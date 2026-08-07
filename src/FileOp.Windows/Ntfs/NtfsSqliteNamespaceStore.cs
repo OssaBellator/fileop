@@ -94,6 +94,7 @@ public sealed class NtfsSqliteNamespaceStore : IDisposable
             using var deleteSubtree = CreateDeleteSubtreeCommand(connection, transaction);
             using var moveSubtree = CreateMoveSubtreeCommand(connection, transaction);
             using var deleteDestination = CreateDeleteDestinationCommand(connection, transaction);
+            using var pathIdentityState = CreatePathIdentityStateCommand(connection, transaction);
 
             foreach (var mutation in mutations)
             {
@@ -128,6 +129,7 @@ public sealed class NtfsSqliteNamespaceStore : IDisposable
                         await MoveAsync(
                             oldPath,
                             newRecord,
+                            pathIdentityState,
                             deleteDestination,
                             moveSubtree,
                             upsert,
@@ -166,13 +168,53 @@ public sealed class NtfsSqliteNamespaceStore : IDisposable
     private static async ValueTask MoveAsync(
         string oldPath,
         FileRecord newRecord,
+        SqliteCommand pathIdentityState,
         SqliteCommand deleteDestination,
         SqliteCommand moveSubtree,
         SqliteCommand upsert,
         CancellationToken cancellationToken)
     {
+        if (newRecord.Identity is not { } identity)
+        {
+            throw new InvalidOperationException("An NTFS move requires a stable file identity.");
+        }
+
         if (!string.Equals(oldPath, newRecord.Path, StringComparison.OrdinalIgnoreCase))
         {
+            var sourceState = await GetPathIdentityStateAsync(
+                pathIdentityState,
+                oldPath,
+                identity,
+                cancellationToken).ConfigureAwait(false);
+
+            if (sourceState == PathIdentityState.Missing)
+            {
+                var destinationState = await GetPathIdentityStateAsync(
+                    pathIdentityState,
+                    newRecord.Path,
+                    identity,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (destinationState == PathIdentityState.MatchingIdentity)
+                {
+                    // The live MFT snapshot can already contain the post-rename subtree while
+                    // catch-up starts from the pre-scan checkpoint. Treat replaying that move
+                    // as idempotent; deleting the destination would otherwise erase children.
+                    BindRecord(upsert, newRecord);
+                    await upsert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                throw new NtfsIndexResnapshotRequiredException(
+                    $"Could not replay move {oldPath} -> {newRecord.Path} for {identity} because the source path is missing. A fresh namespace snapshot is required.");
+            }
+
+            if (sourceState != PathIdentityState.MatchingIdentity)
+            {
+                throw new NtfsIndexResnapshotRequiredException(
+                    $"Could not replay move {oldPath} -> {newRecord.Path} for {identity} because the source path belongs to a different identity. A fresh namespace snapshot is required.");
+            }
+
             BindPath(deleteDestination, newRecord.Path);
             await deleteDestination.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -320,6 +362,46 @@ public sealed class NtfsSqliteNamespaceStore : IDisposable
         return command;
     }
 
+    private static SqliteCommand CreatePathIdentityStateCommand(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT CASE
+                WHEN NOT EXISTS (
+                    SELECT 1 FROM files WHERE path = @path COLLATE NOCASE)
+                THEN 0
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM files
+                    WHERE path = @path COLLATE NOCASE
+                      AND volume_serial = @volume_serial
+                      AND file_reference = @file_reference)
+                THEN 1
+                ELSE 2
+            END;
+            """;
+        command.Parameters.Add("@path", SqliteType.Text);
+        command.Parameters.Add("@volume_serial", SqliteType.Integer);
+        command.Parameters.Add("@file_reference", SqliteType.Integer);
+        return command;
+    }
+
+    private static async ValueTask<PathIdentityState> GetPathIdentityStateAsync(
+        SqliteCommand command,
+        string path,
+        FileIdentity identity,
+        CancellationToken cancellationToken)
+    {
+        command.Parameters["@path"].Value = path;
+        command.Parameters["@volume_serial"].Value = ToSqlInteger(identity.VolumeSerialNumber);
+        command.Parameters["@file_reference"].Value = ToSqlInteger(identity.FileReferenceNumber);
+        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return (PathIdentityState)Convert.ToInt32(value, CultureInfo.InvariantCulture);
+    }
+
     private static SqliteCommand CreateMoveSubtreeCommand(SqliteConnection connection, SqliteTransaction transaction)
     {
         var command = connection.CreateCommand();
@@ -428,6 +510,13 @@ public sealed class NtfsSqliteNamespaceStore : IDisposable
         "SELECT path, name, parent_path, extension, length, is_directory, " +
         "last_write_utc_ticks, attributes, volume_serial, file_reference, " +
         "parent_volume_serial, parent_file_reference, allocated_length ";
+
+    private enum PathIdentityState
+    {
+        Missing = 0,
+        MatchingIdentity = 1,
+        DifferentIdentity = 2,
+    }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
