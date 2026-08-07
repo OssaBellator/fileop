@@ -89,7 +89,10 @@ public sealed class IndexingServiceProtocolTests
     {
         var pipeName = $"fileop-test-{Guid.NewGuid():N}";
         using var backend = new FakeBackend();
-        var server = new IndexingPipeServer(pipeName, new IndexingServiceDispatcher(backend));
+        var server = new IndexingPipeServer(
+            pipeName,
+            Environment.ProcessId,
+            new IndexingServiceDispatcher(backend));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var serverTask = server.RunSingleClientAsync(cancellation.Token);
 
@@ -119,7 +122,10 @@ public sealed class IndexingServiceProtocolTests
                 "Fresh snapshot required.",
                 canRetry: true),
         };
-        var server = new IndexingPipeServer(pipeName, new IndexingServiceDispatcher(backend));
+        var server = new IndexingPipeServer(
+            pipeName,
+            Environment.ProcessId,
+            new IndexingServiceDispatcher(backend));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var serverTask = server.RunSingleClientAsync(cancellation.Token);
 
