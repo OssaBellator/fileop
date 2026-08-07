@@ -26,6 +26,7 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
 {
     private const int FallbackBatchSize = 512;
     private const int InitialCatchUpBatchLimit = 64;
+    private const int BackgroundCatchUpBatchLimit = 8;
     private static readonly TimeSpan BackgroundSyncInterval = TimeSpan.FromSeconds(3);
 
     private readonly InMemoryFileIndex _fallbackIndex = new();
@@ -323,8 +324,12 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
             try
             {
                 var rebuilt = await session.Client.RebuildVolumeAsync(request, cancellationToken).ConfigureAwait(false);
-                var catchUp = await CatchUpAsync(session, request, rebuilt.NextUsn, cancellationToken)
-                    .ConfigureAwait(false);
+                var catchUp = await CatchUpAsync(
+                    session,
+                    request,
+                    rebuilt.NextUsn,
+                    InitialCatchUpBatchLimit,
+                    cancellationToken).ConfigureAwait(false);
                 return NativePreparationResult.Ready(
                     session,
                     volume,
@@ -353,8 +358,12 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
 
         try
         {
-            var catchUp = await CatchUpAsync(session, request, startingUsn: null, cancellationToken)
-                .ConfigureAwait(false);
+            var catchUp = await CatchUpAsync(
+                session,
+                request,
+                startingUsn: null,
+                InitialCatchUpBatchLimit,
+                cancellationToken).ConfigureAwait(false);
             return NativePreparationResult.Ready(
                 session,
                 volume,
@@ -392,8 +401,12 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
             try
             {
                 var rebuilt = await session.Client.RebuildVolumeAsync(request, cancellationToken).ConfigureAwait(false);
-                var catchUp = await CatchUpAsync(session, request, rebuilt.NextUsn, cancellationToken)
-                    .ConfigureAwait(false);
+                var catchUp = await CatchUpAsync(
+                    session,
+                    request,
+                    rebuilt.NextUsn,
+                    InitialCatchUpBatchLimit,
+                    cancellationToken).ConfigureAwait(false);
                 return NativePreparationResult.Ready(
                     session,
                     volume,
@@ -417,12 +430,13 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
         IndexingServiceProcessSession session,
         IndexingVolumeRequest request,
         long? startingUsn,
+        int batchLimit,
         CancellationToken cancellationToken)
     {
         var previousUsn = startingUsn;
         var indexedItemCount = 0;
 
-        for (var batch = 0; batch < InitialCatchUpBatchLimit; batch++)
+        for (var batch = 0; batch < batchLimit; batch++)
         {
             var response = await session.Client.SyncVolumeAsync(request, cancellationToken).ConfigureAwait(false);
             indexedItemCount = response.IndexedItemCount;
@@ -492,7 +506,7 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
             indexed,
             IsBusy: false,
             CanElevate: canElevate,
-            IsCurrent: true));
+            IsCurrent: false));
     }
 
     private async ValueTask<IReadOnlyList<FileRecord>> SearchFallbackAsync(FileSearchQuery query)
@@ -583,9 +597,19 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
 
             var session = _nativeSession;
             var volume = _primaryVolume;
-            if (session is null || volume is null || !session.Client.IsConnected)
+            if (session is null || volume is null)
             {
                 continue;
+            }
+
+            if (!session.Client.IsConnected)
+            {
+                await TransitionToFallbackFromBackgroundAsync(
+                    session,
+                    "Native indexing helper disconnected.",
+                    canElevate: false,
+                    cancellationToken).ConfigureAwait(false);
+                return;
             }
 
             if (!await _nativeOperationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
@@ -593,22 +617,29 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
                 continue;
             }
 
+            var transitionToFallback = false;
+            var fallbackCanElevate = false;
+            var fallbackReason = string.Empty;
+
             try
             {
-                var response = await session.Client.SyncVolumeAsync(
-                    new IndexingVolumeRequest(volume.VolumeIdentity, volume.RootPath),
+                var request = new IndexingVolumeRequest(volume.VolumeIdentity, volume.RootPath);
+                var catchUp = await CatchUpAsync(
+                    session,
+                    request,
+                    startingUsn: null,
+                    BackgroundCatchUpBatchLimit,
                     cancellationToken).ConfigureAwait(false);
 
-                if (!State.IsCurrent || State.IndexedItemCount != response.IndexedItemCount)
+                SetState(State with
                 {
-                    SetState(State with
-                    {
-                        Status = $"Fast NTFS index active for {volume.RootPath}",
-                        IndexedItemCount = response.IndexedItemCount,
-                        IsCurrent = true,
-                        CanElevate = false,
-                    });
-                }
+                    Status = catchUp.IsCurrent
+                        ? $"Fast NTFS index active for {volume.RootPath}"
+                        : $"Fast NTFS index active for {volume.RootPath}; journal catch-up is continuing.",
+                    IndexedItemCount = catchUp.IndexedItemCount,
+                    IsCurrent = catchUp.IsCurrent,
+                    CanElevate = false,
+                });
             }
             catch (IndexingServiceRemoteException exception)
                 when (exception.Error.Code == IndexingServiceErrorCode.ElevationRequired)
@@ -625,24 +656,90 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
             {
                 SetState(State with
                 {
-                    Status = $"The NTFS index for {volume.RootPath} needs a fresh snapshot.",
+                    Status = $"Refreshing invalid NTFS snapshot for {volume.RootPath}…",
+                    IsBusy = true,
                     CanElevate = false,
                     IsCurrent = false,
                 });
+
+                try
+                {
+                    var request = new IndexingVolumeRequest(volume.VolumeIdentity, volume.RootPath);
+                    var rebuilt = await session.Client.RebuildVolumeAsync(request, cancellationToken).ConfigureAwait(false);
+                    var catchUp = await CatchUpAsync(
+                        session,
+                        request,
+                        rebuilt.NextUsn,
+                        BackgroundCatchUpBatchLimit,
+                        cancellationToken).ConfigureAwait(false);
+
+                    SetState(State with
+                    {
+                        Status = catchUp.IsCurrent
+                            ? $"Fast NTFS index rebuilt for {volume.RootPath}"
+                            : $"Fast NTFS index rebuilt for {volume.RootPath}; journal catch-up is continuing.",
+                        IndexedItemCount = catchUp.IndexedItemCount,
+                        IsBusy = false,
+                        CanElevate = false,
+                        IsCurrent = catchUp.IsCurrent,
+                    });
+                }
+                catch (IndexingServiceRemoteException rebuildException)
+                    when (rebuildException.Error.Code == IndexingServiceErrorCode.ElevationRequired)
+                {
+                    transitionToFallback = true;
+                    fallbackCanElevate = true;
+                    fallbackReason = $"The NTFS index for {volume.RootPath} needs an administrator-authorized rebuild.";
+                }
             }
             catch (Exception exception) when (exception is IOException or InvalidOperationException)
             {
-                SetState(State with
-                {
-                    Status = $"Native index connection stopped: {exception.Message}",
-                    IsCurrent = false,
-                });
-                return;
+                transitionToFallback = true;
+                fallbackReason = $"Native index connection stopped: {exception.Message}";
             }
             finally
             {
                 _nativeOperationGate.Release();
             }
+
+            if (transitionToFallback)
+            {
+                await TransitionToFallbackFromBackgroundAsync(
+                    session,
+                    fallbackReason,
+                    fallbackCanElevate,
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+        }
+    }
+
+    private async Task TransitionToFallbackFromBackgroundAsync(
+        IndexingServiceProcessSession failedSession,
+        string reason,
+        bool canElevate,
+        CancellationToken cancellationToken)
+    {
+        if (!await _lifecycleGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        try
+        {
+            if (!ReferenceEquals(_nativeSession, failedSession))
+            {
+                return;
+            }
+
+            _nativeSession = null;
+            _primaryVolume = null;
+            await failedSession.DisposeAsync().ConfigureAwait(false);
+            await BuildFallbackAsync(reason, canElevate, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _lifecycleGate.Release();
         }
     }
 
