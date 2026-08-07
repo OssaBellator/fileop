@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FileOp.Windows.IndexingService;
 
 namespace FileOp.Indexer;
@@ -19,30 +20,58 @@ internal static class Program
             return 1;
         }
 
-        var databaseDirectory = Path.Combine(localAppData, "FileOp", "Index");
-        using var lifetimeCancellation = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, eventArgs) =>
-        {
-            eventArgs.Cancel = true;
-            lifetimeCancellation.Cancel();
-        };
-
+        Process parentProcess;
         try
         {
-            using var backend = new NtfsIndexingServiceBackend(databaseDirectory);
-            var dispatcher = new IndexingServiceDispatcher(backend);
-            var server = new IndexingPipeServer(pipeName, parentProcessId, dispatcher);
-            await server.RunSingleClientAsync(lifetimeCancellation.Token).ConfigureAwait(false);
-            return 0;
+            parentProcess = Process.GetProcessById(parentProcessId);
         }
-        catch (OperationCanceledException) when (lifetimeCancellation.IsCancellationRequested)
+        catch (ArgumentException)
         {
             return 0;
         }
-        catch (Exception exception)
+
+        using (parentProcess)
+        using (var lifetimeCancellation = new CancellationTokenSource())
         {
-            Console.Error.WriteLine($"FileOp.Indexer failed: {exception}");
-            return 1;
+            void CancelLifetime(object? sender, EventArgs eventArgs) => lifetimeCancellation.Cancel();
+
+            try
+            {
+                parentProcess.EnableRaisingEvents = true;
+                parentProcess.Exited += CancelLifetime;
+                if (parentProcess.HasExited)
+                {
+                    lifetimeCancellation.Cancel();
+                }
+
+                Console.CancelKeyPress += CancelOnConsoleInterrupt;
+                var databaseDirectory = Path.Combine(localAppData, "FileOp", "Index");
+                using var backend = new NtfsIndexingServiceBackend(databaseDirectory);
+                var dispatcher = new IndexingServiceDispatcher(backend);
+                var server = new IndexingPipeServer(pipeName, parentProcessId, dispatcher);
+                await server.RunSingleClientAsync(lifetimeCancellation.Token).ConfigureAwait(false);
+                return 0;
+            }
+            catch (OperationCanceledException) when (lifetimeCancellation.IsCancellationRequested)
+            {
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine($"FileOp.Indexer failed: {exception}");
+                return 1;
+            }
+            finally
+            {
+                parentProcess.Exited -= CancelLifetime;
+                Console.CancelKeyPress -= CancelOnConsoleInterrupt;
+            }
+
+            void CancelOnConsoleInterrupt(object? sender, ConsoleCancelEventArgs eventArgs)
+            {
+                eventArgs.Cancel = true;
+                lifetimeCancellation.Cancel();
+            }
         }
     }
 
