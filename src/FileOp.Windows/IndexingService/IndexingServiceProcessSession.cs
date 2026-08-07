@@ -51,6 +51,8 @@ public sealed class IndexingServiceProcessSession : IAsyncDisposable
         };
         startInfo.ArgumentList.Add("--pipe");
         startInfo.ArgumentList.Add(pipeName);
+        startInfo.ArgumentList.Add("--parent-pid");
+        startInfo.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
         if (elevated)
         {
