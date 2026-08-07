@@ -28,5 +28,9 @@ public interface IIndexingServiceBackend : IDisposable
 
     ValueTask<IndexingStorageAnalysisResponse> AnalyzeStorageAsync(
         IndexingStorageAnalysisRequest request,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromException<IndexingStorageAnalysisResponse>(
+            new IndexingServiceException(
+                IndexingServiceErrorCode.InvalidRequest,
+                "This indexing backend does not support storage analytics."));
 }
