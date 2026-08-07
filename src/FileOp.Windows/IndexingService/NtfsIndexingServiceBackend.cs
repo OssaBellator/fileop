@@ -199,7 +199,8 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
 
         var merged = perVolumeResults
             .SelectMany(static result => result)
-            .OrderBy(static record => record.Name, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(record => CalculateSearchScore(record, query))
+            .ThenBy(static record => record.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static record => record.Path, StringComparer.OrdinalIgnoreCase)
             .Take(limit)
             .Select(IndexingSearchResult.FromRecord)
@@ -320,6 +321,33 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         {
             context.OperationGate.Release();
         }
+    }
+
+    private static int CalculateSearchScore(FileRecord record, FileSearchQuery query)
+    {
+        var score = 0;
+        foreach (var term in query.Terms)
+        {
+            if (string.Equals(record.Name, term, StringComparison.OrdinalIgnoreCase))
+            {
+                score += 100;
+            }
+            else if (record.Name.StartsWith(term, StringComparison.OrdinalIgnoreCase))
+            {
+                score += 50;
+            }
+            else if (record.Name.Contains(term, StringComparison.OrdinalIgnoreCase))
+            {
+                score += 20;
+            }
+            else
+            {
+                // SqliteFileIndex assigns the path-only match fallback this score.
+                score += 5;
+            }
+        }
+
+        return score;
     }
 
     private static async ValueTask InvalidateCheckpointAsync(VolumeContext context)
