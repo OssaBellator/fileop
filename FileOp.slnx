@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="src/FileOp.Core/FileOp.Core.csproj" />
   <Project Path="src/FileOp.Windows/FileOp.Windows.csproj" />
+  <Project Path="src/FileOp.Indexer/FileOp.Indexer.csproj" />
   <Project Path="src/FileOp.App/FileOp.App.csproj" />
   <Project Path="tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj" />
   <Project Path="benchmarks/FileOp.Benchmarks/FileOp.Benchmarks.csproj" />
