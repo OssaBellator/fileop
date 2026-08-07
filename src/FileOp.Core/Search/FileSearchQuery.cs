@@ -135,6 +135,7 @@ public sealed record FileSearchQuery(
         }
 
         if (!double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var numeric) ||
+            !double.IsFinite(numeric) ||
             numeric < 0 ||
             numeric > long.MaxValue / (double)multiplier)
         {
