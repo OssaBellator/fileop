@@ -33,6 +33,7 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
     private readonly FileSystemCrawler _crawler = new();
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
+    private readonly SemaphoreSlim _searchOperationGate = new(1, 1);
     private readonly SemaphoreSlim _nativeOperationGate = new(1, 1);
     private IndexingServiceProcessSession? _nativeSession;
     private IndexingVolumeDescriptor? _primaryVolume;
@@ -185,27 +186,36 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
     public async ValueTask<IReadOnlyList<FileRecord>> SearchAsync(string rawQuery, int limit = 250)
     {
         ThrowIfDisposed();
-        var query = FileSearchQuery.Parse(rawQuery ?? string.Empty, limit);
-
-        if (_nativeSession is { Client.IsConnected: true })
+        await _searchOperationGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+        try
         {
-            await _nativeOperationGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
-            try
+            ThrowIfDisposed();
+            var query = FileSearchQuery.Parse(rawQuery ?? string.Empty, limit);
+
+            if (_nativeSession is { Client.IsConnected: true })
             {
-                if (_nativeSession is not { Client.IsConnected: true } session)
+                await _nativeOperationGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+                try
                 {
-                    return await SearchFallbackAsync(query).ConfigureAwait(false);
+                    if (_nativeSession is not { Client.IsConnected: true } session)
+                    {
+                        return await SearchFallbackAsync(query).ConfigureAwait(false);
+                    }
+
+                    return await SearchNativeAsync(session, query).ConfigureAwait(false);
                 }
+                finally
+                {
+                    _nativeOperationGate.Release();
+                }
+            }
 
-                return await SearchNativeAsync(session, query).ConfigureAwait(false);
-            }
-            finally
-            {
-                _nativeOperationGate.Release();
-            }
+            return await SearchFallbackAsync(query).ConfigureAwait(false);
         }
-
-        return await SearchFallbackAsync(query).ConfigureAwait(false);
+        finally
+        {
+            _searchOperationGate.Release();
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -219,13 +229,32 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
         _lifetimeCancellation.Cancel();
         await StopBackgroundSyncAsync().ConfigureAwait(false);
 
-        if (_nativeSession is not null)
+        await _lifecycleGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
         {
-            await _nativeSession.DisposeAsync().ConfigureAwait(false);
-            _nativeSession = null;
+            await _searchOperationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                if (_nativeSession is not null)
+                {
+                    await _nativeSession.DisposeAsync().ConfigureAwait(false);
+                    _nativeSession = null;
+                }
+
+                _primaryVolume = null;
+                _fallbackIndex.Dispose();
+            }
+            finally
+            {
+                _searchOperationGate.Release();
+            }
+        }
+        finally
+        {
+            _lifecycleGate.Release();
         }
 
-        _fallbackIndex.Dispose();
+        _searchOperationGate.Dispose();
         _nativeOperationGate.Dispose();
         _lifecycleGate.Dispose();
         _lifetimeCancellation.Dispose();
