@@ -20,6 +20,8 @@ The Windows engine can read logical size, allocated size, link count, timestamps
 
 A volume is included in service-backed search only when it has a valid durable checkpoint and is not rebuilding. If journal consistency requires a resnapshot, that checkpoint is invalidated persistently before the service reports `SnapshotRequired`.
 
+Multiple FileOp desktop instances can create separate helper processes, so per-process semaphores are not sufficient to protect one shared volume database. Each persistent volume index therefore has a companion cross-process file gate: searches take shared read leases while snapshot rebuild and USN synchronization hold an exclusive maintenance lease for the entire semantic operation, including checkpoint invalidation. The lock file is a coordination primitive, not an authorization boundary.
+
 The desktop starts `FileOp.Indexer` unelevated, builds or resumes the primary NTFS snapshot, and replays USN batches until the durable cursor converges. A low-priority background loop continues incremental catch-up without competing with active searches. If live NTFS access needs elevation, the UI can retain a valid existing native snapshot while explicitly marking it stale and offering helper-only UAC; if native indexing is unavailable entirely, FileOp builds a user-profile fallback snapshot instead.
 
 Superseded searches do not cancel an in-flight service request because an interrupted IPC exchange intentionally faults that session. The UI drops stale generations and serializes queued searches so only the newest pending query reaches the service. Window shutdown may cancel the active exchange because the whole helper session is being torn down.
