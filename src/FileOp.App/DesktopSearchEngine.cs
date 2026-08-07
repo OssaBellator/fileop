@@ -79,7 +79,11 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
             if (preparation.IsNativeReady)
             {
                 ApplyNativePreparation(preparation);
-                StartBackgroundSync();
+                if (!preparation.CanElevate)
+                {
+                    StartBackgroundSync();
+                }
+
                 return;
             }
 
@@ -137,7 +141,10 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
                 var previousSession = _nativeSession;
                 ApplyNativePreparation(preparation);
                 await StopBackgroundSyncAsync().ConfigureAwait(false);
-                StartBackgroundSync();
+                if (!preparation.CanElevate)
+                {
+                    StartBackgroundSync();
+                }
 
                 if (previousSession is not null && !ReferenceEquals(previousSession, _nativeSession))
                 {
@@ -633,12 +640,17 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
 
             if (!session.Client.IsConnected)
             {
-                await TransitionToFallbackFromBackgroundAsync(
+                var handled = await TransitionToFallbackFromBackgroundAsync(
                     session,
                     "Native indexing helper disconnected.",
                     canElevate: false,
                     cancellationToken).ConfigureAwait(false);
-                return;
+                if (handled)
+                {
+                    return;
+                }
+
+                continue;
             }
 
             if (!await _nativeOperationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
@@ -676,9 +688,11 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
                 SetState(State with
                 {
                     Status = $"Fast index available for {volume.RootPath}, but live NTFS updates need administrator access.",
+                    IsBusy = false,
                     CanElevate = true,
                     IsCurrent = false,
                 });
+                return;
             }
             catch (IndexingServiceRemoteException exception)
                 when (exception.Error.Code == IndexingServiceErrorCode.SnapshotRequired)
@@ -733,17 +747,20 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
 
             if (transitionToFallback)
             {
-                await TransitionToFallbackFromBackgroundAsync(
+                var handled = await TransitionToFallbackFromBackgroundAsync(
                     session,
                     fallbackReason,
                     fallbackCanElevate,
                     cancellationToken).ConfigureAwait(false);
-                return;
+                if (handled)
+                {
+                    return;
+                }
             }
         }
     }
 
-    private async Task TransitionToFallbackFromBackgroundAsync(
+    private async Task<bool> TransitionToFallbackFromBackgroundAsync(
         IndexingServiceProcessSession failedSession,
         string reason,
         bool canElevate,
@@ -751,20 +768,21 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
     {
         if (!await _lifecycleGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
-            return;
+            return false;
         }
 
         try
         {
             if (!ReferenceEquals(_nativeSession, failedSession))
             {
-                return;
+                return true;
             }
 
             _nativeSession = null;
             _primaryVolume = null;
             await failedSession.DisposeAsync().ConfigureAwait(false);
             await BuildFallbackAsync(reason, canElevate, cancellationToken).ConfigureAwait(false);
+            return true;
         }
         finally
         {
