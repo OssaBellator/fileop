@@ -443,12 +443,15 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
 
     private static void BindIdentity(SqliteCommand command, string prefix, FileIdentity? identity)
     {
-        command.Parameters[$"@{prefix}volume_serial"].Value = identity is { } value
-            ? ToSqlInteger(value.VolumeSerialNumber)
-            : DBNull.Value;
-        command.Parameters[$"@{prefix}file_reference"].Value = identity is { } value
-            ? ToSqlInteger(value.FileReferenceNumber)
-            : DBNull.Value;
+        if (identity is { } value)
+        {
+            command.Parameters[$"@{prefix}volume_serial"].Value = ToSqlInteger(value.VolumeSerialNumber);
+            command.Parameters[$"@{prefix}file_reference"].Value = ToSqlInteger(value.FileReferenceNumber);
+            return;
+        }
+
+        command.Parameters[$"@{prefix}volume_serial"].Value = DBNull.Value;
+        command.Parameters[$"@{prefix}file_reference"].Value = DBNull.Value;
     }
 
     private static void BuildSearchCommand(SqliteCommand command, FileSearchQuery query)
