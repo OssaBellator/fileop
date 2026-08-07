@@ -1,8 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
-using FileOp.Core.Indexing;
 using FileOp.Core.Models;
-using FileOp.Core.Search;
 using FileOp.Core.Services;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -12,16 +10,15 @@ namespace FileOp.App;
 
 public sealed partial class MainWindow : Window
 {
-    private const int IndexBatchSize = 512;
-
-    private readonly InMemoryFileIndex _index = new();
-    private readonly FileSystemCrawler _crawler = new();
+    private readonly DesktopSearchEngine _searchEngine = new();
     private readonly StorageSnapshotService _storageSnapshotService = new();
     private readonly ObservableCollection<SearchResultRow> _results = [];
     private readonly ObservableCollection<VolumeCard> _volumes = [];
     private readonly DispatcherQueueTimer _searchTimer;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
-    private CancellationTokenSource? _searchCancellation;
+    private readonly SemaphoreSlim _searchGate = new(1, 1);
+    private int _searchGeneration;
+    private bool _closed;
 
     public MainWindow()
     {
@@ -35,13 +32,8 @@ public sealed partial class MainWindow : Window
         _searchTimer.IsRepeating = false;
         _searchTimer.Tick += SearchTimer_Tick;
 
-        Closed += (_, _) =>
-        {
-            _searchTimer.Stop();
-            _lifetimeCancellation.Cancel();
-            _searchCancellation?.Cancel();
-        };
-
+        _searchEngine.StateChanged += SearchEngine_StateChanged;
+        Closed += MainWindow_Closed;
         Activated += MainWindow_Activated;
     }
 
@@ -49,7 +41,77 @@ public sealed partial class MainWindow : Window
     {
         Activated -= MainWindow_Activated;
         LoadVolumes();
-        await IndexDefaultLocationAsync();
+
+        var root = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+        {
+            ApplyEngineState(new DesktopSearchEngineState(
+                DesktopSearchMode.Unavailable,
+                "User profile is unavailable.",
+                0,
+                IsBusy: false,
+                CanElevate: false,
+                IsCurrent: false));
+            return;
+        }
+
+        try
+        {
+            await _searchEngine.InitializeAsync(root, _lifetimeCancellation.Token);
+            if (_closed)
+            {
+                return;
+            }
+
+            ApplyEngineState(_searchEngine.State);
+            if (SearchBox.IsEnabled)
+            {
+                await RunSearchAsync();
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            ApplyEngineState(new DesktopSearchEngineState(
+                DesktopSearchMode.Unavailable,
+                $"Search engine could not start: {exception.Message}",
+                0,
+                IsBusy: false,
+                CanElevate: false,
+                IsCurrent: false));
+        }
+    }
+
+    private async void MainWindow_Closed(object sender, WindowEventArgs args)
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        _closed = true;
+        _searchTimer.Stop();
+        _lifetimeCancellation.Cancel();
+        _searchEngine.StateChanged -= SearchEngine_StateChanged;
+
+        var disposeTask = _searchEngine.DisposeAsync().AsTask();
+        try
+        {
+            await _searchGate.WaitAsync(CancellationToken.None);
+            _searchGate.Release();
+            await disposeTask;
+        }
+        catch (Exception)
+        {
+            // Window shutdown should not be blocked by search/helper teardown failures.
+        }
+        finally
+        {
+            _searchGate.Dispose();
+            _lifetimeCancellation.Dispose();
+        }
     }
 
     private void LoadVolumes()
@@ -61,65 +123,53 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task IndexDefaultLocationAsync()
+    private void SearchEngine_StateChanged(DesktopSearchEngineState state)
     {
-        var root = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+        if (_closed)
         {
-            StatusText.Text = "User profile is unavailable.";
             return;
         }
 
-        var cancellationToken = _lifetimeCancellation.Token;
-        StatusText.Text = $"Indexing {root}";
-
-        try
+        if (DispatcherQueue.HasThreadAccess)
         {
-            await _index.ClearAsync(cancellationToken);
+            ApplyEngineState(state);
+            return;
+        }
 
-            var indexed = await Task.Run(async () =>
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_closed)
             {
-                var batch = new List<FileRecord>(IndexBatchSize);
-                var count = 0;
+                ApplyEngineState(state);
+            }
+        });
+    }
 
-                await foreach (var record in _crawler.CrawlAsync(root, cancellationToken).ConfigureAwait(false))
-                {
-                    batch.Add(record);
-                    if (batch.Count < IndexBatchSize)
-                    {
-                        continue;
-                    }
+    private void ApplyEngineState(DesktopSearchEngineState state)
+    {
+        EngineStatusText.Text = state.Status;
+        IndexingProgressRing.IsActive = state.IsBusy;
+        CountText.Text = state.IndexedItemCount > 0
+            ? $"{state.IndexedItemCount:N0} indexed"
+            : string.Empty;
 
-                    await _index.AddBatchAsync(batch, cancellationToken).ConfigureAwait(false);
-                    count += batch.Count;
-                    batch.Clear();
-                }
+        var searchAvailable = !_closed &&
+            !state.IsBusy &&
+            state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback;
+        SearchBox.IsEnabled = searchAvailable;
 
-                if (batch.Count > 0)
-                {
-                    await _index.AddBatchAsync(batch, cancellationToken).ConfigureAwait(false);
-                    count += batch.Count;
-                }
-
-                return count;
-            }, cancellationToken);
-
-            cancellationToken.ThrowIfCancellationRequested();
-            CountText.Text = $"{indexed:N0} indexed";
-            StatusText.Text = "Index ready";
-            await RunSearchAsync();
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception exception)
-        {
-            StatusText.Text = $"Indexing stopped: {exception.Message}";
-        }
+        EnableFastIndexButton.Visibility = state.CanElevate
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        EnableFastIndexButton.IsEnabled = state.CanElevate && !state.IsBusy;
+        EnableFastIndexButton.Content = state.Mode == DesktopSearchMode.Native
+            ? "Enable live updates"
+            : "Enable fast indexing";
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
+        Interlocked.Increment(ref _searchGeneration);
         _searchTimer.Stop();
         _searchTimer.Start();
     }
@@ -132,40 +182,93 @@ public sealed partial class MainWindow : Window
 
     private async Task RunSearchAsync()
     {
-        _searchCancellation?.Cancel();
-        var searchCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
-        _searchCancellation = searchCancellation;
-        var cancellationToken = searchCancellation.Token;
+        if (!SearchBox.IsEnabled || _closed)
+        {
+            return;
+        }
+
+        var generation = Interlocked.Increment(ref _searchGeneration);
+        var rawQuery = SearchBox.Text;
 
         try
         {
-            var query = FileSearchQuery.Parse(SearchBox.Text, limit: 250);
-            var matches = await Task.Run(
-                async () => await _index.SearchAsync(query, cancellationToken).ConfigureAwait(false),
-                cancellationToken);
-
-            cancellationToken.ThrowIfCancellationRequested();
-            _results.Clear();
-            foreach (var match in matches)
+            await _searchGate.WaitAsync(_lifetimeCancellation.Token);
+            try
             {
-                _results.Add(SearchResultRow.FromRecord(match));
-            }
+                if (_closed || generation != Volatile.Read(ref _searchGeneration))
+                {
+                    return;
+                }
 
-            StatusText.Text = string.IsNullOrWhiteSpace(query.Raw)
-                ? "Showing indexed items"
-                : $"{matches.Count:N0} result(s)";
+                var matches = await _searchEngine.SearchAsync(rawQuery, limit: 250);
+                if (_closed || generation != Volatile.Read(ref _searchGeneration))
+                {
+                    return;
+                }
+
+                _results.Clear();
+                foreach (var match in matches)
+                {
+                    _results.Add(SearchResultRow.FromRecord(match));
+                }
+
+                var mode = _searchEngine.State.Mode == DesktopSearchMode.Native
+                    ? "native index"
+                    : "profile fallback";
+                SearchStatusText.Text = string.IsNullOrWhiteSpace(rawQuery)
+                    ? $"Showing {matches.Count:N0} indexed item(s) · {mode}"
+                    : $"{matches.Count:N0} result(s) · {mode}";
+            }
+            finally
+            {
+                _searchGate.Release();
+            }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!_closed)
+            {
+                SearchStatusText.Text = $"Search failed: {exception.Message}";
+            }
+        }
+    }
+
+    private async void EnableFastIndexButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        SearchBox.IsEnabled = false;
+        EnableFastIndexButton.IsEnabled = false;
+        SearchStatusText.Text = string.Empty;
+        Interlocked.Increment(ref _searchGeneration);
+
+        try
+        {
+            var enabled = await _searchEngine.TryElevateAsync(_lifetimeCancellation.Token);
+            if (enabled && !_closed)
+            {
+                ApplyEngineState(_searchEngine.State);
+                if (SearchBox.IsEnabled)
+                {
+                    await RunSearchAsync();
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
         {
         }
         finally
         {
-            if (ReferenceEquals(_searchCancellation, searchCancellation))
+            if (!_closed)
             {
-                _searchCancellation = null;
+                ApplyEngineState(_searchEngine.State);
             }
-
-            searchCancellation.Dispose();
         }
     }
 
@@ -185,7 +288,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            StatusText.Text = $"Could not open item: {exception.Message}";
+            SearchStatusText.Text = $"Could not open item: {exception.Message}";
         }
     }
 }

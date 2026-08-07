@@ -63,7 +63,8 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             volumes.Volumes.Count,
             volumes.Volumes.Count(static volume =>
                 string.Equals(volume.State, VolumeState.Rebuilding.ToString(), StringComparison.Ordinal) ||
-                string.Equals(volume.State, VolumeState.Syncing.ToString(), StringComparison.Ordinal)),
+                string.Equals(volume.State, VolumeState.Syncing.ToString(), StringComparison.Ordinal) ||
+                string.Equals(volume.State, "Busy", StringComparison.Ordinal)),
             volumes.Volumes);
     }
 
@@ -75,14 +76,18 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         var context = ResolveContext(request);
         if (!await context.OperationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
-            throw new IndexingServiceException(
-                IndexingServiceErrorCode.Busy,
-                $"{context.Volume.RootPath} is already performing an indexing operation.",
-                canRetry: true);
+            throw CreateBusyException(context);
         }
 
+        IDisposable? processLease = null;
         try
         {
+            processLease = context.ProcessGate.TryAcquireMaintenance();
+            if (processLease is null)
+            {
+                throw CreateBusyException(context, "another FileOp indexing process is maintaining it");
+            }
+
             context.State = VolumeState.Rebuilding;
             context.LastError = null;
             var indexer = new NtfsSnapshotIndexer(context.Index, context.Index);
@@ -113,6 +118,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
                 context.State = VolumeState.Idle;
             }
 
+            processLease?.Dispose();
             context.OperationGate.Release();
         }
     }
@@ -125,19 +131,23 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         var context = ResolveContext(request);
         if (!await context.OperationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
-            throw new IndexingServiceException(
-                IndexingServiceErrorCode.Busy,
-                $"{context.Volume.RootPath} is already performing an indexing operation.",
-                canRetry: true);
+            throw CreateBusyException(context);
         }
 
+        IDisposable? processLease = null;
         try
         {
+            processLease = context.ProcessGate.TryAcquireMaintenance();
+            if (processLease is null)
+            {
+                throw CreateBusyException(context, "another FileOp indexing process is maintaining it");
+            }
+
             context.State = VolumeState.Syncing;
             context.LastError = null;
             var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
             var saved = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
-            if (saved is null || context.RequiresSnapshot)
+            if (saved is null)
             {
                 context.RequiresSnapshot = true;
                 throw new IndexingServiceException(
@@ -146,6 +156,10 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
                     canRetry: true);
             }
 
+            // The durable checkpoint is shared across helper processes. A local RequiresSnapshot
+            // flag can be stale after another process successfully rebuilds the volume, so refresh
+            // the cache from durable state while the cross-process maintenance lease is held.
+            context.RequiresSnapshot = false;
             var checkpoint = new NtfsJournalCheckpoint(saved.Generation, saved.Position);
             var synchronizer = new NtfsIndexSynchronizer(context.NamespaceStore);
             var next = await synchronizer.ApplyNextBatchAsync(context.Volume, checkpoint, cancellationToken)
@@ -175,6 +189,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
                 context.State = VolumeState.Idle;
             }
 
+            processLease?.Dispose();
             context.OperationGate.Release();
         }
     }
@@ -275,20 +290,39 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         VolumeContext context,
         CancellationToken cancellationToken)
     {
-        var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
-        var checkpoint = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
-        var hasCheckpoint = checkpoint is not null && !context.RequiresSnapshot;
-        var state = context.State == VolumeState.Idle && !hasCheckpoint
-            ? "SnapshotRequired"
-            : context.State.ToString();
-        return new IndexingVolumeDescriptor(
-            context.Volume.VolumeIdentity,
-            context.Volume.RootPath,
-            context.Volume.Label,
-            context.Index.Count,
-            hasCheckpoint,
-            state,
-            context.LastError);
+        if (!await context.OperationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            return CreateBusyDescriptor(context, context.State.ToString());
+        }
+
+        try
+        {
+            using var processLease = context.ProcessGate.TryAcquireRead();
+            if (processLease is null)
+            {
+                return CreateBusyDescriptor(context, "Busy");
+            }
+
+            var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
+            var checkpoint = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
+            var hasCheckpoint = checkpoint is not null;
+            context.RequiresSnapshot = !hasCheckpoint;
+            var state = context.State == VolumeState.Idle && !hasCheckpoint
+                ? "SnapshotRequired"
+                : context.State.ToString();
+            return new IndexingVolumeDescriptor(
+                context.Volume.VolumeIdentity,
+                context.Volume.RootPath,
+                context.Volume.Label,
+                context.Index.Count,
+                hasCheckpoint,
+                state,
+                context.LastError);
+        }
+        finally
+        {
+            context.OperationGate.Release();
+        }
     }
 
     private static async Task<IReadOnlyList<FileRecord>> SearchVolumeAsync(
@@ -303,7 +337,8 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
 
         try
         {
-            if (context.RequiresSnapshot)
+            using var processLease = context.ProcessGate.TryAcquireRead();
+            if (processLease is null)
             {
                 return [];
             }
@@ -312,9 +347,11 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             var checkpoint = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
             if (checkpoint is null)
             {
+                context.RequiresSnapshot = true;
                 return [];
             }
 
+            context.RequiresSnapshot = false;
             return await context.Index.SearchAsync(query, cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -349,6 +386,24 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
 
         return score;
     }
+
+    private static IndexingVolumeDescriptor CreateBusyDescriptor(VolumeContext context, string state) =>
+        new(
+            context.Volume.VolumeIdentity,
+            context.Volume.RootPath,
+            context.Volume.Label,
+            0,
+            HasCheckpoint: false,
+            state,
+            "Another indexing operation currently owns this volume index.");
+
+    private static IndexingServiceException CreateBusyException(
+        VolumeContext context,
+        string reason = "it is already performing an indexing operation") =>
+        new(
+            IndexingServiceErrorCode.Busy,
+            $"{context.Volume.RootPath} cannot start this operation because {reason}.",
+            canRetry: true);
 
     private static async ValueTask InvalidateCheckpointAsync(VolumeContext context)
     {
@@ -437,11 +492,14 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         public VolumeContext(NtfsVolume volume, string databasePath)
         {
             Volume = volume;
+            ProcessGate = new IndexingVolumeFileGate(databasePath);
             Index = new SqliteFileIndex(databasePath);
             NamespaceStore = new NtfsSqliteNamespaceStore(databasePath);
         }
 
         public NtfsVolume Volume { get; }
+
+        public IndexingVolumeFileGate ProcessGate { get; }
 
         public SqliteFileIndex Index { get; }
 

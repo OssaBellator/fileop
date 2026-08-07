@@ -9,6 +9,9 @@ FileOp is a storage operating layer for Windows, not a generic "PC cleaner". The
 ```text
 WinUI application (asInvoker)
       |
+      | native-first search coordinator
+      |   \-- bounded crawler fallback
+      |
       | bounded, versioned named-pipe protocol
       v
 FileOp.Indexer (on-demand helper)
@@ -39,7 +42,7 @@ FileOp.Benchmarks
 
 `FileOp.Core` stays independent of how records are discovered. Windows-specific filesystem control codes, P/Invoke and named-pipe process-boundary implementation live in `FileOp.Windows`. `FileOp.Indexer` is a thin host around that Windows backend. Network, removable and non-NTFS providers can therefore use different implementations without contaminating the search/domain layer.
 
-`FileOp.App` intentionally remains on the reviewed crawler until the service boundary itself has been reviewed and a separate WinUI cutover/fallback slice is validated.
+`FileOp.App` now consumes the reviewed indexer boundary for its primary search path. The first desktop cutover intentionally orchestrates the NTFS volume containing the user's profile and retains the bounded crawler as an explicit fallback. This makes the native path useful without making unsupported filesystems, missing helper binaries or privilege limitations fatal to search.
 
 ## NTFS ingestion strategy
 
@@ -130,7 +133,7 @@ The benchmark project is compiled in CI but long benchmark runs remain manual so
 
 ## Indexing service boundary
 
-`FileOp.Indexer` owns native NTFS indexing and persistent index writes for a desktop session. It accepts exactly one authenticated client and exits after that client disconnects. It is not an always-running Windows service.
+`FileOp.Indexer` owns native NTFS indexing and persistent index writes for a desktop session. It accepts exactly one authenticated client and exits after that client disconnects or its launching desktop process exits. It is not an always-running Windows service.
 
 Version 1 exposes only:
 
@@ -140,7 +143,9 @@ Version 1 exposes only:
 - one incremental USN synchronization batch for one volume;
 - search across valid attached-volume indexes.
 
-The pipe protocol uses a random per-session name, `PipeOptions.CurrentUserOnly`, exact connected-client PID verification, non-empty request IDs, strict protocol-version validation and an 8 MiB frame cap. Required DTO fields are validated after deserialization rather than trusting serializer defaults. If a successful response would exceed the frame cap, the server substitutes a retryable `ResponseTooLarge` error and keeps the session alive.
+The pipe protocol uses a random per-session name, `PipeOptions.CurrentUserOnly`, exact connected-client PID verification, non-empty request IDs, strict protocol-version validation and an 8 MiB frame cap. Required DTO fields are validated after deserialization rather than trusting serializer defaults. If any response would exceed the frame cap, the server substitutes a retryable `ResponseTooLarge` error and keeps the session alive.
+
+An interrupted exchange is different. If a request may have been written without the matching response being fully consumed, the client faults that connection rather than risking response/request desynchronization. The desktop therefore does not cancel active service searches merely because the user typed a newer query.
 
 ### Per-volume persistence and validity
 
@@ -160,11 +165,37 @@ The current per-user pipe model permits UAC relaunch only for a limited split ad
 
 The helper chooses its own persistent root under `LocalApplicationData\FileOp\Index`; an elevated process does not accept an arbitrary database path from its command line. The server additionally verifies the connected pipe client's process ID matches the desktop process that launched the helper, preventing an unrelated same-user process from claiming the privileged channel first.
 
-Production WinUI packaging must resolve and verify the installed `FileOp.Indexer` executable before offering elevation. Supporting different-user credential elevation requires a separately reviewed Windows service/ACL design rather than weakening the current pipe boundary.
+The desktop build places `FileOp.Indexer.exe` and its host metadata beside the application. Runtime discovery accepts only that exact adjacent non-reparse executable. This narrows development/runtime path resolution but is not a substitute for Authenticode publisher verification; signed production packaging still owns that trust decision before elevation is exposed to users.
 
 Partition management, formatting, BitLocker changes and other destructive disk administration are explicitly outside the indexing protocol and remain a separate future privileged surface.
 
-See `docs/indexing-service.md` for the detailed trust-boundary and cutover policy.
+See `docs/indexing-service.md` for the detailed trust-boundary and desktop integration model.
+
+## Desktop native/fallback integration
+
+The WinUI search coordinator follows a deliberately conservative state machine:
+
+1. Resolve the adjacent indexer host and start it unelevated.
+2. Discover the NTFS volume containing the user profile.
+3. If no valid checkpoint exists, build a fresh MFT-backed snapshot.
+4. Replay `SyncVolume` repeatedly until two consecutive durable cursors stop advancing or a bounded startup catch-up budget is exhausted.
+5. Use service-backed search as soon as the primary snapshot is valid; if the startup budget is exhausted, mark the index as catching up and continue in the low-priority background loop.
+6. Every few seconds, attempt a bounded number of journal batches only when no foreground native operation owns the gate.
+7. If a valid existing snapshot can be searched but live synchronization returns `ElevationRequired`, keep that snapshot available, mark it non-current, stop repeated permission probes and offer helper-only elevation explicitly.
+8. If the native helper/provider is unavailable, or an invalid snapshot cannot be rebuilt without elevation, build the bounded user-profile crawler fallback.
+9. If a live native session later becomes unusable or its snapshot requires an unavailable rebuild, transition back to the fallback rather than leaving the desktop search path dead.
+
+The first cutover only orchestrates creation/maintenance of the user-profile NTFS volume. Other attached NTFS volume indexes that already have valid checkpoints can still participate in cross-volume service search. Automatic first-run orchestration for every attached disk is intentionally a later slice so the primary lifecycle can be validated before adding multi-volume startup work.
+
+### Query supersession
+
+A new keystroke invalidates the visible search generation immediately, but it does not cancel a service call that may already have crossed the pipe. UI searches are serialized; stale queued generations are discarded before they touch the service, and stale completed generations are discarded before rendering. Only session/window shutdown is allowed to interrupt the active exchange because that path is destroying the helper session anyway.
+
+### UI availability
+
+Engine state is the single source of truth for whether the search box is enabled. Search input is disabled during snapshot rebuilds, fallback crawling and elevation transitions, then re-enabled only when either a native searchable snapshot or completed fallback snapshot is available. This prevents an apparently enabled search box from blocking silently behind a maintenance operation.
+
+The fallback crawler is a snapshot, not a live watcher, and is therefore represented as non-current even after its initial crawl completes.
 
 ## Target indexing architecture
 
@@ -197,6 +228,7 @@ Other filesystem provider --------------------+    per-volume metadata
 - Parent identity resolution failures are consistency failures, not an invitation to guess an absolute path.
 - A missing/invalid durable checkpoint means that volume is not eligible for service-backed search.
 - The desktop process must never become elevated merely to index storage.
+- Superseding a UI query must not cancel an already transmitted service request and desynchronize the IPC session.
 
 ## Roadmap
 
@@ -239,6 +271,12 @@ Implemented:
 - structured capability/error contract
 - per-volume persistent index isolation and durable invalidation
 - same-account helper-only UAC elevation policy
+- native-first WinUI search for the primary user-profile NTFS volume
+- snapshot/cursor-convergence startup orchestration
+- low-priority incremental desktop synchronization
+- explicit stale-native/elevation UX
+- crawler fallback and native-to-fallback recovery path
+- bundled helper host validation in Windows CI
 
 Next:
 
@@ -247,7 +285,8 @@ Next:
 - specialized filename/path search structure beyond SQLite substring scans
 - explicit support policy for per-directory case-sensitive NTFS namespaces
 - optional shadow-index rebuild + atomic swap for uninterrupted per-volume search
-- separate WinUI service-client integration and crawler fallback cutover
+- automatic first-run orchestration for additional attached NTFS volumes
+- signed-package/Authenticode verification policy for the elevated helper
 
 ### Milestone 3 — file manager
 

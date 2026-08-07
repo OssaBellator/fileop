@@ -69,6 +69,12 @@ public sealed class IndexingServiceProcessSession : IAsyncDisposable
         {
             throw new OperationCanceledException("Administrative indexing access was declined.", exception);
         }
+        catch (Win32Exception exception)
+        {
+            throw new InvalidOperationException(
+                $"Windows could not start the FileOp indexing helper: {exception.Message}",
+                exception);
+        }
 
         var client = new IndexingServiceClient(pipeName);
         try
