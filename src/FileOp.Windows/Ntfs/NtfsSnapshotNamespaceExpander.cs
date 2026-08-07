@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using FileOp.Core.Models;
 
 namespace FileOp.Windows.Ntfs;
@@ -29,7 +30,20 @@ public sealed class NtfsSnapshotNamespaceExpander
             return [NtfsFileRecordFactory.Create(volume, baselinePath, entry, metadata)];
         }
 
-        var linkPaths = _hardLinkEnumerator.Enumerate(baselinePath)
+        IReadOnlyList<string> enumeratedLinks;
+        try
+        {
+            enumeratedLinks = _hardLinkEnumerator.Enumerate(baselinePath);
+        }
+        catch (Win32Exception exception) when (exception.NativeErrorCode is 2 or 3 or 1168)
+        {
+            throw new NtfsIndexResnapshotRequiredException(
+                $"The baseline namespace path {baselinePath} disappeared while enumerating hard links for file reference " +
+                $"{entry.FileReferenceNumber} on {volume.RootPath}. A fresh snapshot is required.",
+                exception);
+        }
+
+        var linkPaths = enumeratedLinks
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
