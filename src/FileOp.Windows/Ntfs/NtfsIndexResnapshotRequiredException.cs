@@ -6,4 +6,9 @@ public sealed class NtfsIndexResnapshotRequiredException : IOException
         : base(message)
     {
     }
+
+    public NtfsIndexResnapshotRequiredException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
 }
