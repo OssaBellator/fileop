@@ -20,6 +20,7 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<SearchResultRow> _results = [];
     private readonly ObservableCollection<VolumeCard> _volumes = [];
     private readonly DispatcherQueueTimer _searchTimer;
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
     private CancellationTokenSource? _searchCancellation;
 
     public MainWindow()
@@ -36,9 +37,9 @@ public sealed partial class MainWindow : Window
 
         Closed += (_, _) =>
         {
+            _searchTimer.Stop();
+            _lifetimeCancellation.Cancel();
             _searchCancellation?.Cancel();
-            _searchCancellation?.Dispose();
-            _index.Dispose();
         };
 
         Activated += MainWindow_Activated;
@@ -69,39 +70,49 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        var cancellationToken = _lifetimeCancellation.Token;
         StatusText.Text = $"Indexing {root}";
-        await _index.ClearAsync();
-
-        var batch = new List<FileRecord>(IndexBatchSize);
-        var indexed = 0;
 
         try
         {
-            await foreach (var record in _crawler.CrawlAsync(root))
+            await _index.ClearAsync(cancellationToken);
+
+            var indexed = await Task.Run(async () =>
             {
-                batch.Add(record);
-                if (batch.Count < IndexBatchSize)
+                var batch = new List<FileRecord>(IndexBatchSize);
+                var count = 0;
+
+                await foreach (var record in _crawler.CrawlAsync(root, cancellationToken).ConfigureAwait(false))
                 {
-                    continue;
+                    batch.Add(record);
+                    if (batch.Count < IndexBatchSize)
+                    {
+                        continue;
+                    }
+
+                    await _index.AddBatchAsync(batch, cancellationToken).ConfigureAwait(false);
+                    count += batch.Count;
+                    batch.Clear();
                 }
 
-                await _index.AddBatchAsync(batch);
-                indexed += batch.Count;
-                batch.Clear();
-                CountText.Text = $"{indexed:N0} indexed";
-            }
+                if (batch.Count > 0)
+                {
+                    await _index.AddBatchAsync(batch, cancellationToken).ConfigureAwait(false);
+                    count += batch.Count;
+                }
 
-            if (batch.Count > 0)
-            {
-                await _index.AddBatchAsync(batch);
-                indexed += batch.Count;
-            }
+                return count;
+            }, cancellationToken);
 
+            cancellationToken.ThrowIfCancellationRequested();
             CountText.Text = $"{indexed:N0} indexed";
             StatusText.Text = "Index ready";
             await RunSearchAsync();
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
         {
             StatusText.Text = $"Indexing stopped: {exception.Message}";
         }
@@ -122,15 +133,18 @@ public sealed partial class MainWindow : Window
     private async Task RunSearchAsync()
     {
         _searchCancellation?.Cancel();
-        _searchCancellation?.Dispose();
-        _searchCancellation = new CancellationTokenSource();
-        var cancellationToken = _searchCancellation.Token;
+        var searchCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+        _searchCancellation = searchCancellation;
+        var cancellationToken = searchCancellation.Token;
 
         try
         {
             var query = FileSearchQuery.Parse(SearchBox.Text, limit: 250);
-            var matches = await _index.SearchAsync(query, cancellationToken);
+            var matches = await Task.Run(
+                async () => await _index.SearchAsync(query, cancellationToken).ConfigureAwait(false),
+                cancellationToken);
 
+            cancellationToken.ThrowIfCancellationRequested();
             _results.Clear();
             foreach (var match in matches)
             {
@@ -141,8 +155,17 @@ public sealed partial class MainWindow : Window
                 ? "Showing indexed items"
                 : $"{matches.Count:N0} result(s)";
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        finally
+        {
+            if (ReferenceEquals(_searchCancellation, searchCancellation))
+            {
+                _searchCancellation = null;
+            }
+
+            searchCancellation.Dispose();
         }
     }
 
