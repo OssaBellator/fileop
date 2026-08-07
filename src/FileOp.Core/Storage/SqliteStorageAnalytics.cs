@@ -20,9 +20,6 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
             Directory.CreateDirectory(directory);
         }
 
-        // Storage analytics shares the same durable metadata database as search.
-        // Bootstrapping through SqliteFileIndex guarantees the schema exists before
-        // the additive parent-path index is created.
         using (var bootstrap = new SqliteFileIndex(fullPath))
         {
         }
@@ -62,16 +59,22 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
             WITH RECURSIVE tree(
                 entry_path,
                 path,
+                path_norm,
                 is_directory,
                 length,
-                allocated_length
+                allocated_length,
+                volume_serial,
+                file_reference
             ) AS (
                 SELECT
                     path,
                     path,
+                    path_norm,
                     is_directory,
                     length,
-                    allocated_length
+                    allocated_length,
+                    volume_serial,
+                    file_reference
                 FROM files
                 WHERE parent_path = @root COLLATE NOCASE
 
@@ -80,21 +83,49 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
                 SELECT
                     tree.entry_path,
                     child.path,
+                    child.path_norm,
                     child.is_directory,
                     child.length,
-                    child.allocated_length
+                    child.allocated_length,
+                    child.volume_serial,
+                    child.file_reference
                 FROM files AS child
                 JOIN tree ON child.parent_path = tree.path COLLATE NOCASE
+            ),
+            physical_rows AS (
+                SELECT
+                    tree.*,
+                    CASE
+                        WHEN is_directory = 1 THEN 1
+                        ELSE ROW_NUMBER() OVER (
+                            PARTITION BY
+                                volume_serial,
+                                file_reference,
+                                CASE
+                                    WHEN volume_serial IS NULL OR file_reference IS NULL THEN path_norm
+                                    ELSE ''
+                                END
+                            ORDER BY path_norm
+                        )
+                    END AS physical_rank
+                FROM tree
             ),
             aggregates AS (
                 SELECT
                     entry_path,
                     SUM(CASE WHEN is_directory = 0 THEN length ELSE 0 END) AS logical_bytes,
-                    SUM(CASE WHEN is_directory = 0 THEN COALESCE(allocated_length, 0) ELSE 0 END) AS allocated_known_bytes,
-                    SUM(CASE WHEN is_directory = 0 AND allocated_length IS NULL THEN 1 ELSE 0 END) AS unknown_allocated_files,
+                    SUM(CASE
+                        WHEN is_directory = 0 AND physical_rank = 1 THEN COALESCE(allocated_length, 0)
+                        ELSE 0
+                    END) AS allocated_known_bytes,
+                    SUM(CASE
+                        WHEN is_directory = 0 AND physical_rank = 1 AND allocated_length IS NULL THEN 1
+                        ELSE 0
+                    END) AS unknown_allocated_files,
                     SUM(CASE WHEN is_directory = 0 THEN 1 ELSE 0 END) AS file_count,
-                    SUM(CASE WHEN is_directory = 1 THEN 1 ELSE 0 END) AS directory_count
-                FROM tree
+                    SUM(CASE WHEN is_directory = 1 THEN 1 ELSE 0 END) AS directory_count,
+                    SUM(CASE WHEN is_directory = 0 AND physical_rank > 1 THEN 1 ELSE 0 END) AS hard_link_alias_count
+                FROM physical_rows
                 GROUP BY entry_path
             ),
             ranked AS (
@@ -107,11 +138,13 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
                     aggregates.unknown_allocated_files,
                     aggregates.file_count,
                     aggregates.directory_count,
+                    aggregates.hard_link_alias_count,
                     SUM(aggregates.logical_bytes) OVER () AS total_logical_bytes,
                     SUM(aggregates.allocated_known_bytes) OVER () AS total_allocated_known_bytes,
                     SUM(aggregates.unknown_allocated_files) OVER () AS total_unknown_allocated_files,
                     SUM(aggregates.file_count) OVER () AS total_file_count,
                     SUM(aggregates.directory_count) OVER () AS total_directory_count,
+                    SUM(aggregates.hard_link_alias_count) OVER () AS total_hard_link_alias_count,
                     COUNT(*) OVER () AS direct_entry_count
                 FROM aggregates
                 JOIN files AS entry ON entry.path = aggregates.entry_path COLLATE NOCASE
@@ -125,11 +158,13 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
                 unknown_allocated_files,
                 file_count,
                 directory_count,
+                hard_link_alias_count,
                 total_logical_bytes,
                 total_allocated_known_bytes,
                 total_unknown_allocated_files,
                 total_file_count,
                 total_directory_count,
+                total_hard_link_alias_count,
                 direct_entry_count
             FROM ranked
             ORDER BY
@@ -151,17 +186,19 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
         long totalUnknownAllocatedFiles = 0;
         long totalFileCount = 0;
         long totalDirectoryCount = 0;
+        long totalHardLinkAliasCount = 0;
         long directEntryCount = 0;
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            totalLogicalBytes = reader.GetInt64(8);
-            totalAllocatedKnownBytes = reader.GetInt64(9);
-            totalUnknownAllocatedFiles = reader.GetInt64(10);
-            totalFileCount = reader.GetInt64(11);
-            totalDirectoryCount = reader.GetInt64(12);
-            directEntryCount = reader.GetInt64(13);
+            totalLogicalBytes = reader.GetInt64(9);
+            totalAllocatedKnownBytes = reader.GetInt64(10);
+            totalUnknownAllocatedFiles = reader.GetInt64(11);
+            totalFileCount = reader.GetInt64(12);
+            totalDirectoryCount = reader.GetInt64(13);
+            totalHardLinkAliasCount = reader.GetInt64(14);
+            directEntryCount = reader.GetInt64(15);
 
             var unknownAllocatedFiles = reader.GetInt64(5);
             entries.Add(new StorageDirectoryEntry(
@@ -171,7 +208,8 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
                 reader.GetInt64(3),
                 unknownAllocatedFiles == 0 ? reader.GetInt64(4) : null,
                 CheckedCount(reader.GetInt64(6)),
-                CheckedCount(reader.GetInt64(7))));
+                CheckedCount(reader.GetInt64(7)),
+                CheckedCount(reader.GetInt64(8))));
         }
 
         return new StorageDirectoryAnalysis(
@@ -180,6 +218,7 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
             totalUnknownAllocatedFiles == 0 ? totalAllocatedKnownBytes : null,
             CheckedCount(totalFileCount),
             CheckedCount(totalDirectoryCount),
+            CheckedCount(totalHardLinkAliasCount),
             CheckedCount(directEntryCount),
             entries);
     }
