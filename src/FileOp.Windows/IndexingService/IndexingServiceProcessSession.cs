@@ -23,13 +23,11 @@ public sealed class IndexingServiceProcessSession : IAsyncDisposable
 
     public static async Task<IndexingServiceProcessSession> StartAsync(
         string serviceExecutablePath,
-        string databaseDirectory,
         bool elevated,
         TimeSpan? connectTimeout = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serviceExecutablePath);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseDirectory);
 
         var executable = Path.GetFullPath(serviceExecutablePath);
         if (!File.Exists(executable))
@@ -45,8 +43,6 @@ public sealed class IndexingServiceProcessSession : IAsyncDisposable
         };
         startInfo.ArgumentList.Add("--pipe");
         startInfo.ArgumentList.Add(pipeName);
-        startInfo.ArgumentList.Add("--database-directory");
-        startInfo.ArgumentList.Add(Path.GetFullPath(databaseDirectory));
 
         if (elevated)
         {
