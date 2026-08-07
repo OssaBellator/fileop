@@ -40,6 +40,8 @@ Protocol messages use a four-byte little-endian length prefix followed by UTF-8 
 
 Every response echoes the request ID and protocol version. The client rejects mismatched IDs or protocol changes within a session. Required payload fields are validated explicitly after JSON deserialization; a positional record with missing JSON properties is not accepted merely because the serializer can construct it with default values.
 
+If a successful response would exceed the 8 MiB frame cap, the server substitutes a small retryable `ResponseTooLarge` error rather than terminating the session. The caller can reduce the search result limit and retry on the same connection.
+
 Protocol version mismatch is rejected before native operations are dispatched.
 
 ## Version 1 operations
@@ -65,9 +67,10 @@ Expected failures cross the process boundary as structured errors rather than ra
 - `SnapshotRequired`;
 - `ElevationRequired`;
 - `Busy`;
+- `ResponseTooLarge`;
 - `InternalError`.
 
-`ElevationRequired` is specifically produced when NTFS access fails with access denied. Cancelling UAC leaves the desktop process unaffected.
+`ElevationRequired` is specifically produced when NTFS access fails with access denied. Cancelling UAC leaves the desktop process unaffected. `ResponseTooLarge` is retryable with a smaller result limit and does not close the pipe.
 
 ### Same-account elevation rule
 
@@ -77,15 +80,15 @@ Credential-over-the-shoulder elevation from a standard account is deliberately u
 
 Production packaging must also ensure the executable selected for elevation is a trusted FileOp binary from the installed application location; the current development launcher takes the helper path explicitly so the WinUI packaging/cutover slice can own that verification policy.
 
-## Per-volume persistence
+## Per-volume persistence and identity
 
 The helper chooses its own storage root under the current Windows user's `LocalApplicationData\FileOp\Index`. An elevated helper does not accept an arbitrary database path from command-line arguments, preventing the indexing executable from becoming a generic privileged file-creation primitive.
 
 Each discovered NTFS volume/root pair gets its own SQLite database. This is intentional because the current snapshot indexer clears its target index during a rebuild. A shared multi-volume database would therefore allow rebuilding one drive to erase records for another drive.
 
-The database key includes both the NTFS serial-derived identity and the current root path. NTFS volume serials are only 32-bit and can collide across attached disks; absolute indexed paths also become stale when a volume changes drive letter. Requiring both values prevents one volume from being mistaken for another and causes a remounted volume to start with a fresh path namespace.
+Raw NTFS serial numbers are only 32-bit and can collide. Discovery therefore also asks Windows for the stable `\\?\Volume{GUID}\` mount identity. When present, that 128-bit GUID is deterministically hashed into the 64-bit provider volume token used by `FileIdentity`; serial-only identity is retained as a fallback when no volume GUID is available. This makes ordinary cross-volume file identities independent of 32-bit serial collisions without changing the persistent 64-bit schema.
 
-This is an isolation mechanism, not the final volume-identity design. A future provider may additionally persist Windows volume GUID paths or stronger filesystem-specific identities.
+The per-volume database key includes the provider volume identity and current root path. The root remains significant even for a stable physical identity because indexed namespace paths are absolute: if the same disk moves from `D:\` to `E:\`, FileOp takes a fresh path snapshot instead of serving stale paths under the old letter.
 
 ## Snapshot validity and concurrency
 
