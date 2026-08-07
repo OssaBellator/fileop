@@ -37,39 +37,36 @@ public sealed class NtfsSnapshotIndexer
 
         await _index.ClearAsync(cancellationToken).ConfigureAwait(false);
 
-        var batch = new List<FileRecord>(BatchSize);
         var indexed = 0;
-
-        foreach (var entry in entries)
+        for (var offset = 0; offset < entries.Length; offset += BatchSize)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!paths.TryGetValue(entry.FileReferenceNumber, out var path))
+            var count = Math.Min(BatchSize, entries.Length - offset);
+            var entryBatch = new ArraySegment<NtfsMftEntry>(entries, offset, count);
+            var metadataByFileReference = _metadataReader.ReadBatch(
+                volume,
+                entryBatch.Select(static entry => entry.FileReferenceNumber),
+                cancellationToken);
+            var records = new List<FileRecord>(count);
+
+            foreach (var entry in entryBatch)
+            {
+                if (!paths.TryGetValue(entry.FileReferenceNumber, out var path) ||
+                    !metadataByFileReference.TryGetValue(entry.FileReferenceNumber, out var metadata))
+                {
+                    continue;
+                }
+
+                records.Add(NtfsFileRecordFactory.Create(volume, path, entry, metadata));
+            }
+
+            if (records.Count == 0)
             {
                 continue;
             }
 
-            var metadata = _metadataReader.TryRead(volume, entry.FileReferenceNumber);
-            if (metadata is null)
-            {
-                continue;
-            }
-
-            batch.Add(NtfsFileRecordFactory.Create(volume, path, entry, metadata));
-            if (batch.Count < BatchSize)
-            {
-                continue;
-            }
-
-            await _index.AddBatchAsync(batch, cancellationToken).ConfigureAwait(false);
-            indexed += batch.Count;
-            progress?.Report(indexed);
-            batch.Clear();
-        }
-
-        if (batch.Count > 0)
-        {
-            await _index.AddBatchAsync(batch, cancellationToken).ConfigureAwait(false);
-            indexed += batch.Count;
+            await _index.AddBatchAsync(records, cancellationToken).ConfigureAwait(false);
+            indexed += records.Count;
             progress?.Report(indexed);
         }
 
