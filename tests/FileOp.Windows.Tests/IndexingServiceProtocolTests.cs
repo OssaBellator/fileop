@@ -135,6 +135,30 @@ public sealed class IndexingServiceProtocolTests
         await serverTask.WaitAsync(cancellation.Token);
     }
 
+    [TestMethod]
+    public async Task IndexerProcessSessionCompletesRealHostHandshake()
+    {
+        var executablePath = Environment.GetEnvironmentVariable("FILEOP_INDEXER_PATH");
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            Assert.Inconclusive("FILEOP_INDEXER_PATH is only set by the Windows CI helper-process smoke test.");
+        }
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var session = await IndexingServiceProcessSession.StartAsync(
+            executablePath!,
+            elevated: false,
+            connectTimeout: TimeSpan.FromSeconds(20),
+            cancellation.Token);
+
+        var hello = await session.Client.HelloAsync("process-test", cancellation.Token);
+        Assert.AreEqual(IndexingServiceProtocol.CurrentVersion, hello.ProtocolVersion);
+        Assert.AreEqual("FileOp.Indexer", hello.ServiceName);
+
+        var volumes = await session.Client.GetVolumesAsync(cancellation.Token);
+        Assert.IsNotNull(volumes.Volumes);
+    }
+
     private sealed class FakeBackend : IIndexingServiceBackend
     {
         public int HelloCalls { get; private set; }
