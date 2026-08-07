@@ -106,14 +106,26 @@ public sealed class InMemoryFileIndex : IFileIndex, IDisposable
             }
         }
 
-        if (query.MinimumSize is { } minimumSize && record.Length <= minimumSize)
+        if (query.MinimumSize is { } minimumSize &&
+            query.MaximumSize is { } maximumSize &&
+            minimumSize == maximumSize)
         {
-            return false;
+            if (record.Length != minimumSize)
+            {
+                return false;
+            }
         }
-
-        if (query.MaximumSize is { } maximumSize && record.Length >= maximumSize)
+        else
         {
-            return false;
+            if (query.MinimumSize is { } lowerBound && record.Length <= lowerBound)
+            {
+                return false;
+            }
+
+            if (query.MaximumSize is { } upperBound && record.Length >= upperBound)
+            {
+                return false;
+            }
         }
 
         foreach (var term in query.Terms)
