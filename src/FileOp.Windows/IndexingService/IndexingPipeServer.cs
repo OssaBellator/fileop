@@ -58,7 +58,7 @@ public sealed class IndexingPipeServer
             {
                 await IndexingPipeTransport.WriteAsync(pipe, response, cancellationToken).ConfigureAwait(false);
             }
-            catch (InvalidDataException) when (response.Success)
+            catch (InvalidDataException)
             {
                 var tooLarge = new IndexingServiceResponse(
                     IndexingServiceProtocol.CurrentVersion,
@@ -67,7 +67,7 @@ public sealed class IndexingPipeServer
                     JsonSerializer.SerializeToElement<object?>(null),
                     new IndexingServiceError(
                         IndexingServiceErrorCode.ResponseTooLarge,
-                        "The indexing service result exceeded the IPC frame limit. Retry with a smaller result limit.",
+                        "The indexing service response exceeded the IPC frame limit. Retry with a smaller request.",
                         CanRetry: true));
                 await IndexingPipeTransport.WriteAsync(pipe, tooLarge, cancellationToken).ConfigureAwait(false);
             }
