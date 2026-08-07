@@ -74,7 +74,10 @@ public sealed record IndexingServiceStatusResponse(
     int BusyVolumeCount,
     IReadOnlyList<IndexingVolumeDescriptor> Volumes);
 
-public sealed record IndexingVolumeRequest(ulong VolumeIdentity);
+// Volume serial numbers are not globally unique. Requests therefore carry the current
+// root path as well as the serial-derived identity so two attached volumes with the same
+// serial cannot be confused and a drive-letter change does not reuse stale absolute paths.
+public sealed record IndexingVolumeRequest(ulong VolumeIdentity, string RootPath);
 
 public sealed record IndexingVolumeOperationResponse(
     ulong VolumeIdentity,
