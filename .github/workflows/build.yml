@@ -30,3 +30,25 @@ jobs:
         env:
           FILEOP_INDEXER_PATH: ${{ github.workspace }}\src\FileOp.Indexer\bin\x64\Release\net10.0-windows10.0.17763.0\FileOp.Indexer.exe
       - run: dotnet build src/FileOp.App/FileOp.App.csproj --configuration Release -p:Platform=x64
+      - name: Verify bundled indexer host
+        shell: pwsh
+        run: |
+          $directory = "${{ github.workspace }}\src\FileOp.App\bin\x64\Release\net10.0-windows10.0.26100.0"
+          $required = @(
+            "FileOp.Indexer.exe",
+            "FileOp.Indexer.dll",
+            "FileOp.Indexer.deps.json",
+            "FileOp.Indexer.runtimeconfig.json"
+          )
+          foreach ($name in $required) {
+            $path = Join-Path $directory $name
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Missing bundled indexing helper artifact: $path"
+            }
+          }
+
+          $env:FILEOP_INDEXER_PATH = Join-Path $directory "FileOp.Indexer.exe"
+          dotnet test tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj `
+            --configuration Release `
+            --no-build `
+            --filter IndexerProcessSessionCompletesRealHostHandshake
