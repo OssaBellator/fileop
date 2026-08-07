@@ -23,7 +23,7 @@ FileOp.Indexer (normal token first; same-account elevation only when supported)
         +-- search across valid volume indexes
 ```
 
-The helper accepts one authenticated client, remains alive for that desktop session, and exits when the pipe disconnects. It is not installed as an always-running Windows service and it is never permanently elevated.
+The helper accepts one authenticated client, remains alive for that desktop session, and exits when the pipe disconnects or the launching desktop process exits. It is not installed as an always-running Windows service and it is never permanently elevated.
 
 ## IPC security
 
@@ -40,7 +40,9 @@ Protocol messages use a four-byte little-endian length prefix followed by UTF-8 
 
 Every response echoes the request ID and protocol version. The client rejects mismatched IDs or protocol changes within a session. Required payload fields are validated explicitly after JSON deserialization; a positional record with missing JSON properties is not accepted merely because the serializer can construct it with default values.
 
-If a successful response would exceed the 8 MiB frame cap, the server substitutes a small retryable `ResponseTooLarge` error rather than terminating the session. The caller can reduce the search result limit and retry on the same connection.
+If any response would exceed the 8 MiB frame cap, the server substitutes a small retryable `ResponseTooLarge` error rather than terminating the session. For search results, the caller can reduce the result limit and retry on the same connection.
+
+A cancelled or otherwise interrupted client exchange is different: once a request may have been written without its complete matching response being consumed, the client faults and closes that connection instead of risking request/response desynchronization. A subsequent operation must use a fresh indexer session.
 
 Protocol version mismatch is rejected before native operations are dispatched.
 
@@ -70,7 +72,7 @@ Expected failures cross the process boundary as structured errors rather than ra
 - `ResponseTooLarge`;
 - `InternalError`.
 
-`ElevationRequired` is specifically produced when NTFS access fails with access denied. Cancelling UAC leaves the desktop process unaffected. `ResponseTooLarge` is retryable with a smaller result limit and does not close the pipe.
+`ElevationRequired` is specifically produced when NTFS access fails with access denied. Cancelling UAC leaves the desktop process unaffected. `ResponseTooLarge` is retryable with a smaller request when applicable and does not close an otherwise healthy pipe.
 
 ### Same-account elevation rule
 
@@ -82,7 +84,7 @@ Production packaging must also ensure the executable selected for elevation is a
 
 ## Per-volume persistence and identity
 
-The helper chooses its own storage root under the current Windows user's `LocalApplicationData\FileOp\Index`. An elevated helper does not accept an arbitrary database path from command-line arguments, preventing the indexing executable from becoming a generic privileged file-creation primitive.
+The helper chooses its own storage root under the current Windows user's `LocalApplicationData\FileOp\Index`. An elevated helper does not accept an arbitrary database path from command-line arguments, removing a caller-controlled privileged file-write destination from this protocol. Production hardening should continue to treat the writable per-user storage tree as untrusted input when the helper is elevated.
 
 Each discovered NTFS volume/root pair gets its own SQLite database. This is intentional because the current snapshot indexer clears its target index during a rebuild. A shared multi-volume database would therefore allow rebuilding one drive to erase records for another drive.
 
@@ -95,6 +97,8 @@ The per-volume database key includes the provider volume identity and current ro
 Rebuild and journal synchronization are serialized per volume with a non-blocking operation gate. A second maintenance command for the same volume receives `Busy` rather than queueing invisibly.
 
 A volume is eligible for service-backed search only while it has a durable NTFS checkpoint and is not being rebuilt. Search briefly acquires the same per-volume gate before checking the checkpoint and reading the index, so a rebuild cannot clear and partially repopulate that database underneath a query. Other valid volumes remain searchable while one volume is busy.
+
+Each volume query is ranked by the same filename/path relevance rules as the SQLite index. The merged cross-volume result set reapplies that relevance score before final name/path tie-breaking so service-backed search does not degrade into alphabetical ordering when multiple indexes participate.
 
 If incremental synchronization determines that a fresh snapshot is required, the service deletes that volume's durable checkpoint before returning `SnapshotRequired`. The invalid state therefore survives helper restarts instead of allowing stale rows to look valid again merely because in-memory state was lost.
 
