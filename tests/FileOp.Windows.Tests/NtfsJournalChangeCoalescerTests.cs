@@ -63,6 +63,20 @@ public sealed class NtfsJournalChangeCoalescerTests
     }
 
     [TestMethod]
+    public void Coalesce_HardLinkChangeRequiresResnapshot()
+    {
+        var batch = new NtfsJournalBatch(
+            new NtfsJournalCheckpoint(4, 100),
+            new NtfsJournalCheckpoint(4, 140),
+            [Entry(55, 7, 130, UsnReason.HardLinkChange, "linked.dat")]);
+
+        var exception = Assert.ThrowsExactly<NtfsIndexResnapshotRequiredException>(
+            () => new NtfsJournalChangeCoalescer().Coalesce(batch));
+
+        StringAssert.Contains(exception.Message, "hard-link");
+    }
+
+    [TestMethod]
     public void Coalesce_IgnoresCloseOnlyRecords()
     {
         var batch = new NtfsJournalBatch(
