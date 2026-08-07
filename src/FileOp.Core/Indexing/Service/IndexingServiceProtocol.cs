@@ -75,9 +75,9 @@ public sealed record IndexingServiceStatusResponse(
     int BusyVolumeCount,
     IReadOnlyList<IndexingVolumeDescriptor> Volumes);
 
-// Volume serial numbers are not globally unique. Requests therefore carry the current
-// root path as well as the serial-derived identity so two attached volumes with the same
-// serial cannot be confused and a drive-letter change does not reuse stale absolute paths.
+// The provider volume token is stable for the physical volume when Windows exposes a
+// volume GUID, but requests still carry the current root path because all persisted
+// namespace paths are absolute and a drive-letter change requires a fresh path snapshot.
 public sealed record IndexingVolumeRequest(ulong VolumeIdentity, string RootPath);
 
 public sealed record IndexingVolumeOperationResponse(
