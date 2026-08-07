@@ -29,6 +29,14 @@ public sealed class IndexingServiceProcessSession : IAsyncDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serviceExecutablePath);
 
+        if (elevated && !WindowsProcessElevation.CanElevateCurrentIdentityInPlace())
+        {
+            throw new InvalidOperationException(
+                "This indexing session cannot use credential-over-the-shoulder elevation. " +
+                "FileOp only elevates the helper when the current account has a split administrator token, " +
+                "so the elevated helper keeps the same Windows user identity as the current-user-only pipe.");
+        }
+
         var executable = Path.GetFullPath(serviceExecutablePath);
         if (!File.Exists(executable))
         {
