@@ -8,8 +8,7 @@ public static class IndexingServiceHelperLocator
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(applicationBaseDirectory);
 
-        var baseDirectory = Path.GetFullPath(applicationBaseDirectory)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var baseDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(applicationBaseDirectory));
         var helperPath = Path.GetFullPath(Path.Combine(baseDirectory, HelperFileName));
         var helperDirectory = Path.GetDirectoryName(helperPath);
 
