@@ -15,8 +15,11 @@ public sealed record StorageDirectoryEntry(
     long LogicalBytes,
     long? AllocatedBytes,
     int FileCount,
-    int DirectoryCount)
+    int DirectoryCount,
+    int HardLinkAliasCount)
 {
+    public int UniqueFileCount => FileCount - HardLinkAliasCount;
+
     public long TreemapBytes => AllocatedBytes ?? LogicalBytes;
 }
 
@@ -26,5 +29,9 @@ public sealed record StorageDirectoryAnalysis(
     long? AllocatedBytes,
     int FileCount,
     int DirectoryCount,
+    int HardLinkAliasCount,
     int DirectEntryCount,
-    IReadOnlyList<StorageDirectoryEntry> Entries);
+    IReadOnlyList<StorageDirectoryEntry> Entries)
+{
+    public int UniqueFileCount => FileCount - HardLinkAliasCount;
+}
