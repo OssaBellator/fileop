@@ -11,13 +11,6 @@ public sealed class NtfsJournalChangeCoalescer
 
         foreach (var record in batch.Records)
         {
-            if ((record.Reason & UsnReason.HardLinkChange) != 0)
-            {
-                throw new NtfsIndexResnapshotRequiredException(
-                    $"A hard-link namespace change was observed for file reference {record.FileReferenceNumber}. " +
-                    "The current NTFS snapshot model does not preserve every hard-link name, so a fresh namespace snapshot is required.");
-            }
-
             if ((record.Reason & UsnReason.RenameOldName) != 0)
             {
                 pendingRenameOld[record.FileReferenceNumber] = record;
@@ -55,6 +48,20 @@ public sealed class NtfsJournalChangeCoalescer
             {
                 changes.Add(new NtfsJournalChange(
                     NtfsJournalChangeKind.Delete,
+                    record.FileReferenceNumber,
+                    record.ParentFileReferenceNumber,
+                    record.Name,
+                    record.Usn,
+                    record.Timestamp,
+                    record.Reason,
+                    record.Attributes));
+                continue;
+            }
+
+            if ((record.Reason & UsnReason.HardLinkChange) != 0)
+            {
+                changes.Add(new NtfsJournalChange(
+                    NtfsJournalChangeKind.HardLinkRefresh,
                     record.FileReferenceNumber,
                     record.ParentFileReferenceNumber,
                     record.Name,
