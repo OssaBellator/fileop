@@ -55,9 +55,12 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
         try
         {
             using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
             using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM files;";
+            command.Transaction = transaction;
+            command.CommandText = "DELETE FROM files; DELETE FROM source_checkpoints;";
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            transaction.Commit();
         }
         finally
         {
@@ -466,7 +469,7 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
             where.Add($"(instr(name_norm, {parameterName}) > 0 OR instr(path_norm, {parameterName}) > 0)");
             score.Add(
                 $"CASE WHEN name_norm = {parameterName} THEN 100 " +
-                $"WHEN name_norm LIKE {parameterName} || '%' THEN 50 " +
+                $"WHEN substr(name_norm, 1, length({parameterName})) = {parameterName} THEN 50 " +
                 $"WHEN instr(name_norm, {parameterName}) > 0 THEN 20 ELSE 5 END");
         }
 
