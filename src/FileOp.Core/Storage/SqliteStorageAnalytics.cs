@@ -1,3 +1,4 @@
+using FileOp.Core.Search;
 using Microsoft.Data.Sqlite;
 
 namespace FileOp.Core.Storage;
@@ -22,7 +23,7 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
         // Storage analytics shares the same durable metadata database as search.
         // Bootstrapping through SqliteFileIndex guarantees the schema exists before
         // the additive parent-path index is created.
-        using (var bootstrap = new Search.SqliteFileIndex(fullPath))
+        using (var bootstrap = new SqliteFileIndex(fullPath))
         {
         }
 
