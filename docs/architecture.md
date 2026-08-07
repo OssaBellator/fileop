@@ -40,7 +40,7 @@ The first native NTFS implementation uses supported Windows filesystem controls 
 5. Reconstruct paths from file-reference and parent-file-reference relationships.
 6. Persist a snapshot and its journal checkpoint.
 7. Apply subsequent `FSCTL_READ_USN_JOURNAL` batches as index mutations.
-8. If the journal identity changes or a saved cursor falls below `LowestValidUsn`, discard the cursor and take a fresh namespace snapshot.
+8. If the journal identity changes or a saved cursor falls below the journal's readable range (`FirstUsn` or `LowestValidUsn`), discard the cursor and take a fresh namespace snapshot.
 
 The native parser currently accepts USN record major version 2, which is the 64-bit file-reference format used for the NTFS provider. Unsupported major versions fail explicitly rather than being interpreted using the wrong layout.
 
@@ -54,7 +54,7 @@ The native parser currently accepts USN record major version 2, which is the 64-
 - sparse/compressed stream state;
 - selected timestamps and other attributes that should not require opening every file individually.
 
-Until those are available and stored persistently, the WinUI shell continues to use the existing crawler for its user-visible searchable snapshot. The native layer is compiled in CI so integration problems are caught without silently degrading query correctness.
+Until those metadata fields can be hydrated efficiently and populated in the persistent index, the WinUI shell continues to use the existing crawler for its user-visible searchable snapshot. The native layer is compiled in CI so integration problems are caught without silently degrading query correctness.
 
 ## File identity and mutation model
 
@@ -67,7 +67,7 @@ ParentIdentity = (VolumeSerialNumber, ParentFileReferenceNumber)
 
 `IFileIndex` supports both initial batch insertion and `ApplyChangesAsync`, with upsert/delete changes keyed by stable identity when available. This is the contract the USN change processor will target.
 
-The in-memory implementation is deliberately simple. The persistent store is expected to provide indexed identity/path lookup and transactional batch application rather than linearly scanning records.
+The in-memory implementation is deliberately simple. The SQLite-backed persistent store provides indexed identity/path lookup and transactional batch application while preserving the same query/index contracts.
 
 ## Target indexing architecture
 
@@ -122,10 +122,10 @@ Implemented:
 - incremental journal batch reads
 - journal replacement/overrun detection
 - index upsert/delete mutation contract
+- SQLite-backed persistent metadata store and checkpoint persistence
 
 Next:
 
-- persistent metadata store
 - metadata hydration for logical/allocated size and selected timestamps
 - full hard-link representation
 - journal-to-index change processor, including rename pairing
