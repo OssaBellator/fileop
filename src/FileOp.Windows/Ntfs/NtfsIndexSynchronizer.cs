@@ -314,12 +314,6 @@ public sealed class NtfsIndexSynchronizer
             return;
         }
 
-        if (metadata.IsDirectory)
-        {
-            throw new NtfsIndexResnapshotRequiredException(
-                $"Directory {identity} reported a hard-link namespace change. A fresh snapshot is required.");
-        }
-
         var existingRows = await _store.FindByIdentityAsync(identity, cancellationToken).ConfigureAwait(false);
         IReadOnlyList<string>? currentLinkPaths = null;
 
@@ -359,66 +353,15 @@ public sealed class NtfsIndexSynchronizer
             }
         }
 
-        var distinctLinkPaths = currentLinkPaths
-            .Select(Path.GetFullPath)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        if (distinctLinkPaths.Length != metadata.NumberOfLinks)
-        {
-            throw new NtfsIndexResnapshotRequiredException(
-                $"Hard-linked file {identity} reports {metadata.NumberOfLinks} links, but {distinctLinkPaths.Length} live paths were enumerated. " +
-                "A fresh snapshot is required.");
-        }
-
-        var parentByPath = new Dictionary<string, FileIdentity>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in existingRows)
-        {
-            if (row.ParentIdentity is { } parent)
-            {
-                parentByPath[row.Path] = parent;
-            }
-        }
-
-        parentByPath[eventPath] = eventParentIdentity;
-
-        var desiredRecords = new List<FileRecord>(distinctLinkPaths.Length);
-        foreach (var linkPath in distinctLinkPaths)
-        {
-            if (!parentByPath.TryGetValue(linkPath, out var parentIdentity))
-            {
-                throw new NtfsIndexResnapshotRequiredException(
-                    $"Hard-link refresh for {identity} discovered new path {linkPath} without a matching journal parent identity. " +
-                    "A fresh snapshot is required.");
-            }
-
-            var name = Path.GetFileName(linkPath);
-            if (string.IsNullOrEmpty(name))
-            {
-                throw new NtfsIndexResnapshotRequiredException(
-                    $"Hard-link refresh for {identity} returned invalid path {linkPath}.");
-            }
-
-            var namespaceEntry = ToEntry(change) with
-            {
-                ParentFileReferenceNumber = parentIdentity.FileReferenceNumber,
-                Name = name,
-            };
-            desiredRecords.Add(NtfsFileRecordFactory.Create(volume, linkPath, namespaceEntry, metadata));
-        }
-
-        foreach (var existing in existingRows)
-        {
-            if (!distinctLinkPaths.Contains(existing.Path, StringComparer.OrdinalIgnoreCase))
-            {
-                mutations.Add(NtfsIndexMutation.Delete(identity, existing.Path, existing.IsDirectory));
-            }
-        }
-
-        foreach (var desired in desiredRecords)
-        {
-            mutations.Add(NtfsIndexMutation.Upsert(desired));
-        }
+        mutations.AddRange(NtfsHardLinkNamespacePlanner.PlanRefresh(
+            volume,
+            change,
+            identity,
+            metadata,
+            existingRows,
+            eventPath,
+            eventParentIdentity,
+            currentLinkPaths));
     }
 
     private async ValueTask DeleteKnownIdentityRowsAsync(
