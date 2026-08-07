@@ -9,14 +9,16 @@ The product direction is to combine instant file search, power-user file managem
 The current implementation has four runtime layers plus a benchmark harness:
 
 - `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, in-memory and SQLite-backed indexes, checkpoint persistence, the fallback bounded-channel filesystem crawler and the versioned indexing-service protocol contracts.
-- `FileOp.Windows` contains the Windows/NTFS engine plus the indexing-service backend/client boundary: NTFS volume discovery, MFT namespace enumeration through `FSCTL_ENUM_USN_DATA`, USN journal querying/reading, file-ID metadata hydration, multi-name hard-link snapshots, rename-safe journal normalization, transactional namespace synchronization and current-user named-pipe transport.
-- `FileOp.Indexer` is the on-demand helper executable that owns native indexing and per-volume persistent index writes. It runs unelevated first and can be relaunched with UAC only when NTFS access explicitly requires it.
+- `FileOp.Windows` contains the Windows/NTFS engine plus the indexing-service backend/client boundary: NTFS volume discovery, MFT namespace enumeration through `FSCTL_ENUM_USN_DATA`, USN journal querying/reading, file-ID metadata hydration, multi-name hard-link snapshots, rename-safe journal normalization, transactional namespace synchronization and authenticated named-pipe transport.
+- `FileOp.Indexer` is the on-demand helper executable that owns native indexing and per-volume persistent index writes. It runs unelevated first; helper-only UAC elevation is limited to same-account split-token administrators so the desktop process never changes integrity level or Windows identity.
 - `FileOp.App` is the WinUI 3 desktop shell using Windows App SDK 2.3.1. It still uses the safe crawler for its searchable snapshot until the new service boundary is reviewed and the native cutover is validated separately.
 - `FileOp.Benchmarks` provides repeatable synthetic search baselines for the current SQLite-backed index at 100,000 and 1,000,000 records.
 
 The Windows engine can read logical size, allocated size, link count, timestamps and attributes by NTFS file reference, preserve multiple namespace paths for ordinary hard-linked files, pair journal rename events, update directory subtrees without leaving stale descendant paths, reconcile targeted hard-link changes and commit namespace mutations together with the durable USN checkpoint.
 
-`FileOp.Indexer` exposes only version negotiation, NTFS volume/status discovery, snapshot rebuild, incremental journal synchronization and search. It does not expose partition, format, cleanup or other destructive storage commands. Each NTFS volume/root pair gets its own SQLite database so rebuilding one drive cannot clear another drive's index.
+`FileOp.Indexer` exposes only version negotiation, NTFS volume/status discovery, snapshot rebuild, incremental journal synchronization and search. It does not expose partition, format, cleanup or other destructive storage commands. Each NTFS volume/root pair gets its own SQLite database so rebuilding one drive cannot clear another drive's index. The per-session pipe is restricted to the current Windows user and to the exact desktop process ID that launched the helper.
+
+A volume is included in service-backed search only when it has a valid durable checkpoint and is not rebuilding. If journal consistency requires a resnapshot, that checkpoint is invalidated persistently before the service reports `SnapshotRequired`.
 
 The native NTFS layer intentionally does **not** replace the crawler in the UI yet. The remaining cutover work is sparse/compressed/reparse metadata semantics, measured performance validation, a filename/path search structure that can outperform the current SQLite substring scans at Everything-class scale, and a separate WinUI service-client/fallback integration slice.
 
@@ -81,5 +83,5 @@ docs/
 1. Speed is a feature: no feature should silently trigger a full rescan when the shared index can answer it.
 2. Expensive metadata is lazy: hashes, content indexing and similar work are calculated only when requested or during idle work.
 3. Destructive actions are explainable and reversible where possible.
-4. The normal UI is not permanently elevated. Native indexing can use an on-demand helper with UAC only when required; future destructive storage administration remains a separate privileged surface.
+4. The normal UI is not permanently elevated. Native indexing can use an on-demand same-account helper with UAC only when safe; future destructive storage administration remains a separate privileged surface.
 5. Avoid fake optimisation features such as registry cleaning, RAM boosting and opaque health scores.
