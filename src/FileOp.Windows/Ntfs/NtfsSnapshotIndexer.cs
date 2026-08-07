@@ -31,10 +31,16 @@ public sealed class NtfsSnapshotIndexer
     {
         ArgumentNullException.ThrowIfNull(volume);
 
+        var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(volume);
         var checkpoint = _journal.GetCurrentCheckpoint(volume);
         var entries = _journal.EnumerateMft(volume, checkpoint, cancellationToken).ToArray();
         var paths = NtfsPathResolver.Resolve(volume.RootPath, entries);
 
+        // Invalidate the durable cursor before touching index contents. This is redundant
+        // when both interfaces are backed by SqliteFileIndex (ClearAsync also clears its
+        // checkpoints), but it keeps interrupted rebuilds safe when callers provide a
+        // separate IIndexCheckpointStore.
+        await _checkpointStore.DeleteCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
         await _index.ClearAsync(cancellationToken).ConfigureAwait(false);
 
         var indexed = 0;
@@ -72,7 +78,7 @@ public sealed class NtfsSnapshotIndexer
 
         await _checkpointStore.SaveCheckpointAsync(
             new IndexSourceCheckpoint(
-                NtfsIndexSynchronizer.CreateSourceKey(volume),
+                sourceKey,
                 checkpoint.JournalId,
                 checkpoint.NextUsn,
                 DateTimeOffset.UtcNow),
