@@ -91,6 +91,15 @@ public sealed class NtfsFileMetadataReader
                 "read standard file metadata");
         }
 
+        // FILE_STANDARD_INFO exposes DeletePending immediately before Directory.
+        // A delete-pending file can remain openable by ID while its final namespace entry is
+        // already queued for removal; treating it as absent prevents a snapshot/catch-up race
+        // from resurrecting a row that Windows is deleting.
+        if (standardInfo[20] != 0)
+        {
+            return null;
+        }
+
         var basicInfo = new byte[FileBasicInfoSize];
         if (!GetFileInformationByHandleEx(
             fileHandle,
@@ -200,7 +209,7 @@ public sealed class NtfsFileMetadataReader
         uint dwFlagsAndAttributes,
         IntPtr hTemplateFile);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     private static extern SafeFileHandle OpenFileById(
         SafeFileHandle hVolumeHint,
         ref FileIdDescriptor lpFileId,
@@ -209,11 +218,11 @@ public sealed class NtfsFileMetadataReader
         IntPtr lpSecurityAttributes,
         uint dwFlagsAndAttributes);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandleEx(
         SafeFileHandle hFile,
-        int fileInformationClass,
+        int FileInformationClass,
         [Out] byte[] lpFileInformation,
         uint dwBufferSize);
 }
