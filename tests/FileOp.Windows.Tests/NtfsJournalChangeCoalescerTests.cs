@@ -1,4 +1,5 @@
 using FileOp.Windows.Ntfs;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace FileOp.Windows.Tests;
 
@@ -19,7 +20,7 @@ public sealed class NtfsJournalChangeCoalescerTests
         var result = new NtfsJournalChangeCoalescer().Coalesce(batch);
 
         Assert.AreEqual(200L, result.DurableCheckpoint.NextUsn);
-        Assert.HasCount(1, result.Changes);
+        Assert.AreEqual(1, result.Changes.Count);
         var change = result.Changes[0];
         Assert.AreEqual(NtfsJournalChangeKind.Rename, change.Kind);
         Assert.AreEqual("old.txt", change.OldName);
@@ -42,7 +43,7 @@ public sealed class NtfsJournalChangeCoalescerTests
         var result = new NtfsJournalChangeCoalescer().Coalesce(batch);
 
         Assert.AreEqual(150L, result.DurableCheckpoint.NextUsn);
-        Assert.IsEmpty(result.Changes);
+        Assert.AreEqual(0, result.Changes.Count);
     }
 
     [TestMethod]
@@ -55,7 +56,7 @@ public sealed class NtfsJournalChangeCoalescerTests
 
         var result = new NtfsJournalChangeCoalescer().Coalesce(batch);
 
-        Assert.HasCount(1, result.Changes);
+        Assert.AreEqual(1, result.Changes.Count);
         Assert.AreEqual(NtfsJournalChangeKind.Upsert, result.Changes[0].Kind);
         Assert.AreEqual("renamed.dat", result.Changes[0].Name);
         Assert.AreEqual(140L, result.DurableCheckpoint.NextUsn);
@@ -71,7 +72,7 @@ public sealed class NtfsJournalChangeCoalescerTests
 
         var result = new NtfsJournalChangeCoalescer().Coalesce(batch);
 
-        Assert.IsEmpty(result.Changes);
+        Assert.AreEqual(0, result.Changes.Count);
         Assert.AreEqual(110L, result.DurableCheckpoint.NextUsn);
     }
 
