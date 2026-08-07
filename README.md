@@ -6,17 +6,15 @@ The product direction is to combine instant file search, power-user file managem
 
 ## Status
 
-This repository contains the first implementation slice:
+The current implementation has two engine layers:
 
-- a .NET 10 core library with filesystem records, query parsing and an in-memory search index;
-- a bounded-channel filesystem crawler that indexes without blocking the UI thread;
-- a WinUI 3 desktop shell using Windows App SDK 2.3.1;
-- a storage overview using `DriveInfo`;
-- a debounced search experience with basic `ext:` and `size:` filters;
-- architecture boundaries for a future NTFS MFT/USN-backed index provider;
-- Windows and cross-platform build checks in GitHub Actions.
+- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, in-memory and SQLite-backed indexes, checkpoint persistence and the fallback bounded-channel filesystem crawler.
+- `FileOp.Windows` contains the Windows/NTFS-specific engine foundation: NTFS volume discovery, MFT namespace enumeration through `FSCTL_ENUM_USN_DATA`, USN journal querying/reading, record parsing and file-reference hierarchy reconstruction.
+- `FileOp.App` is the WinUI 3 desktop shell using Windows App SDK 2.3.1. It still uses the safe crawler for its searchable snapshot while the native metadata pipeline is completed and validated.
 
-The current crawler is intentionally a bootstrap provider, not the final performance engine. The next major milestone is a Windows-specific NTFS provider that reads filesystem metadata efficiently and tails the USN journal while keeping the same `IFileIndex` contract.
+File records can now carry stable NTFS-style `(volume serial, file reference)` identities, and `IFileIndex` supports upsert/delete change batches so journal events can update an index instead of forcing a rescan.
+
+The native NTFS layer intentionally does **not** replace the crawler yet. `FSCTL_ENUM_USN_DATA` provides fast namespace/file-reference information but is not sufficient by itself for complete logical size, allocated size, all hard-link names and other metadata FileOp needs. The next engine work is targeted/native metadata hydration plus journal-to-index processing before switching the app's default indexer.
 
 ## Query examples
 
@@ -40,7 +38,7 @@ Build the core library on any supported .NET platform:
 dotnet build src/FileOp.Core/FileOp.Core.csproj
 ```
 
-Build the Windows app on Windows:
+Build the Windows app and native engine on Windows:
 
 ```powershell
 dotnet build src/FileOp.App/FileOp.App.csproj -p:Platform=x64
@@ -50,7 +48,8 @@ dotnet build src/FileOp.App/FileOp.App.csproj -p:Platform=x64
 
 ```text
 src/
-  FileOp.Core/       Search/index/storage domain and services
+  FileOp.Core/       Search/index/storage domain and cross-platform services
+  FileOp.Windows/    Windows-native NTFS/USN engine
   FileOp.App/        WinUI 3 desktop application
 docs/
   architecture.md    Architectural decisions and roadmap

@@ -47,7 +47,43 @@ public sealed class InMemoryFileIndex : IFileIndex, IDisposable
         _gate.EnterWriteLock();
         try
         {
-            _records.AddRange(records);
+            foreach (var record in records)
+            {
+                Upsert(record);
+            }
+        }
+        finally
+        {
+            _gate.ExitWriteLock();
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask ApplyChangesAsync(IReadOnlyList<FileIndexChange> changes, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        _gate.EnterWriteLock();
+        try
+        {
+            foreach (var change in changes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                switch (change.Kind)
+                {
+                    case FileIndexChangeKind.Upsert when change.Record is { } record:
+                        Upsert(record);
+                        break;
+                    case FileIndexChangeKind.Delete when change.Identity is { } identity:
+                        Delete(identity, change.Path);
+                        break;
+                    default:
+                        throw new InvalidOperationException("The file-index change is missing the data required by its change kind.");
+                }
+            }
         }
         finally
         {
@@ -93,6 +129,28 @@ public sealed class InMemoryFileIndex : IFileIndex, IDisposable
             .ToArray();
 
         return ValueTask.FromResult(result);
+    }
+
+    private void Upsert(FileRecord record)
+    {
+        var existingIndex = _records.FindIndex(
+            item => string.Equals(item.Path, record.Path, StringComparison.OrdinalIgnoreCase));
+
+        if (existingIndex >= 0)
+        {
+            _records[existingIndex] = record;
+        }
+        else
+        {
+            _records.Add(record);
+        }
+    }
+
+    private void Delete(FileIdentity identity, string? path)
+    {
+        _records.RemoveAll(item =>
+            item.Identity == identity &&
+            (path is null || string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase)));
     }
 
     private static bool Matches(FileRecord record, FileSearchQuery query)
