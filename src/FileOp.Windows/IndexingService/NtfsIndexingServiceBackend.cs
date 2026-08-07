@@ -147,7 +147,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             context.LastError = null;
             var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
             var saved = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
-            if (saved is null || context.RequiresSnapshot)
+            if (saved is null)
             {
                 context.RequiresSnapshot = true;
                 throw new IndexingServiceException(
@@ -156,6 +156,10 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
                     canRetry: true);
             }
 
+            // The durable checkpoint is shared across helper processes. A local RequiresSnapshot
+            // flag can be stale after another process successfully rebuilds the volume, so refresh
+            // the cache from durable state while the cross-process maintenance lease is held.
+            context.RequiresSnapshot = false;
             var checkpoint = new NtfsJournalCheckpoint(saved.Generation, saved.Position);
             var synchronizer = new NtfsIndexSynchronizer(context.NamespaceStore);
             var next = await synchronizer.ApplyNextBatchAsync(context.Volume, checkpoint, cancellationToken)
@@ -301,7 +305,8 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
 
             var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
             var checkpoint = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
-            var hasCheckpoint = checkpoint is not null && !context.RequiresSnapshot;
+            var hasCheckpoint = checkpoint is not null;
+            context.RequiresSnapshot = !hasCheckpoint;
             var state = context.State == VolumeState.Idle && !hasCheckpoint
                 ? "SnapshotRequired"
                 : context.State.ToString();
@@ -333,7 +338,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         try
         {
             using var processLease = context.ProcessGate.TryAcquireRead();
-            if (processLease is null || context.RequiresSnapshot)
+            if (processLease is null)
             {
                 return [];
             }
@@ -342,9 +347,11 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             var checkpoint = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
             if (checkpoint is null)
             {
+                context.RequiresSnapshot = true;
                 return [];
             }
 
+            context.RequiresSnapshot = false;
             return await context.Index.SearchAsync(query, cancellationToken).ConfigureAwait(false);
         }
         finally
