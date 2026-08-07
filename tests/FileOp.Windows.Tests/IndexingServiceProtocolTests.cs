@@ -142,6 +142,48 @@ public sealed class IndexingServiceProtocolTests
     }
 
     [TestMethod]
+    public async Task CancellingInFlightRequestFaultsClientConnection()
+    {
+        var pipeName = $"fileop-test-{Guid.NewGuid():N}";
+        using var backend = new FakeBackend
+        {
+            SearchStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
+            SearchRelease = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        var server = new IndexingPipeServer(
+            pipeName,
+            Environment.ProcessId,
+            new IndexingServiceDispatcher(backend));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var serverTask = server.RunSingleClientAsync(cancellation.Token);
+
+        await using (var client = new IndexingServiceClient(pipeName))
+        {
+            await client.ConnectAsync(cancellation.Token);
+            using var requestCancellation = new CancellationTokenSource();
+            var searchTask = client.SearchAsync(
+                new IndexingSearchRequest("test"),
+                requestCancellation.Token).AsTask();
+
+            await backend.SearchStarted!.Task.WaitAsync(cancellation.Token);
+            requestCancellation.Cancel();
+            try
+            {
+                await Assert.ThrowsExactlyAsync<OperationCanceledException>(async () => await searchTask);
+                Assert.IsFalse(client.IsConnected);
+                await Assert.ThrowsExactlyAsync<InvalidOperationException>(async () =>
+                    await client.HelloAsync("after-cancel", cancellation.Token));
+            }
+            finally
+            {
+                backend.SearchRelease!.TrySetResult(true);
+            }
+        }
+
+        await serverTask.WaitAsync(cancellation.Token);
+    }
+
+    [TestMethod]
     public async Task OversizedResponseReturnsRetryableErrorAndKeepsPipeAlive()
     {
         var oversizedPath = new string('x', IndexingServiceProtocol.MaximumFrameBytes + 1024);
@@ -216,6 +258,10 @@ public sealed class IndexingServiceProtocolTests
 
         public IndexingSearchResponse? SearchResponse { get; init; }
 
+        public TaskCompletionSource<bool>? SearchStarted { get; init; }
+
+        public TaskCompletionSource<bool>? SearchRelease { get; init; }
+
         public ValueTask<IndexingHelloResponse> HelloAsync(
             IndexingHelloRequest request,
             CancellationToken cancellationToken = default)
@@ -253,16 +299,22 @@ public sealed class IndexingServiceProtocolTests
             CancellationToken cancellationToken = default) =>
             RebuildVolumeAsync(request, cancellationToken);
 
-        public ValueTask<IndexingSearchResponse> SearchAsync(
+        public async ValueTask<IndexingSearchResponse> SearchAsync(
             IndexingSearchRequest request,
             CancellationToken cancellationToken = default)
         {
             if (SearchException is not null)
             {
-                return ValueTask.FromException<IndexingSearchResponse>(SearchException);
+                throw SearchException;
             }
 
-            return ValueTask.FromResult(SearchResponse ?? new IndexingSearchResponse([]));
+            SearchStarted?.TrySetResult(true);
+            if (SearchRelease is not null)
+            {
+                await SearchRelease.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return SearchResponse ?? new IndexingSearchResponse([]);
         }
 
         public void Dispose()
