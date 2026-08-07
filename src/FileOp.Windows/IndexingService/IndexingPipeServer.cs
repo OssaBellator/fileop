@@ -1,17 +1,26 @@
+using System.ComponentModel;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using FileOp.Core.Indexing.Service;
+using Microsoft.Win32.SafeHandles;
 
 namespace FileOp.Windows.IndexingService;
 
 public sealed class IndexingPipeServer
 {
     private readonly string _pipeName;
+    private readonly int _expectedClientProcessId;
     private readonly IndexingServiceDispatcher _dispatcher;
 
-    public IndexingPipeServer(string pipeName, IndexingServiceDispatcher dispatcher)
+    public IndexingPipeServer(
+        string pipeName,
+        int expectedClientProcessId,
+        IndexingServiceDispatcher dispatcher)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedClientProcessId);
         _pipeName = pipeName;
+        _expectedClientProcessId = expectedClientProcessId;
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
     }
 
@@ -24,7 +33,7 @@ public sealed class IndexingPipeServer
             PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
-        await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await WaitForExpectedClientAsync(pipe, cancellationToken).ConfigureAwait(false);
         while (pipe.IsConnected && !cancellationToken.IsCancellationRequested)
         {
             IndexingServiceRequest? request;
@@ -54,4 +63,37 @@ public sealed class IndexingPipeServer
             }
         }
     }
+
+    private async Task WaitForExpectedClientAsync(
+        NamedPipeServerStream pipe,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+            if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var processId))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "FileOp.Indexer could not identify the process connected to its named pipe.");
+            }
+
+            if (processId == (uint)_expectedClientProcessId)
+            {
+                return;
+            }
+
+            // The pipe name is random and CurrentUserOnly, but an unrelated process under
+            // the same Windows account must still not be able to claim an elevated indexing
+            // channel. Reject it and continue waiting for the exact desktop process that
+            // launched this helper.
+            pipe.Disconnect();
+        }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetNamedPipeClientProcessId(
+        SafePipeHandle pipe,
+        out uint clientProcessId);
 }
