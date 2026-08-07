@@ -10,6 +10,8 @@
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <IndexerTargetFramework>net10.0-windows10.0.17763.0</IndexerTargetFramework>
+    <IndexerOutputDirectory>$(MSBuildProjectDirectory)\..\FileOp.Indexer\bin\$(Platform)\$(Configuration)\$(IndexerTargetFramework)</IndexerOutputDirectory>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,5 +20,23 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FileOp.Core\FileOp.Core.csproj" />
+    <ProjectReference Include="..\FileOp.Windows\FileOp.Windows.csproj" />
+    <ProjectReference Include="..\FileOp.Indexer\FileOp.Indexer.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <Target Name="CopyIndexerHost" AfterTargets="Build">
+    <ItemGroup>
+      <IndexerHostFiles Include="$(IndexerOutputDirectory)\FileOp.Indexer.exe" />
+      <IndexerHostFiles Include="$(IndexerOutputDirectory)\FileOp.Indexer.dll" />
+      <IndexerHostFiles Include="$(IndexerOutputDirectory)\FileOp.Indexer.deps.json" />
+      <IndexerHostFiles Include="$(IndexerOutputDirectory)\FileOp.Indexer.runtimeconfig.json" />
+    </ItemGroup>
+
+    <Error Condition="!Exists('$(IndexerOutputDirectory)\FileOp.Indexer.exe')"
+           Text="FileOp.Indexer.exe was not produced before the desktop app copy step." />
+    <Copy SourceFiles="@(IndexerHostFiles)"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>
