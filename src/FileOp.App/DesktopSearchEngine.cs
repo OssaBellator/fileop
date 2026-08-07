@@ -27,7 +27,9 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
     private const int FallbackBatchSize = 512;
     private const int InitialCatchUpBatchLimit = 64;
     private const int BackgroundCatchUpBatchLimit = 8;
+    private const int CatchUpBusyRetryLimit = 8;
     private static readonly TimeSpan BackgroundSyncInterval = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan CatchUpBusyRetryDelay = TimeSpan.FromMilliseconds(75);
 
     private readonly InMemoryFileIndex _fallbackIndex = new();
     private readonly FileSystemCrawler _crawler = new();
@@ -471,10 +473,26 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
     {
         var previousUsn = startingUsn;
         var indexedItemCount = 0;
+        var busyRetries = 0;
+        var batch = 0;
 
-        for (var batch = 0; batch < batchLimit; batch++)
+        while (batch < batchLimit)
         {
-            var response = await session.Client.SyncVolumeAsync(request, cancellationToken).ConfigureAwait(false);
+            IndexingVolumeOperationResponse response;
+            try
+            {
+                response = await session.Client.SyncVolumeAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (IndexingServiceRemoteException exception)
+                when (exception.Error.Code == IndexingServiceErrorCode.Busy &&
+                      busyRetries < CatchUpBusyRetryLimit)
+            {
+                busyRetries++;
+                await Task.Delay(CatchUpBusyRetryDelay, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
+            busyRetries = 0;
             indexedItemCount = response.IndexedItemCount;
             if (previousUsn is { } previous && response.NextUsn == previous)
             {
@@ -482,6 +500,7 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
             }
 
             previousUsn = response.NextUsn;
+            batch++;
         }
 
         return new CatchUpResult(indexedItemCount, IsCurrent: false);
@@ -537,8 +556,8 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
         SetState(new DesktopSearchEngineState(
             DesktopSearchMode.Fallback,
             canElevate
-                ? "Profile fallback ready. Helper-only administrator access can enable fast NTFS indexing."
-                : "Profile fallback ready.",
+                ? "Profile fallback snapshot ready. Helper-only administrator access can enable fast NTFS indexing."
+                : "Profile fallback snapshot ready.",
             indexed,
             IsBusy: false,
             CanElevate: canElevate,
@@ -678,6 +697,7 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
                         ? $"Fast NTFS index active for {volume.RootPath}"
                         : $"Fast NTFS index active for {volume.RootPath}; journal catch-up is continuing.",
                     IndexedItemCount = catchUp.IndexedItemCount,
+                    IsBusy = false,
                     IsCurrent = catchUp.IsCurrent,
                     CanElevate = false,
                 });
@@ -693,6 +713,16 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
                     IsCurrent = false,
                 });
                 return;
+            }
+            catch (IndexingServiceRemoteException exception)
+                when (exception.Error.Code == IndexingServiceErrorCode.Busy)
+            {
+                SetState(State with
+                {
+                    Status = $"Another FileOp session is updating {volume.RootPath}; native search will resume when that maintenance lease is free.",
+                    IsBusy = true,
+                    IsCurrent = false,
+                });
             }
             catch (IndexingServiceRemoteException exception)
                 when (exception.Error.Code == IndexingServiceErrorCode.SnapshotRequired)
@@ -734,6 +764,27 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
                     fallbackCanElevate = true;
                     fallbackReason = $"The NTFS index for {volume.RootPath} needs an administrator-authorized rebuild.";
                 }
+                catch (IndexingServiceRemoteException rebuildException)
+                    when (rebuildException.Error.Code == IndexingServiceErrorCode.Busy)
+                {
+                    transitionToFallback = true;
+                    fallbackReason = $"Another FileOp session is rebuilding {volume.RootPath}.";
+                }
+                catch (IndexingServiceRemoteException rebuildException)
+                {
+                    transitionToFallback = true;
+                    fallbackReason = $"The NTFS snapshot for {volume.RootPath} could not be rebuilt: {rebuildException.Message}";
+                }
+                catch (Exception rebuildException) when (rebuildException is IOException or InvalidOperationException)
+                {
+                    transitionToFallback = true;
+                    fallbackReason = $"The NTFS snapshot for {volume.RootPath} could not be rebuilt: {rebuildException.Message}";
+                }
+            }
+            catch (IndexingServiceRemoteException exception)
+            {
+                transitionToFallback = true;
+                fallbackReason = $"Native index service failed for {volume.RootPath}: {exception.Message}";
             }
             catch (Exception exception) when (exception is IOException or InvalidOperationException)
             {
