@@ -72,6 +72,12 @@ public sealed class IndexingServiceDispatcher
                         DeserializeSearch(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
+                IndexingServiceOperation.AnalyzeStorage => Success(
+                    request.RequestId,
+                    await _backend.AnalyzeStorageAsync(
+                        DeserializeStorageAnalysis(request.Payload),
+                        cancellationToken).ConfigureAwait(false)),
+
                 _ => Failure(
                     request.RequestId,
                     IndexingServiceErrorCode.InvalidRequest,
@@ -135,6 +141,33 @@ public sealed class IndexingServiceDispatcher
         if (request.Limit <= 0)
         {
             throw new JsonException("limit must be greater than zero.");
+        }
+
+        return request;
+    }
+
+    private static IndexingStorageAnalysisRequest DeserializeStorageAnalysis(JsonElement payload)
+    {
+        var request = Deserialize<IndexingStorageAnalysisRequest>(payload);
+        if (string.IsNullOrWhiteSpace(request.VolumeRootPath))
+        {
+            throw new JsonException("volumeRootPath is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.DirectoryPath))
+        {
+            throw new JsonException("directoryPath is required.");
+        }
+
+        if (!Path.IsPathFullyQualified(request.VolumeRootPath) ||
+            !Path.IsPathFullyQualified(request.DirectoryPath))
+        {
+            throw new JsonException("Storage analysis paths must be absolute.");
+        }
+
+        if (request.MaxEntries <= 0 || request.MaxEntries > 4_096)
+        {
+            throw new JsonException("maxEntries must be between 1 and 4096.");
         }
 
         return request;
