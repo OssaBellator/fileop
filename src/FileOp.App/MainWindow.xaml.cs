@@ -63,16 +63,24 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            SearchBox.IsEnabled = true;
-            await RunSearchAsync();
+            ApplyEngineState(_searchEngine.State);
+            if (SearchBox.IsEnabled)
+            {
+                await RunSearchAsync();
+            }
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
         {
         }
         catch (Exception exception)
         {
-            EngineStatusText.Text = $"Search engine could not start: {exception.Message}";
-            IndexingProgressRing.IsActive = false;
+            ApplyEngineState(new DesktopSearchEngineState(
+                DesktopSearchMode.Unavailable,
+                $"Search engine could not start: {exception.Message}",
+                0,
+                IsBusy: false,
+                CanElevate: false,
+                IsCurrent: false));
         }
     }
 
@@ -144,6 +152,11 @@ public sealed partial class MainWindow : Window
         CountText.Text = state.IndexedItemCount > 0
             ? $"{state.IndexedItemCount:N0} indexed"
             : string.Empty;
+
+        var searchAvailable = !_closed &&
+            !state.IsBusy &&
+            state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback;
+        SearchBox.IsEnabled = searchAvailable;
 
         EnableFastIndexButton.Visibility = state.CanElevate
             ? Visibility.Visible
@@ -240,8 +253,11 @@ public sealed partial class MainWindow : Window
             var enabled = await _searchEngine.TryElevateAsync(_lifetimeCancellation.Token);
             if (enabled && !_closed)
             {
-                SearchBox.IsEnabled = true;
-                await RunSearchAsync();
+                ApplyEngineState(_searchEngine.State);
+                if (SearchBox.IsEnabled)
+                {
+                    await RunSearchAsync();
+                }
             }
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
@@ -251,7 +267,6 @@ public sealed partial class MainWindow : Window
         {
             if (!_closed)
             {
-                SearchBox.IsEnabled = true;
                 ApplyEngineState(_searchEngine.State);
             }
         }
