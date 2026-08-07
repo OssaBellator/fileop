@@ -63,7 +63,7 @@ public sealed class IndexingServiceProtocolTests
 
         Assert.IsFalse(response.Success);
         Assert.AreEqual(IndexingServiceErrorCode.ElevationRequired, response.Error?.Code);
-        Assert.IsTrue(response.Error?.CanRetry);
+        Assert.IsTrue(response.Error?.CanRetry == true);
     }
 
     [TestMethod]
