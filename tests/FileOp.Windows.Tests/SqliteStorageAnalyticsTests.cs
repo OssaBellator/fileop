@@ -23,6 +23,8 @@ public sealed class SqliteStorageAnalyticsTests
             Assert.AreEqual(750L, result.LogicalBytes);
             Assert.AreEqual(960L, result.AllocatedBytes);
             Assert.AreEqual(4, result.FileCount);
+            Assert.AreEqual(4, result.UniqueFileCount);
+            Assert.AreEqual(0, result.HardLinkAliasCount);
             Assert.AreEqual(3, result.DirectoryCount);
             Assert.AreEqual(3, result.DirectEntryCount);
             Assert.AreEqual(3, result.Entries.Count);
@@ -33,6 +35,8 @@ public sealed class SqliteStorageAnalyticsTests
             Assert.AreEqual(400L, beta.LogicalBytes);
             Assert.AreEqual(512L, beta.AllocatedBytes);
             Assert.AreEqual(1, beta.FileCount);
+            Assert.AreEqual(1, beta.UniqueFileCount);
+            Assert.AreEqual(0, beta.HardLinkAliasCount);
             Assert.AreEqual(1, beta.DirectoryCount);
 
             var alpha = result.Entries[1];
@@ -40,6 +44,7 @@ public sealed class SqliteStorageAnalyticsTests
             Assert.AreEqual(300L, alpha.LogicalBytes);
             Assert.AreEqual(384L, alpha.AllocatedBytes);
             Assert.AreEqual(2, alpha.FileCount);
+            Assert.AreEqual(2, alpha.UniqueFileCount);
             Assert.AreEqual(2, alpha.DirectoryCount);
 
             var rootFile = result.Entries[2];
@@ -83,7 +88,7 @@ public sealed class SqliteStorageAnalyticsTests
     }
 
     [TestMethod]
-    public async Task AnalyzeDirectoryKeepsAllocatedSizeUnknownWhenAnyFileIsUnknown()
+    public async Task AnalyzeDirectoryKeepsAllocatedSizeUnknownWhenAnyPhysicalFileIsUnknown()
     {
         var databasePath = CreateDatabasePath();
         try
@@ -113,6 +118,45 @@ public sealed class SqliteStorageAnalyticsTests
     }
 
     [TestMethod]
+    public async Task AnalyzeDirectoryCountsHardLinkedNamesOnceForPhysicalUsage()
+    {
+        var databasePath = CreateDatabasePath();
+        try
+        {
+            var identity = new FileIdentity(0xAABB, 0x1122);
+            using var index = new SqliteFileIndex(databasePath);
+            await index.AddBatchAsync(
+            [
+                Directory(@"C:\Data\Alpha", @"C:\Data", "Alpha"),
+                Directory(@"C:\Data\Beta", @"C:\Data", "Beta"),
+                File(@"C:\Data\Alpha\shared.bin", @"C:\Data\Alpha", "shared.bin", 100, 128, identity),
+                File(@"C:\Data\Beta\shared.bin", @"C:\Data\Beta", "shared.bin", 100, 128, identity),
+            ]);
+            using var analytics = new SqliteStorageAnalytics(databasePath);
+
+            var result = await analytics.AnalyzeDirectoryAsync(@"C:\Data", maxEntries: 10);
+
+            Assert.AreEqual(200L, result.LogicalBytes);
+            Assert.AreEqual(128L, result.AllocatedBytes);
+            Assert.AreEqual(2, result.FileCount);
+            Assert.AreEqual(1, result.UniqueFileCount);
+            Assert.AreEqual(1, result.HardLinkAliasCount);
+
+            var alpha = result.Entries.Single(entry => entry.Name == "Alpha");
+            var beta = result.Entries.Single(entry => entry.Name == "Beta");
+            Assert.AreEqual(128L, alpha.AllocatedBytes);
+            Assert.AreEqual(0, alpha.HardLinkAliasCount);
+            Assert.AreEqual(0L, beta.AllocatedBytes);
+            Assert.AreEqual(1, beta.HardLinkAliasCount);
+            Assert.AreEqual(0, beta.UniqueFileCount);
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [TestMethod]
     public async Task AnalyzeDirectoryReturnsEmptySummaryForUnknownOrEmptyDirectory()
     {
         var databasePath = CreateDatabasePath();
@@ -126,6 +170,8 @@ public sealed class SqliteStorageAnalyticsTests
             Assert.AreEqual(0L, result.LogicalBytes);
             Assert.AreEqual(0L, result.AllocatedBytes);
             Assert.AreEqual(0, result.FileCount);
+            Assert.AreEqual(0, result.UniqueFileCount);
+            Assert.AreEqual(0, result.HardLinkAliasCount);
             Assert.AreEqual(0, result.DirectoryCount);
             Assert.AreEqual(0, result.DirectEntryCount);
             Assert.AreEqual(0, result.Entries.Count);
@@ -163,7 +209,8 @@ public sealed class SqliteStorageAnalyticsTests
         string parentPath,
         string name,
         long logicalBytes,
-        long? allocatedBytes) =>
+        long? allocatedBytes,
+        FileIdentity? identity = null) =>
         new(
             path,
             name,
@@ -173,6 +220,7 @@ public sealed class SqliteStorageAnalyticsTests
             false,
             DateTimeOffset.UnixEpoch,
             FileAttributes.Normal,
+            Identity: identity,
             AllocatedLength: allocatedBytes);
 
     private static string CreateDatabasePath() =>
