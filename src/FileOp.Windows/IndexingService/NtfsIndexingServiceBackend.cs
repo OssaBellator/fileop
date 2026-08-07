@@ -2,6 +2,7 @@ using System.ComponentModel;
 using FileOp.Core.Indexing.Service;
 using FileOp.Core.Models;
 using FileOp.Core.Search;
+using FileOp.Core.Storage;
 using FileOp.Windows.Ntfs;
 
 namespace FileOp.Windows.IndexingService;
@@ -222,6 +223,60 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             .ToArray();
 
         return new IndexingSearchResponse(merged);
+    }
+
+    public async ValueTask<IndexingStorageAnalysisResponse> AnalyzeStorageAsync(
+        IndexingStorageAnalysisRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ThrowIfDisposed();
+
+        var context = ResolveContext(new IndexingVolumeRequest(
+            request.VolumeIdentity,
+            request.VolumeRootPath));
+        if (!IsPathWithinRoot(request.DirectoryPath, context.Volume.RootPath))
+        {
+            throw new IndexingServiceException(
+                IndexingServiceErrorCode.InvalidRequest,
+                $"{request.DirectoryPath} is outside the requested volume root {context.Volume.RootPath}.");
+        }
+
+        if (!await context.OperationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            throw CreateBusyException(context);
+        }
+
+        try
+        {
+            using var processLease = context.ProcessGate.TryAcquireRead();
+            if (processLease is null)
+            {
+                throw CreateBusyException(context, "another FileOp indexing process is maintaining it");
+            }
+
+            var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
+            var checkpoint = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
+            if (checkpoint is null)
+            {
+                context.RequiresSnapshot = true;
+                throw new IndexingServiceException(
+                    IndexingServiceErrorCode.SnapshotRequired,
+                    $"{context.Volume.RootPath} has no valid durable NTFS checkpoint for storage analysis.",
+                    canRetry: true);
+            }
+
+            context.RequiresSnapshot = false;
+            var analysis = await context.Analytics.AnalyzeDirectoryAsync(
+                request.DirectoryPath,
+                request.MaxEntries,
+                cancellationToken).ConfigureAwait(false);
+            return new IndexingStorageAnalysisResponse(analysis);
+        }
+        finally
+        {
+            context.OperationGate.Release();
+        }
     }
 
     public void Dispose()
@@ -471,6 +526,13 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         return $"ntfs-{volume.VolumeIdentity:X16}-{rootToken.ToLowerInvariant()}";
     }
 
+    private static bool IsPathWithinRoot(string path, string rootPath)
+    {
+        var normalizedPath = NormalizeRoot(path);
+        var normalizedRoot = NormalizeRoot(rootPath);
+        return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string NormalizeRoot(string rootPath) =>
         Path.GetFullPath(rootPath)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
@@ -495,6 +557,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             ProcessGate = new IndexingVolumeFileGate(databasePath);
             Index = new SqliteFileIndex(databasePath);
             NamespaceStore = new NtfsSqliteNamespaceStore(databasePath);
+            Analytics = new SqliteStorageAnalytics(databasePath);
         }
 
         public NtfsVolume Volume { get; }
@@ -504,6 +567,8 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         public SqliteFileIndex Index { get; }
 
         public NtfsSqliteNamespaceStore NamespaceStore { get; }
+
+        public SqliteStorageAnalytics Analytics { get; }
 
         public SemaphoreSlim OperationGate { get; } = new(1, 1);
 
@@ -515,6 +580,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
 
         public void Dispose()
         {
+            Analytics.Dispose();
             NamespaceStore.Dispose();
             Index.Dispose();
             OperationGate.Dispose();
