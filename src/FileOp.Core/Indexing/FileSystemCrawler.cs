@@ -19,8 +19,10 @@ public sealed class FileSystemCrawler
             SingleWriter = true,
             FullMode = BoundedChannelFullMode.Wait,
         });
+        using var producerCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var producerToken = producerCancellation.Token;
 
-        _ = Task.Run(async () =>
+        var producer = Task.Run(async () =>
         {
             Exception? error = null;
             try
@@ -37,15 +39,15 @@ public sealed class FileSystemCrawler
                 var rootDirectory = new DirectoryInfo(root);
                 foreach (var info in rootDirectory.EnumerateFileSystemInfos("*", options))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    await channel.Writer.WriteAsync(FileRecord.FromFileSystemInfo(info), cancellationToken)
+                    producerToken.ThrowIfCancellationRequested();
+                    await channel.Writer.WriteAsync(FileRecord.FromFileSystemInfo(info), producerToken)
                         .ConfigureAwait(false);
                 }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (producerToken.IsCancellationRequested)
             {
             }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            catch (Exception exception)
             {
                 error = exception;
             }
@@ -55,9 +57,17 @@ public sealed class FileSystemCrawler
             }
         }, CancellationToken.None);
 
-        await foreach (var record in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        try
         {
-            yield return record;
+            await foreach (var record in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                yield return record;
+            }
+        }
+        finally
+        {
+            producerCancellation.Cancel();
+            await producer.ConfigureAwait(false);
         }
     }
 }
