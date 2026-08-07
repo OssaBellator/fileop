@@ -79,9 +79,10 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             throw CreateBusyException(context);
         }
 
+        IDisposable? processLease = null;
         try
         {
-            using var processLease = context.ProcessGate.TryAcquireMaintenance();
+            processLease = context.ProcessGate.TryAcquireMaintenance();
             if (processLease is null)
             {
                 throw CreateBusyException(context, "another FileOp indexing process is maintaining it");
@@ -117,6 +118,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
                 context.State = VolumeState.Idle;
             }
 
+            processLease?.Dispose();
             context.OperationGate.Release();
         }
     }
@@ -132,9 +134,10 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             throw CreateBusyException(context);
         }
 
+        IDisposable? processLease = null;
         try
         {
-            using var processLease = context.ProcessGate.TryAcquireMaintenance();
+            processLease = context.ProcessGate.TryAcquireMaintenance();
             if (processLease is null)
             {
                 throw CreateBusyException(context, "another FileOp indexing process is maintaining it");
@@ -182,6 +185,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
                 context.State = VolumeState.Idle;
             }
 
+            processLease?.Dispose();
             context.OperationGate.Release();
         }
     }
