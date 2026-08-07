@@ -26,6 +26,24 @@ public sealed class IndexingServiceProtocolTests
     }
 
     [TestMethod]
+    public async Task DispatcherRejectsEmptyRequestIdBeforeBackendCall()
+    {
+        using var backend = new FakeBackend();
+        var dispatcher = new IndexingServiceDispatcher(backend);
+        var request = new IndexingServiceRequest(
+            IndexingServiceProtocol.CurrentVersion,
+            Guid.Empty,
+            IndexingServiceOperation.Hello,
+            JsonSerializer.SerializeToElement(new IndexingHelloRequest("test")));
+
+        var response = await dispatcher.DispatchAsync(request);
+
+        Assert.IsFalse(response.Success);
+        Assert.AreEqual(IndexingServiceErrorCode.InvalidRequest, response.Error?.Code);
+        Assert.AreEqual(0, backend.HelloCalls);
+    }
+
+    [TestMethod]
     public async Task DispatcherReturnsInvalidRequestForMalformedPayload()
     {
         using var backend = new FakeBackend();
@@ -85,6 +103,33 @@ public sealed class IndexingServiceProtocolTests
             var volumes = await client.GetVolumesAsync(cancellation.Token);
             Assert.AreEqual(1, volumes.Volumes.Count);
             Assert.AreEqual(@"C:\", volumes.Volumes[0].RootPath);
+        }
+
+        await serverTask.WaitAsync(cancellation.Token);
+    }
+
+    [TestMethod]
+    public async Task NamedPipeRoundTripPreservesStructuredRemoteError()
+    {
+        var pipeName = $"fileop-test-{Guid.NewGuid():N}";
+        using var backend = new FakeBackend
+        {
+            SearchException = new IndexingServiceException(
+                IndexingServiceErrorCode.SnapshotRequired,
+                "Fresh snapshot required.",
+                canRetry: true),
+        };
+        var server = new IndexingPipeServer(pipeName, new IndexingServiceDispatcher(backend));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var serverTask = server.RunSingleClientAsync(cancellation.Token);
+
+        await using (var client = new IndexingServiceClient(pipeName))
+        {
+            await client.ConnectAsync(cancellation.Token);
+            var exception = await Assert.ThrowsExactlyAsync<IndexingServiceRemoteException>(async () =>
+                await client.SearchAsync(new IndexingSearchRequest("test"), cancellation.Token));
+            Assert.AreEqual(IndexingServiceErrorCode.SnapshotRequired, exception.Error.Code);
+            Assert.IsTrue(exception.Error.CanRetry);
         }
 
         await serverTask.WaitAsync(cancellation.Token);
