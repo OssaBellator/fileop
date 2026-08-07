@@ -66,7 +66,12 @@ public sealed class NtfsUsnJournal
                 cancellationToken.ThrowIfCancellationRequested();
                 BinaryPrimitives.WriteUInt64LittleEndian(input.AsSpan(0, 8), startFileReferenceNumber);
                 BinaryPrimitives.WriteInt64LittleEndian(input.AsSpan(8, 8), 0);
-                BinaryPrimitives.WriteInt64LittleEndian(input.AsSpan(16, 8), snapshotCheckpoint.NextUsn);
+
+                // Enumerate the live namespace instead of filtering out records whose last
+                // change occurred after the pre-scan checkpoint. Journal replay begins at
+                // snapshotCheckpoint, so post-checkpoint changes are still reconciled while
+                // renamed parents remain available to resolve unchanged descendants.
+                BinaryPrimitives.WriteInt64LittleEndian(input.AsSpan(16, 8), journal.MaxUsn);
 
                 if (!DeviceIoControl(
                     handle,
