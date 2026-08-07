@@ -21,16 +21,20 @@ public sealed class NtfsHardLinkEnumerator : INtfsHardLinkEnumerator
             throw new ArgumentException("The hard-link path must have a volume root.", nameof(path));
         }
 
+        // FindFirstFileNameW is still subject to MAX_PATH unless the hosting process opts
+        // into long-path behavior. The NTFS engine can run under hosts other than FileOp.App,
+        // so use the extended-length form here rather than relying on each host manifest.
+        var apiPath = ToExtendedLengthPath(fullPath);
         var buffer = new char[InitialBufferLength];
         uint length = (uint)buffer.Length;
-        var handle = FindFirstFileNameW(fullPath, 0, ref length, buffer);
+        var handle = FindFirstFileNameW(apiPath, 0, ref length, buffer);
 
         if (handle.IsInvalid && Marshal.GetLastWin32Error() == ErrorMoreData)
         {
             handle.Dispose();
             buffer = new char[checked((int)length)];
             length = (uint)buffer.Length;
-            handle = FindFirstFileNameW(fullPath, 0, ref length, buffer);
+            handle = FindFirstFileNameW(apiPath, 0, ref length, buffer);
         }
 
         if (handle.IsInvalid)
@@ -97,6 +101,22 @@ public sealed class NtfsHardLinkEnumerator : INtfsHardLinkEnumerator
 
         var relativeName = linkName.TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         return Path.GetFullPath(Path.Combine(rootPath, relativeName));
+    }
+
+    private static string ToExtendedLengthPath(string path)
+    {
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal) ||
+            path.StartsWith(@"\\.\", StringComparison.Ordinal))
+        {
+            return path;
+        }
+
+        if (path.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            return @"\\?\UNC\" + path[2..];
+        }
+
+        return @"\\?\" + path;
     }
 
     private static string ReadBuffer(char[] buffer)
