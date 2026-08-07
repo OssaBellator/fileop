@@ -142,6 +142,49 @@ public sealed class IndexingServiceProtocolTests
     }
 
     [TestMethod]
+    public async Task OversizedResponseReturnsRetryableErrorAndKeepsPipeAlive()
+    {
+        var oversizedPath = new string('x', IndexingServiceProtocol.MaximumFrameBytes + 1024);
+        using var backend = new FakeBackend
+        {
+            SearchResponse = new IndexingSearchResponse(
+                [new IndexingSearchResult(
+                    oversizedPath,
+                    "huge.bin",
+                    string.Empty,
+                    ".bin",
+                    1,
+                    1,
+                    false,
+                    DateTimeOffset.UnixEpoch,
+                    FileAttributes.Normal,
+                    null,
+                    null)]),
+        };
+        var pipeName = $"fileop-test-{Guid.NewGuid():N}";
+        var server = new IndexingPipeServer(
+            pipeName,
+            Environment.ProcessId,
+            new IndexingServiceDispatcher(backend));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var serverTask = server.RunSingleClientAsync(cancellation.Token);
+
+        await using (var client = new IndexingServiceClient(pipeName))
+        {
+            await client.ConnectAsync(cancellation.Token);
+            var exception = await Assert.ThrowsExactlyAsync<IndexingServiceRemoteException>(async () =>
+                await client.SearchAsync(new IndexingSearchRequest("test"), cancellation.Token));
+            Assert.AreEqual(IndexingServiceErrorCode.ResponseTooLarge, exception.Error.Code);
+            Assert.IsTrue(exception.Error.CanRetry);
+
+            var hello = await client.HelloAsync("after-oversize", cancellation.Token);
+            Assert.AreEqual("FakeIndexer", hello.ServiceName);
+        }
+
+        await serverTask.WaitAsync(cancellation.Token);
+    }
+
+    [TestMethod]
     public async Task IndexerProcessSessionCompletesRealHostHandshake()
     {
         var executablePath = Environment.GetEnvironmentVariable("FILEOP_INDEXER_PATH");
@@ -170,6 +213,8 @@ public sealed class IndexingServiceProtocolTests
         public int HelloCalls { get; private set; }
 
         public Exception? SearchException { get; init; }
+
+        public IndexingSearchResponse? SearchResponse { get; init; }
 
         public ValueTask<IndexingHelloResponse> HelloAsync(
             IndexingHelloRequest request,
@@ -217,7 +262,7 @@ public sealed class IndexingServiceProtocolTests
                 return ValueTask.FromException<IndexingSearchResponse>(SearchException);
             }
 
-            return ValueTask.FromResult(new IndexingSearchResponse([]));
+            return ValueTask.FromResult(SearchResponse ?? new IndexingSearchResponse([]));
         }
 
         public void Dispose()
