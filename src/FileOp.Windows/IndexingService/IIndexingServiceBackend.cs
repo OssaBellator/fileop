@@ -25,4 +25,8 @@ public interface IIndexingServiceBackend : IDisposable
     ValueTask<IndexingSearchResponse> SearchAsync(
         IndexingSearchRequest request,
         CancellationToken cancellationToken = default);
+
+    ValueTask<IndexingStorageAnalysisResponse> AnalyzeStorageAsync(
+        IndexingStorageAnalysisRequest request,
+        CancellationToken cancellationToken = default);
 }
