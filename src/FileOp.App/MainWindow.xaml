@@ -1,0 +1,111 @@
+<Window
+    x:Class="FileOp.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="FileOp">
+
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="220" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,1,0">
+            <StackPanel Padding="20,24" Spacing="10">
+                <TextBlock Text="FileOp" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,18" />
+                <Button Content="Search" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" />
+                <Button Content="Files" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False" />
+                <Button Content="Storage" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False" />
+                <Button Content="Clean" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False" />
+                <Button Content="Disks" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False" />
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Column="1" Padding="28,24">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Spacing="8">
+                <TextBlock Text="Search your PC" FontSize="28" FontWeight="SemiBold" />
+                <TextBlock Text="The bootstrap index starts in your user profile. NTFS MFT/USN indexing is the next engine milestone."
+                           Opacity="0.7" TextWrapping="Wrap" />
+                <TextBox x:Name="SearchBox"
+                         PlaceholderText="Search files — try ext:pdf or size:&gt;100mb"
+                         FontSize="18"
+                         Margin="0,12,0,0"
+                         TextChanged="SearchBox_TextChanged" />
+            </StackPanel>
+
+            <ItemsControl x:Name="VolumeCards" Grid.Row="1" Margin="0,20,0,14">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="12" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Padding="14" MinWidth="210" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                            <StackPanel Spacing="5">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding Usage}" Opacity="0.75" />
+                                <ProgressBar Value="{Binding UsedPercent}" Maximum="100" Height="5" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Border Grid.Row="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Padding="14,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="4*" />
+                            <ColumnDefinition Width="120" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Name" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" Text="Location" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="2" Text="Size" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                    </Grid>
+
+                    <ListView x:Name="ResultsList" Grid.Row="1" IsItemClickEnabled="True" ItemClick="ResultsList_ItemClick">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="8,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="4*" />
+                                        <ColumnDefinition Width="120" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ParentPath}" TextTrimming="CharacterEllipsis" Opacity="0.7" />
+                                    <TextBlock Grid.Column="2" Text="{Binding SizeText}" HorizontalAlignment="Right" Opacity="0.7" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="3" Margin="0,12,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusText" Text="Preparing index…" Opacity="0.7" />
+                <TextBlock x:Name="CountText" Grid.Column="1" Opacity="0.7" />
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>
