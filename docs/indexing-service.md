@@ -11,6 +11,9 @@ The indexer is deliberately not the future disk-administration helper. It expose
 ```text
 FileOp.App (normal user token + known PID)
         |
+        | native-first search coordinator
+        |   \-- bounded user-profile crawler fallback
+        |
         | random per-session named pipe
         | current-user-only ACL + exact client-PID check
         v
@@ -40,9 +43,11 @@ Protocol messages use a four-byte little-endian length prefix followed by UTF-8 
 
 Every response echoes the request ID and protocol version. The client rejects mismatched IDs or protocol changes within a session. Required payload fields are validated explicitly after JSON deserialization; a positional record with missing JSON properties is not accepted merely because the serializer can construct it with default values.
 
-If any response would exceed the 8 MiB frame cap, the server substitutes a small retryable `ResponseTooLarge` error rather than terminating the session. For search results, the caller can reduce the result limit and retry on the same connection.
+If any response would exceed the 8 MiB frame cap, the server substitutes a small retryable `ResponseTooLarge` error rather than terminating the session. For search results, the desktop reduces the result limit and retries on the same connection.
 
 A cancelled or otherwise interrupted client exchange is different: once a request may have been written without its complete matching response being consumed, the client faults and closes that connection instead of risking request/response desynchronization. A subsequent operation must use a fresh indexer session.
+
+The WinUI coordinator therefore does not use query supersession as a cancellation signal. A new keystroke invalidates the visible generation immediately; queued stale searches are discarded before transmission and completed stale searches are discarded before rendering. Only session/window shutdown deliberately interrupts the active exchange because the whole helper session is being destroyed.
 
 Protocol version mismatch is rejected before native operations are dispatched.
 
@@ -80,7 +85,18 @@ The current named-pipe model intentionally permits `runas` relaunch only when Wi
 
 Credential-over-the-shoulder elevation from a standard account is deliberately unsupported in this version. In that case `runas` can launch the helper as a different administrator account, which would both break the current-user-only pipe and resolve a different account's LocalAppData. Supporting that scenario requires a separately reviewed service/ACL design rather than silently weakening the pipe ACL.
 
-Production packaging must also ensure the executable selected for elevation is a trusted FileOp binary from the installed application location; the current development launcher takes the helper path explicitly so the WinUI packaging/cutover slice can own that verification policy.
+## Helper location and packaging trust
+
+The desktop build treats `FileOp.Indexer` as a build dependency and copies these host artifacts beside `FileOp.App`:
+
+- `FileOp.Indexer.exe`;
+- `FileOp.Indexer.dll`;
+- `FileOp.Indexer.deps.json`;
+- `FileOp.Indexer.runtimeconfig.json`.
+
+At runtime, the current resolver accepts only the exact `FileOp.Indexer.exe` adjacent to the application and rejects the helper file itself if it is a filesystem reparse point. CI verifies the four bundled artifacts and launches the copy beside the built WinUI application through the real process/pipe handshake.
+
+This location rule is intentionally narrow but is **not** a cryptographic trust claim. Production signed packaging still needs to verify the installed helper/publisher before elevation is offered. The current resolver must not be described as equivalent to Authenticode verification.
 
 ## Per-volume persistence and identity
 
@@ -104,18 +120,29 @@ If incremental synchronization determines that a fresh snapshot is required, the
 
 The current rebuild implementation temporarily omits the affected volume from search. A future shadow-database rebuild followed by an atomic swap can remove that outage without ever exposing a partial snapshot.
 
-## WinUI cutover policy
+## WinUI integration policy
 
-This service boundary is a prerequisite for switching the desktop shell to native indexing, not the cutover itself. Until the service/client lifecycle has passed review and regression testing, `FileOp.App` continues to use the reviewed bounded filesystem crawler.
+The desktop now uses the service boundary as its primary search path for the NTFS volume containing the user profile. The integration remains deliberately conservative:
 
-The cutover should be a separate change with an explicit fallback path:
+1. Resolve the bundled adjacent helper and start it unelevated.
+2. Negotiate the reviewed protocol and discover NTFS volumes.
+3. Select the volume containing the user profile as the first-run orchestration target.
+4. If no checkpoint exists, build a fresh snapshot; otherwise resume the durable snapshot.
+5. Repeatedly call `SyncVolume` until its durable USN cursor stops advancing or the bounded startup catch-up budget is reached. One successful `SyncVolume` call is not considered equivalent to being caught up because each call intentionally processes only one bounded journal batch.
+6. Use the native index when its snapshot is searchable. If startup catch-up does not converge within the budget, expose it as active-but-catching-up and continue in the background.
+7. Run bounded background catch-up only when the foreground native-operation gate is free, so active searches take priority over maintenance.
+8. If a valid existing snapshot can still be searched but journal access returns `ElevationRequired`, retain that snapshot, mark it non-current, stop repeated permission probes and offer explicit helper-only elevation.
+9. If the native provider/helper is unavailable, or an invalid snapshot cannot be rebuilt with the current token, build the bounded user-profile crawler fallback.
+10. If a native session later disconnects or requires a rebuild that cannot proceed, transition back to the fallback rather than leaving search unavailable.
 
-1. resolve and verify the installed `FileOp.Indexer` binary;
-2. start an unelevated indexer session and bind it to the desktop PID;
-3. negotiate protocol version;
-4. discover volumes and inspect checkpoints;
-5. use persistent service-backed search when available;
-6. offer helper-only same-account UAC elevation when the service returns `ElevationRequired` and a split token is available;
-7. retain crawler fallback for unsupported/non-NTFS locations, standard-user credential elevation cases and service capability failures.
+Engine state controls search-box availability. Input is disabled during initial snapshot construction, fallback crawling, rebuilds and elevation transitions, and is enabled only when a native searchable snapshot or completed fallback snapshot exists.
 
-This keeps a service-boundary regression from silently changing file-search correctness or making the desktop process elevated.
+The fallback is a static crawl snapshot rather than a live watcher, so the coordinator records it as non-current even after the initial crawl finishes.
+
+The first cutover does not automatically create snapshots for every attached NTFS disk. Existing attached-volume databases with valid checkpoints can still participate in service search; automatic first-run orchestration for additional volumes remains a separate lifecycle slice.
+
+### Elevation flow
+
+When the primary volume needs more privilege, the UI exposes an explicit `Enable fast indexing` action while using the crawler fallback, or `Enable live updates` when an older valid native snapshot is usable but cannot synchronize. The desktop itself remains non-elevated. A successful same-account helper relaunch replaces the existing/fallback search source only after the elevated session has produced a valid native state.
+
+Cancelling UAC preserves the existing search mode.
