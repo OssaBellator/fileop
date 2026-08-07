@@ -15,6 +15,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet build src/FileOp.Core/FileOp.Core.csproj --configuration Release
+      - run: dotnet build benchmarks/FileOp.Benchmarks/FileOp.Benchmarks.csproj --configuration Release
 
   windows-app:
     runs-on: windows-latest
