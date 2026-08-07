@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using FileOp.Core.Models;
 using FileOp.Windows.Ntfs;
 
@@ -9,22 +10,9 @@ public sealed class NtfsSnapshotNamespaceExpanderTests
     [TestMethod]
     public void ExpandMultiLinkFileCreatesOneRecordPerNamespacePath()
     {
-        var volume = new NtfsVolume(@"C:\", @"\\.\C:", "Test", 0x1234);
-        var entry = new NtfsMftEntry(
-            100,
-            10,
-            500,
-            DateTimeOffset.UnixEpoch,
-            UsnReason.None,
-            FileAttributes.Normal,
-            "file.bin");
-        var metadata = new NtfsFileMetadata(
-            42,
-            4096,
-            2,
-            false,
-            DateTimeOffset.UnixEpoch,
-            FileAttributes.Normal);
+        var volume = Volume();
+        var entry = Entry();
+        var metadata = Metadata(2);
         var directories = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
         {
             [@"C:\Alpha"] = 10,
@@ -54,22 +42,7 @@ public sealed class NtfsSnapshotNamespaceExpanderTests
     [TestMethod]
     public void ExpandMultiLinkFileRejectsIncompleteEnumeration()
     {
-        var volume = new NtfsVolume(@"C:\", @"\\.\C:", "Test", 0x1234);
-        var entry = new NtfsMftEntry(
-            100,
-            10,
-            500,
-            DateTimeOffset.UnixEpoch,
-            UsnReason.None,
-            FileAttributes.Normal,
-            "file.bin");
-        var metadata = new NtfsFileMetadata(
-            42,
-            4096,
-            2,
-            false,
-            DateTimeOffset.UnixEpoch,
-            FileAttributes.Normal);
+        var volume = Volume();
         var directories = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
         {
             [@"C:\Alpha"] = 10,
@@ -78,11 +51,54 @@ public sealed class NtfsSnapshotNamespaceExpanderTests
             new FakeHardLinkEnumerator([@"C:\Alpha\file.bin"]));
 
         Assert.ThrowsExactly<NtfsIndexResnapshotRequiredException>(() =>
-            expander.Expand(volume, entry, @"C:\Alpha\file.bin", metadata, directories));
+            expander.Expand(volume, Entry(), @"C:\Alpha\file.bin", Metadata(2), directories));
     }
+
+    [TestMethod]
+    public void ExpandMultiLinkFileConvertsDisappearingBaselineToResnapshot()
+    {
+        var volume = Volume();
+        var expander = new NtfsSnapshotNamespaceExpander(new MissingHardLinkEnumerator());
+
+        var exception = Assert.ThrowsExactly<NtfsIndexResnapshotRequiredException>(() =>
+            expander.Expand(
+                volume,
+                Entry(),
+                @"C:\Alpha\file.bin",
+                Metadata(2),
+                new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)));
+
+        Assert.IsInstanceOfType<Win32Exception>(exception.InnerException);
+    }
+
+    private static NtfsVolume Volume() => new(@"C:\", @"\\.\C:", "Test", 0x1234);
+
+    private static NtfsMftEntry Entry() =>
+        new(
+            100,
+            10,
+            500,
+            DateTimeOffset.UnixEpoch,
+            UsnReason.None,
+            FileAttributes.Normal,
+            "file.bin");
+
+    private static NtfsFileMetadata Metadata(uint links) =>
+        new(
+            42,
+            4096,
+            links,
+            false,
+            DateTimeOffset.UnixEpoch,
+            FileAttributes.Normal);
 
     private sealed class FakeHardLinkEnumerator(IReadOnlyList<string> paths) : INtfsHardLinkEnumerator
     {
         public IReadOnlyList<string> Enumerate(string path) => paths;
+    }
+
+    private sealed class MissingHardLinkEnumerator : INtfsHardLinkEnumerator
+    {
+        public IReadOnlyList<string> Enumerate(string path) => throw new Win32Exception(2);
     }
 }
