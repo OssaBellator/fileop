@@ -330,8 +330,9 @@ public sealed class NtfsSqliteNamespaceStore : IDisposable
                 path_norm = lower(@new_path || substr(path, length(@old_path) + 1)),
                 parent_path = CASE
                     WHEN path = @old_path COLLATE NOCASE THEN @new_parent
-                    WHEN substr(parent_path, 1, length(@old_path)) = @old_path COLLATE NOCASE
-                         AND substr(parent_path, length(@old_path) + 1, 1) = @separator
+                    WHEN parent_path = @old_path COLLATE NOCASE
+                         OR (substr(parent_path, 1, length(@old_path)) = @old_path COLLATE NOCASE
+                             AND substr(parent_path, length(@old_path) + 1, 1) = @separator)
                     THEN @new_path || substr(parent_path, length(@old_path) + 1)
                     ELSE parent_path
                 END
