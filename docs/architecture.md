@@ -15,11 +15,12 @@ WinUI application
 FileOp.Core                   FileOp.Windows
   |-- query parser              |-- NTFS volume discovery
   |-- IFileIndex                |-- MFT namespace enumeration
-  |-- stable FileIdentity       |-- USN journal reader
-  |-- index change batches      |-- file-reference path resolver
-  |-- storage snapshots         |
-  |-- fallback crawler          +---- Windows-native provider boundary
-      |                             |
+  |-- stable FileIdentity       |-- USN journal reader/coalescer
+  |-- index change batches      |-- file-ID metadata hydration
+  |-- SQLite persistence        |-- namespace synchronization
+  |-- storage snapshots         |-- snapshot seeding
+  |-- fallback crawler          |
+      |                         +---- Windows-native provider boundary
       +--------------+--------------+
                      v
                persistent index
@@ -31,30 +32,40 @@ FileOp.Core                   FileOp.Windows
 
 ## NTFS ingestion strategy
 
-The first native NTFS implementation uses supported Windows filesystem controls rather than raw-sector parsing:
+The native NTFS implementation uses supported Windows filesystem controls rather than raw-sector parsing:
 
 1. Discover ready NTFS volumes and record their volume serial numbers.
 2. Open a volume handle (`\\.\C:` style device path).
 3. Query the current journal identity and USN range.
 4. Enumerate MFT-backed namespace records with `FSCTL_ENUM_USN_DATA`.
 5. Reconstruct paths from file-reference and parent-file-reference relationships.
-6. Persist a snapshot and its journal checkpoint.
-7. Apply subsequent `FSCTL_READ_USN_JOURNAL` batches as index mutations.
-8. If the journal identity changes or a saved cursor falls below the journal's readable range (`FirstUsn` or `LowestValidUsn`), discard the cursor and take a fresh namespace snapshot.
+6. Open records by file ID and hydrate logical size, allocated size, link count, timestamps and attributes.
+7. Persist the snapshot and its journal checkpoint.
+8. Read subsequent `FSCTL_READ_USN_JOURNAL` batches.
+9. Normalize journal records into upsert/delete/rename events, pairing old/new rename records.
+10. Translate normalized events into namespace mutations and commit those mutations together with the durable journal checkpoint.
+11. If the journal identity changes, a cursor falls outside the readable range, or a parent identity cannot be resolved, fail safe into a fresh namespace snapshot.
 
 The native parser currently accepts USN record major version 2, which is the 64-bit file-reference format used for the NTFS provider. Unsupported major versions fail explicitly rather than being interpreted using the wrong layout.
 
-### Why this is not yet the final metadata reader
+### Metadata hydration
 
-`FSCTL_ENUM_USN_DATA` is an excellent fast namespace/file-identity source, but it is not a complete replacement for parsing NTFS metadata attributes. In particular, FileOp still needs an efficient strategy for:
+`NtfsFileMetadataReader` opens an item using its NTFS file reference and reads `FILE_STANDARD_INFO` / `FILE_BASIC_INFO`. This supplies:
 
-- logical file size;
-- allocated/compressed size;
-- complete hard-link naming;
-- sparse/compressed stream state;
-- selected timestamps and other attributes that should not require opening every file individually.
+- logical length (`EndOfFile`);
+- allocated length (`AllocationSize`);
+- hard-link count;
+- directory state;
+- last-write time;
+- file attributes.
 
-Until those metadata fields can be hydrated efficiently and populated in the persistent index, the WinUI shell continues to use the existing crawler for its user-visible searchable snapshot. The native layer is compiled in CI so integration problems are caught without silently degrading query correctness.
+This preserves `size:` query semantics while the native provider evolves. It is still not the final highest-throughput metadata strategy because opening every record individually is more expensive than extracting all required attributes from NTFS metadata in bulk. It is an accuracy-first bridge between the journal/MFT foundation and a future direct metadata parser.
+
+### Rename durability
+
+A rename is represented by separate `RENAME_OLD_NAME` and `RENAME_NEW_NAME` USN records. The change coalescer does not persist a checkpoint beyond an unmatched old-name record. If the pair is split at a read-buffer boundary or the process exits, the next read begins at the old record again and can reconstruct the pair.
+
+Directory renames are applied as subtree moves. Updating only the renamed directory row would leave all descendant absolute paths stale, so the SQLite namespace coordinator rewrites the directory and every descendant path in one transaction. That transaction also advances the USN checkpoint.
 
 ## File identity and mutation model
 
@@ -65,39 +76,47 @@ FileIdentity = (VolumeSerialNumber, FileReferenceNumber)
 ParentIdentity = (VolumeSerialNumber, ParentFileReferenceNumber)
 ```
 
-`IFileIndex` supports both initial batch insertion and `ApplyChangesAsync`, with upsert/delete changes keyed by stable identity when available. This is the contract the USN change processor will target.
+The generic `IFileIndex` supports initial insertion and stable-identity upsert/delete changes. `FileOp.Windows` adds namespace-aware move semantics on top of the SQLite schema for NTFS journal processing.
 
-The in-memory implementation is deliberately simple. The SQLite-backed persistent store provides indexed identity/path lookup and transactional batch application while preserving the same query/index contracts.
+Persistent namespace rows remain keyed by path because one NTFS file can have multiple hard-link names. File identity is an indexed relationship, not a unique row key.
+
+### Current hard-link limitation
+
+The SQLite representation can store multiple paths for one file identity, but the current initial snapshot path resolver still reduces MFT/USN enumeration to one path per file reference. Therefore the native snapshot is not yet a complete hard-link namespace enumerator and is not enabled as the WinUI default.
+
+The next namespace step should replace this one-path-per-FRN snapshot model with a representation that preserves every filename/parent relationship, ideally from direct NTFS metadata enumeration rather than treating `FSCTL_ENUM_USN_DATA` as a complete hard-link source.
 
 ## Target indexing architecture
 
 ```text
 NTFS volume
-  |-- MFT namespace snapshot ----------------+
-  |-- USN change journal ---------------------|----> metadata pipeline
-                                             |          |
-Other filesystem provider ------------------+          v
-                                                  persistent index
-                                                     /   |   \
-                                               search analytics cleanup
+  |-- namespace snapshot -------------------+
+  |-- file-ID metadata hydration -----------|----> metadata pipeline
+  |-- USN change journal -------------------|          |
+                                             |          v
+Other filesystem provider ------------------+    persistent index
+                                                    /   |   \
+                                              search analytics cleanup
 ```
 
 ### Constraints
 
 - Initial NTFS discovery should read filesystem metadata rather than recurse through every directory.
-- Incremental changes should be applied from the USN journal.
+- Incremental changes are applied from the USN journal.
 - File identity uses volume identity + file ID, not path alone, whenever the provider supports it.
 - Allocated size, hard links, sparse/compressed state and reparse points must be represented explicitly.
 - Hashes and content extraction are lazy workloads and must not delay filename/path availability.
 - Search results should remain responsive while indexing continues.
 - Network/removable/non-NTFS volumes use provider-specific fallbacks rather than pretending MFT semantics exist everywhere.
 - Journal discontinuity must fail safe into a fresh snapshot, never silently skip changes.
+- Journal mutations and checkpoint advancement must be atomic.
+- Parent identity resolution failures are consistency failures, not an invitation to guess an absolute path.
 
 ## Privilege boundary
 
-The desktop UI should run as the user. Native read-only discovery may fail on systems where a volume handle is not available to the current token; that is a capability failure, not a reason to run the whole app elevated.
+The desktop UI should run as the user. Native read-only discovery and file-ID access may fail on systems where volume/file handles are not available to the current token; that is a capability failure, not a reason to run the whole app elevated.
 
-A future administrative helper will expose a narrow, versioned command surface for operations that really require elevation (partition changes, selected disk operations, etc.). The helper should start only after explicit user action and exit after the operation completes.
+Before the WinUI shell switches to the native provider by default, the indexing lifecycle needs a narrow background/service boundary that can obtain only the privileges required for NTFS discovery and expose a versioned, read-oriented interface to the desktop process. Partition and other destructive disk administration should remain a separate privileged surface.
 
 ## Roadmap
 
@@ -121,15 +140,22 @@ Implemented:
 - USN journal state/checkpoint model
 - incremental journal batch reads
 - journal replacement/overrun detection
-- index upsert/delete mutation contract
 - SQLite-backed persistent metadata store and checkpoint persistence
+- logical/allocated-size, link-count, timestamp and attribute hydration by file ID
+- rename-old/new coalescing with buffer-boundary-safe checkpoints
+- journal-to-index change translation
+- transactional directory subtree moves
+- atomic namespace mutation + checkpoint commits
+- native snapshot seeder
+- Windows regression tests for rename durability and subtree moves
 
 Next:
 
-- metadata hydration for logical/allocated size and selected timestamps
-- full hard-link representation
-- journal-to-index change processor, including rename pairing
-- benchmark harness with multi-million-record synthetic data
+- complete multi-name/hard-link namespace snapshots
+- sparse/compressed/reparse metadata semantics
+- indexing service / privilege boundary
+- benchmark harness with multi-million-record synthetic and real-world datasets
+- specialized filename/path search structure beyond SQLite substring scans
 - switch the WinUI search snapshot to the native provider after correctness/performance validation
 
 ### Milestone 3 — file manager
