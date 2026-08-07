@@ -24,13 +24,15 @@ public sealed class NtfsIndexSynchronizer
     public async ValueTask<NtfsJournalCheckpoint> ApplyNextBatchAsync(
         NtfsVolume volume,
         NtfsJournalCheckpoint checkpoint,
-        uint reasonMask = uint.MaxValue,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(volume);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var batch = _journal.ReadChanges(volume, checkpoint, reasonMask, cancellationToken);
+        // A synchronization checkpoint is only safe if every namespace-relevant journal
+        // record before it has been observed. Do not expose a caller-supplied reason mask:
+        // FSCTL_READ_USN_JOURNAL can advance the returned cursor past filtered-out records.
+        var batch = _journal.ReadChanges(volume, checkpoint, uint.MaxValue, cancellationToken);
         var changeSet = _coalescer.Coalesce(batch);
         var mutations = await TranslateAsync(volume, changeSet, cancellationToken).ConfigureAwait(false);
 
@@ -126,10 +128,8 @@ public sealed class NtfsIndexSynchronizer
         var metadata = _metadataReader.TryRead(volume, change.FileReferenceNumber);
         if (metadata is null)
         {
-            await DeleteKnownNamespaceRowsAsync(
+            await DeleteKnownIdentityRowsAsync(
                 identity,
-                parentIdentity,
-                change.Name,
                 directoryOverlay,
                 mutations,
                 cancellationToken).ConfigureAwait(false);
@@ -219,16 +219,15 @@ public sealed class NtfsIndexSynchronizer
 
         if (metadata is null)
         {
-            var oldRows = await _store.FindByParentAndNameAsync(
-                oldParentIdentity,
-                change.OldName,
+            // OpenFileById can no longer resolve this full file identity, so the file no
+            // longer exists. Remove every known namespace row for the identity; deleting
+            // only the journal's old path can leave a stale row after a later rename/delete
+            // races ahead of hydration.
+            await DeleteKnownIdentityRowsAsync(
+                identity,
+                directoryOverlay,
+                mutations,
                 cancellationToken).ConfigureAwait(false);
-            foreach (var row in oldRows.Where(row => row.Identity == identity))
-            {
-                mutations.Add(NtfsIndexMutation.Delete(identity, row.Path, row.IsDirectory));
-            }
-
-            directoryOverlay.Remove(identity);
             return;
         }
 
@@ -237,26 +236,28 @@ public sealed class NtfsIndexSynchronizer
         TrackDirectory(directoryOverlay, record);
     }
 
-    private async ValueTask DeleteKnownNamespaceRowsAsync(
+    private async ValueTask DeleteKnownIdentityRowsAsync(
         FileIdentity identity,
-        FileIdentity parentIdentity,
-        string name,
         Dictionary<FileIdentity, FileRecord> directoryOverlay,
         List<NtfsIndexMutation> mutations,
         CancellationToken cancellationToken)
     {
-        if (directoryOverlay.TryGetValue(identity, out var overlay) &&
-            overlay.ParentIdentity == parentIdentity &&
-            string.Equals(overlay.Name, name, StringComparison.OrdinalIgnoreCase))
+        string? overlayPath = null;
+        if (directoryOverlay.Remove(identity, out var overlay))
         {
+            overlayPath = overlay.Path;
             mutations.Add(NtfsIndexMutation.Delete(identity, overlay.Path, overlay.IsDirectory));
-            directoryOverlay.Remove(identity);
         }
 
-        var rows = await _store.FindByParentAndNameAsync(parentIdentity, name, cancellationToken)
-            .ConfigureAwait(false);
-        foreach (var row in rows.Where(row => row.Identity == identity))
+        var rows = await _store.FindByIdentityAsync(identity, cancellationToken).ConfigureAwait(false);
+        foreach (var row in rows)
         {
+            if (overlayPath is not null &&
+                string.Equals(row.Path, overlayPath, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             mutations.Add(NtfsIndexMutation.Delete(identity, row.Path, row.IsDirectory));
         }
     }
