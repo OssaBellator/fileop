@@ -24,4 +24,5 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet build src/FileOp.Windows/FileOp.Windows.csproj --configuration Release
+      - run: dotnet test tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj --configuration Release --no-restore
       - run: dotnet build src/FileOp.App/FileOp.App.csproj --configuration Release -p:Platform=x64
