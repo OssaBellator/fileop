@@ -9,6 +9,7 @@ public sealed class IndexingServiceClient : IAsyncDisposable, IDisposable
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly NamedPipeClientStream _pipe;
     private readonly SemaphoreSlim _requestGate = new(1, 1);
+    private bool _connectionFaulted;
     private bool _disposed;
 
     public IndexingServiceClient(string pipeName)
@@ -21,11 +22,12 @@ public sealed class IndexingServiceClient : IAsyncDisposable, IDisposable
             PipeOptions.Asynchronous);
     }
 
-    public bool IsConnected => !_disposed && _pipe.IsConnected;
+    public bool IsConnected => !_disposed && !_connectionFaulted && _pipe.IsConnected;
 
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        ThrowIfConnectionFaulted();
         return _pipe.ConnectAsync(cancellationToken);
     }
 
@@ -105,6 +107,7 @@ public sealed class IndexingServiceClient : IAsyncDisposable, IDisposable
         CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
+        ThrowIfConnectionFaulted();
         if (!_pipe.IsConnected)
         {
             throw new InvalidOperationException("The indexing service client is not connected.");
@@ -113,6 +116,13 @@ public sealed class IndexingServiceClient : IAsyncDisposable, IDisposable
         await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ThrowIfDisposed();
+            ThrowIfConnectionFaulted();
+            if (!_pipe.IsConnected)
+            {
+                throw new InvalidOperationException("The indexing service client is not connected.");
+            }
+
             var requestId = Guid.NewGuid();
             var request = new IndexingServiceRequest(
                 IndexingServiceProtocol.CurrentVersion,
@@ -148,9 +158,44 @@ public sealed class IndexingServiceClient : IAsyncDisposable, IDisposable
                 ?? throw new InvalidDataException(
                     $"The indexing service returned an empty {typeof(TResponse).Name} response.");
         }
+        catch (OperationCanceledException)
+        {
+            FaultConnection();
+            throw;
+        }
+        catch (IOException)
+        {
+            FaultConnection();
+            throw;
+        }
+        catch (InvalidDataException)
+        {
+            FaultConnection();
+            throw;
+        }
+        catch (JsonException)
+        {
+            FaultConnection();
+            throw;
+        }
         finally
         {
             _requestGate.Release();
+        }
+    }
+
+    private void FaultConnection()
+    {
+        _connectionFaulted = true;
+        _pipe.Dispose();
+    }
+
+    private void ThrowIfConnectionFaulted()
+    {
+        if (_connectionFaulted)
+        {
+            throw new InvalidOperationException(
+                "The indexing service connection is no longer reusable after an interrupted or invalid exchange.");
         }
     }
 
