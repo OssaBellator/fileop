@@ -6,12 +6,20 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        if (!TryParseArguments(args, out var pipeName, out var databaseDirectory, out var error))
+        if (!TryParseArguments(args, out var pipeName, out var error))
         {
             Console.Error.WriteLine(error);
             return 2;
         }
 
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
+        {
+            Console.Error.WriteLine("FileOp.Indexer could not resolve LocalApplicationData for the current user.");
+            return 1;
+        }
+
+        var databaseDirectory = Path.Combine(localAppData, "FileOp", "Index");
         using var lifetimeCancellation = new CancellationTokenSource();
         Console.CancelKeyPress += (_, eventArgs) =>
         {
@@ -39,25 +47,19 @@ internal static class Program
     }
 
     private static bool TryParseArguments(
-        IReadOnlyList<string> args,
+        string[] args,
         out string pipeName,
-        out string databaseDirectory,
         out string error)
     {
         pipeName = string.Empty;
-        databaseDirectory = string.Empty;
         error = string.Empty;
 
-        for (var index = 0; index < args.Count; index++)
+        for (var index = 0; index < args.Length; index++)
         {
             switch (args[index])
             {
-                case "--pipe" when index + 1 < args.Count:
+                case "--pipe" when index + 1 < args.Length:
                     pipeName = args[++index];
-                    break;
-
-                case "--database-directory" when index + 1 < args.Count:
-                    databaseDirectory = args[++index];
                     break;
 
                 default:
@@ -78,13 +80,6 @@ internal static class Program
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(databaseDirectory))
-        {
-            error = "FileOp.Indexer requires --database-directory <path>.";
-            return false;
-        }
-
-        databaseDirectory = Path.GetFullPath(databaseDirectory);
         return true;
     }
 }
