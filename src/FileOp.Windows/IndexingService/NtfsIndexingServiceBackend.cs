@@ -1,6 +1,6 @@
 using System.ComponentModel;
-using System.Security.Principal;
 using FileOp.Core.Indexing.Service;
+using FileOp.Core.Models;
 using FileOp.Core.Search;
 using FileOp.Windows.Ntfs;
 
@@ -36,7 +36,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             IndexingServiceProtocol.CurrentVersion,
             "FileOp.Indexer",
             version,
-            IsProcessElevated()));
+            WindowsProcessElevation.IsElevated()));
     }
 
     public async ValueTask<IndexingGetVolumesResponse> GetVolumesAsync(
@@ -88,8 +88,19 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             var indexer = new NtfsSnapshotIndexer(context.Index, context.Index);
             var checkpoint = await indexer.RebuildAsync(context.Volume, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
+            context.RequiresSnapshot = false;
             context.State = VolumeState.Idle;
             return CreateOperationResponse(context, checkpoint);
+        }
+        catch (NtfsIndexResnapshotRequiredException exception)
+        {
+            await InvalidateCheckpointAsync(context).ConfigureAwait(false);
+            context.LastError = exception.Message;
+            throw new IndexingServiceException(
+                IndexingServiceErrorCode.SnapshotRequired,
+                exception.Message,
+                canRetry: true,
+                exception);
         }
         catch (Exception exception)
         {
@@ -126,11 +137,12 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             context.LastError = null;
             var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
             var saved = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
-            if (saved is null)
+            if (saved is null || context.RequiresSnapshot)
             {
+                context.RequiresSnapshot = true;
                 throw new IndexingServiceException(
                     IndexingServiceErrorCode.SnapshotRequired,
-                    $"{context.Volume.RootPath} has no durable NTFS checkpoint. Build a fresh snapshot first.",
+                    $"{context.Volume.RootPath} has no valid durable NTFS checkpoint. Build a fresh snapshot first.",
                     canRetry: true);
             }
 
@@ -138,8 +150,19 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             var synchronizer = new NtfsIndexSynchronizer(context.NamespaceStore);
             var next = await synchronizer.ApplyNextBatchAsync(context.Volume, checkpoint, cancellationToken)
                 .ConfigureAwait(false);
+            context.RequiresSnapshot = false;
             context.State = VolumeState.Idle;
             return CreateOperationResponse(context, next);
+        }
+        catch (NtfsIndexResnapshotRequiredException exception)
+        {
+            await InvalidateCheckpointAsync(context).ConfigureAwait(false);
+            context.LastError = exception.Message;
+            throw new IndexingServiceException(
+                IndexingServiceErrorCode.SnapshotRequired,
+                exception.Message,
+                canRetry: true,
+                exception);
         }
         catch (Exception exception)
         {
@@ -171,8 +194,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             return new IndexingSearchResponse([]);
         }
 
-        var searchTasks = contexts.Select(async context =>
-            await context.Index.SearchAsync(query, cancellationToken).ConfigureAwait(false)).ToArray();
+        var searchTasks = contexts.Select(context => SearchVolumeAsync(context, query, cancellationToken)).ToArray();
         var perVolumeResults = await Task.WhenAll(searchTasks).ConfigureAwait(false);
 
         var merged = perVolumeResults
@@ -248,20 +270,63 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         }
     }
 
-    private async ValueTask<IndexingVolumeDescriptor> CreateDescriptorAsync(
+    private static async ValueTask<IndexingVolumeDescriptor> CreateDescriptorAsync(
         VolumeContext context,
         CancellationToken cancellationToken)
     {
         var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
         var checkpoint = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
+        var hasCheckpoint = checkpoint is not null && !context.RequiresSnapshot;
+        var state = context.State == VolumeState.Idle && !hasCheckpoint
+            ? "SnapshotRequired"
+            : context.State.ToString();
         return new IndexingVolumeDescriptor(
             context.Volume.VolumeIdentity,
             context.Volume.RootPath,
             context.Volume.Label,
             context.Index.Count,
-            checkpoint is not null,
-            context.State.ToString(),
+            hasCheckpoint,
+            state,
             context.LastError);
+    }
+
+    private static async Task<IReadOnlyList<FileRecord>> SearchVolumeAsync(
+        VolumeContext context,
+        FileSearchQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (!await context.OperationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            return [];
+        }
+
+        try
+        {
+            if (context.RequiresSnapshot)
+            {
+                return [];
+            }
+
+            var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
+            var checkpoint = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
+            if (checkpoint is null)
+            {
+                return [];
+            }
+
+            return await context.Index.SearchAsync(query, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            context.OperationGate.Release();
+        }
+    }
+
+    private static async ValueTask InvalidateCheckpointAsync(VolumeContext context)
+    {
+        context.RequiresSnapshot = true;
+        var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
+        await context.Index.DeleteCheckpointAsync(sourceKey, CancellationToken.None).ConfigureAwait(false);
     }
 
     private static IndexingVolumeOperationResponse CreateOperationResponse(
@@ -289,16 +354,6 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         {
             context.LastError = serviceException.Message;
             return serviceException;
-        }
-
-        if (exception is NtfsIndexResnapshotRequiredException)
-        {
-            context.LastError = exception.Message;
-            return new IndexingServiceException(
-                IndexingServiceErrorCode.SnapshotRequired,
-                exception.Message,
-                canRetry: true,
-                exception);
         }
 
         if (exception is UnauthorizedAccessException ||
@@ -337,13 +392,6 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         Path.GetFullPath(rootPath)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
 
-    private static bool IsProcessElevated()
-    {
-        using var identity = WindowsIdentity.GetCurrent();
-        var principal = new WindowsPrincipal(identity);
-        return principal.IsInRole(WindowsBuiltInRole.Administrator);
-    }
-
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -374,6 +422,8 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         public SemaphoreSlim OperationGate { get; } = new(1, 1);
 
         public VolumeState State { get; set; }
+
+        public bool RequiresSnapshot { get; set; }
 
         public string? LastError { get; set; }
 
