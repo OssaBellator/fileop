@@ -10,6 +10,8 @@ public sealed record FileSearchQuery(
     long? MaximumSize,
     int Limit)
 {
+    public long? ExactSize { get; init; }
+
     public static FileSearchQuery Parse(string? raw, int limit = 200)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
@@ -19,6 +21,7 @@ public sealed record FileSearchQuery(
         var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         long? minimumSize = null;
         long? maximumSize = null;
+        long? exactSize = null;
 
         foreach (var token in Tokenize(raw))
         {
@@ -35,14 +38,17 @@ public sealed record FileSearchQuery(
 
             if (token.StartsWith("size:", StringComparison.OrdinalIgnoreCase))
             {
-                ParseSizeFilter(token[5..], ref minimumSize, ref maximumSize);
+                ParseSizeFilter(token[5..], ref minimumSize, ref maximumSize, ref exactSize);
                 continue;
             }
 
             terms.Add(token);
         }
 
-        return new FileSearchQuery(raw, terms, extensions, minimumSize, maximumSize, limit);
+        return new FileSearchQuery(raw, terms, extensions, minimumSize, maximumSize, limit)
+        {
+            ExactSize = exactSize,
+        };
     }
 
     private static IEnumerable<string> Tokenize(string value)
@@ -78,7 +84,11 @@ public sealed record FileSearchQuery(
         }
     }
 
-    private static void ParseSizeFilter(string value, ref long? minimumSize, ref long? maximumSize)
+    private static void ParseSizeFilter(
+        string value,
+        ref long? minimumSize,
+        ref long? maximumSize,
+        ref long? exactSize)
     {
         var comparison = value.StartsWith('>') ? '>' : value.StartsWith('<') ? '<' : '=';
         var number = comparison == '=' ? value : value[1..];
@@ -97,8 +107,7 @@ public sealed record FileSearchQuery(
                 maximumSize = bytes;
                 break;
             default:
-                minimumSize = bytes;
-                maximumSize = bytes;
+                exactSize = bytes;
                 break;
         }
     }
