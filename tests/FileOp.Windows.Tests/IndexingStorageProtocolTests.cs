@@ -33,6 +33,8 @@ public sealed class IndexingStorageProtocolTests
             Assert.AreEqual(@"C:\Data", response.Analysis.RootPath);
             Assert.AreEqual(300L, response.Analysis.LogicalBytes);
             Assert.AreEqual(384L, response.Analysis.AllocatedBytes);
+            Assert.AreEqual(2, response.Analysis.UniqueFileCount);
+            Assert.AreEqual(0, response.Analysis.HardLinkAliasCount);
             Assert.AreEqual(1, response.Analysis.Entries.Count);
             Assert.AreEqual("Alpha", response.Analysis.Entries[0].Name);
             Assert.AreEqual(32, backend.LastRequest?.MaxEntries);
@@ -95,6 +97,7 @@ public sealed class IndexingStorageProtocolTests
                     384,
                     2,
                     1,
+                    0,
                     1,
                     [new StorageDirectoryEntry(
                         @"C:\Data\Alpha",
@@ -103,7 +106,8 @@ public sealed class IndexingStorageProtocolTests
                         300,
                         384,
                         2,
-                        1)])));
+                        1,
+                        0)])));
         }
 
         public void Dispose()
