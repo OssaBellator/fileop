@@ -8,7 +8,10 @@ public sealed record FileRecord(
     long Length,
     bool IsDirectory,
     DateTimeOffset LastWriteTime,
-    FileAttributes Attributes)
+    FileAttributes Attributes,
+    FileIdentity? Identity = null,
+    FileIdentity? ParentIdentity = null,
+    long? AllocatedLength = null)
 {
     public static FileRecord FromFileSystemInfo(FileSystemInfo info)
     {

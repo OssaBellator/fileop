@@ -57,6 +57,39 @@ public sealed class InMemoryFileIndex : IFileIndex, IDisposable
         return ValueTask.CompletedTask;
     }
 
+    public ValueTask ApplyChangesAsync(IReadOnlyList<FileIndexChange> changes, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        _gate.EnterWriteLock();
+        try
+        {
+            foreach (var change in changes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                switch (change.Kind)
+                {
+                    case FileIndexChangeKind.Upsert when change.Record is { } record:
+                        Upsert(record);
+                        break;
+                    case FileIndexChangeKind.Delete when change.Identity is { } identity:
+                        _records.RemoveAll(item => item.Identity == identity);
+                        break;
+                    default:
+                        throw new InvalidOperationException("The file-index change is missing the data required by its change kind.");
+                }
+            }
+        }
+        finally
+        {
+            _gate.ExitWriteLock();
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
     public ValueTask<IReadOnlyList<FileRecord>> SearchAsync(
         FileSearchQuery query,
         CancellationToken cancellationToken = default)
@@ -93,6 +126,22 @@ public sealed class InMemoryFileIndex : IFileIndex, IDisposable
             .ToArray();
 
         return ValueTask.FromResult(result);
+    }
+
+    private void Upsert(FileRecord record)
+    {
+        var existingIndex = record.Identity is { } identity
+            ? _records.FindIndex(item => item.Identity == identity)
+            : _records.FindIndex(item => string.Equals(item.Path, record.Path, StringComparison.OrdinalIgnoreCase));
+
+        if (existingIndex >= 0)
+        {
+            _records[existingIndex] = record;
+        }
+        else
+        {
+            _records.Add(record);
+        }
     }
 
     private static bool Matches(FileRecord record, FileSearchQuery query)

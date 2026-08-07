@@ -4,53 +4,104 @@
 
 FileOp is a storage operating layer for Windows, not a generic "PC cleaner". The central architectural rule is that search, browsing, storage analytics, duplicate discovery and cleanup should consume a shared filesystem model instead of independently scanning disks.
 
-## Initial component model
+## Component model
 
 ```text
 WinUI application
       |
-      v
-FileOp.Core
-  |-- query parser
-  |-- IFileIndex
-  |-- storage snapshot service
-  |-- bootstrap filesystem crawler
-      |
-      +---- future NTFS MFT/USN source
+      +-----------------------------+
+      |                             |
+      v                             v
+FileOp.Core                   FileOp.Windows
+  |-- query parser              |-- NTFS volume discovery
+  |-- IFileIndex                |-- MFT namespace enumeration
+  |-- stable FileIdentity       |-- USN journal reader
+  |-- index change batches      |-- file-reference path resolver
+  |-- storage snapshots         |
+  |-- fallback crawler          +---- Windows-native provider boundary
+      |                             |
+      +--------------+--------------+
+                     v
+               persistent index
+                 /   |   \
+           search analytics cleanup
 ```
 
-`IFileIndex` is intentionally independent of how records are discovered. The bootstrap crawler uses ordinary Windows/.NET enumeration so the vertical slice works immediately. It must not become the permanent NTFS implementation.
+`FileOp.Core` stays independent of how records are discovered. Windows-specific filesystem control codes and P/Invoke live in `FileOp.Windows` so network, removable and non-NTFS providers can use different implementations without contaminating the search/domain layer.
+
+## NTFS ingestion strategy
+
+The first native NTFS implementation uses supported Windows filesystem controls rather than raw-sector parsing:
+
+1. Discover ready NTFS volumes and record their volume serial numbers.
+2. Open a volume handle (`\\.\C:` style device path).
+3. Query the current journal identity and USN range.
+4. Enumerate MFT-backed namespace records with `FSCTL_ENUM_USN_DATA`.
+5. Reconstruct paths from file-reference and parent-file-reference relationships.
+6. Persist a snapshot and its journal checkpoint.
+7. Apply subsequent `FSCTL_READ_USN_JOURNAL` batches as index mutations.
+8. If the journal identity changes or a saved cursor falls below `LowestValidUsn`, discard the cursor and take a fresh namespace snapshot.
+
+The native parser currently accepts USN record major version 2, which is the 64-bit file-reference format used for the NTFS provider. Unsupported major versions fail explicitly rather than being interpreted using the wrong layout.
+
+### Why this is not yet the final metadata reader
+
+`FSCTL_ENUM_USN_DATA` is an excellent fast namespace/file-identity source, but it is not a complete replacement for parsing NTFS metadata attributes. In particular, FileOp still needs an efficient strategy for:
+
+- logical file size;
+- allocated/compressed size;
+- complete hard-link naming;
+- sparse/compressed stream state;
+- selected timestamps and other attributes that should not require opening every file individually.
+
+Until those are available and stored persistently, the WinUI shell continues to use the existing crawler for its user-visible searchable snapshot. The native layer is compiled in CI so integration problems are caught without silently degrading query correctness.
+
+## File identity and mutation model
+
+Path is not a durable identity because rename and move operations change it. `FileRecord` can therefore carry:
+
+```text
+FileIdentity = (VolumeSerialNumber, FileReferenceNumber)
+ParentIdentity = (VolumeSerialNumber, ParentFileReferenceNumber)
+```
+
+`IFileIndex` supports both initial batch insertion and `ApplyChangesAsync`, with upsert/delete changes keyed by stable identity when available. This is the contract the USN change processor will target.
+
+The in-memory implementation is deliberately simple. The persistent store is expected to provide indexed identity/path lookup and transactional batch application rather than linearly scanning records.
 
 ## Target indexing architecture
 
 ```text
 NTFS volume
-  |-- initial MFT read --------------------+
-  |-- USN change journal ------------------|----> metadata pipeline
-                                           |          |
-Other filesystem provider ----------------+          v
-                                                persistent index
-                                                   /   |   \
-                                             search analytics cleanup
+  |-- MFT namespace snapshot ----------------+
+  |-- USN change journal ---------------------|----> metadata pipeline
+                                             |          |
+Other filesystem provider ------------------+          v
+                                                  persistent index
+                                                     /   |   \
+                                               search analytics cleanup
 ```
 
 ### Constraints
 
 - Initial NTFS discovery should read filesystem metadata rather than recurse through every directory.
 - Incremental changes should be applied from the USN journal.
-- File identity should eventually use volume identity + file ID, not path alone.
+- File identity uses volume identity + file ID, not path alone, whenever the provider supports it.
 - Allocated size, hard links, sparse/compressed state and reparse points must be represented explicitly.
 - Hashes and content extraction are lazy workloads and must not delay filename/path availability.
 - Search results should remain responsive while indexing continues.
 - Network/removable/non-NTFS volumes use provider-specific fallbacks rather than pretending MFT semantics exist everywhere.
+- Journal discontinuity must fail safe into a fresh snapshot, never silently skip changes.
 
 ## Privilege boundary
 
-The desktop UI should run as the user. A future administrative helper will expose a narrow, versioned command surface for operations that really require elevation (partition changes, selected disk operations, etc.). The helper should start only after explicit user action and exit after the operation completes.
+The desktop UI should run as the user. Native read-only discovery may fail on systems where a volume handle is not available to the current token; that is a capability failure, not a reason to run the whole app elevated.
+
+A future administrative helper will expose a narrow, versioned command surface for operations that really require elevation (partition changes, selected disk operations, etc.). The helper should start only after explicit user action and exit after the operation completes.
 
 ## Roadmap
 
-### Milestone 1 — vertical slice
+### Milestone 1 — vertical slice — complete
 
 - WinUI shell
 - safe folder crawler
@@ -59,14 +110,27 @@ The desktop UI should run as the user. A future administrative helper will expos
 - basic `ext:` and `size:` query filters
 - disk-capacity overview
 
-### Milestone 2 — fast NTFS engine
+### Milestone 2 — fast NTFS engine — in progress
 
-- volume discovery
-- MFT parser/provider
-- file-ID-based hierarchy reconstruction
-- USN journal catch-up/tailing
+Implemented:
+
+- NTFS volume discovery and volume identity
+- MFT-backed namespace enumeration via `FSCTL_ENUM_USN_DATA`
+- version-aware USN v2 parser
+- file-ID/parent-ID hierarchy reconstruction
+- USN journal state/checkpoint model
+- incremental journal batch reads
+- journal replacement/overrun detection
+- index upsert/delete mutation contract
+
+Next:
+
 - persistent metadata store
+- metadata hydration for logical/allocated size and selected timestamps
+- full hard-link representation
+- journal-to-index change processor, including rename pairing
 - benchmark harness with multi-million-record synthetic data
+- switch the WinUI search snapshot to the native provider after correctness/performance validation
 
 ### Milestone 3 — file manager
 

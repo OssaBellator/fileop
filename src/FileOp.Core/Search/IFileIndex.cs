@@ -10,6 +10,8 @@ public interface IFileIndex
 
     ValueTask AddBatchAsync(IReadOnlyList<FileRecord> records, CancellationToken cancellationToken = default);
 
+    ValueTask ApplyChangesAsync(IReadOnlyList<FileIndexChange> changes, CancellationToken cancellationToken = default);
+
     ValueTask<IReadOnlyList<FileRecord>> SearchAsync(
         FileSearchQuery query,
         CancellationToken cancellationToken = default);
