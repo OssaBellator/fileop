@@ -9,10 +9,10 @@ The indexer is deliberately not the future disk-administration helper. It expose
 ## Process model
 
 ```text
-FileOp.App (normal user token)
+FileOp.App (normal user token + known PID)
         |
         | random per-session named pipe
-        | current-user-only ACL enforcement
+        | current-user-only ACL + exact client-PID check
         v
 FileOp.Indexer (normal token first; same-account elevation only when supported)
         |
@@ -20,14 +20,16 @@ FileOp.Indexer (normal token first; same-account elevation only when supported)
         +-- metadata hydration / hard-link enumeration
         +-- journal synchronization
         +-- per-volume SQLite ownership
-        +-- search across volume indexes
+        +-- search across valid volume indexes
 ```
 
-The helper accepts one client, remains alive for that desktop session, and exits when the pipe disconnects. It is not installed as an always-running Windows service and it is never permanently elevated.
+The helper accepts one authenticated client, remains alive for that desktop session, and exits when the pipe disconnects. It is not installed as an always-running Windows service and it is never permanently elevated.
 
 ## IPC security
 
-The client generates a cryptographically random pipe name for every helper launch. The server also creates the pipe with `PipeOptions.CurrentUserOnly`, so knowing or guessing a pipe name is not sufficient for another Windows user to connect.
+The client generates a cryptographically random pipe name for every helper launch. The server creates the pipe with `PipeOptions.CurrentUserOnly`, so another Windows user cannot connect.
+
+`CurrentUserOnly` alone is not treated as sufficient for an elevated helper: an unrelated process running under the same user account might otherwise race the desktop for a discovered pipe name. The launcher therefore passes its own process ID to the helper, and after every pipe connection the server calls Windows `GetNamedPipeClientProcessId`. It accepts the channel only when the connected process ID exactly matches the live desktop process that launched it; unrelated same-user clients are disconnected before any protocol request is read.
 
 Protocol messages use a four-byte little-endian length prefix followed by UTF-8 JSON. Frames are capped at 8 MiB before allocation. Every request includes:
 
@@ -49,7 +51,7 @@ The initial service surface is intentionally narrow:
 - `GetStatus` — aggregate and per-volume status;
 - `RebuildVolume` — fresh MFT/metadata namespace snapshot for one volume;
 - `SyncVolume` — apply one durable USN journal batch for one volume;
-- `Search` — query the persistent indexes and merge results across attached NTFS volumes.
+- `Search` — query the persistent indexes and merge results across attached NTFS volumes whose snapshots are currently valid.
 
 There are no file mutation, cleanup, partition, format, TRIM, BitLocker or process-management commands in this protocol.
 
@@ -85,11 +87,15 @@ The database key includes both the NTFS serial-derived identity and the current 
 
 This is an isolation mechanism, not the final volume-identity design. A future provider may additionally persist Windows volume GUID paths or stronger filesystem-specific identities.
 
-## Concurrency
+## Snapshot validity and concurrency
 
 Rebuild and journal synchronization are serialized per volume with a non-blocking operation gate. A second maintenance command for the same volume receives `Busy` rather than queueing invisibly.
 
-Different volumes have separate contexts and failure domains. SQLite readers can continue servicing search requests while another volume is being updated. Search currently queries each attached volume index and deterministically merges the per-volume results.
+A volume is eligible for service-backed search only while it has a durable NTFS checkpoint and is not being rebuilt. Search briefly acquires the same per-volume gate before checking the checkpoint and reading the index, so a rebuild cannot clear and partially repopulate that database underneath a query. Other valid volumes remain searchable while one volume is busy.
+
+If incremental synchronization determines that a fresh snapshot is required, the service deletes that volume's durable checkpoint before returning `SnapshotRequired`. The invalid state therefore survives helper restarts instead of allowing stale rows to look valid again merely because in-memory state was lost.
+
+The current rebuild implementation temporarily omits the affected volume from search. A future shadow-database rebuild followed by an atomic swap can remove that outage without ever exposing a partial snapshot.
 
 ## WinUI cutover policy
 
@@ -98,7 +104,7 @@ This service boundary is a prerequisite for switching the desktop shell to nativ
 The cutover should be a separate change with an explicit fallback path:
 
 1. resolve and verify the installed `FileOp.Indexer` binary;
-2. start an unelevated indexer session;
+2. start an unelevated indexer session and bind it to the desktop PID;
 3. negotiate protocol version;
 4. discover volumes and inspect checkpoints;
 5. use persistent service-backed search when available;
