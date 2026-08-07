@@ -106,6 +106,12 @@ public sealed class InMemoryFileIndex : IFileIndex, IDisposable
             }
         }
 
+        var hasSizeFilter = query.MinimumSize.HasValue || query.MaximumSize.HasValue;
+        if (hasSizeFilter && record.IsDirectory)
+        {
+            return false;
+        }
+
         if (query.MinimumSize is { } minimumSize &&
             query.MaximumSize is { } maximumSize &&
             minimumSize == maximumSize)
