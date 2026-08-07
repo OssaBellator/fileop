@@ -819,16 +819,24 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
 
         try
         {
-            if (!ReferenceEquals(_nativeSession, failedSession))
+            await _searchOperationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
+                if (!ReferenceEquals(_nativeSession, failedSession))
+                {
+                    return true;
+                }
+
+                _nativeSession = null;
+                _primaryVolume = null;
+                await failedSession.DisposeAsync().ConfigureAwait(false);
+                await BuildFallbackAsync(reason, canElevate, cancellationToken).ConfigureAwait(false);
                 return true;
             }
-
-            _nativeSession = null;
-            _primaryVolume = null;
-            await failedSession.DisposeAsync().ConfigureAwait(false);
-            await BuildFallbackAsync(reason, canElevate, cancellationToken).ConfigureAwait(false);
-            return true;
+            finally
+            {
+                _searchOperationGate.Release();
+            }
         }
         finally
         {
