@@ -24,6 +24,8 @@ public sealed class InMemoryStorageAnalyticsTests
         Assert.AreEqual(350L, result.LogicalBytes);
         Assert.AreEqual(448L, result.AllocatedBytes);
         Assert.AreEqual(3, result.FileCount);
+        Assert.AreEqual(3, result.UniqueFileCount);
+        Assert.AreEqual(0, result.HardLinkAliasCount);
         Assert.AreEqual(2, result.DirectoryCount);
         Assert.AreEqual(2, result.DirectEntryCount);
         Assert.AreEqual(@"C:\Data\Alpha", result.Entries[0].Path);
@@ -50,6 +52,31 @@ public sealed class InMemoryStorageAnalyticsTests
         Assert.IsNull(result.Entries.Single(entry => entry.Name == "unknown.bin").AllocatedBytes);
     }
 
+    [TestMethod]
+    public async Task AnalyzeDirectoryCountsHardLinkedNamesOnceForPhysicalUsage()
+    {
+        var identity = new FileIdentity(0xAABB, 0x1122);
+        using var index = new InMemoryFileIndex();
+        await index.AddBatchAsync(
+        [
+            Directory(@"C:\Data\Alpha", @"C:\Data", "Alpha"),
+            Directory(@"C:\Data\Beta", @"C:\Data", "Beta"),
+            File(@"C:\Data\Alpha\shared.bin", @"C:\Data\Alpha", "shared.bin", 100, 128, identity),
+            File(@"C:\Data\Beta\shared.bin", @"C:\Data\Beta", "shared.bin", 100, 128, identity),
+        ]);
+
+        var result = await index.AnalyzeDirectoryAsync(@"C:\Data", maxEntries: 10);
+
+        Assert.AreEqual(200L, result.LogicalBytes);
+        Assert.AreEqual(128L, result.AllocatedBytes);
+        Assert.AreEqual(2, result.FileCount);
+        Assert.AreEqual(1, result.UniqueFileCount);
+        Assert.AreEqual(1, result.HardLinkAliasCount);
+        Assert.AreEqual(128L, result.Entries.Single(entry => entry.Name == "Alpha").AllocatedBytes);
+        Assert.AreEqual(0L, result.Entries.Single(entry => entry.Name == "Beta").AllocatedBytes);
+        Assert.AreEqual(1, result.Entries.Single(entry => entry.Name == "Beta").HardLinkAliasCount);
+    }
+
     private static FileRecord Directory(string path, string parentPath, string name) =>
         new(
             path,
@@ -66,7 +93,8 @@ public sealed class InMemoryStorageAnalyticsTests
         string parentPath,
         string name,
         long logicalBytes,
-        long? allocatedBytes) =>
+        long? allocatedBytes,
+        FileIdentity? identity = null) =>
         new(
             path,
             name,
@@ -76,5 +104,6 @@ public sealed class InMemoryStorageAnalyticsTests
             false,
             DateTimeOffset.UnixEpoch,
             FileAttributes.Normal,
+            Identity: identity,
             AllocatedLength: allocatedBytes);
 }
