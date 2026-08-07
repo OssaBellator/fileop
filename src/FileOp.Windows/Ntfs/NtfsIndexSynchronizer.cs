@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using FileOp.Core.Models;
 
 namespace FileOp.Windows.Ntfs;
@@ -7,18 +8,21 @@ public sealed class NtfsIndexSynchronizer
     private readonly NtfsUsnJournal _journal;
     private readonly NtfsJournalChangeCoalescer _coalescer;
     private readonly NtfsFileMetadataReader _metadataReader;
+    private readonly INtfsHardLinkEnumerator _hardLinkEnumerator;
     private readonly NtfsSqliteNamespaceStore _store;
 
     public NtfsIndexSynchronizer(
         NtfsSqliteNamespaceStore store,
         NtfsUsnJournal? journal = null,
         NtfsJournalChangeCoalescer? coalescer = null,
-        NtfsFileMetadataReader? metadataReader = null)
+        NtfsFileMetadataReader? metadataReader = null,
+        INtfsHardLinkEnumerator? hardLinkEnumerator = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _journal = journal ?? new NtfsUsnJournal();
         _coalescer = coalescer ?? new NtfsJournalChangeCoalescer();
         _metadataReader = metadataReader ?? new NtfsFileMetadataReader();
+        _hardLinkEnumerator = hardLinkEnumerator ?? new NtfsHardLinkEnumerator();
     }
 
     public async ValueTask<NtfsJournalCheckpoint> ApplyNextBatchAsync(
@@ -58,6 +62,8 @@ public sealed class NtfsIndexSynchronizer
     {
         var mutations = new List<NtfsIndexMutation>(changeSet.Changes.Count);
         var directoryOverlay = new Dictionary<FileIdentity, FileRecord>();
+        var mutatedIdentities = new HashSet<FileIdentity>();
+        var refreshedHardLinkIdentities = new HashSet<FileIdentity>();
 
         foreach (var change in changeSet.Changes)
         {
@@ -65,6 +71,24 @@ public sealed class NtfsIndexSynchronizer
 
             var identity = Identity(volume, change.FileReferenceNumber);
             var parentIdentity = Identity(volume, change.ParentFileReferenceNumber);
+
+            if (change.Kind == NtfsJournalChangeKind.HardLinkRefresh)
+            {
+                if (mutatedIdentities.Contains(identity))
+                {
+                    throw new NtfsIndexResnapshotRequiredException(
+                        $"Multiple namespace changes for hard-linked file {identity} occurred in one journal batch. " +
+                        "A fresh snapshot is required to avoid reconciling against uncommitted namespace rows.");
+                }
+
+                refreshedHardLinkIdentities.Add(identity);
+            }
+            else if (refreshedHardLinkIdentities.Contains(identity))
+            {
+                throw new NtfsIndexResnapshotRequiredException(
+                    $"File {identity} changed again after a hard-link refresh in the same journal batch. " +
+                    "A fresh snapshot is required to preserve namespace ordering.");
+            }
 
             switch (change.Kind)
             {
@@ -100,9 +124,22 @@ public sealed class NtfsIndexSynchronizer
                         cancellationToken).ConfigureAwait(false);
                     break;
 
+                case NtfsJournalChangeKind.HardLinkRefresh:
+                    await TranslateHardLinkRefreshAsync(
+                        volume,
+                        change,
+                        identity,
+                        parentIdentity,
+                        directoryOverlay,
+                        mutations,
+                        cancellationToken).ConfigureAwait(false);
+                    break;
+
                 default:
                     throw new ArgumentOutOfRangeException(nameof(changeSet), change.Kind, "Unknown NTFS journal change kind.");
             }
+
+            mutatedIdentities.Add(identity);
         }
 
         return mutations;
@@ -150,6 +187,27 @@ public sealed class NtfsIndexSynchronizer
         {
             throw new NtfsIndexResnapshotRequiredException(
                 $"A rename for {identity} began before the readable journal window and the file has multiple namespace rows. A fresh namespace snapshot is required.");
+        }
+        else if (!isRenameNewWithoutOld && existingRows.Count > 1)
+        {
+            if (exactPath is null)
+            {
+                throw new NtfsIndexResnapshotRequiredException(
+                    $"A metadata change for hard-linked file {identity} referenced unknown path {record.Path}. " +
+                    "A fresh namespace snapshot is required.");
+            }
+
+            foreach (var existing in existingRows)
+            {
+                mutations.Add(NtfsIndexMutation.Upsert(existing with
+                {
+                    Length = metadata.IsDirectory ? 0 : metadata.Length,
+                    IsDirectory = metadata.IsDirectory,
+                    LastWriteTime = metadata.LastWriteTime,
+                    Attributes = metadata.Attributes,
+                    AllocatedLength = metadata.IsDirectory ? 0 : metadata.AllocatedLength,
+                }));
+            }
         }
         else
         {
@@ -236,6 +294,76 @@ public sealed class NtfsIndexSynchronizer
         TrackDirectory(directoryOverlay, record);
     }
 
+    private async ValueTask TranslateHardLinkRefreshAsync(
+        NtfsVolume volume,
+        NtfsJournalChange change,
+        FileIdentity identity,
+        FileIdentity eventParentIdentity,
+        Dictionary<FileIdentity, FileRecord> directoryOverlay,
+        List<NtfsIndexMutation> mutations,
+        CancellationToken cancellationToken)
+    {
+        var metadata = _metadataReader.TryRead(volume, change.FileReferenceNumber);
+        if (metadata is null)
+        {
+            await DeleteKnownIdentityRowsAsync(
+                identity,
+                directoryOverlay,
+                mutations,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var existingRows = await _store.FindByIdentityAsync(identity, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string>? currentLinkPaths = null;
+
+        foreach (var row in existingRows)
+        {
+            try
+            {
+                currentLinkPaths = _hardLinkEnumerator.Enumerate(row.Path);
+                break;
+            }
+            catch (Win32Exception exception) when (IsMissingPathError(exception.NativeErrorCode))
+            {
+                // A removed hard-link path can remain in the persisted snapshot until this
+                // journal record is committed. Try another known alias before failing safe.
+            }
+        }
+
+        var eventPath = await ResolvePathAsync(
+            volume,
+            identity,
+            eventParentIdentity,
+            change.Name,
+            directoryOverlay,
+            cancellationToken).ConfigureAwait(false);
+
+        if (currentLinkPaths is null)
+        {
+            try
+            {
+                currentLinkPaths = _hardLinkEnumerator.Enumerate(eventPath);
+            }
+            catch (Win32Exception exception) when (IsMissingPathError(exception.NativeErrorCode))
+            {
+                throw new NtfsIndexResnapshotRequiredException(
+                    $"Could not find a live namespace path for hard-linked file {identity}. A fresh snapshot is required.",
+                    exception);
+            }
+        }
+
+        mutations.AddRange(NtfsHardLinkNamespacePlanner.PlanRefresh(
+            volume,
+            change,
+            identity,
+            metadata,
+            existingRows,
+            eventPath,
+            eventParentIdentity,
+            currentLinkPaths));
+    }
+
     private async ValueTask DeleteKnownIdentityRowsAsync(
         FileIdentity identity,
         Dictionary<FileIdentity, FileRecord> directoryOverlay,
@@ -317,6 +445,8 @@ public sealed class NtfsIndexSynchronizer
 
     private static FileIdentity Identity(NtfsVolume volume, ulong fileReferenceNumber) =>
         new(volume.VolumeIdentity, fileReferenceNumber);
+
+    private static bool IsMissingPathError(int error) => error is 2 or 3 or 1168;
 
     private static void TrackDirectory(
         Dictionary<FileIdentity, FileRecord> directoryOverlay,

@@ -11,17 +11,20 @@ public sealed class NtfsSnapshotIndexer
     private readonly IIndexCheckpointStore _checkpointStore;
     private readonly NtfsUsnJournal _journal;
     private readonly NtfsFileMetadataReader _metadataReader;
+    private readonly NtfsSnapshotNamespaceExpander _namespaceExpander;
 
     public NtfsSnapshotIndexer(
         IFileIndex index,
         IIndexCheckpointStore checkpointStore,
         NtfsUsnJournal? journal = null,
-        NtfsFileMetadataReader? metadataReader = null)
+        NtfsFileMetadataReader? metadataReader = null,
+        NtfsSnapshotNamespaceExpander? namespaceExpander = null)
     {
         _index = index ?? throw new ArgumentNullException(nameof(index));
         _checkpointStore = checkpointStore ?? throw new ArgumentNullException(nameof(checkpointStore));
         _journal = journal ?? new NtfsUsnJournal();
         _metadataReader = metadataReader ?? new NtfsFileMetadataReader();
+        _namespaceExpander = namespaceExpander ?? new NtfsSnapshotNamespaceExpander();
     }
 
     public async ValueTask<NtfsJournalCheckpoint> RebuildAsync(
@@ -35,6 +38,7 @@ public sealed class NtfsSnapshotIndexer
         var checkpoint = _journal.GetCurrentCheckpoint(volume);
         var entries = _journal.EnumerateMft(volume, checkpoint, cancellationToken).ToArray();
         var paths = NtfsPathResolver.Resolve(volume.RootPath, entries);
+        var directoryFileReferencesByPath = BuildDirectoryFileReferenceMap(entries, paths);
 
         // Invalidate the durable cursor before touching index contents. This is redundant
         // when both interfaces are backed by SqliteFileIndex (ClearAsync also clears its
@@ -63,7 +67,12 @@ public sealed class NtfsSnapshotIndexer
                     continue;
                 }
 
-                records.Add(NtfsFileRecordFactory.Create(volume, path, entry, metadata));
+                records.AddRange(_namespaceExpander.Expand(
+                    volume,
+                    entry,
+                    path,
+                    metadata,
+                    directoryFileReferencesByPath));
             }
 
             if (records.Count == 0)
@@ -85,5 +94,21 @@ public sealed class NtfsSnapshotIndexer
             cancellationToken).ConfigureAwait(false);
 
         return checkpoint;
+    }
+
+    private static Dictionary<string, ulong> BuildDirectoryFileReferenceMap(
+        IReadOnlyList<NtfsMftEntry> entries,
+        IReadOnlyDictionary<ulong, string> paths)
+    {
+        var result = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+        {
+            if (entry.IsDirectory && paths.TryGetValue(entry.FileReferenceNumber, out var path))
+            {
+                result[Path.GetFullPath(path)] = entry.FileReferenceNumber;
+            }
+        }
+
+        return result;
     }
 }

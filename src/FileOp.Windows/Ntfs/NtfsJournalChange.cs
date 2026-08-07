@@ -5,6 +5,7 @@ public enum NtfsJournalChangeKind
     Upsert,
     Delete,
     Rename,
+    HardLinkRefresh,
 }
 
 public sealed record NtfsJournalChange(
