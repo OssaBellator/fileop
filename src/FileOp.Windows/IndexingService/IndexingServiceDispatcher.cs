@@ -19,6 +19,14 @@ public sealed class IndexingServiceDispatcher
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (request.RequestId == Guid.Empty)
+        {
+            return Failure(
+                Guid.Empty,
+                IndexingServiceErrorCode.InvalidRequest,
+                "An indexing service request must include a non-empty request ID.");
+        }
+
         if (request.ProtocolVersion != IndexingServiceProtocol.CurrentVersion)
         {
             return Failure(
@@ -35,7 +43,7 @@ public sealed class IndexingServiceDispatcher
                 IndexingServiceOperation.Hello => Success(
                     request.RequestId,
                     await _backend.HelloAsync(
-                        Deserialize<IndexingHelloRequest>(request.Payload),
+                        DeserializeHello(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
                 IndexingServiceOperation.GetVolumes => Success(
@@ -49,19 +57,19 @@ public sealed class IndexingServiceDispatcher
                 IndexingServiceOperation.RebuildVolume => Success(
                     request.RequestId,
                     await _backend.RebuildVolumeAsync(
-                        Deserialize<IndexingVolumeRequest>(request.Payload),
+                        DeserializeVolumeRequest(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
                 IndexingServiceOperation.SyncVolume => Success(
                     request.RequestId,
                     await _backend.SyncVolumeAsync(
-                        Deserialize<IndexingVolumeRequest>(request.Payload),
+                        DeserializeVolumeRequest(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
                 IndexingServiceOperation.Search => Success(
                     request.RequestId,
                     await _backend.SearchAsync(
-                        Deserialize<IndexingSearchRequest>(request.Payload),
+                        DeserializeSearch(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
                 _ => Failure(
@@ -92,6 +100,44 @@ public sealed class IndexingServiceDispatcher
                 IndexingServiceErrorCode.InternalError,
                 $"The indexing service could not complete the request: {exception.Message}");
         }
+    }
+
+    private static IndexingHelloRequest DeserializeHello(JsonElement payload)
+    {
+        var request = Deserialize<IndexingHelloRequest>(payload);
+        if (string.IsNullOrWhiteSpace(request.ClientName))
+        {
+            throw new JsonException("clientName is required.");
+        }
+
+        return request;
+    }
+
+    private static IndexingVolumeRequest DeserializeVolumeRequest(JsonElement payload)
+    {
+        var request = Deserialize<IndexingVolumeRequest>(payload);
+        if (string.IsNullOrWhiteSpace(request.RootPath))
+        {
+            throw new JsonException("rootPath is required.");
+        }
+
+        if (!Path.IsPathFullyQualified(request.RootPath))
+        {
+            throw new JsonException("rootPath must be an absolute path.");
+        }
+
+        return request;
+    }
+
+    private static IndexingSearchRequest DeserializeSearch(JsonElement payload)
+    {
+        var request = Deserialize<IndexingSearchRequest>(payload);
+        if (request.Limit <= 0)
+        {
+            throw new JsonException("limit must be greater than zero.");
+        }
+
+        return request;
     }
 
     private static T Deserialize<T>(JsonElement payload)
