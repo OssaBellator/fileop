@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/FileOp.Core/FileOp.Core.csproj" />
+  <Project Path="src/FileOp.App/FileOp.App.csproj" />
+</Solution>
