@@ -123,8 +123,6 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
                 CanElevate = false,
             });
 
-            // Prevent an existing service search from reading the same per-volume SQLite
-            // file while a replacement elevated helper may need to rebuild it.
             await _nativeOperationGate.WaitAsync(token).ConfigureAwait(false);
             try
             {
@@ -415,9 +413,6 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
         catch (IndexingServiceRemoteException exception)
             when (exception.Error.Code == IndexingServiceErrorCode.ElevationRequired)
         {
-            // The durable checkpoint is still valid if access was denied before a sync
-            // operation could mutate or invalidate it. Keep the reviewed snapshot usable,
-            // but make its lack of live catch-up explicit and offer helper-only elevation.
             return NativePreparationResult.Ready(
                 session,
                 volume,
@@ -464,7 +459,7 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
         }
     }
 
-    private async Task<CatchUpResult> CatchUpAsync(
+    private static async Task<CatchUpResult> CatchUpAsync(
         IndexingServiceProcessSession session,
         IndexingVolumeRequest request,
         long? startingUsn,
