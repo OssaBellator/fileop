@@ -16,6 +16,9 @@ public sealed class NtfsUsnJournal
     private const uint ShareReadWriteDelete = 0x00000007;
     private const uint OpenExisting = 3;
     private const int ErrorHandleEof = 38;
+    private const int ErrorJournalDeleteInProgress = 1178;
+    private const int ErrorJournalNotActive = 1179;
+    private const int ErrorJournalEntryDeleted = 1181;
     private const int BufferSize = 1024 * 1024;
     private const int UsnRecordV2MinimumLength = 60;
 
@@ -79,6 +82,11 @@ public sealed class NtfsUsnJournal
                     if (error == ErrorHandleEof)
                     {
                         yield break;
+                    }
+
+                    if (IsJournalResetError(error))
+                    {
+                        throw CreateJournalResetException(volume, "enumerating MFT records");
                     }
 
                     throw CreateWin32Exception(error, volume, "enumerate MFT records");
@@ -147,7 +155,13 @@ public sealed class NtfsUsnJournal
                 out var bytesReturned,
                 IntPtr.Zero))
             {
-                throw CreateWin32Exception(Marshal.GetLastWin32Error(), volume, "read the USN journal");
+                var error = Marshal.GetLastWin32Error();
+                if (IsJournalResetError(error))
+                {
+                    throw CreateJournalResetException(volume, "reading changes");
+                }
+
+                throw CreateWin32Exception(error, volume, "read the USN journal");
             }
 
             if (bytesReturned < sizeof(long))
@@ -188,10 +202,11 @@ public sealed class NtfsUsnJournal
                 $"The USN journal for {volume.RootPath} was replaced. A fresh namespace snapshot is required.");
         }
 
-        if (checkpoint.NextUsn < state.LowestValidUsn)
+        var minimumReadableUsn = Math.Max(state.FirstUsn, state.LowestValidUsn);
+        if (checkpoint.NextUsn < minimumReadableUsn)
         {
             throw new NtfsJournalResetException(
-                $"The saved USN {checkpoint.NextUsn} is older than the journal's lowest valid USN {state.LowestValidUsn}. A fresh namespace snapshot is required.");
+                $"The saved USN {checkpoint.NextUsn} is older than the journal's minimum readable USN {minimumReadableUsn}. A fresh namespace snapshot is required.");
         }
 
         if (checkpoint.NextUsn > state.NextUsn)
@@ -315,6 +330,12 @@ public sealed class NtfsUsnJournal
 
         return handle;
     }
+
+    private static bool IsJournalResetError(int error) =>
+        error is ErrorJournalDeleteInProgress or ErrorJournalNotActive or ErrorJournalEntryDeleted;
+
+    private static NtfsJournalResetException CreateJournalResetException(NtfsVolume volume, string operation) =>
+        new($"The USN journal for {volume.RootPath} changed while {operation}. A fresh namespace snapshot is required.");
 
     private static Win32Exception CreateWin32Exception(int error, NtfsVolume volume, string operation) =>
         new(error, $"Could not {operation} on {volume.RootPath}: {new Win32Exception(error).Message}");
