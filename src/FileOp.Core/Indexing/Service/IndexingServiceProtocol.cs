@@ -28,6 +28,7 @@ public enum IndexingServiceErrorCode
     SnapshotRequired,
     ElevationRequired,
     Busy,
+    ResponseTooLarge,
     InternalError,
 }
 
