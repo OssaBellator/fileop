@@ -66,10 +66,11 @@ public static class NtfsVolumeDiscovery
 
     private static bool TryGetVolumeGuidPath(string rootPath, out string? volumeGuidPath)
     {
-        var buffer = new StringBuilder(64);
-        if (GetVolumeNameForVolumeMountPointW(rootPath, buffer, buffer.Capacity))
+        var buffer = new char[64];
+        if (GetVolumeNameForVolumeMountPointW(rootPath, buffer, buffer.Length))
         {
-            volumeGuidPath = buffer.ToString();
+            var terminator = Array.IndexOf(buffer, '\0');
+            volumeGuidPath = new string(buffer, 0, terminator >= 0 ? terminator : buffer.Length);
             return true;
         }
 
@@ -93,6 +94,6 @@ public static class NtfsVolumeDiscovery
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetVolumeNameForVolumeMountPointW(
         string lpszVolumeMountPoint,
-        StringBuilder lpszVolumeName,
+        [Out] char[] lpszVolumeName,
         int cchBufferLength);
 }
