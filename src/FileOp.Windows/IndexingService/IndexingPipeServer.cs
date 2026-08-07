@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using FileOp.Core.Indexing.Service;
 using Microsoft.Win32.SafeHandles;
 
@@ -56,6 +57,19 @@ public sealed class IndexingPipeServer
             try
             {
                 await IndexingPipeTransport.WriteAsync(pipe, response, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidDataException) when (response.Success)
+            {
+                var tooLarge = new IndexingServiceResponse(
+                    IndexingServiceProtocol.CurrentVersion,
+                    request.RequestId,
+                    false,
+                    JsonSerializer.SerializeToElement<object?>(null),
+                    new IndexingServiceError(
+                        IndexingServiceErrorCode.ResponseTooLarge,
+                        "The indexing service result exceeded the IPC frame limit. Retry with a smaller result limit.",
+                        CanRetry: true));
+                await IndexingPipeTransport.WriteAsync(pipe, tooLarge, cancellationToken).ConfigureAwait(false);
             }
             catch (IOException) when (!pipe.IsConnected)
             {
