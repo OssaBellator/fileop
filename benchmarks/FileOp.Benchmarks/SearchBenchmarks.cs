@@ -5,7 +5,7 @@ using FileOp.Core.Search;
 namespace FileOp.Benchmarks;
 
 [MemoryDiagnoser]
-public sealed class SearchBenchmarks
+public sealed class SearchBenchmarks : IDisposable
 {
     private SqliteFileIndex? _index;
     private string? _databasePath;
@@ -60,7 +60,9 @@ public sealed class SearchBenchmarks
     }
 
     [GlobalCleanup]
-    public void Cleanup()
+    public void Cleanup() => Dispose();
+
+    public void Dispose()
     {
         _index?.Dispose();
         _index = null;
@@ -81,6 +83,8 @@ public sealed class SearchBenchmarks
                 // SQLite pooling can keep a benchmark database alive briefly after cleanup.
             }
         }
+
+        _databasePath = null;
     }
 
     private SqliteFileIndex Index =>
@@ -88,7 +92,7 @@ public sealed class SearchBenchmarks
 
     private static FileRecord CreateRecord(int ordinal)
     {
-        var extension = ordinal % 5 switch
+        var extension = (ordinal % 5) switch
         {
             0 => ".bin",
             1 => ".log",
