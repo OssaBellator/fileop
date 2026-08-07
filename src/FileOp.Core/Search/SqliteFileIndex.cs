@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using FileOp.Core.Models;
 using Microsoft.Data.Sqlite;
@@ -39,17 +40,17 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
     {
         get
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            ThrowIfDisposed();
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = "SELECT item_count FROM index_metadata WHERE id = 1;";
-            return checked(Convert.ToInt32((long)(command.ExecuteScalar() ?? 0L)));
+            return checked((int)(long)(command.ExecuteScalar() ?? 0L));
         }
     }
 
     public async ValueTask ClearAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfDisposed();
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -69,7 +70,7 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(records);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfDisposed();
 
         if (records.Count == 0)
         {
@@ -103,7 +104,7 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(changes);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfDisposed();
 
         if (changes.Count == 0)
         {
@@ -116,21 +117,12 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
             using var connection = OpenConnection();
             using var transaction = connection.BeginTransaction();
             using var upsert = CreateUpsertCommand(connection, transaction);
-            using var delete = connection.CreateCommand();
-            delete.Transaction = transaction;
-            delete.CommandText = """
-                DELETE FROM files
-                WHERE volume_serial = @volume_serial
-                  AND file_reference = @file_reference
-                  AND (@path IS NULL OR path = @path COLLATE NOCASE);
-                """;
-            delete.Parameters.Add("@volume_serial", SqliteType.Integer);
-            delete.Parameters.Add("@file_reference", SqliteType.Integer);
-            delete.Parameters.Add("@path", SqliteType.Text);
+            using var delete = CreateDeleteCommand(connection, transaction);
 
             foreach (var change in changes)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
                 switch (change.Kind)
                 {
                     case FileIndexChangeKind.Upsert when change.Record is { } record:
@@ -146,7 +138,8 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
                         break;
 
                     default:
-                        throw new InvalidOperationException("The file-index change is missing the data required by its change kind.");
+                        throw new InvalidOperationException(
+                            "The file-index change is missing the data required by its change kind.");
                 }
             }
 
@@ -163,7 +156,7 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
 
         using var connection = OpenConnection();
@@ -185,11 +178,15 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceKey);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfDisposed();
 
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT generation, position, updated_utc_ticks FROM source_checkpoints WHERE source_key = @source_key;";
+        command.CommandText = """
+            SELECT generation, position, updated_utc_ticks
+            FROM source_checkpoints
+            WHERE source_key = @source_key;
+            """;
         command.Parameters.AddWithValue("@source_key", sourceKey);
 
         using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -211,7 +208,7 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
         ArgumentException.ThrowIfNullOrWhiteSpace(checkpoint.SourceKey);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfDisposed();
 
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -243,7 +240,7 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceKey);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfDisposed();
 
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -272,14 +269,12 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
                 id INTEGER PRIMARY KEY CHECK(id = 1),
                 version INTEGER NOT NULL
             );
-
             INSERT OR IGNORE INTO schema_info(id, version) VALUES (1, {{SchemaVersion}});
 
             CREATE TABLE IF NOT EXISTS index_metadata(
                 id INTEGER PRIMARY KEY CHECK(id = 1),
                 item_count INTEGER NOT NULL
             );
-
             INSERT OR IGNORE INTO index_metadata(id, item_count) VALUES (1, 0);
 
             CREATE TABLE IF NOT EXISTS files(
@@ -333,10 +328,11 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
 
         using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "SELECT version FROM schema_info WHERE id = 1;";
-        var version = Convert.ToInt32(versionCommand.ExecuteScalar());
+        var version = Convert.ToInt32(versionCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
         if (version != SchemaVersion)
         {
-            throw new InvalidDataException($"Unsupported FileOp index schema version {version}; expected {SchemaVersion}.");
+            throw new InvalidDataException(
+                $"Unsupported FileOp index schema version {version}; expected {SchemaVersion}.");
         }
     }
 
@@ -351,7 +347,9 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
         return connection;
     }
 
-    private static SqliteCommand CreateUpsertCommand(SqliteConnection connection, SqliteTransaction transaction)
+    private static SqliteCommand CreateUpsertCommand(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
     {
         var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -381,27 +379,46 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
                 parent_volume_serial = excluded.parent_volume_serial,
                 parent_file_reference = excluded.parent_file_reference;
             """;
-
-        foreach (var parameter in new[]
-                 {
-                     "@path", "@path_norm", "@name", "@name_norm", "@parent_path", "@extension", "@extension_norm",
-                     "@length", "@allocated_length", "@is_directory", "@last_write_utc_ticks", "@attributes",
-                     "@volume_serial", "@file_reference", "@parent_volume_serial", "@parent_file_reference",
-                 })
-        {
-            command.Parameters.Add(parameter, SqliteType.Text);
-        }
-
-        command.Parameters["@length"].SqliteType = SqliteType.Integer;
-        command.Parameters["@allocated_length"].SqliteType = SqliteType.Integer;
-        command.Parameters["@is_directory"].SqliteType = SqliteType.Integer;
-        command.Parameters["@last_write_utc_ticks"].SqliteType = SqliteType.Integer;
-        command.Parameters["@attributes"].SqliteType = SqliteType.Integer;
-        command.Parameters["@volume_serial"].SqliteType = SqliteType.Integer;
-        command.Parameters["@file_reference"].SqliteType = SqliteType.Integer;
-        command.Parameters["@parent_volume_serial"].SqliteType = SqliteType.Integer;
-        command.Parameters["@parent_file_reference"].SqliteType = SqliteType.Integer;
+        AddRecordParameters(command);
         return command;
+    }
+
+    private static SqliteCommand CreateDeleteCommand(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            DELETE FROM files
+            WHERE volume_serial = @volume_serial
+              AND file_reference = @file_reference
+              AND (@path IS NULL OR path = @path COLLATE NOCASE);
+            """;
+        command.Parameters.Add("@volume_serial", SqliteType.Integer);
+        command.Parameters.Add("@file_reference", SqliteType.Integer);
+        command.Parameters.Add("@path", SqliteType.Text);
+        return command;
+    }
+
+    private static void AddRecordParameters(SqliteCommand command)
+    {
+        command.Parameters.Add("@path", SqliteType.Text);
+        command.Parameters.Add("@path_norm", SqliteType.Text);
+        command.Parameters.Add("@name", SqliteType.Text);
+        command.Parameters.Add("@name_norm", SqliteType.Text);
+        command.Parameters.Add("@parent_path", SqliteType.Text);
+        command.Parameters.Add("@extension", SqliteType.Text);
+        command.Parameters.Add("@extension_norm", SqliteType.Text);
+        command.Parameters.Add("@length", SqliteType.Integer);
+        command.Parameters.Add("@allocated_length", SqliteType.Integer);
+        command.Parameters.Add("@is_directory", SqliteType.Integer);
+        command.Parameters.Add("@last_write_utc_ticks", SqliteType.Integer);
+        command.Parameters.Add("@attributes", SqliteType.Integer);
+        command.Parameters.Add("@volume_serial", SqliteType.Integer);
+        command.Parameters.Add("@file_reference", SqliteType.Integer);
+        command.Parameters.Add("@parent_volume_serial", SqliteType.Integer);
+        command.Parameters.Add("@parent_file_reference", SqliteType.Integer);
     }
 
     private static void BindRecord(SqliteCommand command, FileRecord record)
@@ -414,11 +431,13 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
         command.Parameters["@extension"].Value = record.Extension;
         command.Parameters["@extension_norm"].Value = record.Extension.TrimStart('.').ToLowerInvariant();
         command.Parameters["@length"].Value = record.Length;
-        command.Parameters["@allocated_length"].Value = record.AllocatedLength is { } allocated ? allocated : DBNull.Value;
+        command.Parameters["@allocated_length"].Value = record.AllocatedLength is { } allocated
+            ? allocated
+            : DBNull.Value;
         command.Parameters["@is_directory"].Value = record.IsDirectory ? 1 : 0;
         command.Parameters["@last_write_utc_ticks"].Value = record.LastWriteTime.UtcDateTime.Ticks;
         command.Parameters["@attributes"].Value = (long)record.Attributes;
-        BindIdentity(command, "", record.Identity);
+        BindIdentity(command, string.Empty, record.Identity);
         BindIdentity(command, "parent_", record.ParentIdentity);
     }
 
@@ -427,8 +446,8 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
         command.Parameters[$"@{prefix}volume_serial"].Value = identity is { } value
             ? ToSqlInteger(value.VolumeSerialNumber)
             : DBNull.Value;
-        command.Parameters[$"@{prefix}file_reference"].Value = identity is { } reference
-            ? ToSqlInteger(reference.FileReferenceNumber)
+        command.Parameters[$"@{prefix}file_reference"].Value = identity is { } value
+            ? ToSqlInteger(value.FileReferenceNumber)
             : DBNull.Value;
     }
 
@@ -440,10 +459,12 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
         for (var index = 0; index < query.Terms.Count; index++)
         {
             var parameterName = $"@term{index}";
-            var term = query.Terms[index].ToLowerInvariant();
-            command.Parameters.AddWithValue(parameterName, term);
+            command.Parameters.AddWithValue(parameterName, query.Terms[index].ToLowerInvariant());
             where.Add($"(instr(name_norm, {parameterName}) > 0 OR instr(path_norm, {parameterName}) > 0)");
-            score.Add($"CASE WHEN name_norm = {parameterName} THEN 100 WHEN name_norm LIKE {parameterName} || '%' THEN 50 WHEN instr(name_norm, {parameterName}) > 0 THEN 20 ELSE 5 END");
+            score.Add(
+                $"CASE WHEN name_norm = {parameterName} THEN 100 " +
+                $"WHEN name_norm LIKE {parameterName} || '%' THEN 50 " +
+                $"WHEN instr(name_norm, {parameterName}) > 0 THEN 20 ELSE 5 END");
         }
 
         if (query.Extensions.Count > 0)
@@ -460,8 +481,7 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
             where.Add($"extension_norm IN ({string.Join(", ", extensionParameters)})");
         }
 
-        var hasSizeFilter = query.ExactSize.HasValue || query.MinimumSize.HasValue || query.MaximumSize.HasValue;
-        if (hasSizeFilter)
+        if (query.ExactSize.HasValue || query.MinimumSize.HasValue || query.MaximumSize.HasValue)
         {
             where.Add("is_directory = 0");
         }
@@ -486,25 +506,27 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
 
         command.Parameters.AddWithValue("@limit", query.Limit);
 
-        var builder = new StringBuilder();
-        builder.Append("SELECT path, name, parent_path, extension, length, is_directory, last_write_utc_ticks, attributes, ");
-        builder.Append("volume_serial, file_reference, parent_volume_serial, parent_file_reference, allocated_length, ");
-        builder.Append(score.Count == 0 ? "0" : string.Join(" + ", score));
-        builder.Append(" AS score FROM files");
+        var sql = new StringBuilder(
+            "SELECT path, name, parent_path, extension, length, is_directory, " +
+            "last_write_utc_ticks, attributes, volume_serial, file_reference, " +
+            "parent_volume_serial, parent_file_reference, allocated_length, ");
+        sql.Append(score.Count == 0 ? "0" : string.Join(" + ", score));
+        sql.Append(" AS score FROM files");
+
         if (where.Count > 0)
         {
-            builder.Append(" WHERE ").Append(string.Join(" AND ", where));
+            sql.Append(" WHERE ").Append(string.Join(" AND ", where));
         }
 
-        builder.Append(" ORDER BY score DESC, name_norm ASC LIMIT @limit;");
-        command.CommandText = builder.ToString();
+        sql.Append(" ORDER BY score DESC, name_norm ASC LIMIT @limit;");
+        command.CommandText = sql.ToString();
     }
 
     private static FileRecord ReadRecord(SqliteDataReader reader)
     {
         var identity = ReadIdentity(reader, 8, 9);
         var parentIdentity = ReadIdentity(reader, 10, 11);
-        var allocatedLength = reader.IsDBNull(12) ? null : reader.GetInt64(12);
+        long? allocatedLength = reader.IsDBNull(12) ? null : reader.GetInt64(12);
 
         return new FileRecord(
             reader.GetString(0),
@@ -520,7 +542,10 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
             allocatedLength);
     }
 
-    private static FileIdentity? ReadIdentity(SqliteDataReader reader, int volumeIndex, int referenceIndex)
+    private static FileIdentity? ReadIdentity(
+        SqliteDataReader reader,
+        int volumeIndex,
+        int referenceIndex)
     {
         if (reader.IsDBNull(volumeIndex) || reader.IsDBNull(referenceIndex))
         {
@@ -531,6 +556,8 @@ public sealed class SqliteFileIndex : IFileIndex, IIndexCheckpointStore, IDispos
             FromSqlInteger(reader.GetInt64(volumeIndex)),
             FromSqlInteger(reader.GetInt64(referenceIndex)));
     }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
     private static long ToSqlInteger(ulong value) => unchecked((long)value);
 
