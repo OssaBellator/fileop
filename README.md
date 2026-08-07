@@ -6,15 +6,15 @@ The product direction is to combine instant file search, power-user file managem
 
 ## Status
 
-The current implementation has two engine layers:
+The current implementation has three layers:
 
 - `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, in-memory and SQLite-backed indexes, checkpoint persistence and the fallback bounded-channel filesystem crawler.
-- `FileOp.Windows` contains the Windows/NTFS-specific engine foundation: NTFS volume discovery, MFT namespace enumeration through `FSCTL_ENUM_USN_DATA`, USN journal querying/reading, record parsing and file-reference hierarchy reconstruction.
-- `FileOp.App` is the WinUI 3 desktop shell using Windows App SDK 2.3.1. It still uses the safe crawler for its searchable snapshot while the native metadata pipeline is completed and validated.
+- `FileOp.Windows` contains the Windows/NTFS engine: NTFS volume discovery, MFT namespace enumeration through `FSCTL_ENUM_USN_DATA`, USN journal querying/reading, record parsing, file-reference hierarchy reconstruction, file-ID metadata hydration, rename-safe journal normalization and transactional namespace synchronization.
+- `FileOp.App` is the WinUI 3 desktop shell using Windows App SDK 2.3.1. It still uses the safe crawler for its searchable snapshot while the native namespace model and privilege/service boundary are completed and validated.
 
-File records can now carry stable NTFS-style `(volume serial, file reference)` identities, and `IFileIndex` supports upsert/delete change batches so journal events can update an index instead of forcing a rescan.
+The Windows engine can now read logical size, allocated size, link count, timestamps and attributes by NTFS file reference, pair journal rename events, update directory subtrees without leaving stale descendant paths, and commit index mutations together with the durable USN checkpoint.
 
-The native NTFS layer intentionally does **not** replace the crawler yet. `FSCTL_ENUM_USN_DATA` provides fast namespace/file-reference information but is not sufficient by itself for complete logical size, allocated size, all hard-link names and other metadata FileOp needs. The next engine work is targeted/native metadata hydration plus journal-to-index processing before switching the app's default indexer.
+The native NTFS layer intentionally does **not** replace the crawler in the UI yet. The current snapshot path resolver still represents one namespace path per file reference, so it is not a complete hard-link enumerator. The next engine work is a complete namespace snapshot model, an indexing service/privilege boundary, and performance benchmarks before switching the app's default indexer.
 
 ## Query examples
 
@@ -38,9 +38,11 @@ Build the core library on any supported .NET platform:
 dotnet build src/FileOp.Core/FileOp.Core.csproj
 ```
 
-Build the Windows app and native engine on Windows:
+Build the native engine, run its regression tests and build the Windows app on Windows:
 
 ```powershell
+dotnet build src/FileOp.Windows/FileOp.Windows.csproj
+dotnet test tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj
 dotnet build src/FileOp.App/FileOp.App.csproj -p:Platform=x64
 ```
 
@@ -51,6 +53,8 @@ src/
   FileOp.Core/       Search/index/storage domain and cross-platform services
   FileOp.Windows/    Windows-native NTFS/USN engine
   FileOp.App/        WinUI 3 desktop application
+tests/
+  FileOp.Windows.Tests/  NTFS journal/persistence regression tests
 docs/
   architecture.md    Architectural decisions and roadmap
 ```
