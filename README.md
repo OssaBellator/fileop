@@ -8,13 +8,13 @@ The product direction is to combine instant file search, power-user file managem
 
 The current implementation has two engine layers:
 
-- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, an in-memory index and the fallback bounded-channel filesystem crawler.
+- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, in-memory and SQLite-backed indexes, checkpoint persistence and the fallback bounded-channel filesystem crawler.
 - `FileOp.Windows` contains the Windows/NTFS-specific engine foundation: NTFS volume discovery, MFT namespace enumeration through `FSCTL_ENUM_USN_DATA`, USN journal querying/reading, record parsing and file-reference hierarchy reconstruction.
-- `FileOp.App` is the WinUI 3 desktop shell using Windows App SDK 2.3.1. It still uses the safe crawler for its searchable snapshot while the native engine is validated and the persistent metadata store is built.
+- `FileOp.App` is the WinUI 3 desktop shell using Windows App SDK 2.3.1. It still uses the safe crawler for its searchable snapshot while the native metadata pipeline is completed and validated.
 
 File records can now carry stable NTFS-style `(volume serial, file reference)` identities, and `IFileIndex` supports upsert/delete change batches so journal events can update an index instead of forcing a rescan.
 
-The native NTFS layer intentionally does **not** replace the crawler yet. `FSCTL_ENUM_USN_DATA` provides fast namespace/file-reference information but is not sufficient by itself for complete logical size, allocated size, all hard-link names and other metadata FileOp needs. The next engine work is persistent metadata plus targeted/native metadata hydration before switching the app's default indexer.
+The native NTFS layer intentionally does **not** replace the crawler yet. `FSCTL_ENUM_USN_DATA` provides fast namespace/file-reference information but is not sufficient by itself for complete logical size, allocated size, all hard-link names and other metadata FileOp needs. The next engine work is targeted/native metadata hydration plus journal-to-index processing before switching the app's default indexer.
 
 ## Query examples
 
