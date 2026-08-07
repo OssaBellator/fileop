@@ -1,6 +1,8 @@
 using FileOp.Core.Models;
 using FileOp.Core.Search;
 using FileOp.Windows.Ntfs;
+using Microsoft.Data.Sqlite;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace FileOp.Windows.Tests;
 
