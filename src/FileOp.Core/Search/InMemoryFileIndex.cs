@@ -157,15 +157,33 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
             var recordsByPath = _records.ToDictionary(
                 static record => record.Path,
                 StringComparer.OrdinalIgnoreCase);
+            var scopedRecords = new List<(FileRecord Record, string DirectPath)>();
 
             foreach (var record in _records)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var directPath = FindDirectChildPath(record, normalizedRoot);
-                if (directPath is null)
+                if (directPath is not null)
                 {
-                    continue;
+                    scopedRecords.Add((record, directPath));
                 }
+            }
+
+            var canonicalHardLinkPaths = scopedRecords
+                .Where(static item => !item.Record.IsDirectory && item.Record.Identity.HasValue)
+                .GroupBy(static item => item.Record.Identity!.Value)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => group
+                        .Select(static item => item.Record.Path)
+                        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+                        .First());
+
+            foreach (var item in scopedRecords)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var record = item.Record;
+                var directPath = item.DirectPath;
 
                 if (!aggregates.TryGetValue(directPath, out var aggregate))
                 {
@@ -177,7 +195,13 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
                     aggregates.Add(directPath, aggregate);
                 }
 
-                aggregate.Add(record);
+                var ownsPhysicalAllocation = record.IsDirectory ||
+                    record.Identity is null ||
+                    string.Equals(
+                        canonicalHardLinkPaths[record.Identity.Value],
+                        record.Path,
+                        StringComparison.OrdinalIgnoreCase);
+                aggregate.Add(record, ownsPhysicalAllocation);
             }
         }
         finally
@@ -204,6 +228,7 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
             allocatedBytes,
             allEntries.Sum(static entry => entry.FileCount),
             allEntries.Sum(static entry => entry.DirectoryCount),
+            allEntries.Sum(static entry => entry.HardLinkAliasCount),
             allEntries.Length,
             allEntries.Take(maxEntries).ToArray()));
     }
@@ -356,6 +381,7 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
         private bool _allocatedKnown = true;
         private int _fileCount;
         private int _directoryCount;
+        private int _hardLinkAliasCount;
 
         public MutableStorageAggregate(string path, string name, bool isDirectory)
         {
@@ -372,7 +398,7 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
 
         public long LogicalBytes { get; private set; }
 
-        public void Add(FileRecord record)
+        public void Add(FileRecord record, bool ownsPhysicalAllocation)
         {
             if (record.IsDirectory)
             {
@@ -382,6 +408,12 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
 
             _fileCount++;
             LogicalBytes += record.Length;
+            if (!ownsPhysicalAllocation)
+            {
+                _hardLinkAliasCount++;
+                return;
+            }
+
             if (record.AllocatedLength is { } allocatedLength)
             {
                 _allocatedBytes += allocatedLength;
@@ -399,6 +431,7 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
             LogicalBytes,
             _allocatedKnown ? _allocatedBytes : null,
             _fileCount,
-            _directoryCount);
+            _directoryCount,
+            _hardLinkAliasCount);
     }
 }
