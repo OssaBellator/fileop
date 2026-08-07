@@ -45,7 +45,7 @@ FileOp.Benchmarks
 
 The native NTFS implementation uses supported Windows filesystem controls rather than recursively opening every directory:
 
-1. Discover ready NTFS volumes and record their volume serial numbers.
+1. Discover ready NTFS volumes, their serial numbers and the stable Windows volume GUID path when available.
 2. Open a volume handle (`\\.\C:` style device path).
 3. Query the current journal identity and USN range.
 4. Enumerate MFT-backed namespace records with `FSCTL_ENUM_USN_DATA`.
@@ -81,7 +81,7 @@ This preserves `size:` query semantics while the native provider evolves. It is 
 Persistent rows are keyed by path because one NTFS file can have multiple names. File identity is an indexed relationship, not a unique row key:
 
 ```text
-physical file identity  (volume serial, file reference)
+physical file identity  (provider volume token, file reference)
           |
           +-- C:\Work\artifact.bin
           +-- C:\Archive\artifact.bin
@@ -106,15 +106,15 @@ Directory renames are applied as subtree moves. Updating only the renamed direct
 Path is not a durable identity because rename, move and hard-link operations change the namespace without necessarily changing the underlying file. `FileRecord` can therefore carry:
 
 ```text
-FileIdentity = (VolumeSerialNumber, FileReferenceNumber)
-ParentIdentity = (VolumeSerialNumber, ParentFileReferenceNumber)
+FileIdentity = (VolumeIdentity, FileReferenceNumber)
+ParentIdentity = (VolumeIdentity, ParentFileReferenceNumber)
 ```
 
 The generic `IFileIndex` supports initial insertion and stable-identity upsert/delete changes. `FileOp.Windows` adds namespace-aware move and reconciliation semantics on top of the SQLite schema for NTFS journal processing.
 
-NTFS volume serials are only 32-bit and can collide across attached volumes. The service therefore does not target a volume by serial alone: protocol requests include both the serial-derived identity and current root path. Per-volume database names include both values as well, so a drive-letter change does not silently reuse stale absolute paths.
+Raw NTFS volume serial numbers are only 32-bit and can collide across disks. When Windows exposes a `\\?\Volume{GUID}\` mount identity, `NtfsVolume` deterministically hashes that 128-bit GUID into the 64-bit provider volume token stored by `FileIdentity`; serial-only identity remains a fallback for environments/tests where a volume GUID is unavailable. This removes ordinary cross-volume serial collisions from the file-identity namespace while preserving the existing 64-bit index schema.
 
-A future provider may additionally persist Windows volume GUID paths or stronger filesystem-specific volume identities.
+Protocol requests also carry the current root path because persisted namespace paths are absolute. A drive-letter change therefore uses a fresh per-root database even though the underlying volume identity stays stable, rather than serving paths under the previous mount letter.
 
 ## Search performance strategy
 
@@ -130,7 +130,7 @@ The benchmark project is compiled in CI but long benchmark runs remain manual so
 
 ## Indexing service boundary
 
-`FileOp.Indexer` owns native NTFS indexing and persistent index writes for a desktop session. It accepts exactly one client and exits after that client disconnects. It is not an always-running Windows service.
+`FileOp.Indexer` owns native NTFS indexing and persistent index writes for a desktop session. It accepts exactly one authenticated client and exits after that client disconnects. It is not an always-running Windows service.
 
 Version 1 exposes only:
 
@@ -140,7 +140,7 @@ Version 1 exposes only:
 - one incremental USN synchronization batch for one volume;
 - search across valid attached-volume indexes.
 
-The pipe protocol uses a random per-session name, `PipeOptions.CurrentUserOnly`, non-empty request IDs, strict protocol-version validation and an 8 MiB frame cap. Required DTO fields are validated after deserialization rather than trusting serializer defaults.
+The pipe protocol uses a random per-session name, `PipeOptions.CurrentUserOnly`, exact connected-client PID verification, non-empty request IDs, strict protocol-version validation and an 8 MiB frame cap. Required DTO fields are validated after deserialization rather than trusting serializer defaults. If a successful response would exceed the frame cap, the server substitutes a retryable `ResponseTooLarge` error and keeps the session alive.
 
 ### Per-volume persistence and validity
 
@@ -158,7 +158,7 @@ The desktop UI always remains `asInvoker`. The helper starts unelevated first. A
 
 The current per-user pipe model permits UAC relaunch only for a limited split administrator token, where elevation retains the same Windows account SID. Credential-over-the-shoulder elevation from a standard account is deliberately unsupported because it can produce a different administrator identity, which would conflict with the current-user-only pipe and resolve a different account's LocalAppData.
 
-The helper chooses its own persistent root under `LocalApplicationData\FileOp\Index`; an elevated process does not accept an arbitrary database path from its command line.
+The helper chooses its own persistent root under `LocalApplicationData\FileOp\Index`; an elevated process does not accept an arbitrary database path from its command line. The server additionally verifies the connected pipe client's process ID matches the desktop process that launched the helper, preventing an unrelated same-user process from claiming the privileged channel first.
 
 Production WinUI packaging must resolve and verify the installed `FileOp.Indexer` executable before offering elevation. Supporting different-user credential elevation requires a separately reviewed Windows service/ACL design rather than weakening the current pipe boundary.
 
@@ -186,7 +186,7 @@ Other filesystem provider --------------------+    per-volume metadata
 
 - Initial NTFS discovery should read filesystem metadata rather than recurse through every directory.
 - Incremental changes are applied from the USN journal.
-- File identity uses volume identity + file ID, not path alone, whenever the provider supports it.
+- File identity uses a stable provider volume token + file ID, not path alone, whenever the provider supports it.
 - Multiple namespace rows may share one physical file identity.
 - Allocated size, hard links, sparse/compressed state and reparse points must be represented explicitly.
 - Hashes and content extraction are lazy workloads and must not delay filename/path availability.
@@ -213,7 +213,7 @@ Other filesystem provider --------------------+    per-volume metadata
 
 Implemented:
 
-- NTFS volume discovery and volume identity
+- NTFS volume discovery and GUID-backed provider volume identity
 - MFT-backed namespace enumeration via `FSCTL_ENUM_USN_DATA`
 - version-aware USN v2 parser
 - file-ID/parent-ID hierarchy reconstruction
@@ -234,9 +234,10 @@ Implemented:
 - synthetic 100k/1M persistent-index benchmark harness
 - versioned indexing service protocol
 - on-demand `FileOp.Indexer` process boundary
-- current-user named-pipe client/server transport
+- current-user + exact-client-PID named-pipe authentication
+- bounded responses with retryable oversized-result handling
 - structured capability/error contract
-- per-volume persistent index isolation
+- per-volume persistent index isolation and durable invalidation
 - same-account helper-only UAC elevation policy
 
 Next:
