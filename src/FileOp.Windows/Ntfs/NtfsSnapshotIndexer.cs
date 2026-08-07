@@ -96,7 +96,7 @@ public sealed class NtfsSnapshotIndexer
         return checkpoint;
     }
 
-    private static IReadOnlyDictionary<string, ulong> BuildDirectoryFileReferenceMap(
+    private static Dictionary<string, ulong> BuildDirectoryFileReferenceMap(
         IReadOnlyList<NtfsMftEntry> entries,
         IReadOnlyDictionary<ulong, string> paths)
     {
