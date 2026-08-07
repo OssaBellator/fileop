@@ -23,7 +23,7 @@ public sealed class IndexingVolumeFileGate
 
     public IDisposable? TryAcquireMaintenance() => TryOpen(FileAccess.ReadWrite, FileShare.None);
 
-    private IDisposable? TryOpen(FileAccess access, FileShare share)
+    private FileStream? TryOpen(FileAccess access, FileShare share)
     {
         try
         {
