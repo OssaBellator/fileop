@@ -16,6 +16,7 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<VolumeCard> _volumes = [];
     private readonly DispatcherQueueTimer _searchTimer;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private readonly SemaphoreSlim _searchGate = new(1, 1);
     private int _searchGeneration;
     private bool _closed;
 
@@ -87,16 +88,20 @@ public sealed partial class MainWindow : Window
         _lifetimeCancellation.Cancel();
         _searchEngine.StateChanged -= SearchEngine_StateChanged;
 
+        var disposeTask = _searchEngine.DisposeAsync().AsTask();
         try
         {
-            await _searchEngine.DisposeAsync();
+            await _searchGate.WaitAsync(CancellationToken.None);
+            _searchGate.Release();
+            await disposeTask;
         }
         catch (Exception)
         {
-            // Window shutdown should not be blocked by helper teardown failures.
+            // Window shutdown should not be blocked by search/helper teardown failures.
         }
         finally
         {
+            _searchGate.Dispose();
             _lifetimeCancellation.Dispose();
         }
     }
@@ -151,6 +156,7 @@ public sealed partial class MainWindow : Window
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
+        Interlocked.Increment(ref _searchGeneration);
         _searchTimer.Stop();
         _searchTimer.Start();
     }
@@ -173,24 +179,37 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var matches = await _searchEngine.SearchAsync(rawQuery, limit: 250);
-            if (_closed || generation != Volatile.Read(ref _searchGeneration))
+            await _searchGate.WaitAsync(_lifetimeCancellation.Token);
+            try
             {
-                return;
-            }
+                if (_closed || generation != Volatile.Read(ref _searchGeneration))
+                {
+                    return;
+                }
 
-            _results.Clear();
-            foreach (var match in matches)
+                var matches = await _searchEngine.SearchAsync(rawQuery, limit: 250);
+                if (_closed || generation != Volatile.Read(ref _searchGeneration))
+                {
+                    return;
+                }
+
+                _results.Clear();
+                foreach (var match in matches)
+                {
+                    _results.Add(SearchResultRow.FromRecord(match));
+                }
+
+                var mode = _searchEngine.State.Mode == DesktopSearchMode.Native
+                    ? "native index"
+                    : "profile fallback";
+                SearchStatusText.Text = string.IsNullOrWhiteSpace(rawQuery)
+                    ? $"Showing {matches.Count:N0} indexed item(s) · {mode}"
+                    : $"{matches.Count:N0} result(s) · {mode}";
+            }
+            finally
             {
-                _results.Add(SearchResultRow.FromRecord(match));
+                _searchGate.Release();
             }
-
-            var mode = _searchEngine.State.Mode == DesktopSearchMode.Native
-                ? "native index"
-                : "profile fallback";
-            SearchStatusText.Text = string.IsNullOrWhiteSpace(rawQuery)
-                ? $"Showing {matches.Count:N0} indexed item(s) · {mode}"
-                : $"{matches.Count:N0} result(s) · {mode}";
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
         {
@@ -214,6 +233,7 @@ public sealed partial class MainWindow : Window
         SearchBox.IsEnabled = false;
         EnableFastIndexButton.IsEnabled = false;
         SearchStatusText.Text = string.Empty;
+        Interlocked.Increment(ref _searchGeneration);
 
         try
         {
