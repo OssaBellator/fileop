@@ -47,7 +47,10 @@ public sealed class InMemoryFileIndex : IFileIndex, IDisposable
         _gate.EnterWriteLock();
         try
         {
-            _records.AddRange(records);
+            foreach (var record in records)
+            {
+                Upsert(record);
+            }
         }
         finally
         {
@@ -75,7 +78,7 @@ public sealed class InMemoryFileIndex : IFileIndex, IDisposable
                         Upsert(record);
                         break;
                     case FileIndexChangeKind.Delete when change.Identity is { } identity:
-                        _records.RemoveAll(item => item.Identity == identity);
+                        Delete(identity, change.Path);
                         break;
                     default:
                         throw new InvalidOperationException("The file-index change is missing the data required by its change kind.");
@@ -130,9 +133,8 @@ public sealed class InMemoryFileIndex : IFileIndex, IDisposable
 
     private void Upsert(FileRecord record)
     {
-        var existingIndex = record.Identity is { } identity
-            ? _records.FindIndex(item => item.Identity == identity)
-            : _records.FindIndex(item => string.Equals(item.Path, record.Path, StringComparison.OrdinalIgnoreCase));
+        var existingIndex = _records.FindIndex(
+            item => string.Equals(item.Path, record.Path, StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
         {
@@ -142,6 +144,13 @@ public sealed class InMemoryFileIndex : IFileIndex, IDisposable
         {
             _records.Add(record);
         }
+    }
+
+    private void Delete(FileIdentity identity, string? path)
+    {
+        _records.RemoveAll(item =>
+            item.Identity == identity &&
+            (path is null || string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase)));
     }
 
     private static bool Matches(FileRecord record, FileSearchQuery query)

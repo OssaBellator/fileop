@@ -8,14 +8,18 @@ public enum FileIndexChangeKind
     Delete,
 }
 
-public sealed record FileIndexChange(FileIndexChangeKind Kind, FileRecord? Record, FileIdentity? Identity)
+public sealed record FileIndexChange(
+    FileIndexChangeKind Kind,
+    FileRecord? Record,
+    FileIdentity? Identity,
+    string? Path)
 {
     public static FileIndexChange Upsert(FileRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
-        return new FileIndexChange(FileIndexChangeKind.Upsert, record, record.Identity);
+        return new FileIndexChange(FileIndexChangeKind.Upsert, record, record.Identity, record.Path);
     }
 
-    public static FileIndexChange Delete(FileIdentity identity) =>
-        new(FileIndexChangeKind.Delete, null, identity);
+    public static FileIndexChange Delete(FileIdentity identity, string? path = null) =>
+        new(FileIndexChangeKind.Delete, null, identity, path);
 }
