@@ -49,6 +49,7 @@ for each entry
        ↓ durable MarkMutationStarted
        ↓ build FileCopyMutationRequest from fresh item + fresh roots
        ↓ acquire identity-bound Windows Copy mutation lease
+       ↓ write-through byte Copy + final destination flush
        ↓ read + validate receipt
        ↓ durable CommitCopy(destination identity)
        ↓ report progress
@@ -74,7 +75,7 @@ The validator must return the exact plan instance requested. Fresh one-file vali
 
 The executor passes those fresh roots directly to the mutation primitive. The Windows primitive reopens each canonical parent, verifies final path and `FileIdentity`, opens the source relative to the verified source-directory handle, and exclusively creates the destination relative to the verified destination-directory handle. A root swap, source replacement or destination collision after validation therefore fails conservatively rather than silently redirecting or overwriting the Copy.
 
-The mutation receipt must repeat the freshly validated source/destination canonical paths and source identity and must provide a different destination identity.
+Destination creation requests `FILE_WRITE_THROUGH`, and the primitive still requires a final `FlushFileBuffers` before returning its lease. The mutation receipt must then repeat the freshly validated source/destination canonical paths and source identity and provide a different destination identity.
 
 ## Recovery
 
