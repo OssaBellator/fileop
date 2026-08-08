@@ -137,6 +137,8 @@ Capture scheduling and retention policy should be measured against real user val
 
 `tools/test-local.ps1` runs the history and history-service verifiers before the full .NET/Windows test stack, so a Windows development machine can run the complete gate without GitHub Actions usage.
 
+For this service slice, the hourly-bucket property was also exercised over 20,000 randomized timezone-offset cases in the available sandbox; Windows/.NET compilation remains delegated to the local Windows gate rather than being inferred from those Python checks.
+
 ## Deliberate limitations
 
 This slice does not yet:
