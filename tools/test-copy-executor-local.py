@@ -41,12 +41,13 @@ def main() -> int:
         ("File Copy executor verification", ["tools/verify_file_copy_executor.py", "--repo-root", str(repo_root), "--cases", "20000"]),
         ("Windows Copy mutation handle-binding verification", ["tools/verify_windows_file_copy_mutation.py", "--repo-root", str(repo_root), "--cases", "2000"]),
         ("Copy basic metadata verification", ["tools/verify_copy_basic_metadata.py", "--repo-root", str(repo_root), "--cases", "50000"]),
+        ("Copy basic metadata ABI verification", ["tools/verify_copy_basic_metadata_abi.py", "--repo-root", str(repo_root)]),
     ]
 
     for name, arguments in steps:
         run_step(name, repo_root, arguments)
 
-    print("\nPASS: Copy executor, Windows mutation handle binding, and basic metadata boundary verified without GitHub Actions, PowerShell, or the .NET SDK.")
+    print("\nPASS: Copy executor, Windows mutation handle binding, basic metadata, and interop ABI boundaries verified without GitHub Actions, PowerShell, or the .NET SDK.")
     return 0
 
 
