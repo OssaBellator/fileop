@@ -6,6 +6,8 @@ namespace FileOp.App;
 
 public sealed partial class FilesView : UserControl
 {
+    private string? _lastAppliedPath;
+
     public FilesView()
     {
         InitializeComponent();
@@ -51,6 +53,7 @@ public sealed partial class FilesView : UserControl
         bool canRefresh)
     {
         ArgumentNullException.ThrowIfNull(rows);
+        _lastAppliedPath = path;
         PathText.Text = path;
         LoadingRing.IsActive = false;
         UpButton.IsEnabled = canNavigateUp;
@@ -70,6 +73,10 @@ public sealed partial class FilesView : UserControl
         if (LoadingRing.IsActive && StatusText.Text.StartsWith("Loading ", StringComparison.Ordinal))
         {
             StatusText.Text = "The indexed directory load did not complete. Refresh to try again.";
+            if (_lastAppliedPath is not null)
+            {
+                PathText.Text = _lastAppliedPath;
+            }
         }
 
         LoadingRing.IsActive = false;
