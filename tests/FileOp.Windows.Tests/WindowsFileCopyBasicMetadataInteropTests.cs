@@ -18,8 +18,13 @@ public sealed class WindowsFileCopyBasicMetadataInteropTests
         var classType = GetNestedType(helperType, "FileInfoByHandleClass");
 
         Assert.AreEqual(40, Marshal.SizeOf(basicType));
-        Assert.AreEqual(new IntPtr(32), Marshal.OffsetOf(basicType, "FileAttributes"));
+        AssertOffset(basicType, "CreationTime", 0);
+        AssertOffset(basicType, "LastAccessTime", 8);
+        AssertOffset(basicType, "LastWriteTime", 16);
+        AssertOffset(basicType, "ChangeTime", 24);
+        AssertOffset(basicType, "FileAttributes", 32);
         Assert.IsTrue(classType.IsEnum);
+        Assert.AreEqual(typeof(int), Enum.GetUnderlyingType(classType));
         Assert.AreEqual(0, Convert.ToInt32(Enum.Parse(classType, "FileBasicInfo")));
 
         var method = GetPrivateStaticMethod(helperType, "SetFileInformationByHandle");
@@ -32,6 +37,7 @@ public sealed class WindowsFileCopyBasicMetadataInteropTests
         Assert.AreEqual(typeof(SafeFileHandle), parameters[0].ParameterType);
         Assert.AreEqual(classType, parameters[1].ParameterType);
         Assert.IsTrue(parameters[2].ParameterType.IsByRef);
+        Assert.IsFalse(parameters[2].IsOut);
         Assert.AreEqual(basicType, parameters[2].ParameterType.GetElementType());
         Assert.AreEqual(typeof(uint), parameters[3].ParameterType);
     }
@@ -41,14 +47,23 @@ public sealed class WindowsFileCopyBasicMetadataInteropTests
     {
         var helperType = typeof(WindowsFileCopyBasicMetadata);
         var informationType = GetNestedType(helperType, "ByHandleFileInformation");
+        var fileTimeType = GetNestedType(helperType, "FileTime");
+
+        Assert.AreEqual(8, Marshal.SizeOf(fileTimeType));
+        AssertOffset(fileTimeType, "LowDateTime", 0);
+        AssertOffset(fileTimeType, "HighDateTime", 4);
 
         Assert.AreEqual(52, Marshal.SizeOf(informationType));
-        Assert.AreEqual(new IntPtr(0), Marshal.OffsetOf(informationType, "FileAttributes"));
-        Assert.AreEqual(new IntPtr(4), Marshal.OffsetOf(informationType, "CreationTime"));
-        Assert.AreEqual(new IntPtr(12), Marshal.OffsetOf(informationType, "LastAccessTime"));
-        Assert.AreEqual(new IntPtr(20), Marshal.OffsetOf(informationType, "LastWriteTime"));
-        Assert.AreEqual(new IntPtr(28), Marshal.OffsetOf(informationType, "VolumeSerialNumber"));
-        Assert.AreEqual(new IntPtr(48), Marshal.OffsetOf(informationType, "FileIndexLow"));
+        AssertOffset(informationType, "FileAttributes", 0);
+        AssertOffset(informationType, "CreationTime", 4);
+        AssertOffset(informationType, "LastAccessTime", 12);
+        AssertOffset(informationType, "LastWriteTime", 20);
+        AssertOffset(informationType, "VolumeSerialNumber", 28);
+        AssertOffset(informationType, "FileSizeHigh", 32);
+        AssertOffset(informationType, "FileSizeLow", 36);
+        AssertOffset(informationType, "NumberOfLinks", 40);
+        AssertOffset(informationType, "FileIndexHigh", 44);
+        AssertOffset(informationType, "FileIndexLow", 48);
 
         var method = GetPrivateStaticMethod(helperType, "GetFileInformationByHandle");
         Assert.AreEqual(typeof(bool), method.ReturnType);
@@ -71,6 +86,9 @@ public sealed class WindowsFileCopyBasicMetadataInteropTests
         declaringType.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)
         ?? throw new AssertFailedException($"Missing private interop method '{name}'.");
 
+    private static void AssertOffset(Type type, string fieldName, int expected) =>
+        Assert.AreEqual(new IntPtr(expected), Marshal.OffsetOf(type, fieldName));
+
     private static void AssertKernel32Import(MethodInfo method)
     {
         var attribute = method.GetCustomAttribute<DllImportAttribute>()
@@ -79,6 +97,7 @@ public sealed class WindowsFileCopyBasicMetadataInteropTests
             string.Equals(attribute.Value, "kernel32.dll", StringComparison.OrdinalIgnoreCase),
             $"{method.Name} must import kernel32.dll.");
         Assert.IsTrue(attribute.SetLastError, $"{method.Name} must preserve the Win32 last-error value.");
+        Assert.AreEqual(CallingConvention.Winapi, attribute.CallingConvention);
     }
 
     private static void AssertBooleanMarshalling(MethodInfo method)
