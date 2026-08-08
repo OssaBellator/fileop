@@ -26,7 +26,7 @@ public sealed class StorageFileTypeParityTests
                 Directory(@"C:\Data\A", @"C:\Data", "A"),
                 Directory(@"C:\Data\B", @"C:\Data", "B"),
                 File(@"C:\Data\A\shared.bin", @"C:\Data\A", "shared.bin", 300, 384, identity),
-                File(@"C:\Data\B\shared.dat", @"C:\Data\B", "shared.dat", 300, 384, identity),
+                File(@"C:\Data\B\shared.jpg", @"C:\Data\B", "shared.jpg", 300, 384, identity),
             ];
 
             using var sqliteIndex = new SqliteFileIndex(databasePath);
@@ -72,6 +72,17 @@ public sealed class StorageFileTypeParityTests
                 sqlite.Categories.Sum(static category => category.TypeCount));
             Assert.IsNull(sqlite.AllocatedBytes);
             Assert.IsTrue(sqlite.Categories.Any(static category => !category.AllocatedBytes.HasValue));
+
+            var data = sqlite.Categories.Single(static category => category.Category == StorageFileCategory.Data);
+            Assert.AreEqual(300L, data.LogicalBytes);
+            Assert.AreEqual(384L, data.AllocatedBytes);
+            Assert.AreEqual(0, data.HardLinkAliasCount);
+
+            var images = sqlite.Categories.Single(static category => category.Category == StorageFileCategory.Images);
+            Assert.AreEqual(500L, images.LogicalBytes);
+            Assert.AreEqual(256L, images.AllocatedBytes);
+            Assert.AreEqual(1, images.HardLinkAliasCount);
+            Assert.AreEqual(2, images.TypeCount);
         }
         finally
         {
