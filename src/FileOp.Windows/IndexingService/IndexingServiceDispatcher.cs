@@ -72,6 +72,12 @@ public sealed class IndexingServiceDispatcher
                         DeserializeSearch(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
+                IndexingServiceOperation.AnalyzeStorage => Success(
+                    request.RequestId,
+                    await _backend.AnalyzeStorageAsync(
+                        DeserializeStorageAnalysis(request.Payload),
+                        cancellationToken).ConfigureAwait(false)),
+
                 _ => Failure(
                     request.RequestId,
                     IndexingServiceErrorCode.InvalidRequest,
@@ -138,6 +144,47 @@ public sealed class IndexingServiceDispatcher
         }
 
         return request;
+    }
+
+    private static IndexingStorageAnalysisRequest DeserializeStorageAnalysis(JsonElement payload)
+    {
+        var request = Deserialize<IndexingStorageAnalysisRequest>(payload);
+        if (string.IsNullOrWhiteSpace(request.VolumeRootPath))
+        {
+            throw new JsonException("volumeRootPath is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.DirectoryPath))
+        {
+            throw new JsonException("directoryPath is required.");
+        }
+
+        if (!Path.IsPathFullyQualified(request.VolumeRootPath) ||
+            !Path.IsPathFullyQualified(request.DirectoryPath))
+        {
+            throw new JsonException("Storage analysis paths must be absolute.");
+        }
+
+        if (request.MaxEntries <= 0 || request.MaxEntries > 4_096)
+        {
+            throw new JsonException("maxEntries must be between 1 and 4096.");
+        }
+
+        try
+        {
+            return request with
+            {
+                VolumeRootPath = Path.GetFullPath(request.VolumeRootPath),
+                DirectoryPath = Path.GetFullPath(request.DirectoryPath),
+            };
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or
+            NotSupportedException or
+            PathTooLongException)
+        {
+            throw new JsonException("Storage analysis paths are invalid.", exception);
+        }
     }
 
     private static T Deserialize<T>(JsonElement payload)

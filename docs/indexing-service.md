@@ -4,7 +4,7 @@
 
 `FileOp.Indexer` isolates native NTFS indexing from the WinUI desktop process. The desktop application remains an ordinary `asInvoker` process. If raw NTFS volume/file-ID access requires elevation, only the indexing helper may be relaunched with UAC after an explicit user action.
 
-The indexer is deliberately not the future disk-administration helper. It exposes read/index/search operations only. Partition changes, formatting, BitLocker administration and other destructive storage operations must use a separate privileged surface with their own pre-flight and confirmation model.
+The indexer is deliberately not the future disk-administration helper. It exposes read/index/search/storage-analysis operations only. Partition changes, formatting, BitLocker administration and other destructive storage operations must use a separate privileged surface with their own pre-flight and confirmation model.
 
 ## Process model
 
@@ -23,7 +23,7 @@ FileOp.Indexer (normal token first; same-account elevation only when supported)
         +-- metadata hydration / hard-link enumeration
         +-- journal synchronization
         +-- per-volume SQLite ownership
-        +-- search across valid volume indexes
+        +-- search + storage analytics across valid indexes
 ```
 
 The helper accepts one authenticated client, remains alive for that desktop session, and exits when the pipe disconnects or the launching desktop process exits. It is not installed as an always-running Windows service and it is never permanently elevated.
@@ -43,7 +43,7 @@ Protocol messages use a four-byte little-endian length prefix followed by UTF-8 
 
 Every response echoes the request ID and protocol version. The client rejects mismatched IDs or protocol changes within a session. Required payload fields are validated explicitly after JSON deserialization; a positional record with missing JSON properties is not accepted merely because the serializer can construct it with default values.
 
-If any response would exceed the 8 MiB frame cap, the server substitutes a small retryable `ResponseTooLarge` error rather than terminating the session. For search results, the desktop reduces the result limit and retries on the same connection.
+If any response would exceed the 8 MiB frame cap, the server substitutes a small retryable `ResponseTooLarge` error rather than terminating the session. For search results, the desktop reduces the result limit and retries on the same connection. Storage-analysis requests are explicitly bounded by `MaxEntries` so the direct-entry payload remains finite while root totals stay complete.
 
 A cancelled or otherwise interrupted client exchange is different: once a request may have been written without its complete matching response being consumed, the client faults and closes that connection instead of risking request/response desynchronization. A subsequent operation must use a fresh indexer session.
 
@@ -51,18 +51,37 @@ The WinUI coordinator therefore does not use query supersession as a cancellatio
 
 Protocol version mismatch is rejected before native operations are dispatched.
 
-## Version 1 operations
+## Version 2 operations
 
-The initial service surface is intentionally narrow:
+Protocol v2 keeps the original narrow indexing surface and adds one read-only storage-analysis operation:
 
 - `Hello` — protocol/service version and elevation state;
 - `GetVolumes` — currently available NTFS volumes plus per-volume index status;
 - `GetStatus` — aggregate and per-volume status;
 - `RebuildVolume` — fresh MFT/metadata namespace snapshot for one volume;
 - `SyncVolume` — apply one durable USN journal batch for one volume;
-- `Search` — query the persistent indexes and merge results across attached NTFS volumes whose snapshots are currently valid.
+- `Search` — query the persistent indexes and merge results across attached NTFS volumes whose snapshots are currently valid;
+- `AnalyzeStorage` — aggregate direct entries under one indexed directory, recursively rolling descendant logical/allocated bytes and counts into each direct child.
+
+The protocol version advances from v1 to v2 because adding a new wire operation under the same version would let mismatched desktop/helper binaries disagree about the valid operation set. FileOp builds and ships the desktop and helper together; an older adjacent helper therefore fails normal version negotiation and follows the existing native-unavailable/fallback path.
 
 There are no file mutation, cleanup, partition, format, TRIM, BitLocker or process-management commands in this protocol.
+
+### Storage-analysis result semantics
+
+`AnalyzeStorage` identifies both the physical volume/root pair and the target indexed directory. The target must remain inside the selected volume root.
+
+The response returns the target directory's direct entries. Each direct directory is recursively aggregated over its indexed subtree and reports:
+
+- logical bytes for files in that subtree;
+- allocated bytes only when every file in that aggregate has allocated-size metadata;
+- file count;
+- directory count;
+- a treemap weight defined as `allocated bytes ?? logical bytes`.
+
+The response also returns whole-root totals and the number of direct entries. Root totals are computed before `MaxEntries` truncates the returned entry list, so a UI can render only the largest entries without changing the reported total.
+
+Allocated bytes are intentionally nullable. If any file in an aggregate lacks allocation metadata, the service does not substitute logical bytes and present that approximation as exact physical usage. This is important while sparse/compressed/reparse metadata semantics continue to mature.
 
 ## Error contract
 
@@ -110,15 +129,17 @@ The per-volume database key includes the provider volume identity and current ro
 
 ## Snapshot validity and concurrency
 
-Rebuild and journal synchronization are serialized per volume with a non-blocking operation gate. A second maintenance command for the same volume receives `Busy` rather than queueing invisibly.
+Rebuild and journal synchronization are serialized per volume with a non-blocking process-local operation gate. A second maintenance command for the same volume receives `Busy` rather than queueing invisibly.
 
-A volume is eligible for service-backed search only while it has a durable NTFS checkpoint and is not being rebuilt. Search briefly acquires the same per-volume gate before checking the checkpoint and reading the index, so a rebuild cannot clear and partially repopulate that database underneath a query. Other valid volumes remain searchable while one volume is busy.
+Because each FileOp desktop instance can own a separate helper process, every persistent volume database also has a companion cross-process reader/writer file gate. Search and storage analysis take shared read leases. Rebuild and `SyncVolume` take an exclusive maintenance lease for the entire semantic operation, including durable checkpoint invalidation after a consistency failure. SQLite still provides transaction-level locking, but the file gate prevents two helpers from interleaving the many transactions that can comprise one logical snapshot rebuild.
 
-Each volume query is ranked by the same filename/path relevance rules as the SQLite index. The merged cross-volume result set reapplies that relevance score before final name/path tie-breaking so service-backed search does not degrade into alphabetical ordering when multiple indexes participate.
+A volume is eligible for service-backed search or storage analysis only while it has a durable NTFS checkpoint and is not being maintained. Both reads acquire the process-local gate, then a shared cross-process lease, then inspect the durable checkpoint before reading the index. A rebuild therefore cannot clear and partially repopulate that database underneath either query. Other valid volumes remain independently available.
+
+Each volume search is ranked by the same filename/path relevance rules as the SQLite index. The merged cross-volume result set reapplies that relevance score before final name/path tie-breaking so service-backed search does not degrade into alphabetical ordering when multiple indexes participate.
 
 If incremental synchronization determines that a fresh snapshot is required, the service deletes that volume's durable checkpoint before returning `SnapshotRequired`. The invalid state therefore survives helper restarts instead of allowing stale rows to look valid again merely because in-memory state was lost.
 
-The current rebuild implementation temporarily omits the affected volume from search. A future shadow-database rebuild followed by an atomic swap can remove that outage without ever exposing a partial snapshot.
+The current rebuild implementation temporarily omits the affected volume from reads. A future shadow-database rebuild followed by an atomic swap can remove that outage without ever exposing a partial snapshot.
 
 ## WinUI integration policy
 
@@ -140,6 +161,8 @@ Engine state controls search-box availability. Input is disabled during initial 
 The fallback is a static crawl snapshot rather than a live watcher, so the coordinator records it as non-current even after the initial crawl finishes.
 
 The first cutover does not automatically create snapshots for every attached NTFS disk. Existing attached-volume databases with valid checkpoints can still participate in service search; automatic first-run orchestration for additional volumes remains a separate lifecycle slice.
+
+Storage analytics is available at the service/client boundary in v2 but is not wired into WinUI in this slice. The desktop Storage page should consume this operation through the existing native/fallback coordinator rather than opening the SQLite database directly or rescanning the filesystem.
 
 ### Elevation flow
 

@@ -1,11 +1,12 @@
 using System.Text.Json;
 using FileOp.Core.Models;
+using FileOp.Core.Storage;
 
 namespace FileOp.Core.Indexing.Service;
 
 public static class IndexingServiceProtocol
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -17,6 +18,7 @@ public enum IndexingServiceOperation
     RebuildVolume,
     SyncVolume,
     Search,
+    AnalyzeStorage,
 }
 
 public enum IndexingServiceErrorCode
@@ -91,6 +93,14 @@ public sealed record IndexingVolumeOperationResponse(
 public sealed record IndexingSearchRequest(string Query, int Limit = 250);
 
 public sealed record IndexingSearchResponse(IReadOnlyList<IndexingSearchResult> Results);
+
+public sealed record IndexingStorageAnalysisRequest(
+    ulong VolumeIdentity,
+    string VolumeRootPath,
+    string DirectoryPath,
+    int MaxEntries = 256);
+
+public sealed record IndexingStorageAnalysisResponse(StorageDirectoryAnalysis Analysis);
 
 public sealed record IndexingSearchResult(
     string Path,

@@ -77,6 +77,14 @@ public sealed class IndexingServiceClient : IAsyncDisposable, IDisposable
             request,
             cancellationToken);
 
+    public ValueTask<IndexingStorageAnalysisResponse> AnalyzeStorageAsync(
+        IndexingStorageAnalysisRequest request,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IndexingStorageAnalysisRequest, IndexingStorageAnalysisResponse>(
+            IndexingServiceOperation.AnalyzeStorage,
+            request,
+            cancellationToken);
+
     public void Dispose()
     {
         if (_disposed)
