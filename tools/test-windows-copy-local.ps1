@@ -25,6 +25,11 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     throw "Python 3 is required for the zero-Actions Copy validation gates."
 }
 
+python -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)"
+if ($LASTEXITCODE -ne 0) {
+    throw "The 'python' command must run Python 3 for the zero-Actions Copy validation gates."
+}
+
 if (-not $SkipOfflineModels) {
     Invoke-Step "Copy executor and mutation property models" {
         & (Join-Path $PSScriptRoot "test-copy-executor-local.ps1")
