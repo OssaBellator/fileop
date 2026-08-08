@@ -31,11 +31,11 @@ public sealed partial class MainWindow
         StorageTypesList.ItemsSource = _storageFileTypes;
         StorageCategoryList.ItemsSource = _storageCategories;
 
-        // Run the Types-aware source transition first. When Types is visible it can
-        // suppress the original folder-only source refresh without changing the
-        // reviewed MainWindow.xaml.cs lifecycle implementation.
+        // Run the Types/History-aware source transitions before the original
+        // folder-only handler so a hidden folder analysis is not queued.
         _searchEngine.StateChanged -= SearchEngine_StateChanged;
         _searchEngine.StateChanged += StorageTypesEngine_StateChanged;
+        InitializeStorageHistoryView();
         _searchEngine.StateChanged += SearchEngine_StateChanged;
         Closed += StorageTypesWindow_Closed;
 
@@ -139,6 +139,7 @@ public sealed partial class MainWindow
     private async void StorageFoldersButton_Click(object sender, RoutedEventArgs e)
     {
         Interlocked.Increment(ref _storageTypeGeneration);
+        Interlocked.Increment(ref _storageHistoryGeneration);
         SetStorageViewMode(StorageViewMode.Folders);
 
         var root = _searchEngine.StorageRootPath;
@@ -154,6 +155,7 @@ public sealed partial class MainWindow
     private async void StorageTypesButton_Click(object sender, RoutedEventArgs e)
     {
         Interlocked.Increment(ref _storageGeneration);
+        Interlocked.Increment(ref _storageHistoryGeneration);
         SetStorageViewMode(StorageViewMode.Types);
 
         var root = _searchEngine.StorageRootPath;
@@ -203,17 +205,26 @@ public sealed partial class MainWindow
             return;
         }
 
-        var sourceBeforeElevation = _storageViewMode == StorageViewMode.Types
-            ? _storageTypesSourceKey
-            : _storageSourceKey;
+        var sourceBeforeElevation = _storageViewMode switch
+        {
+            StorageViewMode.Types => _storageTypesSourceKey,
+            StorageViewMode.History => _storageHistorySourceKey,
+            _ => _storageSourceKey,
+        };
         SearchBox.IsEnabled = false;
         StorageRefreshButton.IsEnabled = false;
         StorageTypesRefreshButton.IsEnabled = false;
+        if (_storageHistoryInitialized)
+        {
+            _storageHistoryButton.IsEnabled = false;
+            _storageHistoryView.SetReadyForRefresh(false);
+        }
         EnableFastIndexButton.IsEnabled = false;
         SetSearchStatus(string.Empty);
         Interlocked.Increment(ref _searchGeneration);
         Interlocked.Increment(ref _storageGeneration);
         Interlocked.Increment(ref _storageTypeGeneration);
+        Interlocked.Increment(ref _storageHistoryGeneration);
 
         try
         {
@@ -255,6 +266,12 @@ public sealed partial class MainWindow
 
     private async Task LoadActiveStorageViewAsync(string root, bool forceRefresh)
     {
+        if (_storageViewMode == StorageViewMode.History)
+        {
+            await LoadStorageHistoryAsync(forceRefresh);
+            return;
+        }
+
         var path = ResolveCurrentStoragePath(root);
         var sourceKey = CreateStorageSourceKey(_searchEngine.State.Mode, root);
 
@@ -456,23 +473,40 @@ public sealed partial class MainWindow
     {
         _storageViewMode = mode;
         var foldersVisible = mode == StorageViewMode.Folders;
+        var typesVisible = mode == StorageViewMode.Types;
+        var historyVisible = mode == StorageViewMode.History;
+
         StorageFolderPanel.Visibility = foldersVisible ? Visibility.Visible : Visibility.Collapsed;
-        StorageTypesPanel.Visibility = foldersVisible ? Visibility.Collapsed : Visibility.Visible;
+        StorageTypesPanel.Visibility = typesVisible ? Visibility.Visible : Visibility.Collapsed;
+        if (_storageHistoryInitialized)
+        {
+            _storageHistoryView.Visibility = historyVisible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         StorageUpButton.Visibility = foldersVisible ? Visibility.Visible : Visibility.Collapsed;
         StorageRefreshButton.Visibility = foldersVisible ? Visibility.Visible : Visibility.Collapsed;
-        StorageTypesUpButton.Visibility = foldersVisible ? Visibility.Collapsed : Visibility.Visible;
-        StorageTypesRefreshButton.Visibility = foldersVisible ? Visibility.Collapsed : Visibility.Visible;
+        StorageTypesUpButton.Visibility = typesVisible ? Visibility.Visible : Visibility.Collapsed;
+        StorageTypesRefreshButton.Visibility = typesVisible ? Visibility.Visible : Visibility.Collapsed;
         StorageFoldersButton.IsEnabled = !foldersVisible;
-        StorageTypesButton.IsEnabled = foldersVisible;
+        StorageTypesButton.IsEnabled = !typesVisible;
+        if (_storageHistoryInitialized)
+        {
+            _storageHistoryButton.IsEnabled = !historyVisible && _searchEngine.StorageHistoryAvailable;
+            _storageHistoryView.SetReadyForRefresh(historyVisible && _searchEngine.StorageHistoryAvailable);
+        }
 
         if (foldersVisible)
         {
             UpdateStorageNavigationState();
             RenderStorageTreemap();
         }
-        else
+        else if (typesVisible)
         {
             UpdateStorageTypesNavigationState();
+        }
+        else
+        {
+            StoragePathText.Text = _searchEngine.StorageRootPath ?? string.Empty;
         }
     }
 
@@ -511,6 +545,7 @@ public sealed partial class MainWindow
     {
         Folders,
         Types,
+        History,
     }
 }
 
