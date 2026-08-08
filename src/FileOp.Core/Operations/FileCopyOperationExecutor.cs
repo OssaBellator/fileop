@@ -13,6 +13,11 @@ public sealed record FileCopyMutationReceipt(
     FileIdentity SourceIdentity,
     FileIdentity DestinationIdentity);
 
+public sealed record FileCopyMutationRequest(
+    FileOperationExecutionValidationItem Item,
+    FileOperationCanonicalPath SourceDirectory,
+    FileOperationCanonicalPath DestinationDirectory);
+
 /// <summary>
 /// Keeps mutation identity-binding handles alive through durable Copy commit and progress.
 /// </summary>
@@ -24,7 +29,7 @@ public interface IFileCopyMutationLease : IAsyncDisposable
 public interface IFileCopyMutationPrimitive
 {
     ValueTask<IFileCopyMutationLease> CopyNewFileAsync(
-        FileOperationExecutionValidationItem validation);
+        FileCopyMutationRequest request);
 }
 
 public sealed class FileCopyOperationExecutor : IFileOperationExecutor
@@ -318,7 +323,10 @@ public sealed class FileCopyOperationExecutor : IFileOperationExecutor
                 // destination, and namespace identity-binding handles through durable
                 // Copy commit and the corresponding progress report.
                 mutationLease = await _mutation
-                    .CopyNewFileAsync(freshItem)
+                    .CopyNewFileAsync(new FileCopyMutationRequest(
+                        freshItem,
+                        freshValidation.SourceDirectory,
+                        freshValidation.DestinationDirectory))
                     .ConfigureAwait(false);
                 if (mutationLease is null)
                 {
