@@ -28,4 +28,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "Copy basic metadata verification failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "`nPASS: Copy executor, Windows mutation handle binding, and basic metadata boundary verified without GitHub Actions." -ForegroundColor Green
+python tools/verify_copy_basic_metadata_abi.py --repo-root $repoRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Copy basic metadata ABI verification failed with exit code $LASTEXITCODE."
+}
+
+Write-Host "`nPASS: Copy executor, Windows mutation handle binding, basic metadata, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green
