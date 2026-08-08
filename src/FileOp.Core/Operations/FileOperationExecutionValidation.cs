@@ -64,6 +64,20 @@ public sealed record FileOperationExecutionValidationItem(
         FileOperationExecutionValidationItem,
         FileOperationExecutionValidationRootBinding> RootBindings = new();
 
+    private FileOperationExecutionValidationItem(FileOperationExecutionValidationItem original)
+        : this(
+            original.Entry,
+            original.Source,
+            original.Destination,
+            original.Decision,
+            original.Message)
+    {
+        if (original.MutationRootBinding is { } binding)
+        {
+            BindMutationRoots(binding);
+        }
+    }
+
     public FileOperationExecutionValidationRootBinding? MutationRootBinding =>
         RootBindings.TryGetValue(this, out var binding) ? binding : null;
 
