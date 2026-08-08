@@ -52,6 +52,8 @@ The supported subset is intentionally narrow:
 
 Windows can defer automatic access/write timestamp changes until later I/O or handle close. Immediately after creating the destination handle, FileOp therefore sets its `LastAccessTime` and `LastWriteTime` fields to `-1` through `FileBasicInfo`. Windows defines that value as suppressing automatic updates for subsequent operations on the same handle. FileOp never sends `-2`, which is the value that re-enables those automatic updates, so the explicit source timestamps applied after the byte copy remain stable through the final flush and lease disposal.
 
+That suppression is handle-local. The mutation handle intentionally permits read sharing, so a separate process that reads the destination can legitimately advance its last-access time; the fidelity guarantee covers FileOp's own mutation I/O rather than concurrent external access.
+
 `ChangeTime` is not copied. Storage-state attributes that need separate filesystem semantics are also excluded: reparse-point, sparse, compressed, encrypted, offline and temporary state. ACLs, alternate data streams and extended attributes remain separate future boundaries rather than being implied by a byte copy.
 
 ## Durability and failure semantics
