@@ -72,6 +72,12 @@ public sealed class IndexingServiceDispatcher
                         DeserializeSearch(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
+                IndexingServiceOperation.BrowseDirectory => Success(
+                    request.RequestId,
+                    await _backend.BrowseDirectoryAsync(
+                        DeserializeDirectoryBrowse(request.Payload),
+                        cancellationToken).ConfigureAwait(false)),
+
                 IndexingServiceOperation.AnalyzeStorage => Success(
                     request.RequestId,
                     await _backend.AnalyzeStorageAsync(
@@ -162,6 +168,51 @@ public sealed class IndexingServiceDispatcher
         }
 
         return request;
+    }
+
+    private static IndexingDirectoryBrowseRequest DeserializeDirectoryBrowse(JsonElement payload)
+    {
+        var request = Deserialize<IndexingDirectoryBrowseRequest>(payload);
+        var (volumeRootPath, directoryPath) = NormalizeStoragePaths(
+            request.VolumeRootPath,
+            request.DirectoryPath);
+        if (request.PageSize <= 0 || request.PageSize > 1_024)
+        {
+            throw new JsonException("pageSize must be between 1 and 1024.");
+        }
+
+        var cursor = request.Cursor;
+        if (cursor is not null)
+        {
+            if (string.IsNullOrWhiteSpace(cursor.Name) || string.IsNullOrWhiteSpace(cursor.Path))
+            {
+                throw new JsonException("Directory browse cursors require both name and path.");
+            }
+
+            if (!Path.IsPathFullyQualified(cursor.Path))
+            {
+                throw new JsonException("Directory browse cursor paths must be absolute.");
+            }
+
+            try
+            {
+                cursor = cursor with { Path = Path.GetFullPath(cursor.Path) };
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException or
+                NotSupportedException or
+                PathTooLongException)
+            {
+                throw new JsonException("Directory browse cursor paths are invalid.", exception);
+            }
+        }
+
+        return request with
+        {
+            VolumeRootPath = volumeRootPath,
+            DirectoryPath = directoryPath,
+            Cursor = cursor,
+        };
     }
 
     private static IndexingStorageAnalysisRequest DeserializeStorageAnalysis(JsonElement payload)
