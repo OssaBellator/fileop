@@ -109,6 +109,7 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
                 sourceCanonicalPath,
                 expectedSourceIdentity,
                 "source");
+            var sourceMetadata = WindowsFileCopyBasicMetadata.Capture(sourceFile);
 
             destinationFile = OpenRelativeFile(
                 destinationDirectory,
@@ -132,6 +133,12 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
             if (!FlushFileBuffers(destinationFile))
             {
                 throw Win32IOException("Flushing copied destination data");
+            }
+
+            WindowsFileCopyBasicMetadata.Apply(destinationFile, sourceMetadata);
+            if (!FlushFileBuffers(destinationFile))
+            {
+                throw Win32IOException("Flushing copied destination metadata");
             }
 
             var destinationIdentity = ValidateCreatedFileHandle(
