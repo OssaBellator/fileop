@@ -196,7 +196,23 @@ public sealed class IndexingServiceDispatcher
 
             try
             {
-                cursor = cursor with { Path = Path.GetFullPath(cursor.Path) };
+                var cursorPath = Path.GetFullPath(cursor.Path);
+                var cursorParent = Path.GetDirectoryName(cursorPath);
+                if (string.IsNullOrWhiteSpace(cursorParent) ||
+                    !string.Equals(
+                        NormalizeComparablePath(cursorParent),
+                        NormalizeComparablePath(directoryPath),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new JsonException(
+                        "The directory browse cursor does not belong to the requested directory.");
+                }
+
+                cursor = cursor with { Path = cursorPath };
+            }
+            catch (JsonException)
+            {
+                throw;
             }
             catch (Exception exception) when (
                 exception is ArgumentException or
@@ -301,7 +317,7 @@ public sealed class IndexingServiceDispatcher
         if (!Path.IsPathFullyQualified(volumeRootPath) ||
             !Path.IsPathFullyQualified(directoryPath))
         {
-            throw new JsonException("Storage analysis paths must be absolute.");
+            throw new JsonException("volumeRootPath and directoryPath must be absolute paths.");
         }
 
         try
@@ -313,8 +329,24 @@ public sealed class IndexingServiceDispatcher
             NotSupportedException or
             PathTooLongException)
         {
-            throw new JsonException("Storage analysis paths are invalid.", exception);
+            throw new JsonException("volumeRootPath or directoryPath is invalid.", exception);
         }
+    }
+
+    private static string NormalizeComparablePath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(fullPath);
+        if (!string.IsNullOrEmpty(root) &&
+            string.Equals(
+                fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return root;
+        }
+
+        return fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
     private static T Deserialize<T>(JsonElement payload)
