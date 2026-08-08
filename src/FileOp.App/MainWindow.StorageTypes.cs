@@ -30,8 +30,15 @@ public sealed partial class MainWindow
         _storageTypesInitialized = true;
         StorageTypesList.ItemsSource = _storageFileTypes;
         StorageCategoryList.ItemsSource = _storageCategories;
+
+        // Run the Types-aware source transition first. When Types is visible it can
+        // suppress the original folder-only source refresh without changing the
+        // reviewed MainWindow.xaml.cs lifecycle implementation.
+        _searchEngine.StateChanged -= SearchEngine_StateChanged;
         _searchEngine.StateChanged += StorageTypesEngine_StateChanged;
+        _searchEngine.StateChanged += SearchEngine_StateChanged;
         Closed += StorageTypesWindow_Closed;
+
         SetStorageViewMode(StorageViewMode.Folders);
         HandleStorageTypesEngineState(_searchEngine.State);
     }
@@ -94,6 +101,19 @@ public sealed partial class MainWindow
         _storageCategories.Clear();
         ResetStorageTypesPresentation();
         Interlocked.Increment(ref _storageTypeGeneration);
+
+        if (_storageViewMode == StorageViewMode.Types)
+        {
+            // The original ApplyEngineState only knows about the folder view. Mark
+            // its source cache as transitioned so it does not queue an unnecessary
+            // folder analysis while Types owns the visible Storage surface.
+            _storageSourceKey = sourceKey;
+            _storageAnalysis = null;
+            _storageCurrentPath = null;
+            _storageEntries.Clear();
+            ResetStorageSummary();
+            Interlocked.Increment(ref _storageGeneration);
+        }
 
         if (_activeSection == AppSection.Storage &&
             _storageViewMode == StorageViewMode.Types &&
