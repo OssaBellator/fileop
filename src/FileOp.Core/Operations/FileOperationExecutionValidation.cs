@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
@@ -46,12 +47,46 @@ public enum FileOperationExecutionValidationDecision
     Blocked,
 }
 
+public sealed record FileOperationExecutionValidationRootBinding(
+    string CanonicalSourceDirectoryPath,
+    FileIdentity? SourceDirectoryIdentity,
+    string CanonicalDestinationDirectoryPath,
+    FileIdentity? DestinationDirectoryIdentity);
+
 public sealed record FileOperationExecutionValidationItem(
     FileOperationEntry Entry,
     FileOperationCanonicalPath Source,
     FileOperationCanonicalPath Destination,
     FileOperationExecutionValidationDecision Decision,
-    string Message);
+    string Message)
+{
+    private static readonly ConditionalWeakTable<
+        FileOperationExecutionValidationItem,
+        FileOperationExecutionValidationRootBinding> RootBindings = new();
+
+    public FileOperationExecutionValidationRootBinding? MutationRootBinding =>
+        RootBindings.TryGetValue(this, out var binding) ? binding : null;
+
+    internal void BindMutationRoots(FileOperationExecutionValidationRootBinding binding)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        lock (RootBindings)
+        {
+            if (RootBindings.TryGetValue(this, out var existing))
+            {
+                if (existing != binding)
+                {
+                    throw new InvalidOperationException(
+                        "An execution-validation item cannot be rebound to different canonical roots.");
+                }
+
+                return;
+            }
+
+            RootBindings.Add(this, binding);
+        }
+    }
+}
 
 public enum FileOperationExecutionValidationStatus
 {
@@ -80,6 +115,16 @@ public sealed record FileOperationExecutionValidationResult
         SourceDirectory = sourceDirectory;
         DestinationDirectory = destinationDirectory;
         Items = Array.AsReadOnly(items.ToArray());
+        var rootBinding = new FileOperationExecutionValidationRootBinding(
+            sourceDirectory.CanonicalPath,
+            sourceDirectory.Identity,
+            destinationDirectory.CanonicalPath,
+            destinationDirectory.Identity);
+        foreach (var item in Items)
+        {
+            item.BindMutationRoots(rootBinding);
+        }
+
         Status = status;
         ValidatedAtUtc = validatedAtUtc;
         Summary = summary;
