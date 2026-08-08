@@ -381,23 +381,29 @@ public sealed partial class MainWindow : Window
         catch (IndexingServiceRemoteException exception)
             when (exception.Error.Code == IndexingServiceErrorCode.Busy)
         {
-            SetStorageStatus("Another FileOp session is maintaining this index. Refresh the analysis after that operation completes.");
+            if (!_closed && generation == Volatile.Read(ref _storageGeneration))
+            {
+                SetStorageStatus("Another FileOp session is maintaining this index. Refresh the analysis after that operation completes.");
+            }
         }
         catch (IndexingServiceRemoteException exception)
             when (exception.Error.Code == IndexingServiceErrorCode.SnapshotRequired)
         {
-            SetStorageStatus("This storage snapshot is no longer valid. The indexing engine is refreshing it before analysis can continue.");
+            if (!_closed && generation == Volatile.Read(ref _storageGeneration))
+            {
+                SetStorageStatus("This storage snapshot is no longer valid. The indexing engine is refreshing it before analysis can continue.");
+            }
         }
         catch (Exception exception)
         {
-            if (!_closed)
+            if (!_closed && generation == Volatile.Read(ref _storageGeneration))
             {
                 SetStorageStatus($"Storage analysis failed: {exception.Message}");
             }
         }
         finally
         {
-            if (!_closed)
+            if (!_closed && generation == Volatile.Read(ref _storageGeneration))
             {
                 StorageRefreshButton.IsEnabled = !_searchEngine.State.IsBusy && _searchEngine.StorageRootPath is not null;
                 UpdateStorageNavigationState();
@@ -675,7 +681,7 @@ public sealed partial class MainWindow : Window
             leftWeight = items[start].Weight;
         }
 
-        var ratio = Math.Clamp(leftWeight / (double)total, 0.05, 0.95);
+        var ratio = leftWeight / (double)total;
         if (width >= height)
         {
             var leftWidth = width * ratio;
@@ -749,6 +755,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        var storageSourceBeforeElevation = _storageSourceKey;
         SearchBox.IsEnabled = false;
         StorageRefreshButton.IsEnabled = false;
         EnableFastIndexButton.IsEnabled = false;
@@ -758,20 +765,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var enabled = await _searchEngine.TryElevateAsync(_lifetimeCancellation.Token);
-            if (enabled && !_closed)
-            {
-                ApplyEngineState(_searchEngine.State);
-                if (_activeSection == AppSection.Search && SearchBox.IsEnabled)
-                {
-                    await RunSearchAsync();
-                }
-                else if (_activeSection == AppSection.Storage && _searchEngine.StorageRootPath is { } root)
-                {
-                    _storageSourceKey = CreateStorageSourceKey(_searchEngine.State.Mode, root);
-                    await RunStorageAnalysisAsync(root);
-                }
-            }
+            await _searchEngine.TryElevateAsync(_lifetimeCancellation.Token);
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
         {
@@ -781,6 +775,37 @@ public sealed partial class MainWindow : Window
             if (!_closed)
             {
                 ApplyEngineState(_searchEngine.State);
+            }
+        }
+
+        if (_closed)
+        {
+            return;
+        }
+
+        if (_activeSection == AppSection.Search && SearchBox.IsEnabled)
+        {
+            await RunSearchAsync();
+            return;
+        }
+
+        if (_activeSection == AppSection.Storage &&
+            !_searchEngine.State.IsBusy &&
+            _searchEngine.StorageRootPath is { } root)
+        {
+            var currentSourceKey = CreateStorageSourceKey(_searchEngine.State.Mode, root);
+            if (string.Equals(
+                    currentSourceKey,
+                    storageSourceBeforeElevation,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                var path = _storageCurrentPath;
+                if (string.IsNullOrWhiteSpace(path) || !IsPathWithinRoot(path, root))
+                {
+                    path = root;
+                }
+
+                await RunStorageAnalysisAsync(path);
             }
         }
     }
