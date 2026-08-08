@@ -57,6 +57,8 @@ public sealed record FileOperationExecutionSnapshot
     public static FileOperationExecutionSnapshot CreatePlanned(FileOperationPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(plan.Intent);
+        ArgumentNullException.ThrowIfNull(plan.Intent.Entries);
         if (plan.Intent.Entries.Count == 0)
         {
             throw new ArgumentException("A file operation plan must contain at least one entry.", nameof(plan));
@@ -116,12 +118,12 @@ public sealed record FileOperationExecutionSnapshot
     {
         return State switch
         {
-            FileOperationExecutionState.Planned => this with
+            FileOperationExecutionState.Planned or FileOperationExecutionState.Validating => this with
             {
                 State = FileOperationExecutionState.Cancelled,
                 CurrentPath = null,
             },
-            FileOperationExecutionState.Validating or FileOperationExecutionState.Running => this with
+            FileOperationExecutionState.Running => this with
             {
                 State = FileOperationExecutionState.CancellationRequested,
             },
