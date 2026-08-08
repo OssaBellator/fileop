@@ -9,6 +9,7 @@ namespace FileOp.App;
 public sealed partial class MainWindow
 {
     private const int StorageHistoryDisplayLimit = 90;
+    private static readonly TimeSpan StorageHistoryPostSyncYieldDelay = TimeSpan.FromMilliseconds(250);
 
     private readonly StorageHistoryView _storageHistoryView = new();
     private readonly Button _storageHistoryButton = new()
@@ -19,6 +20,7 @@ public sealed partial class MainWindow
     private string? _storageHistorySourceKey;
     private int _storageHistoryGeneration;
     private bool _storageHistoryInitialized;
+    private bool _storageHistoryLoadedForSource;
 
     private void InitializeStorageHistoryView()
     {
@@ -106,6 +108,7 @@ public sealed partial class MainWindow
 
         if (root is null)
         {
+            _storageHistoryLoadedForSource = false;
             if (_storageViewMode == StorageViewMode.History)
             {
                 _storageHistoryView.SetUnavailable(
@@ -123,6 +126,7 @@ public sealed partial class MainWindow
         {
             _storageHistorySourceKey = sourceKey;
             _storageHistorySnapshots = [];
+            _storageHistoryLoadedForSource = false;
             Interlocked.Increment(ref _storageHistoryGeneration);
         }
 
@@ -131,15 +135,18 @@ public sealed partial class MainWindow
             return;
         }
 
-        // The original MainWindow engine-state path is folder-only. While History owns
-        // the visible Storage surface, mark its source cache as transitioned so a native
-        // or fallback source change does not queue a hidden folder analysis.
-        _storageSourceKey = sourceKey;
-        _storageAnalysis = null;
-        _storageCurrentPath = null;
-        _storageEntries.Clear();
-        ResetStorageSummary();
-        Interlocked.Increment(ref _storageGeneration);
+        if (sourceChanged)
+        {
+            // The original MainWindow engine-state path is folder-only. Mark its source
+            // cache as transitioned only when ownership actually changes so recurring
+            // sync status updates cannot erase the visible History summary.
+            _storageSourceKey = sourceKey;
+            _storageAnalysis = null;
+            _storageCurrentPath = null;
+            _storageEntries.Clear();
+            ResetStorageSummary();
+            Interlocked.Increment(ref _storageGeneration);
+        }
 
         if (!historyAvailable)
         {
@@ -151,7 +158,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (sourceChanged || _storageHistorySnapshots.Count == 0)
+        if (sourceChanged || !_storageHistoryLoadedForSource)
         {
             _ = LoadStorageHistoryAsync(forceRefresh: true);
         }
@@ -159,6 +166,18 @@ public sealed partial class MainWindow
 
     private async Task RunScheduledStorageHistoryCaptureAsync()
     {
+        try
+        {
+            // Background SyncVolume raises StateChanged before releasing the native gate.
+            // Yield past that callback so this low-priority operation gets one fair,
+            // non-blocking attempt after the synchronization lease is released.
+            await Task.Delay(StorageHistoryPostSyncYieldDelay, _lifetimeCancellation.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+            return;
+        }
+
         StorageHistoryCaptureAttempt attempt;
         try
         {
@@ -176,7 +195,13 @@ public sealed partial class MainWindow
 
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_closed && _storageViewMode == StorageViewMode.History)
+            if (_closed)
+            {
+                return;
+            }
+
+            _storageHistoryLoadedForSource = false;
+            if (_storageViewMode == StorageViewMode.History)
             {
                 _ = LoadStorageHistoryAsync(forceRefresh: true);
             }
@@ -226,10 +251,11 @@ public sealed partial class MainWindow
         {
             _storageHistorySourceKey = sourceKey;
             _storageHistorySnapshots = [];
+            _storageHistoryLoadedForSource = false;
             forceRefresh = true;
         }
 
-        if (!forceRefresh && _storageHistorySnapshots.Count > 0)
+        if (!forceRefresh && _storageHistoryLoadedForSource)
         {
             ApplyStorageHistory(_storageHistorySnapshots, root);
             return;
@@ -256,6 +282,7 @@ public sealed partial class MainWindow
                 }
 
                 _storageHistorySnapshots = snapshots;
+                _storageHistoryLoadedForSource = true;
                 ApplyStorageHistory(snapshots, root);
             }
             finally
