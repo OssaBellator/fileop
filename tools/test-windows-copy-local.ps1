@@ -47,7 +47,8 @@ $filter = @(
     "FullyQualifiedName~FileOperationActionHistoryTests",
     "FullyQualifiedName~FileCopyOperationExecutorTests",
     "FullyQualifiedName~WindowsFileCopyMutationPrimitiveTests",
-    "FullyQualifiedName~WindowsFileCopyMutationPrimitiveMetadataTests"
+    "FullyQualifiedName~WindowsFileCopyMutationPrimitiveMetadataTests",
+    "FullyQualifiedName~WindowsFileCopyBasicMetadataInteropTests"
 ) -join "|"
 
 Invoke-Step "Focused action-history/Copy native regressions" {
