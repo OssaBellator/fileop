@@ -51,7 +51,7 @@ For the pure standard-library property models, run:
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-That gate needs Python but no .NET SDK. It includes `verify_windows_file_copy_mutation.py`, whose model exercises both sides of the namespace boundary: a parent-object replacement **before** handle acquisition changes the expected object identity, while a rename/replacement **after** handle acquisition cannot redirect a directory-relative exclusive create. It also checks source identity stability, collision refusal and destination flush ordering. Source guards require explicit fresh roots, `NtCreateFile` relative roots, `FILE_CREATE`, `FILE_WRITE_THROUGH`, reparse-point bypass, handle identity/final-path checks, destination flushing and absence of high-level overwrite/move/delete APIs.
+That gate needs Python but no .NET SDK. It includes `verify_windows_file_copy_mutation.py`, whose model exercises both sides of the namespace boundary: source/destination root replacement **before** handle acquisition changes the expected object identity, source-leaf replacement changes the stable file identity, while a rename/replacement **after** handle acquisition cannot redirect a directory-relative exclusive create. It also checks collision refusal and destination flushing. Source guards require explicit fresh roots, `NtCreateFile` relative roots, `FILE_CREATE`, `FILE_WRITE_THROUGH`, reparse-point bypass, handle identity/final-path checks, destination flushing and absence of high-level overwrite/move/delete APIs.
 
 For the focused real Windows compiler/native gate, run on Windows with .NET 10:
 
@@ -61,7 +61,7 @@ pwsh -File tools/test-windows-copy-local.ps1
 
 That script first runs the zero-Actions property models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs only `FileOperationActionHistoryTests`, `FileCopyOperationExecutorTests` and `WindowsFileCopyMutationPrimitiveTests`. Use `-SkipOfflineModels` when the Python gate has already been run. Neither script invokes GitHub Actions.
 
-Real Windows regression tests cover content copying, exclusive collision refusal, source-identity replacement, destination-root replacement, invalid root identity and lease-held delete/rename sharing. Because this environment cannot execute the Windows kernel/PInvoke path, this branch intentionally does not add Files UI execution wiring.
+Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, and lease-held parent-directory rename blocking. Because this environment cannot execute the Windows kernel/PInvoke path, this branch intentionally does not add Files UI execution wiring.
 
 ## Next boundary
 
