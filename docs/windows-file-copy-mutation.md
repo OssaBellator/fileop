@@ -54,6 +54,8 @@ Windows can defer automatic access/write timestamp changes until later I/O or ha
 
 That suppression is handle-local. The mutation handle intentionally permits read sharing, so a separate process that reads the destination can legitimately advance its last-access time; the fidelity guarantee covers FileOp's own mutation I/O rather than concurrent external access.
 
+A zero timestamp has special Windows basic-information semantics: it means “do not change this field.” Therefore a source filesystem that reports a timestamp as zero/unsupported cannot have that zero value reproduced literally through `FileBasicInfo`; FileOp leaves the corresponding destination timestamp filesystem-owned in that case. Explicit nonzero source timestamps are applied.
+
 `ChangeTime` is not copied. Source storage-state attributes that need separate filesystem semantics are also not copied. Windows' `FileBasicInformation` set operation only changes a documented valid-set mask: read-only, hidden, system, archive, temporary, offline and not-content-indexed. FileOp overlays its supported source fidelity bits while retaining the destination's current `Temporary` and `Offline` values, because those two destination-owned states are part of that settable mask and would otherwise be cleared. Sparse, compressed, encrypted and integrity-stream state are not in that valid-set mask; FileOp deliberately omits those flags from the input and Windows leaves their existing storage semantics untouched. Reparse-point state is excluded by the ordinary-file creation/validation boundary.
 
 Windows can also apply destination-owned defaults at creation—for example, files created in compressed or encrypted directories can inherit those states from the destination directory—and this slice deliberately does not clear or normalize them. ACLs, alternate data streams and extended attributes remain separate future boundaries rather than being implied by a byte copy.
@@ -76,15 +78,21 @@ pwsh -File tools/test-copy-executor-local.ps1
 
 That gate needs Python but no .NET SDK. It includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes both the preserved source-attribute mask and destination-owned settable-attribute merge, rejects unsupported source storage-state flags, requires non-settable storage flags to stay out of the `FileBasicInfo` input, requires explicit destination read-attribute access, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, guards the ordering `capture -> destination create/read access -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`, and requires the concrete regression to exercise every advertised safe attribute with its expected metadata established after validation.
 
-For the focused real Windows compiler/native gate, run on Windows with .NET 10:
+For the focused real Windows compiler/native gate, run on Windows with Python and the .NET 10 SDK. PowerShell 7 remains supported:
 
 ```powershell
 pwsh -File tools/test-windows-copy-local.ps1
 ```
 
-That script first runs the zero-Actions property models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs the focused action-history, Copy-executor, mutation-primitive and metadata-regression test classes. Use `-SkipOfflineModels` when the Python gate has already been run. Neither script invokes GitHub Actions.
+PowerShell 7 is not required. From a stock Windows 10/11 Command Prompt, use the checked-in Windows PowerShell launcher:
 
-Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported source-attribute filtering, destination-owned settable-attribute merging, omission of non-settable storage flags from `FileBasicInfo`, and metadata preservation through the concrete mutation primitive after the mutation lease is disposed.
+```bat
+tools\test-windows-copy-local.cmd
+```
+
+The `.cmd` launcher runs `powershell.exe` with a process-local execution-policy override and delegates to the same `.ps1` gate. The gate first runs the zero-Actions property models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs the focused action-history, Copy-executor, mutation-primitive and metadata-regression test classes. Pass `-SkipOfflineModels` to either launcher when the Python gate has already been run. None of these commands invoke GitHub Actions.
+
+Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported source-attribute filtering, destination-owned settable-attribute merging, destination `Temporary` preservation through the real Win32 helper, omission of non-settable storage flags from `FileBasicInfo`, and metadata preservation through the concrete mutation primitive after the mutation lease is disposed.
 
 ## Next boundary
 
