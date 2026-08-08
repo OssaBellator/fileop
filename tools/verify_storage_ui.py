@@ -7,7 +7,7 @@ Run from the repository root:
     python tools/verify_storage_ui.py
 
 The structural checks inspect the actual XAML/code-behind when those files exist.
-The property tests always run and mirror the current binary treemap/path logic.
+The property tests always run and mirror the current binary treemap/path/category logic.
 """
 from __future__ import annotations
 
@@ -28,21 +28,31 @@ EVENT_ATTRIBUTES = {
     "ItemClick",
     "SizeChanged",
     "Tapped",
+    "Loaded",
 }
 REQUIRED_STORAGE_NAMES = {
     "StorageView",
     "StorageScopeText",
+    "StorageFoldersButton",
+    "StorageTypesButton",
     "StorageUpButton",
+    "StorageTypesUpButton",
     "StoragePathText",
     "StorageRefreshButton",
+    "StorageTypesRefreshButton",
     "StorageLogicalText",
     "StorageAllocatedText",
     "StorageFilesText",
     "StorageAliasesText",
+    "StorageFolderPanel",
     "StorageTreemapModeText",
     "StorageTreemapCanvas",
     "StorageTreemapEmptyText",
     "StorageList",
+    "StorageTypesPanel",
+    "StorageCategoryStatusText",
+    "StorageCategoryList",
+    "StorageTypesList",
 }
 
 
@@ -179,7 +189,6 @@ def check_treemap_properties() -> int:
                         assert not _rectangles_overlap(left, right)
             cases += 1
 
-    # Explicit regression for the old 5%-floor distortion.
     items = [_Item(999), _Item(1)]
     rectangles = []
     _layout_treemap(items, 0, 2, 0, 0, 1000, 500, rectangles)
@@ -215,13 +224,11 @@ def _prepare_treemap_weights(
 def check_treemap_coverage() -> int:
     cases = 0
 
-    # Complete small result: no synthetic remainder is needed.
     tiles, other_count = _prepare_treemap_weights([60, 30, 10], 100, 3)
     assert tiles == [60, 30, 10]
     assert other_count == 0
     cases += 1
 
-    # More returned entries than can be rendered: one tile owns the exact remainder.
     weights = list(range(100, 0, -1))
     tiles, other_count = _prepare_treemap_weights(weights, sum(weights), 100)
     assert len(tiles) == 48
@@ -229,7 +236,6 @@ def check_treemap_coverage() -> int:
     assert sum(tiles) == sum(weights)
     cases += 1
 
-    # Service truncation: omitted direct entries still contribute to the treemap.
     returned = [10] * 256
     full_root_weight = 10 * 1000
     tiles, other_count = _prepare_treemap_weights(returned, full_root_weight, 1000)
@@ -238,11 +244,72 @@ def check_treemap_coverage() -> int:
     assert sum(tiles) == full_root_weight
     cases += 1
 
-    # Zero-weight aliases stay table-only; they must not invent physical allocation.
     tiles, other_count = _prepare_treemap_weights([128, 0], 128, 2)
     assert tiles == [128]
     assert other_count == 1
     assert sum(tiles) == 128
+    cases += 1
+
+    return cases
+
+
+def _prepare_category_weights(
+    returned: list[tuple[str, int]],
+    root_weight: int,
+    complete_type_count: int,
+) -> tuple[dict[str, int], int, int]:
+    categories: dict[str, int] = {}
+    for category, weight in returned:
+        categories[category] = categories.get(category, 0) + max(0, weight)
+
+    represented = sum(categories.values())
+    omitted_count = max(0, complete_type_count - len(returned))
+    omitted_weight = max(0, root_weight - represented) if omitted_count > 0 else 0
+    return categories, omitted_count, omitted_weight
+
+
+def check_category_coverage() -> int:
+    cases = 0
+
+    categories, omitted_count, omitted_weight = _prepare_category_weights(
+        [("Images", 60), ("Documents", 25), ("Images", 15)],
+        100,
+        3,
+    )
+    assert categories == {"Images": 75, "Documents": 25}
+    assert omitted_count == 0
+    assert omitted_weight == 0
+    assert sum(categories.values()) == 100
+    cases += 1
+
+    categories, omitted_count, omitted_weight = _prepare_category_weights(
+        [("Images", 400), ("Documents", 300)],
+        1000,
+        5,
+    )
+    assert omitted_count == 3
+    assert omitted_weight == 300
+    assert sum(categories.values()) + omitted_weight == 1000
+    cases += 1
+
+    categories, omitted_count, omitted_weight = _prepare_category_weights(
+        [("Data", 128), ("Images", 0)],
+        128,
+        2,
+    )
+    assert categories == {"Data": 128, "Images": 0}
+    assert omitted_count == 0
+    assert omitted_weight == 0
+    cases += 1
+
+    categories, omitted_count, omitted_weight = _prepare_category_weights(
+        [("Code", 700), ("Documents", 200)],
+        1200,
+        4,
+    )
+    assert omitted_count == 2
+    assert omitted_weight == 300
+    assert sum(categories.values()) + omitted_weight == 1200
     cases += 1
 
     return cases
@@ -282,10 +349,15 @@ def check_path_properties() -> int:
 
 
 def check_repository(repo_root: Path) -> tuple[int, int]:
-    xaml_path = repo_root / "src" / "FileOp.App" / "MainWindow.xaml"
-    code_path = repo_root / "src" / "FileOp.App" / "MainWindow.xaml.cs"
-    engine_path = repo_root / "src" / "FileOp.App" / "DesktopSearchEngine.cs"
-    missing_files = [path for path in (xaml_path, code_path, engine_path) if not path.is_file()]
+    app_root = repo_root / "src" / "FileOp.App"
+    xaml_path = app_root / "MainWindow.xaml"
+    required_code_paths = [
+        app_root / "MainWindow.xaml.cs",
+        app_root / "MainWindow.StorageTypes.cs",
+        app_root / "DesktopSearchEngine.cs",
+        app_root / "DesktopSearchEngine.StorageTypes.cs",
+    ]
+    missing_files = [path for path in [xaml_path, *required_code_paths] if not path.is_file()]
     if missing_files:
         raise FileNotFoundError(
             "Run this script from a FileOp checkout, or pass --repo-root. "
@@ -293,8 +365,10 @@ def check_repository(repo_root: Path) -> tuple[int, int]:
         )
 
     xaml_text = xaml_path.read_text(encoding="utf-8")
-    code_text = code_path.read_text(encoding="utf-8")
-    engine_text = engine_path.read_text(encoding="utf-8")
+    code_paths = sorted(app_root.glob("MainWindow*.cs"))
+    engine_paths = sorted(app_root.glob("DesktopSearchEngine*.cs"))
+    code_text = "\n".join(path.read_text(encoding="utf-8") for path in code_paths)
+    engine_text = "\n".join(path.read_text(encoding="utf-8") for path in engine_paths)
     root = ET.fromstring(xaml_text)
 
     names: set[str] = set()
@@ -323,17 +397,24 @@ def check_repository(repo_root: Path) -> tuple[int, int]:
     missing_handlers = handlers - method_names
     assert not missing_handlers, f"XAML handlers missing in code-behind: {sorted(missing_handlers)}"
 
-    # Guard against accidentally restoring the old visually-distorting split floor.
     assert "var ratio = leftWeight / (double)total;" in code_text
     assert "Math.Clamp(leftWeight / (double)total" not in code_text
     assert "var rootWeight = analysis.AllocatedBytes ?? analysis.LogicalBytes;" in code_text
     assert "analysis.DirectEntryCount - individualTileCount" in code_text
     assert "rootWeight - representedWeight" in code_text
 
-    # Storage must be reachable and must retain a non-rescan fallback implementation.
     assert 'x:Name="StorageNavigationButton"' in xaml_text
+    assert 'x:Name="StorageFoldersButton"' in xaml_text
+    assert 'x:Name="StorageTypesButton"' in xaml_text
     assert "_fallbackIndex.AnalyzeDirectoryAsync(" in engine_text
     assert "session.Client.AnalyzeStorageAsync(" in engine_text
+    assert "_fallbackIndex.AnalyzeFileTypesAsync(" in engine_text
+    assert "session.Client.AnalyzeStorageTypesAsync(" in engine_text
+    assert "AnalyzeStorageFileTypesAsync(" in engine_text
+    assert "Other {omittedTypeCount:N0} types (not returned)" in code_text
+    assert "omitted remainder is left unclassified" in code_text
+    assert "Interlocked.Increment(ref _storageGeneration);" in code_text
+    assert "Interlocked.Increment(ref _storageTypeGeneration);" in code_text
 
     return len(names), len(handlers)
 
@@ -350,9 +431,11 @@ def main() -> int:
 
     treemap_cases = check_treemap_properties()
     coverage_cases = check_treemap_coverage()
+    category_cases = check_category_coverage()
     path_cases = check_path_properties()
     print(f"PASS treemap properties: {treemap_cases} cases")
     print(f"PASS treemap coverage: {coverage_cases} cases")
+    print(f"PASS category coverage: {category_cases} cases")
     print(f"PASS path containment: {path_cases} cases")
 
     if not args.self_test_only:
