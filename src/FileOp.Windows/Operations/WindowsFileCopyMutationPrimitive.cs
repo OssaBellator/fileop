@@ -129,6 +129,7 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
                     $"Exclusive destination creation returned unexpected information value {createInformation}.");
             }
 
+            WindowsFileCopyBasicMetadata.SuppressAutomaticTimestampUpdates(destinationFile);
             CopyContents(sourceFile, destinationFile);
             if (!FlushFileBuffers(destinationFile))
             {
