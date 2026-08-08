@@ -199,7 +199,7 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
                 current = new SnapshotBuilder(
                     id,
                     reader.GetString(1),
-                    new DateTimeOffset(new DateTime(reader.GetInt64(2), DateTimeKind.Utc)),
+                    ReadUtcTimestamp(reader.GetInt64(2)),
                     reader.GetInt64(3),
                     reader.IsDBNull(4) ? null : reader.GetInt64(4),
                     checked((int)reader.GetInt64(5)),
@@ -212,7 +212,7 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
             {
                 var categoryValue = checked((int)reader.GetInt64(8));
                 var category = (StorageFileCategory)categoryValue;
-                if (!Enum.IsDefined(category))
+                if (!Enum.IsDefined(typeof(StorageFileCategory), category))
                 {
                     throw new InvalidDataException($"Unknown storage-history category value {categoryValue}.");
                 }
@@ -227,7 +227,9 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
             }
         }
 
-        return builders.Select(static builder => builder.Build()).ToArray();
+        return builders
+            .Select(static builder => ValidateSnapshot(builder.Build()))
+            .ToArray();
     }
 
     public async ValueTask<int> PruneBeforeAsync(
@@ -359,7 +361,7 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
 
         foreach (var item in analysis.Categories)
         {
-            if (!Enum.IsDefined(item.Category) ||
+            if (!Enum.IsDefined(typeof(StorageFileCategory), item.Category) ||
                 item.LogicalBytes < 0 ||
                 item.AllocatedBytes is < 0 ||
                 item.FileCount < 0 ||
@@ -371,10 +373,13 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
             }
         }
 
+        var categoryFileCount = analysis.Categories.Sum(static item => (long)item.FileCount);
+        var categoryAliasCount = analysis.Categories.Sum(static item => (long)item.HardLinkAliasCount);
+        var categoryTypeCount = analysis.Categories.Sum(static item => (long)item.TypeCount);
         if (analysis.Categories.Sum(static item => item.LogicalBytes) != analysis.LogicalBytes ||
-            analysis.Categories.Sum(static item => item.FileCount) != analysis.FileCount ||
-            analysis.Categories.Sum(static item => item.HardLinkAliasCount) != analysis.HardLinkAliasCount ||
-            analysis.Categories.Sum(static item => item.TypeCount) != analysis.TypeCount)
+            categoryFileCount != analysis.FileCount ||
+            categoryAliasCount != analysis.HardLinkAliasCount ||
+            categoryTypeCount != analysis.TypeCount)
         {
             throw new ArgumentException("Storage history category totals do not reconcile with the analysis root.", nameof(analysis));
         }
@@ -395,6 +400,80 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
             throw new ArgumentException(
                 "Storage history root allocation cannot be unknown when every category allocation is exact.",
                 nameof(analysis));
+        }
+    }
+
+    private static StorageHistorySnapshot ValidateSnapshot(StorageHistorySnapshot snapshot)
+    {
+        if (snapshot.Id <= 0 ||
+            string.IsNullOrWhiteSpace(snapshot.RootPath) ||
+            snapshot.LogicalBytes < 0 ||
+            snapshot.AllocatedBytes is < 0 ||
+            snapshot.FileCount < 0 ||
+            snapshot.HardLinkAliasCount < 0 ||
+            snapshot.HardLinkAliasCount > snapshot.FileCount ||
+            snapshot.TypeCount < 0)
+        {
+            throw new InvalidDataException("Persisted storage-history root totals are invalid.");
+        }
+
+        if (snapshot.Categories.Select(static item => item.Category).Distinct().Count() != snapshot.Categories.Count)
+        {
+            throw new InvalidDataException("Persisted storage-history categories contain duplicates.");
+        }
+
+        foreach (var item in snapshot.Categories)
+        {
+            if (!Enum.IsDefined(typeof(StorageFileCategory), item.Category) ||
+                item.LogicalBytes < 0 ||
+                item.AllocatedBytes is < 0 ||
+                item.FileCount < 0 ||
+                item.HardLinkAliasCount < 0 ||
+                item.HardLinkAliasCount > item.FileCount ||
+                item.TypeCount <= 0)
+            {
+                throw new InvalidDataException("Persisted storage-history category data is invalid.");
+            }
+        }
+
+        var categoryFileCount = snapshot.Categories.Sum(static item => (long)item.FileCount);
+        var categoryAliasCount = snapshot.Categories.Sum(static item => (long)item.HardLinkAliasCount);
+        var categoryTypeCount = snapshot.Categories.Sum(static item => (long)item.TypeCount);
+        if (snapshot.Categories.Sum(static item => item.LogicalBytes) != snapshot.LogicalBytes ||
+            categoryFileCount != snapshot.FileCount ||
+            categoryAliasCount != snapshot.HardLinkAliasCount ||
+            categoryTypeCount != snapshot.TypeCount)
+        {
+            throw new InvalidDataException("Persisted storage-history categories do not reconcile with the root.");
+        }
+
+        if (snapshot.AllocatedBytes is { } rootAllocated)
+        {
+            if (snapshot.Categories.Any(static item => !item.AllocatedBytes.HasValue) ||
+                snapshot.Categories.Sum(static item => item.AllocatedBytes!.Value) != rootAllocated)
+            {
+                throw new InvalidDataException("Persisted storage-history physical totals do not reconcile.");
+            }
+        }
+        else if (snapshot.FileCount > 0 &&
+                 snapshot.Categories.All(static item => item.AllocatedBytes.HasValue))
+        {
+            throw new InvalidDataException(
+                "Persisted storage-history root allocation is unknown while every category is exact.");
+        }
+
+        return snapshot;
+    }
+
+    private static DateTimeOffset ReadUtcTimestamp(long ticks)
+    {
+        try
+        {
+            return new DateTimeOffset(new DateTime(ticks, DateTimeKind.Utc));
+        }
+        catch (ArgumentOutOfRangeException exception)
+        {
+            throw new InvalidDataException($"Invalid storage-history UTC tick value {ticks}.", exception);
         }
     }
 
