@@ -77,11 +77,16 @@ def check_repository(root: Path) -> int:
     required_helper = [
         "WindowsFileCopyBasicMetadata",
         "Capture(SafeFileHandle sourceHandle)",
+        "SuppressAutomaticTimestampUpdates(SafeFileHandle destinationHandle)",
         "Apply(SafeFileHandle destinationHandle, Snapshot snapshot)",
         "GetFileInformationByHandle(",
         "SetFileInformationByHandle(",
         "FileBasicInfo",
+        "LastAccessTime = -1",
+        "LastWriteTime = -1",
         "ChangeTime = 0",
+        "FileAttributes = 0",
+        "StructLayout(LayoutKind.Sequential, Pack = 8)",
         "FileAttributeReadOnly",
         "FileAttributeHidden",
         "FileAttributeSystem",
@@ -93,6 +98,8 @@ def check_repository(root: Path) -> int:
         assert needle in helper, needle
 
     forbidden_helper = [
+        "LastAccessTime = -2",
+        "LastWriteTime = -2",
         "File.SetCreationTime",
         "File.SetLastAccessTime",
         "File.SetLastWriteTime",
@@ -104,12 +111,16 @@ def check_repository(root: Path) -> int:
         assert needle not in helper, needle
 
     capture = primitive.index("WindowsFileCopyBasicMetadata.Capture(sourceFile)")
-    copy = primitive.index("CopyContents(sourceFile, destinationFile)", capture)
+    suppress = primitive.index(
+        "WindowsFileCopyBasicMetadata.SuppressAutomaticTimestampUpdates(destinationFile)",
+        capture,
+    )
+    copy = primitive.index("CopyContents(sourceFile, destinationFile)", suppress)
     data_flush = primitive.index("FlushFileBuffers(destinationFile)", copy)
     apply = primitive.index("WindowsFileCopyBasicMetadata.Apply(destinationFile, sourceMetadata)", data_flush)
     metadata_flush = primitive.index("FlushFileBuffers(destinationFile)", apply)
     validate_destination = primitive.index("ValidateCreatedFileHandle(", metadata_flush)
-    assert capture < copy < data_flush < apply < metadata_flush < validate_destination
+    assert capture < suppress < copy < data_flush < apply < metadata_flush < validate_destination
 
     for test_name in [
         "BasicMetadataHelperPreservesTimestampsAndSafeAttributes",
@@ -118,9 +129,13 @@ def check_repository(root: Path) -> int:
     ]:
         assert test_name in tests, test_name
 
+    metadata_assertion = tests.index("AssertMetadata(", tests.index("CopyPrimitivePreservesSafeBasicMetadata"))
+    content_read = tests.index("File.ReadAllTextAsync(destinationPath)", metadata_assertion)
+    assert metadata_assertion < content_read
+
     assert "verify_copy_basic_metadata.py" in wrapper
     assert "WindowsFileCopyMutationPrimitiveMetadataTests" in windows_wrapper
-    return len(required_helper) + len(forbidden_helper) + 9
+    return len(required_helper) + len(forbidden_helper) + 11
 
 
 def main() -> int:
