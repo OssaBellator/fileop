@@ -1,5 +1,5 @@
 using FileOp.Core.Indexing.Service;
-using FileOp.Core.Storage;
+using FileOp.Core.Models;
 using FileOp.Windows.IndexingService;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -8,16 +8,20 @@ namespace FileOp.App;
 
 public sealed partial class MainWindow
 {
-    private const int FilesDirectoryEntryLimit = 4_096;
+    private const int FilesPageSize = 256;
 
+    private readonly List<FileBrowserRow> _filesRows = [];
     private FilesView _filesView = null!;
     private Button _filesNavigationButton = null!;
-    private StorageDirectoryAnalysis? _filesAnalysis;
+    private FileDirectoryBrowseCursor? _filesNextCursor;
     private string? _filesCurrentPath;
     private string? _filesSourceKey;
     private string _lastFilesStatus = string.Empty;
+    private int _filesCurrentTotalCount;
     private int _filesGeneration;
+    private int _filesLoadingGeneration;
     private bool _filesInitialized;
+    private bool _filesLoadedForSource;
     private bool _filesVisible;
 
     internal void InitializeFilesFeature()
@@ -55,6 +59,7 @@ public sealed partial class MainWindow
         StorageNavigationButton.Click += FilesOtherNavigationButton_Click;
         _filesView.UpRequested += FilesView_UpRequested;
         _filesView.RefreshRequested += FilesView_RefreshRequested;
+        _filesView.LoadMoreRequested += FilesView_LoadMoreRequested;
         _filesView.EntryInvoked += FilesView_EntryInvoked;
         _searchEngine.StateChanged += FilesEngine_StateChanged;
         Closed += FilesWindow_Closed;
@@ -70,6 +75,7 @@ public sealed partial class MainWindow
         StorageNavigationButton.Click -= FilesOtherNavigationButton_Click;
         _filesView.UpRequested -= FilesView_UpRequested;
         _filesView.RefreshRequested -= FilesView_RefreshRequested;
+        _filesView.LoadMoreRequested -= FilesView_LoadMoreRequested;
         _filesView.EntryInvoked -= FilesView_EntryInvoked;
         Closed -= FilesWindow_Closed;
     }
@@ -114,8 +120,7 @@ public sealed partial class MainWindow
         if (root is null)
         {
             _filesSourceKey = null;
-            _filesCurrentPath = null;
-            _filesAnalysis = null;
+            ResetFilesPaging(clearPath: true);
             Interlocked.Increment(ref _filesGeneration);
             if (_filesVisible)
             {
@@ -130,8 +135,7 @@ public sealed partial class MainWindow
         if (sourceChanged)
         {
             _filesSourceKey = sourceKey;
-            _filesCurrentPath = null;
-            _filesAnalysis = null;
+            ResetFilesPaging(clearPath: true);
             Interlocked.Increment(ref _filesGeneration);
         }
 
@@ -144,7 +148,7 @@ public sealed partial class MainWindow
         {
             if (state.IsBusy)
             {
-                _filesAnalysis = null;
+                ResetFilesPaging(clearPath: false);
                 Interlocked.Increment(ref _filesGeneration);
             }
 
@@ -153,7 +157,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (sourceChanged || _filesAnalysis is null || _filesCurrentPath is null)
+        if ((sourceChanged || !_filesLoadedForSource || _filesCurrentPath is null) &&
+            _filesLoadingGeneration == 0)
         {
             var target = _filesCurrentPath;
             if (string.IsNullOrWhiteSpace(target) || !IsPathWithinRoot(target, root))
@@ -165,7 +170,13 @@ public sealed partial class MainWindow
             return;
         }
 
-        _filesView.SetReady(CanNavigateFilesUp(root), canRefresh: true);
+        if (_filesLoadingGeneration == 0)
+        {
+            _filesView.SetReady(
+                CanNavigateFilesUp(root),
+                canRefresh: true,
+                canLoadMore: _filesNextCursor is not null);
+        }
     }
 
     private async void FilesNavigationButton_Click(object sender, RoutedEventArgs e)
@@ -201,8 +212,7 @@ public sealed partial class MainWindow
         if (!string.Equals(sourceKey, _filesSourceKey, StringComparison.OrdinalIgnoreCase))
         {
             _filesSourceKey = sourceKey;
-            _filesAnalysis = null;
-            _filesCurrentPath = null;
+            ResetFilesPaging(clearPath: true);
         }
 
         var path = _filesCurrentPath;
@@ -223,6 +233,7 @@ public sealed partial class MainWindow
 
         _filesVisible = false;
         Interlocked.Increment(ref _filesGeneration);
+        _filesLoadingGeneration = 0;
         _filesView.Visibility = Visibility.Collapsed;
     }
 
@@ -262,6 +273,18 @@ public sealed partial class MainWindow
         await LoadFilesDirectoryAsync(path, forceRefresh: true);
     }
 
+    private async void FilesView_LoadMoreRequested(object? sender, EventArgs e)
+    {
+        var current = _filesCurrentPath;
+        var cursor = _filesNextCursor;
+        if (current is null || cursor is null || _filesLoadingGeneration != 0)
+        {
+            return;
+        }
+
+        await LoadFilesPageAsync(current, cursor, append: true);
+    }
+
     private async void FilesView_EntryInvoked(object? sender, FileBrowserRow row)
     {
         if (row.IsDirectory)
@@ -297,22 +320,84 @@ public sealed partial class MainWindow
         if (!string.Equals(sourceKey, _filesSourceKey, StringComparison.OrdinalIgnoreCase))
         {
             _filesSourceKey = sourceKey;
-            _filesAnalysis = null;
-            _filesCurrentPath = null;
+            ResetFilesPaging(clearPath: true);
             forceRefresh = true;
         }
 
-        if (!forceRefresh &&
-            _filesAnalysis is { } cached &&
-            PathsEqual(cached.RootPath, directoryPath))
+        var samePath = _filesCurrentPath is not null && PathsEqual(_filesCurrentPath, directoryPath);
+        if (!forceRefresh && samePath && _filesLoadedForSource)
         {
-            ApplyFilesAnalysis(cached, root);
+            ApplyFilesPageCache(root);
+            return;
+        }
+
+        if (forceRefresh || !samePath)
+        {
+            _filesRows.Clear();
+            _filesNextCursor = null;
+            _filesCurrentTotalCount = 0;
+            _filesLoadedForSource = false;
+        }
+
+        await LoadFilesPageAsync(directoryPath, cursor: null, append: false);
+    }
+
+    private async Task LoadFilesPageAsync(
+        string directoryPath,
+        FileDirectoryBrowseCursor? cursor,
+        bool append)
+    {
+        if (_closed || !_filesVisible)
+        {
+            return;
+        }
+
+        var root = _searchEngine.StorageRootPath;
+        if (root is null || _searchEngine.State.IsBusy)
+        {
+            _filesView.SetUnavailable("Indexed Files browsing is not currently available.");
+            SetFilesStatus("Files will be available when indexing is ready.");
+            return;
+        }
+
+        if (!IsPathWithinRoot(directoryPath, root))
+        {
+            directoryPath = root;
+            cursor = null;
+            append = false;
+        }
+
+        var sourceKey = CreateStorageSourceKey(_searchEngine.State.Mode, root);
+        if (!string.Equals(sourceKey, _filesSourceKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _filesSourceKey = sourceKey;
+            ResetFilesPaging(clearPath: true);
+            directoryPath = root;
+            cursor = null;
+            append = false;
+        }
+
+        if (append &&
+            (!_filesLoadedForSource ||
+             _filesCurrentPath is null ||
+             !PathsEqual(_filesCurrentPath, directoryPath) ||
+             _filesNextCursor != cursor))
+        {
             return;
         }
 
         var generation = Interlocked.Increment(ref _filesGeneration);
-        _filesView.SetLoading(directoryPath, "Loading direct entries from the shared index…");
-        SetFilesStatus($"Loading {directoryPath} from the shared index…");
+        _filesLoadingGeneration = generation;
+        _filesView.SetLoading(
+            directoryPath,
+            append
+                ? "Loading more exact directory entries…"
+                : "Loading exact directory entries from the shared index…",
+            preserveRows: append);
+        SetFilesStatus(
+            append
+                ? $"Loading more entries from {directoryPath}…"
+                : $"Loading {directoryPath} from the exact indexed browse API…");
 
         try
         {
@@ -324,15 +409,17 @@ public sealed partial class MainWindow
                     return;
                 }
 
-                var analysis = await _searchEngine.AnalyzeStorageAsync(
+                var page = await _searchEngine.BrowseDirectoryAsync(
                     directoryPath,
-                    FilesDirectoryEntryLimit);
+                    FilesPageSize,
+                    cursor);
                 if (_closed || !_filesVisible || generation != Volatile.Read(ref _filesGeneration))
                 {
                     return;
                 }
 
-                ApplyFilesAnalysis(analysis, root);
+                ApplyFilesPage(page, root, append);
+                _filesLoadingGeneration = 0;
             }
             finally
             {
@@ -347,7 +434,10 @@ public sealed partial class MainWindow
         {
             if (!_closed && _filesVisible && generation == Volatile.Read(ref _filesGeneration))
             {
-                SetFilesStatus("The shared index is busy. Refresh Files after the current maintenance operation completes.");
+                _filesLoadingGeneration = 0;
+                var message = "The shared index is busy. Refresh Files after the current maintenance operation completes.";
+                _filesView.SetStatus(message);
+                SetFilesStatus(message);
             }
         }
         catch (IndexingServiceRemoteException exception)
@@ -355,51 +445,116 @@ public sealed partial class MainWindow
         {
             if (!_closed && _filesVisible && generation == Volatile.Read(ref _filesGeneration))
             {
-                SetFilesStatus("The indexed namespace is refreshing. Files will be available when the snapshot is current again.");
+                _filesLoadingGeneration = 0;
+                var message = "The indexed namespace is refreshing. Files will be available when the snapshot is current again.";
+                _filesView.SetStatus(message);
+                SetFilesStatus(message);
+            }
+        }
+        catch (IndexingServiceRemoteException exception)
+            when (exception.Error.Code == IndexingServiceErrorCode.InvalidRequest)
+        {
+            if (!_closed && _filesVisible && generation == Volatile.Read(ref _filesGeneration))
+            {
+                _filesLoadingGeneration = 0;
+                var message = "That directory is no longer present in the current index. Refresh or navigate to another folder.";
+                _filesView.SetStatus(message);
+                SetFilesStatus(message);
             }
         }
         catch (Exception exception)
         {
             if (!_closed && _filesVisible && generation == Volatile.Read(ref _filesGeneration))
             {
-                SetFilesStatus($"Files could not be loaded: {exception.Message}");
+                _filesLoadingGeneration = 0;
+                var message = $"Files could not be loaded: {exception.Message}";
+                _filesView.SetStatus(message);
+                SetFilesStatus(message);
             }
         }
         finally
         {
+            if (!_closed &&
+                _filesVisible &&
+                generation == Volatile.Read(ref _filesGeneration) &&
+                _filesLoadingGeneration == generation)
+            {
+                _filesLoadingGeneration = 0;
+            }
+
             if (!_closed && _filesVisible && generation == Volatile.Read(ref _filesGeneration))
             {
-                _filesView.SetReady(CanNavigateFilesUp(root), !_searchEngine.State.IsBusy);
+                _filesView.SetReady(
+                    CanNavigateFilesUp(root),
+                    !_searchEngine.State.IsBusy,
+                    _filesLoadedForSource && _filesNextCursor is not null);
             }
         }
     }
 
-    private void ApplyFilesAnalysis(StorageDirectoryAnalysis analysis, string root)
+    private void ApplyFilesPage(FileDirectoryBrowsePage page, string root, bool append)
     {
-        _filesAnalysis = analysis;
-        _filesCurrentPath = analysis.RootPath;
-        var rows = analysis.Entries
-            .OrderByDescending(static entry => entry.IsDirectory)
-            .ThenBy(static entry => entry.Name, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(static entry => entry.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(FileBrowserRow.FromEntry)
-            .ToArray();
+        if (!append)
+        {
+            _filesRows.Clear();
+        }
+
+        HashSet<string>? existingPaths = append
+            ? new HashSet<string>(_filesRows.Select(static row => row.Path), StringComparer.OrdinalIgnoreCase)
+            : null;
+        foreach (var record in page.Entries)
+        {
+            if (existingPaths is not null && !existingPaths.Add(record.Path))
+            {
+                continue;
+            }
+
+            _filesRows.Add(FileBrowserRow.FromRecord(record));
+        }
+
+        _filesCurrentPath = page.DirectoryPath;
+        _filesCurrentTotalCount = page.TotalCount;
+        _filesNextCursor = page.NextCursor;
+        _filesLoadedForSource = true;
+        ApplyFilesPageCache(root);
+    }
+
+    private void ApplyFilesPageCache(string root)
+    {
+        if (_filesCurrentPath is null)
+        {
+            return;
+        }
 
         _filesView.Apply(
-            rows,
-            analysis.RootPath,
-            analysis.DirectEntryCount,
+            _filesRows,
+            _filesCurrentPath,
+            _filesCurrentTotalCount,
+            _filesNextCursor is not null,
             CanNavigateFilesUp(root),
             canRefresh: !_searchEngine.State.IsBusy);
 
         var source = _searchEngine.State.Mode == DesktopSearchMode.Native
             ? "whole-volume native index"
             : "profile fallback snapshot";
-        var bounded = rows.Length == analysis.DirectEntryCount
-            ? string.Empty
-            : $" · bounded to {rows.Length:N0} returned entries";
+        var pageState = _filesNextCursor is null
+            ? "exact page sequence complete"
+            : "more exact pages available";
         SetFilesStatus(
-            $"{rows.Length:N0} of {analysis.DirectEntryCount:N0} direct entries · {source}{bounded}");
+            $"{_filesRows.Count:N0} loaded · current direct count {_filesCurrentTotalCount:N0} · {source} · {pageState}");
+    }
+
+    private void ResetFilesPaging(bool clearPath)
+    {
+        _filesRows.Clear();
+        _filesNextCursor = null;
+        _filesCurrentTotalCount = 0;
+        _filesLoadedForSource = false;
+        _filesLoadingGeneration = 0;
+        if (clearPath)
+        {
+            _filesCurrentPath = null;
+        }
     }
 
     private void UpdateFilesSourceDescription(DesktopSearchMode mode)
@@ -407,9 +562,9 @@ public sealed partial class MainWindow
         _filesView.SetSourceDescription(mode switch
         {
             DesktopSearchMode.Native =>
-                "Browse direct children from the same whole-volume NTFS metadata index used by Search and Storage. No directory rescan is performed.",
+                "Browse exact direct children from the same whole-volume NTFS metadata index used by Search and Storage. Pages are keyset-ordered and no directory rescan is performed.",
             DesktopSearchMode.Fallback =>
-                "Browse the completed user-profile fallback snapshot. No second filesystem scan is performed, and entries outside that snapshot are intentionally unavailable.",
+                "Browse exact direct children from the completed user-profile fallback snapshot. Paging reads that in-memory snapshot and does not rescan the filesystem.",
             _ =>
                 "Indexed directory browsing becomes available when the shared search source is ready.",
         });
