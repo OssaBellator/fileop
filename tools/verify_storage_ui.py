@@ -189,6 +189,65 @@ def check_treemap_properties() -> int:
     return cases + 1
 
 
+def _prepare_treemap_weights(
+    returned_weights: list[int],
+    root_weight: int,
+    direct_entry_count: int,
+    maximum_tiles: int = 48,
+) -> tuple[list[int], int]:
+    weighted = sorted((weight for weight in returned_weights if weight > 0), reverse=True)
+    if not weighted:
+        return [], 0
+
+    individual_count = min(len(weighted), maximum_tiles)
+    if direct_entry_count > individual_count:
+        individual_count = min(len(weighted), maximum_tiles - 1)
+
+    tiles = weighted[:individual_count]
+    other_entry_count = max(0, direct_entry_count - individual_count)
+    if other_entry_count > 0:
+        other_weight = max(0, root_weight - sum(tiles))
+        if other_weight > 0:
+            tiles.append(other_weight)
+    return tiles, other_entry_count
+
+
+def check_treemap_coverage() -> int:
+    cases = 0
+
+    # Complete small result: no synthetic remainder is needed.
+    tiles, other_count = _prepare_treemap_weights([60, 30, 10], 100, 3)
+    assert tiles == [60, 30, 10]
+    assert other_count == 0
+    cases += 1
+
+    # More returned entries than can be rendered: one tile owns the exact remainder.
+    weights = list(range(100, 0, -1))
+    tiles, other_count = _prepare_treemap_weights(weights, sum(weights), 100)
+    assert len(tiles) == 48
+    assert other_count == 53
+    assert sum(tiles) == sum(weights)
+    cases += 1
+
+    # Service truncation: omitted direct entries still contribute to the treemap.
+    returned = [10] * 256
+    full_root_weight = 10 * 1000
+    tiles, other_count = _prepare_treemap_weights(returned, full_root_weight, 1000)
+    assert len(tiles) == 48
+    assert other_count == 953
+    assert sum(tiles) == full_root_weight
+    cases += 1
+
+    # Zero-weight aliases stay table-only; they must not invent physical allocation.
+    tiles, other_count = _prepare_treemap_weights([128, 0], 128, 2)
+    assert tiles == [128]
+    assert other_count == 1
+    assert sum(tiles) == 128
+    cases += 1
+
+    return cases
+
+
 def _normalize_windows_path(path: str) -> str:
     normalized = ntpath.normpath(path)
     if len(normalized) == 3 and normalized[1:] == ":\\":
@@ -264,6 +323,9 @@ def check_repository(repo_root: Path) -> tuple[int, int]:
     # Guard against accidentally restoring the old visually-distorting split floor.
     assert "var ratio = leftWeight / (double)total;" in code_text
     assert "Math.Clamp(leftWeight / (double)total" not in code_text
+    assert "var rootWeight = analysis.AllocatedBytes ?? analysis.LogicalBytes;" in code_text
+    assert "analysis.DirectEntryCount - individualTileCount" in code_text
+    assert "rootWeight - representedWeight" in code_text
 
     # Storage must be reachable and must retain a non-rescan fallback implementation.
     assert 'x:Name="StorageNavigationButton"' in xaml_text
@@ -284,8 +346,10 @@ def main() -> int:
     args = parser.parse_args()
 
     treemap_cases = check_treemap_properties()
+    coverage_cases = check_treemap_coverage()
     path_cases = check_path_properties()
     print(f"PASS treemap properties: {treemap_cases} cases")
+    print(f"PASS treemap coverage: {coverage_cases} cases")
     print(f"PASS path containment: {path_cases} cases")
 
     if not args.self_test_only:
