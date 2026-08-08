@@ -14,11 +14,51 @@ public sealed class SqliteFileDirectoryBrowser : IFileDirectoryBrowser
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = Path.GetFullPath(databasePath),
-            Mode = SqliteOpenMode.ReadWriteCreate,
+            Mode = SqliteOpenMode.ReadOnly,
             Cache = SqliteCacheMode.Shared,
             Pooling = true,
             DefaultTimeout = 5,
         }.ToString();
+    }
+
+    public async ValueTask<bool> HasCheckpointAsync(
+        string sourceKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceKey);
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT EXISTS(
+                SELECT 1
+                FROM source_checkpoints
+                WHERE source_key = @source_key
+            );
+            """;
+        command.Parameters.AddWithValue("@source_key", sourceKey);
+        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return Convert.ToInt64(value ?? 0L) != 0;
+    }
+
+    public async ValueTask<bool> DirectoryExistsAsync(
+        string directoryPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
+        var normalizedDirectory = NormalizeIndexedPath(directoryPath);
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT EXISTS(
+                SELECT 1
+                FROM files
+                WHERE path = @directory COLLATE NOCASE
+                  AND is_directory = 1
+            );
+            """;
+        command.Parameters.AddWithValue("@directory", normalizedDirectory);
+        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return Convert.ToInt64(value ?? 0L) != 0;
     }
 
     public async ValueTask<FileDirectoryBrowsePage> BrowseDirectoryAsync(
@@ -36,10 +76,10 @@ public sealed class SqliteFileDirectoryBrowser : IFileDirectoryBrowser
                 $"Directory browse page sizes must be between 1 and {MaximumPageSize:N0}.");
         }
 
-        ValidateCursor(cursor);
         cancellationToken.ThrowIfCancellationRequested();
-
         var normalizedDirectory = NormalizeIndexedPath(directoryPath);
+        ValidateCursor(cursor, normalizedDirectory);
+
         using var connection = OpenConnection();
         var parentIdentity = await TryGetDirectoryIdentityAsync(
             connection,
@@ -241,7 +281,9 @@ public sealed class SqliteFileDirectoryBrowser : IFileDirectoryBrowser
             FromSqlInteger(reader.GetInt64(referenceIndex)));
     }
 
-    private static void ValidateCursor(FileDirectoryBrowseCursor? cursor)
+    private static void ValidateCursor(
+        FileDirectoryBrowseCursor? cursor,
+        string directoryPath)
     {
         if (cursor is null)
         {
@@ -253,6 +295,18 @@ public sealed class SqliteFileDirectoryBrowser : IFileDirectoryBrowser
         if (!Path.IsPathFullyQualified(cursor.Path))
         {
             throw new ArgumentException("Directory browse cursor paths must be absolute.", nameof(cursor));
+        }
+
+        var parent = Path.GetDirectoryName(Path.GetFullPath(cursor.Path));
+        if (string.IsNullOrWhiteSpace(parent) ||
+            !string.Equals(
+                NormalizeIndexedPath(parent),
+                directoryPath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "The directory browse cursor does not belong to the requested directory.",
+                nameof(cursor));
         }
     }
 
