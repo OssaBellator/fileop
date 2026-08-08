@@ -106,7 +106,7 @@ public sealed partial class MainWindow
         var root = _searchEngine.StorageRootPath;
         var sourceAvailable = !_closed &&
             !state.IsBusy &&
-            state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback &&
+            (state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback) &&
             root is not null;
         _filesNavigationButton.IsEnabled = sourceAvailable;
         UpdateFilesSourceDescription(state.Mode);
