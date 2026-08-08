@@ -13,7 +13,7 @@ Each observation stores aggregate state only:
 - complete extension-group count;
 - exact category rollups for the same observation.
 
-This is enough for future UI to answer “how much did this root grow?” and “which category drove the change?” while keeping persistence proportional to observations and categories rather than files and time.
+The desktop uses those observations to show whole-volume usage over time and the category changes between the newest two observations while keeping persistence proportional to observations and categories rather than files and time.
 
 Folder-level historical contributors remain a later slice. Per-file temporal logging is not part of this model.
 
@@ -70,15 +70,35 @@ That call is the trusted semantic read boundary: it resolves the attached volume
 
 Once the immutable aggregate has been materialized successfully, the wrapper persists it to `storage_history_*`. The history SQLite write does not need to keep the NTFS semantic read lease open: a later rebuild cannot retroactively change the already-materialized observation. This keeps the cross-process lease duration limited to filesystem/index reading rather than extending it through an unrelated history transaction.
 
-A failed or `SnapshotRequired` live analysis cannot create history.
+A failed or `SnapshotRequired` live analysis cannot create history. SQLite `BUSY`/`LOCKED` during save/query is translated to retryable service `Busy` rather than a non-retryable internal failure.
 
 ### Query validity
 
 Historical observations are independently persisted and validated, so querying history intentionally does **not** require the current namespace checkpoint to remain valid. A previous trustworthy observation should still be readable while the live index needs a rebuild.
 
-The initial service implementation still requires the physical volume/root to be currently attached and resolvable. Offline/detached-volume history browsing remains a separate product decision.
+The current service implementation still requires the physical volume/root to be currently attached and resolvable. Offline/detached-volume history browsing remains a separate product decision.
 
 The query reads only `storage_history_*`; it does not scan the filesystem or recalculate live Storage analytics.
+
+## Desktop capture policy
+
+`DesktopSearchEngine` owns automatic capture scheduling. Scheduling therefore starts with the native engine lifecycle and does not depend on the user opening Storage or the History view.
+
+The first product policy captures only the **whole primary native volume**. Protocol v5 can represent arbitrary directory roots, but FileOp does not automatically turn every browsed folder into an implicit time series.
+
+A capture is considered only when the primary native index reports `IsCurrent`. Background synchronization raises the engine state notification before releasing its native operation gate, so the scheduler yields briefly and then makes one non-blocking attempt.
+
+Automatic capture acquires both desktop foreground/native gates with `WaitAsync(0)`. This means:
+
+- an existing Search, Folders, Types or history-query operation wins immediately;
+- desktop-gate contention defers capture for a short cooldown instead of queueing in front of the user;
+- service/SQLite `Busy` uses a longer cooldown;
+- `SnapshotRequired`, elevation-required or unavailable-volume states defer rather than creating an observation;
+- a successful bucket suppresses further automatic captures for that UTC hour within the desktop session.
+
+The service remains authoritative for bucket time and idempotency. A retry or app restart within the same UTC hour updates the same persisted row rather than creating a duplicate observation.
+
+Automatic capture follows the named-pipe rule used elsewhere: it avoids transmitting while foreground work is already active, but once its request has been sent it is allowed to complete rather than being cancelled and faulting the reusable session.
 
 ## Accounting semantics
 
@@ -113,42 +133,76 @@ Physical uncertainty alone is not treated as evidence of change. If every logica
 
 Category deltas are ordered by absolute physical change when available, otherwise absolute logical change. Equivalent root spellings compare using ordinal-ignore-case semantics.
 
+## WinUI History view
+
+Storage has a third **History** mode alongside Folders and Types. The History UI is a separate `StorageHistoryView` UserControl dynamically inserted into the existing Storage layout after `MainWindow.InitializeComponent`, so the reviewed `MainWindow.xaml` does not need another large rewrite.
+
+History is native-only. If FileOp is using the profile crawler fallback, the UI explicitly says that fallback snapshots are not mixed into the native durable series.
+
+The view loads at most 90 persisted observations by default. A loaded-empty result is cached like a populated result so recurring engine status notifications do not repeatedly issue an empty query.
+
+### Usage timeline
+
+Observations are sorted chronologically for display. The chart uses exactly one unit across the displayed series:
+
+- physical allocation only if **every** displayed observation has known `AllocatedBytes`;
+- otherwise logical size for every point.
+
+Each row shows the local display time, proportional size against the largest displayed observation, current size, and signed change from the previous observation. The first point is labeled as the baseline.
+
+### What grew?
+
+The “What grew?” list compares only the newest two observations with `StorageHistoryDelta.Between`.
+
+If the pair has an exact physical root delta, category rows use physical deltas; otherwise they use logical deltas consistently. Rows can be positive or negative and include file-name, hard-link-alias and extension-group count changes.
+
+This is a latest-pair change explanation, not forecasting. FileOp does not infer a trend or future capacity date from two samples.
+
+### UI lifecycle
+
+History queries use the normal foreground desktop/service gates and therefore serialize safely with other requests on the single helper session. They do not cancel transmitted IPC.
+
+The view tracks a generation and a separate active-load generation. Source changes invalidate stale results, while recurring background-sync state notifications cannot stop the progress indicator, re-enable Refresh mid-query, or erase an already loaded summary.
+
+A successful automatic capture emits a desktop-engine notification. If History is visible, the cached series is invalidated and reloaded; otherwise it is simply marked stale until the next History visit.
+
 ## Retention
 
 The persistence API exposes `PruneBeforeAsync(cutoff)` but protocol v5 does not expose deletion/pruning and does not choose a product retention cadence yet.
 
-Capture scheduling and retention policy should be measured against real user value and index sizes. A future desktop/service scheduler can choose when to request hourly-bucket captures and when to prune without changing the stored snapshot contract.
+Retention policy should be measured against real user value and database sizes. A later service policy can prune old hourly observations without changing the stored snapshot contract.
 
 ## Validation without hosted Actions
 
 `tools/verify_storage_history.py` covers persistence, Unicode root identity, rebuild survival, retention cascade, corruption rejection and randomized signed-delta reconciliation.
 
-`tools/verify_storage_history_service.py` adds protocol/service checks without a .NET SDK:
+`tools/verify_storage_history_service.py` covers protocol/service behavior, including service-owned time, capture ordering, query independence from live checkpoint state, contention translation, host selection and database-key parity.
 
-- UTC-hour bucket behavior across randomized timezone offsets;
-- protocol v5 capture/query DTO and client/dispatcher wiring;
-- absence of a client-controlled capture timestamp;
-- capture ordering: validated live analytics before persistence;
-- query independence from live analysis/checkpoint state;
-- production indexer host selection;
-- parity between the history wrapper and native backend's deterministic database-key formula.
+`tools/verify_storage_history_ui.py` adds desktop/UI checks without a Windows/.NET toolchain:
 
-`tests/FileOp.Windows.Tests/IndexingStorageHistoryProtocolTests.cs` adds the real typed named-pipe round trip for capture/query and request validation when the Windows/.NET gate is available.
+- UTC-hour due/cooldown properties across randomized timezone offsets;
+- engine-owned scheduling independent of opening Storage;
+- non-blocking automatic acquisition of foreground/native gates;
+- whole-primary-volume capture scope;
+- fallback-history exclusion;
+- coherent physical-versus-logical timeline selection;
+- latest-pair delta wiring;
+- loaded-empty/source-generation and active-load-state guards;
+- XAML parsing and UserControl event-handler resolution;
+- dynamic insertion without modifying `MainWindow.xaml`.
 
-`tools/test-local.ps1` runs the history and history-service verifiers before the full .NET/Windows test stack, so a Windows development machine can run the complete gate without GitHub Actions usage.
-
-For this service slice, the hourly-bucket property was also exercised over 20,000 randomized timezone-offset cases in the available sandbox; Windows/.NET compilation remains delegated to the local Windows gate rather than being inferred from those Python checks.
+The scheduler property model was exercised over 100,000 randomized cases in the available sandbox. `tools/test-local.ps1` runs the history UI verifier before the full .NET/Windows stack so a Windows development machine remains the compiler/runtime gate without GitHub Actions usage.
 
 ## Deliberate limitations
 
 This slice does not yet:
 
-- schedule automatic captures from the desktop/background coordinator;
-- render a history chart or “what grew?” list in WinUI;
-- expose retention deletion through IPC;
+- choose or execute automatic retention pruning;
 - persist direct-folder historical breakdowns;
+- offer explicit user-selected folder tracking;
 - retain per-file historical events;
 - infer deleted-file history from USN records;
-- browse history for physically detached volumes.
+- browse history for physically detached volumes;
+- forecast future storage usage.
 
-The next vertical slice should add a low-priority capture cadence to the existing desktop/native lifecycle and expose a read-only growth timeline using `GetStorageHistory`, without adding another scanner or cancelling in-flight helper exchanges.
+The next Storage-intelligence work should be measurement-driven. A likely higher-value next step is historical direct-folder contributors (“which folder caused the growth?”), but the indexed file-manager foundation is also now overdue and may provide broader product value before deeper history analytics.
