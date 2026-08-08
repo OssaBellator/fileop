@@ -96,6 +96,30 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
     }
 
     [TestMethod]
+    public void BasicMetadataMergePreservesDestinationOwnedAttributes()
+    {
+        var destinationOwned = (uint)(
+            FileAttributes.Temporary |
+            FileAttributes.Offline |
+            FileAttributes.Compressed);
+        var destinationSafe = (uint)(FileAttributes.ReadOnly | FileAttributes.System);
+        var sourceSafe = (uint)(FileAttributes.Hidden | FileAttributes.Archive);
+
+        var merged = WindowsFileCopyBasicMetadata.MergeDestinationAttributes(
+            destinationOwned | destinationSafe,
+            sourceSafe);
+
+        Assert.AreEqual(sourceSafe, merged & (uint)PreservedAttributes);
+        Assert.AreEqual(destinationOwned, merged & destinationOwned);
+        Assert.AreEqual(0u, merged & (uint)FileAttributes.Normal);
+        Assert.AreEqual(
+            (uint)FileAttributes.Normal,
+            WindowsFileCopyBasicMetadata.MergeDestinationAttributes(
+                (uint)FileAttributes.Normal,
+                (uint)FileAttributes.Normal));
+    }
+
+    [TestMethod]
     public async Task CopyPrimitivePreservesSafeBasicMetadata()
     {
         var root = CreateRoot();
