@@ -88,6 +88,8 @@ def check_repository(repo_root: Path) -> int:
         (backend, "StorageHistoryCapturePolicy.GetHourlyBucket(_utcNow())"),
         (backend, "MaxTypes: 1"),
         (backend, "history.SaveSnapshotAsync("),
+        (backend, "using Microsoft.Data.Sqlite;"),
+        (backend, "exception.SqliteErrorCode is 5 or 6"),
         (client, "CaptureStorageHistoryAsync("),
         (client, "GetStorageHistoryAsync("),
         (dispatcher, "DeserializeStorageHistoryCapture"),
@@ -129,6 +131,13 @@ def check_repository(repo_root: Path) -> int:
     assert "AnalyzeStorage" not in query_body
     assert "Checkpoint" not in query_body
 
+    busy_catch = "catch (SqliteException exception) when (IsDatabaseBusy(exception))"
+    assert backend.count(busy_catch) == 2, (
+        "capture and query must both translate SQLite contention into retryable Busy responses"
+    )
+    assert "IndexingServiceErrorCode.Busy" in backend
+    assert "canRetry: true" in backend
+
     # Keep the wrapper's database-key formula aligned with the reviewed native backend.
     for needle in [
         'new string(root.Where(static character => char.IsLetterOrDigit(character)).ToArray())',
@@ -141,7 +150,7 @@ def check_repository(repo_root: Path) -> int:
     assert "CaptureStorageHistoryAsync" not in native_backend, (
         "history integration should remain in the wrapper, not alter reviewed NTFS lifecycle code"
     )
-    return len(required) + 9
+    return len(required) + 12
 
 
 def main() -> int:
