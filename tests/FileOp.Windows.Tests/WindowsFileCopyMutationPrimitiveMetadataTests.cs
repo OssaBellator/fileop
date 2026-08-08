@@ -98,19 +98,25 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
     [TestMethod]
     public void BasicMetadataMergePreservesDestinationOwnedAttributes()
     {
-        var destinationOwned = (uint)(
+        var destinationSettableOwned = (uint)(
             FileAttributes.Temporary |
-            FileAttributes.Offline |
-            FileAttributes.Compressed);
+            FileAttributes.Offline);
+        var destinationNonSettableStorage = (uint)(
+            FileAttributes.SparseFile |
+            FileAttributes.Compressed |
+            FileAttributes.Encrypted);
         var destinationSafe = (uint)(FileAttributes.ReadOnly | FileAttributes.System);
         var sourceSafe = (uint)(FileAttributes.Hidden | FileAttributes.Archive);
 
         var merged = WindowsFileCopyBasicMetadata.MergeDestinationAttributes(
-            destinationOwned | destinationSafe,
+            destinationSettableOwned |
+                destinationNonSettableStorage |
+                destinationSafe,
             sourceSafe);
 
         Assert.AreEqual(sourceSafe, merged & (uint)PreservedAttributes);
-        Assert.AreEqual(destinationOwned, merged & destinationOwned);
+        Assert.AreEqual(destinationSettableOwned, merged & destinationSettableOwned);
+        Assert.AreEqual(0u, merged & destinationNonSettableStorage);
         Assert.AreEqual(0u, merged & (uint)FileAttributes.Normal);
         Assert.AreEqual(
             (uint)FileAttributes.Normal,
