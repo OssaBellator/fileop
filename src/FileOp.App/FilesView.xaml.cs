@@ -1,3 +1,4 @@
+using FileOp.Core.Operations;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -5,8 +6,8 @@ namespace FileOp.App;
 
 public sealed partial class FilesView : UserControl
 {
-    private readonly List<FileBrowserQueuedOperation> _queuedOperations = [];
-    private FileBrowserOperationIntent? _preparedIntent;
+    private readonly List<FileOperationPlan> _queuedOperations = [];
+    private FileOperationIntent? _preparedIntent;
 
     public FilesView()
     {
@@ -22,9 +23,9 @@ public sealed partial class FilesView : UserControl
 
     public FilesPaneView RightPane => RightPaneControl;
 
-    public FileBrowserOperationIntent? PreparedIntent => _preparedIntent;
+    public FileOperationIntent? PreparedIntent => _preparedIntent;
 
-    public IReadOnlyList<FileBrowserQueuedOperation> QueuedOperations => _queuedOperations.AsReadOnly();
+    public IReadOnlyList<FileOperationPlan> QueuedOperations => _queuedOperations.AsReadOnly();
 
     public void SetSourceDescription(string description)
     {
@@ -64,13 +65,13 @@ public sealed partial class FilesView : UserControl
         }
 
         var entries = selectedRows
-            .Select(static row => new FileBrowserOperationEntry(
+            .Select(static row => new FileOperationEntry(
                 row.Path,
                 row.Name,
                 row.IsDirectory))
             .ToArray();
 
-        _preparedIntent = new FileBrowserOperationIntent(
+        _preparedIntent = new FileOperationIntent(
             source.PaneTitle,
             source.ActiveTabId,
             sourcePath,
@@ -89,15 +90,15 @@ public sealed partial class FilesView : UserControl
 
     private void QueueCopyButton_Click(object sender, RoutedEventArgs e)
     {
-        QueuePreparedIntent(FileBrowserOperationKind.Copy);
+        QueuePreparedIntent(FileOperationKind.Copy);
     }
 
     private void QueueMoveButton_Click(object sender, RoutedEventArgs e)
     {
-        QueuePreparedIntent(FileBrowserOperationKind.Move);
+        QueuePreparedIntent(FileOperationKind.Move);
     }
 
-    private void QueuePreparedIntent(FileBrowserOperationKind kind)
+    private void QueuePreparedIntent(FileOperationKind kind)
     {
         var intent = _preparedIntent;
         if (intent is null || !TryGetCollisionPolicy(out var collisionPolicy))
@@ -112,7 +113,7 @@ public sealed partial class FilesView : UserControl
             return;
         }
 
-        var queued = new FileBrowserQueuedOperation(
+        var queued = new FileOperationPlan(
             Guid.NewGuid(),
             DateTimeOffset.UtcNow,
             kind,
@@ -189,7 +190,7 @@ public sealed partial class FilesView : UserControl
         QueueMoveButton.IsEnabled = canQueue;
     }
 
-    private bool TryGetCollisionPolicy(out FileBrowserCollisionPolicy collisionPolicy)
+    private bool TryGetCollisionPolicy(out FileOperationCollisionPolicy collisionPolicy)
     {
         if (CollisionPolicyBox.SelectedItem is ComboBoxItem { Tag: string tag } &&
             Enum.TryParse(tag, ignoreCase: false, out collisionPolicy))
@@ -209,7 +210,7 @@ public sealed partial class FilesView : UserControl
         !string.IsNullOrWhiteSpace(destination.CurrentPath);
 
     private static bool TryValidateIntentForQueue(
-        FileBrowserOperationIntent intent,
+        FileOperationIntent intent,
         out string validationMessage)
     {
         if (intent.Entries.Count == 0)
@@ -292,49 +293,15 @@ public sealed partial class FilesView : UserControl
         return normalized;
     }
 
-    private static string FormatCollisionPolicy(FileBrowserCollisionPolicy collisionPolicy) =>
+    private static string FormatCollisionPolicy(FileOperationCollisionPolicy collisionPolicy) =>
         collisionPolicy switch
         {
-            FileBrowserCollisionPolicy.Ask => "ask-later collision handling",
-            FileBrowserCollisionPolicy.Skip => "skip-existing collision handling",
-            FileBrowserCollisionPolicy.Stop => "stop-on-collision handling",
+            FileOperationCollisionPolicy.Ask => "ask-later collision handling",
+            FileOperationCollisionPolicy.Skip => "skip-existing collision handling",
+            FileOperationCollisionPolicy.Stop => "stop-on-collision handling",
             _ => throw new ArgumentOutOfRangeException(nameof(collisionPolicy)),
         };
 }
-
-public enum FileBrowserOperationKind
-{
-    Copy,
-    Move,
-}
-
-public enum FileBrowserCollisionPolicy
-{
-    Ask,
-    Skip,
-    Stop,
-}
-
-public sealed record FileBrowserOperationEntry(
-    string Path,
-    string Name,
-    bool IsDirectory);
-
-public sealed record FileBrowserOperationIntent(
-    string SourcePane,
-    Guid SourceTabId,
-    string SourceDirectoryPath,
-    IReadOnlyList<FileBrowserOperationEntry> Entries,
-    string DestinationPane,
-    Guid DestinationTabId,
-    string DestinationDirectoryPath);
-
-public sealed record FileBrowserQueuedOperation(
-    Guid Id,
-    DateTimeOffset QueuedAtUtc,
-    FileBrowserOperationKind Kind,
-    FileBrowserCollisionPolicy CollisionPolicy,
-    FileBrowserOperationIntent Intent);
 
 public sealed record FileBrowserQueuedOperationRow(
     Guid Id,
@@ -343,7 +310,7 @@ public sealed record FileBrowserQueuedOperationRow(
     string CollisionText,
     string QueuedText)
 {
-    public static FileBrowserQueuedOperationRow FromOperation(FileBrowserQueuedOperation operation)
+    public static FileBrowserQueuedOperationRow FromOperation(FileOperationPlan operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
         return new FileBrowserQueuedOperationRow(
@@ -352,9 +319,9 @@ public sealed record FileBrowserQueuedOperationRow(
             $"{operation.Intent.SourcePane}: {operation.Intent.SourceDirectoryPath} → {operation.Intent.DestinationPane}: {operation.Intent.DestinationDirectoryPath}",
             operation.CollisionPolicy switch
             {
-                FileBrowserCollisionPolicy.Ask => "Ask later",
-                FileBrowserCollisionPolicy.Skip => "Skip existing",
-                FileBrowserCollisionPolicy.Stop => "Stop on collision",
+                FileOperationCollisionPolicy.Ask => "Ask later",
+                FileOperationCollisionPolicy.Skip => "Skip existing",
+                FileOperationCollisionPolicy.Stop => "Stop on collision",
                 _ => operation.CollisionPolicy.ToString(),
             },
             operation.QueuedAtUtc.ToLocalTime().ToString("g"));
