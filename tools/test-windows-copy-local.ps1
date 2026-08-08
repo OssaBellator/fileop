@@ -21,11 +21,11 @@ function Invoke-Step {
     }
 }
 
-if (-not $SkipOfflineModels) {
-    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-        throw "Python 3 is required for the zero-Actions Copy property models."
-    }
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    throw "Python 3 is required for the zero-Actions Copy validation gates."
+}
 
+if (-not $SkipOfflineModels) {
     Invoke-Step "Copy executor and mutation property models" {
         & (Join-Path $PSScriptRoot "test-copy-executor-local.ps1")
     }
@@ -33,6 +33,10 @@ if (-not $SkipOfflineModels) {
 
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw ".NET 10 SDK is required for the focused Windows Copy compiler/native test gate."
+}
+
+Invoke-Step "Package-free .NET Copy metadata interop probe" {
+    python tools/verify_copy_basic_metadata_dotnet.py --repo-root $repoRoot
 }
 
 Invoke-Step "FileOp.Core Release build" {
