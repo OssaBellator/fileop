@@ -9,6 +9,8 @@ No third-party packages, .NET SDK, Windows runtime, or GitHub Actions required.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+import re
 import sqlite3
 import sys
 import textwrap
@@ -252,6 +254,10 @@ def check_repository(repo_root: Path) -> int:
         "client": repo_root / "src/FileOp.Windows/IndexingService/IndexingServiceClient.cs",
         "dispatcher": repo_root / "src/FileOp.Windows/IndexingService/IndexingServiceDispatcher.cs",
         "backend": repo_root / "src/FileOp.Windows/IndexingService/NtfsIndexingServiceBackend.cs",
+        "memory_tests": repo_root / "tests/FileOp.Windows.Tests/InMemoryStorageAnalyticsTests.cs",
+        "sqlite_tests": repo_root / "tests/FileOp.Windows.Tests/SqliteStorageFileTypeAnalyticsTests.cs",
+        "classifier_tests": repo_root / "tests/FileOp.Windows.Tests/StorageFileCategoryClassifierTests.cs",
+        "protocol_tests": repo_root / "tests/FileOp.Windows.Tests/IndexingStorageProtocolTests.cs",
     }
     missing = [str(path) for path in files.values() if not path.is_file()]
     if missing:
@@ -268,15 +274,28 @@ def check_repository(repo_root: Path) -> int:
         ("protocol", "AnalyzeStorageTypes"),
         ("protocol", "IndexingStorageFileTypeRequest"),
         ("client", "AnalyzeStorageTypesAsync"),
+        ("client", "IndexingServiceOperation.AnalyzeStorageTypes"),
+        ("dispatcher", "IndexingServiceOperation.AnalyzeStorageTypes"),
         ("dispatcher", "DeserializeStorageFileTypes"),
         ("backend", "AnalyzeStorageTypesAsync"),
         ("backend", "EnsureStorageCheckpointAsync"),
+        ("memory_tests", "AnalyzeFileTypesCountsCrossExtensionHardLinksOnceForPhysicalUsage"),
+        ("sqlite_tests", "AnalyzeFileTypesCountsCrossExtensionHardLinksOnceForPhysicalUsage"),
+        ("classifier_tests", 'DataRow(".ts", StorageFileCategory.Code)'),
+        ("protocol_tests", "NamedPipeRoundTripReturnsTypedStorageFileTypes"),
     ]
     for name, needle in required:
         assert needle in text[name], f"{needle!r} missing from {files[name]}"
 
+    switch_start = text["classifier"].find("return normalized switch")
+    switch_end = text["classifier"].find("_ => StorageFileCategory.Other", switch_start)
+    assert switch_start >= 0 and switch_end > switch_start, "Classifier switch could not be located"
+    switch_text = text["classifier"][switch_start:switch_end]
+    extensions = re.findall(r'"([^"\r\n]+)"', switch_text)
+    duplicates = sorted(name for name, count in Counter(extensions).items() if count > 1)
+    assert not duplicates, f"Duplicate extension switch patterns: {duplicates}"
+    assert extensions.count("ts") == 1, ".ts must have exactly one deterministic category"
     assert '"mpeg" or "mpg" or "mts" or "m2ts"' in text["classifier"]
-    assert '"mpeg" or "mpg" or "ts" or "mts"' not in text["classifier"]
 
     marker = 'private const string FileTypeAnalysisSql = """'
     start = text["sqlite"].find(marker)
@@ -287,7 +306,7 @@ def check_repository(repo_root: Path) -> int:
     extracted = textwrap.dedent(text["sqlite"][start:end]).strip()
     assert extracted == FILE_TYPE_SQL, "Offline SQL verifier drifted from SqliteStorageAnalytics.FileTypeAnalysisSql"
 
-    return len(required) + 3
+    return len(required) + 5
 
 
 def main() -> int:
