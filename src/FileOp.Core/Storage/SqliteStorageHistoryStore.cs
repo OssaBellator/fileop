@@ -7,6 +7,7 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
 {
     private const int HistorySchemaVersion = 1;
     private const int MaximumHistoryLimit = 4_096;
+    private const string HistoryRootCollation = "FILEOP_ORDINAL_NOCASE";
 
     private readonly string _connectionString;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
@@ -177,7 +178,7 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
             FROM (
                 SELECT *
                 FROM storage_history_snapshots
-                WHERE root_path = @root_path COLLATE NOCASE
+                WHERE root_path = @root_path COLLATE FILEOP_ORDINAL_NOCASE
                 ORDER BY captured_utc_ticks DESC
                 LIMIT @limit
             ) AS snapshot
@@ -300,7 +301,7 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS storage_history_snapshots(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                root_path TEXT NOT NULL COLLATE NOCASE,
+                root_path TEXT NOT NULL COLLATE FILEOP_ORDINAL_NOCASE,
                 captured_utc_ticks INTEGER NOT NULL,
                 logical_bytes INTEGER NOT NULL,
                 allocated_bytes INTEGER NULL,
@@ -311,7 +312,7 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
             );
 
             CREATE INDEX IF NOT EXISTS ix_storage_history_root_captured
-                ON storage_history_snapshots(root_path COLLATE NOCASE, captured_utc_ticks DESC);
+                ON storage_history_snapshots(root_path COLLATE FILEOP_ORDINAL_NOCASE, captured_utc_ticks DESC);
 
             CREATE TABLE IF NOT EXISTS storage_history_categories(
                 snapshot_id INTEGER NOT NULL,
@@ -332,6 +333,9 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
     {
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
+        connection.CreateCollation(
+            HistoryRootCollation,
+            static (left, right) => StringComparer.OrdinalIgnoreCase.Compare(left, right));
         using var command = connection.CreateCommand();
         command.CommandText = """
             PRAGMA busy_timeout = 5000;
