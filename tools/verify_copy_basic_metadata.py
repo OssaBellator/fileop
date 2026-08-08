@@ -85,6 +85,7 @@ def check_repository(root: Path) -> int:
     tests_path = root / "tests/FileOp.Windows.Tests/WindowsFileCopyMutationPrimitiveMetadataTests.cs"
     wrapper_path = root / "tools/test-copy-executor-local.ps1"
     windows_wrapper_path = root / "tools/test-windows-copy-local.ps1"
+    windows_cmd_path = root / "tools/test-windows-copy-local.cmd"
     missing = [
         str(path)
         for path in (
@@ -93,6 +94,7 @@ def check_repository(root: Path) -> int:
             tests_path,
             wrapper_path,
             windows_wrapper_path,
+            windows_cmd_path,
         )
         if not path.is_file()
     ]
@@ -104,6 +106,7 @@ def check_repository(root: Path) -> int:
     tests = tests_path.read_text(encoding="utf-8")
     wrapper = wrapper_path.read_text(encoding="utf-8")
     windows_wrapper = windows_wrapper_path.read_text(encoding="utf-8")
+    windows_cmd = windows_cmd_path.read_text(encoding="utf-8")
 
     required_helper = [
         "WindowsFileCopyBasicMetadata",
@@ -224,7 +227,11 @@ def check_repository(root: Path) -> int:
 
     assert "verify_copy_basic_metadata.py" in wrapper
     assert "WindowsFileCopyMutationPrimitiveMetadataTests" in windows_wrapper
-    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 31
+    assert "powershell.exe -NoProfile -ExecutionPolicy Bypass -File" in windows_cmd
+    assert "test-windows-copy-local.ps1" in windows_cmd
+    assert "gh workflow" not in windows_cmd.lower()
+    assert "gh run" not in windows_cmd.lower()
+    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 35
 
 
 def main() -> int:
