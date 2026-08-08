@@ -143,7 +143,7 @@ public sealed class FileOperationPreflightTests
                 "Left",
                 Guid.NewGuid(),
                 sourceDirectory,
-                Array.AsReadOnly([entry]),
+                Array.AsReadOnly(new[] { entry }),
                 "Right",
                 Guid.NewGuid(),
                 destinationDirectory));
