@@ -242,6 +242,7 @@ def check_repository(root: Path) -> int:
 
     required_tests = [
         "CopyCreatesExclusiveIdentityBoundDestinationAndLeaseBlocksDelete",
+        "LeaseBlocksParentDirectoryRenameUntilDisposed",
         "CollisionAppearingAfterValidationNeverOverwritesExistingFile",
         "SourceIdentityReplacementAfterValidationFailsBeforeDestinationCreation",
         "SourceRootReplacementAfterValidationFailsBeforeDestinationCreation",
