@@ -31,6 +31,11 @@ public sealed partial class FilesView : UserControl
         RefreshButton.IsEnabled = false;
     }
 
+    public void SetStatus(string message)
+    {
+        StatusText.Text = message;
+    }
+
     public void SetUnavailable(string message)
     {
         StatusText.Text = message;
