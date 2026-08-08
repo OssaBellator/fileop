@@ -30,6 +30,29 @@ public sealed class IndexingDirectoryBrowseProtocolTests
     }
 
     [TestMethod]
+    public async Task DispatcherRejectsCursorFromAnotherDirectoryBeforeBackendCall()
+    {
+        using var backend = new FakeBackend();
+        var dispatcher = new IndexingServiceDispatcher(backend);
+        var request = new IndexingServiceRequest(
+            IndexingServiceProtocol.CurrentVersion,
+            Guid.NewGuid(),
+            IndexingServiceOperation.BrowseDirectory,
+            System.Text.Json.JsonSerializer.SerializeToElement(new IndexingDirectoryBrowseRequest(
+                0x1234,
+                @"C:\",
+                @"C:\Data",
+                64,
+                new FileDirectoryBrowseCursor(false, "outside.txt", @"C:\Other\outside.txt"))));
+
+        var response = await dispatcher.DispatchAsync(request);
+
+        Assert.IsFalse(response.Success);
+        Assert.AreEqual(IndexingServiceErrorCode.InvalidRequest, response.Error?.Code);
+        Assert.AreEqual(0, backend.BrowseCalls);
+    }
+
+    [TestMethod]
     public async Task NamedPipeRoundTripPreservesBrowseCursorAndEntries()
     {
         var entry = new IndexingSearchResult(
