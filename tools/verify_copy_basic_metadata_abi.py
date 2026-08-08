@@ -294,16 +294,27 @@ def check_repository(root: Path) -> int:
 
 
 C_PROBE = r"""
-typedef signed long long i64;
 typedef unsigned int u32;
+typedef signed int i32;
+typedef signed long long i64;
+typedef union {
+    struct {
+        u32 LowPart;
+        i32 HighPart;
+    } Parts;
+    i64 QuadPart;
+} LARGE_INTEGER_MODEL;
 typedef struct {
-    i64 CreationTime;
-    i64 LastAccessTime;
-    i64 LastWriteTime;
-    i64 ChangeTime;
+    u32 LowDateTime;
+    u32 HighDateTime;
+} FILETIME_MODEL;
+typedef struct {
+    LARGE_INTEGER_MODEL CreationTime;
+    LARGE_INTEGER_MODEL LastAccessTime;
+    LARGE_INTEGER_MODEL LastWriteTime;
+    LARGE_INTEGER_MODEL ChangeTime;
     u32 FileAttributes;
 } FILE_BASIC_INFO_MODEL;
-typedef struct { u32 LowDateTime; u32 HighDateTime; } FILETIME_MODEL;
 typedef struct {
     u32 FileAttributes;
     FILETIME_MODEL CreationTime;
@@ -316,9 +327,16 @@ typedef struct {
     u32 FileIndexHigh;
     u32 FileIndexLow;
 } BY_HANDLE_FILE_INFORMATION_MODEL;
+_Static_assert(sizeof(LARGE_INTEGER_MODEL) == 8, "LARGE_INTEGER size");
+_Static_assert(sizeof(FILETIME_MODEL) == 8, "FILETIME size");
+_Static_assert(__builtin_offsetof(FILETIME_MODEL, HighDateTime) == 4, "FILETIME HighDateTime offset");
 _Static_assert(sizeof(FILE_BASIC_INFO_MODEL) == 40, "FILE_BASIC_INFO size");
+_Static_assert(__builtin_offsetof(FILE_BASIC_INFO_MODEL, LastAccessTime) == 8, "FILE_BASIC_INFO LastAccessTime offset");
+_Static_assert(__builtin_offsetof(FILE_BASIC_INFO_MODEL, ChangeTime) == 24, "FILE_BASIC_INFO ChangeTime offset");
 _Static_assert(__builtin_offsetof(FILE_BASIC_INFO_MODEL, FileAttributes) == 32, "FILE_BASIC_INFO FileAttributes offset");
 _Static_assert(sizeof(BY_HANDLE_FILE_INFORMATION_MODEL) == 52, "BY_HANDLE_FILE_INFORMATION size");
+_Static_assert(__builtin_offsetof(BY_HANDLE_FILE_INFORMATION_MODEL, CreationTime) == 4, "BY_HANDLE_FILE_INFORMATION CreationTime offset");
+_Static_assert(__builtin_offsetof(BY_HANDLE_FILE_INFORMATION_MODEL, LastWriteTime) == 20, "BY_HANDLE_FILE_INFORMATION LastWriteTime offset");
 _Static_assert(__builtin_offsetof(BY_HANDLE_FILE_INFORMATION_MODEL, FileIndexLow) == 48, "BY_HANDLE_FILE_INFORMATION FileIndexLow offset");
 int fileop_copy_metadata_abi_probe;
 """
@@ -333,20 +351,34 @@ def run_clang_probe() -> int:
         "i686-pc-windows-msvc",
         "aarch64-pc-windows-msvc",
     )
-    checks = 0
+    static_assert_count = C_PROBE.count("_Static_assert(")
+    assert static_assert_count > 0
+    checks = 1
     with tempfile.TemporaryDirectory(prefix="fileop-copy-metadata-abi-") as temp_dir:
         source = Path(temp_dir) / "probe.c"
         source.write_text(C_PROBE, encoding="utf-8")
         for target in targets:
             output = Path(temp_dir) / (target + ".obj")
             subprocess.run(
-                [clang, "-target", target, "-std=c11", "-c", str(source), "-o", str(output)],
+                [
+                    clang,
+                    "-target",
+                    target,
+                    "-std=c11",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-c",
+                    str(source),
+                    "-o",
+                    str(output),
+                ],
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            checks += 4  # four _Static_assert statements compiled for this target
+            checks += static_assert_count
             assert output.is_file() and output.stat().st_size > 0
             checks += 1
     return checks
