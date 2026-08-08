@@ -78,6 +78,12 @@ public sealed class IndexingServiceDispatcher
                         DeserializeStorageAnalysis(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
+                IndexingServiceOperation.AnalyzeStorageTypes => Success(
+                    request.RequestId,
+                    await _backend.AnalyzeStorageTypesAsync(
+                        DeserializeStorageFileTypes(request.Payload),
+                        cancellationToken).ConfigureAwait(false)),
+
                 _ => Failure(
                     request.RequestId,
                     IndexingServiceErrorCode.InvalidRequest,
@@ -149,34 +155,64 @@ public sealed class IndexingServiceDispatcher
     private static IndexingStorageAnalysisRequest DeserializeStorageAnalysis(JsonElement payload)
     {
         var request = Deserialize<IndexingStorageAnalysisRequest>(payload);
-        if (string.IsNullOrWhiteSpace(request.VolumeRootPath))
-        {
-            throw new JsonException("volumeRootPath is required.");
-        }
-
-        if (string.IsNullOrWhiteSpace(request.DirectoryPath))
-        {
-            throw new JsonException("directoryPath is required.");
-        }
-
-        if (!Path.IsPathFullyQualified(request.VolumeRootPath) ||
-            !Path.IsPathFullyQualified(request.DirectoryPath))
-        {
-            throw new JsonException("Storage analysis paths must be absolute.");
-        }
+        var (volumeRootPath, directoryPath) = NormalizeStoragePaths(
+            request.VolumeRootPath,
+            request.DirectoryPath);
 
         if (request.MaxEntries <= 0 || request.MaxEntries > 4_096)
         {
             throw new JsonException("maxEntries must be between 1 and 4096.");
         }
 
+        return request with
+        {
+            VolumeRootPath = volumeRootPath,
+            DirectoryPath = directoryPath,
+        };
+    }
+
+    private static IndexingStorageFileTypeRequest DeserializeStorageFileTypes(JsonElement payload)
+    {
+        var request = Deserialize<IndexingStorageFileTypeRequest>(payload);
+        var (volumeRootPath, directoryPath) = NormalizeStoragePaths(
+            request.VolumeRootPath,
+            request.DirectoryPath);
+
+        if (request.MaxTypes <= 0 || request.MaxTypes > 4_096)
+        {
+            throw new JsonException("maxTypes must be between 1 and 4096.");
+        }
+
+        return request with
+        {
+            VolumeRootPath = volumeRootPath,
+            DirectoryPath = directoryPath,
+        };
+    }
+
+    private static (string VolumeRootPath, string DirectoryPath) NormalizeStoragePaths(
+        string? volumeRootPath,
+        string? directoryPath)
+    {
+        if (string.IsNullOrWhiteSpace(volumeRootPath))
+        {
+            throw new JsonException("volumeRootPath is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(directoryPath))
+        {
+            throw new JsonException("directoryPath is required.");
+        }
+
+        if (!Path.IsPathFullyQualified(volumeRootPath) ||
+            !Path.IsPathFullyQualified(directoryPath))
+        {
+            throw new JsonException("Storage analysis paths must be absolute.");
+        }
+
         try
         {
-            return request with
-            {
-                VolumeRootPath = Path.GetFullPath(request.VolumeRootPath),
-                DirectoryPath = Path.GetFullPath(request.DirectoryPath),
-            };
+            return (Path.GetFullPath(volumeRootPath), Path.GetFullPath(directoryPath));
         }
         catch (Exception exception) when (
             exception is ArgumentException or
