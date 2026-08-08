@@ -142,13 +142,24 @@ def check_repository(root: Path) -> int:
     for attribute in preserved_test_attributes:
         assert attribute in metadata_setup, attribute
 
+    primitive_test_start = tests.index("public async Task CopyPrimitivePreservesSafeBasicMetadata()")
+    primitive_test_end = tests.index("private static void SetExpectedMetadata(", primitive_test_start)
+    primitive_test = tests[primitive_test_start:primitive_test_end]
+    validation = primitive_test.index("WindowsFileOperationExecutionValidator().ValidateAsync(plan)")
+    establish_metadata = primitive_test.index(
+        "SetExpectedMetadata(sourcePath, expectedCreation, expectedAccess, expectedWrite)",
+        validation,
+    )
+    mutation = primitive_test.index("CopyNewFileAsync(", establish_metadata)
+    assert validation < establish_metadata < mutation
+
     metadata_assertion = tests.index("AssertMetadata(", tests.index("CopyPrimitivePreservesSafeBasicMetadata"))
     content_read = tests.index("File.ReadAllTextAsync(destinationPath)", metadata_assertion)
     assert metadata_assertion < content_read
 
     assert "verify_copy_basic_metadata.py" in wrapper
     assert "WindowsFileCopyMutationPrimitiveMetadataTests" in windows_wrapper
-    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 11
+    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 12
 
 
 def main() -> int:
