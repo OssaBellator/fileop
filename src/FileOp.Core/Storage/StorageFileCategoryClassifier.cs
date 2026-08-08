@@ -21,7 +21,7 @@ public static class StorageFileCategoryClassifier
             "cr2" or "cr3" or "nef" or "arw" => StorageFileCategory.Images,
 
             "mp4" or "mkv" or "mov" or "avi" or "wmv" or "webm" or "m4v" or
-            "mpeg" or "mpg" or "ts" or "mts" or "m2ts" => StorageFileCategory.Video,
+            "mpeg" or "mpg" or "mts" or "m2ts" => StorageFileCategory.Video,
 
             "mp3" or "flac" or "wav" or "aac" or "m4a" or "ogg" or "opus" or
             "wma" or "aiff" or "aif" => StorageFileCategory.Audio,
