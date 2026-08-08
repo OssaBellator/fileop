@@ -111,7 +111,6 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
             var expectedCreation = new DateTime(2020, 5, 6, 7, 8, 9, DateTimeKind.Utc);
             var expectedAccess = new DateTime(2021, 6, 7, 8, 9, 10, DateTimeKind.Utc);
             var expectedWrite = new DateTime(2022, 7, 8, 9, 10, 11, DateTimeKind.Utc);
-            SetExpectedMetadata(sourcePath, expectedCreation, expectedAccess, expectedWrite);
 
             var entry = new FileOperationEntry(sourcePath, "payload.bin", IsDirectory: false);
             var plan = new FileOperationPlan(
@@ -129,6 +128,11 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
                     destinationDirectory));
             var validation = await new WindowsFileOperationExecutionValidator().ValidateAsync(plan);
             Assert.AreEqual(FileOperationExecutionValidationDecision.Ready, validation.Items[0].Decision);
+
+            // Establish the metadata contract after validation so validation-side
+            // handle activity cannot make LastAccessTime expectations machine-policy dependent.
+            // Basic metadata changes do not alter the stable file identity carried by validation.
+            SetExpectedMetadata(sourcePath, expectedCreation, expectedAccess, expectedWrite);
 
             var lease = await new WindowsFileCopyMutationPrimitive().CopyNewFileAsync(
                 new FileCopyMutationRequest(
