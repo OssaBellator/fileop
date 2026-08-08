@@ -36,6 +36,7 @@ public sealed partial class FilesView : UserControl
         LoadMoreButton.IsEnabled = false;
         if (!preserveRows)
         {
+            LoadMoreButton.Visibility = Visibility.Collapsed;
             FilesList.ItemsSource = null;
             EmptyText.Visibility = Visibility.Collapsed;
         }
@@ -44,6 +45,10 @@ public sealed partial class FilesView : UserControl
     public void SetStatus(string message)
     {
         StatusText.Text = message;
+        if (LoadingRing.IsActive && _lastAppliedPath is not null)
+        {
+            PathText.Text = _lastAppliedPath;
+        }
     }
 
     public void SetUnavailable(string message)
@@ -106,6 +111,7 @@ public sealed partial class FilesView : UserControl
         LoadingRing.IsActive = false;
         UpButton.IsEnabled = canNavigateUp;
         RefreshButton.IsEnabled = canRefresh;
+        LoadMoreButton.Visibility = canLoadMore ? Visibility.Visible : Visibility.Collapsed;
         LoadMoreButton.IsEnabled = canLoadMore && canRefresh;
     }
 
