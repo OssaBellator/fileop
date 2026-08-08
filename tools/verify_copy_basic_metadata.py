@@ -19,8 +19,9 @@ NOT_CONTENT_INDEXED = 0x00002000
 ENCRYPTED = 0x00004000
 INTEGRITY_STREAM = 0x00008000
 PRESERVED = READ_ONLY | HIDDEN | SYSTEM | ARCHIVE | NOT_CONTENT_INDEXED
-DESTINATION_OWNED = TEMPORARY | SPARSE | COMPRESSED | OFFLINE | ENCRYPTED | INTEGRITY_STREAM
-KNOWN_DESTINATION = PRESERVED | NORMAL | DESTINATION_OWNED
+DESTINATION_SETTABLE = TEMPORARY | OFFLINE
+NON_SETTABLE_STORAGE = SPARSE | COMPRESSED | ENCRYPTED | INTEGRITY_STREAM
+KNOWN_DESTINATION = PRESERVED | NORMAL | DESTINATION_SETTABLE | NON_SETTABLE_STORAGE
 
 
 def sanitize(attributes: int) -> int:
@@ -29,7 +30,7 @@ def sanitize(attributes: int) -> int:
 
 
 def merge_destination(destination_attributes: int, source_attributes: int) -> int:
-    destination_owned = destination_attributes & ~(PRESERVED | NORMAL)
+    destination_owned = destination_attributes & DESTINATION_SETTABLE
     source_preserved = source_attributes & PRESERVED
     merged = destination_owned | source_preserved
     return merged if merged else NORMAL
@@ -64,12 +65,13 @@ def run_model(cases: int) -> int:
 
         destination = rng.getrandbits(32) & KNOWN_DESTINATION
         merged = merge_destination(destination, result)
-        expected_owned = destination & DESTINATION_OWNED
+        expected_owned = destination & DESTINATION_SETTABLE
         expected_preserved = value & PRESERVED
-        assert merged & DESTINATION_OWNED == expected_owned
+        assert merged & DESTINATION_SETTABLE == expected_owned
         assert merged & PRESERVED == expected_preserved
+        assert merged & NON_SETTABLE_STORAGE == 0
         assert (merged & NORMAL) == (NORMAL if (expected_owned | expected_preserved) == 0 else 0)
-        checks += 3
+        checks += 4
     return checks
 
 
@@ -105,6 +107,7 @@ def check_repository(root: Path) -> int:
         "SuppressAutomaticTimestampUpdates(SafeFileHandle destinationHandle)",
         "Apply(SafeFileHandle destinationHandle, Snapshot snapshot)",
         "MergeDestinationAttributes(",
+        "DestinationOwnedSettableAttributeMask",
         "GetFileInformationByHandle(",
         "SetFileInformationByHandle(",
         "FileBasicInfo",
@@ -113,12 +116,14 @@ def check_repository(root: Path) -> int:
         "ChangeTime = 0",
         "FileAttributes = 0",
         "destinationInformation.FileAttributes",
-        "destinationAttributes & ~(PreservedAttributeMask | FileAttributeNormal)",
+        "destinationAttributes & DestinationOwnedSettableAttributeMask",
         "StructLayout(LayoutKind.Sequential, Pack = 8)",
         "FileAttributeReadOnly",
         "FileAttributeHidden",
         "FileAttributeSystem",
         "FileAttributeArchive",
+        "FileAttributeTemporary",
+        "FileAttributeOffline",
         "FileAttributeNotContentIndexed",
         "sourceAttributes & PreservedAttributeMask",
     ]
@@ -164,9 +169,12 @@ def check_repository(root: Path) -> int:
     for attribute in [
         "FileAttributes.Temporary",
         "FileAttributes.Offline",
+        "FileAttributes.SparseFile",
         "FileAttributes.Compressed",
+        "FileAttributes.Encrypted",
     ]:
         assert attribute in merge_test, attribute
+    assert "Assert.AreEqual(0u, merged & destinationNonSettableStorage)" in merge_test
 
     metadata_setup_start = tests.index("private static void SetExpectedMetadata(")
     metadata_setup_end = tests.index("private static void AssertMetadata(", metadata_setup_start)
@@ -198,7 +206,7 @@ def check_repository(root: Path) -> int:
 
     assert "verify_copy_basic_metadata.py" in wrapper
     assert "WindowsFileCopyMutationPrimitiveMetadataTests" in windows_wrapper
-    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 16
+    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 22
 
 
 def main() -> int:
