@@ -44,7 +44,8 @@ public sealed record FileOperationActionEntry(
     FileOperationUndoKind UndoKind,
     FileOperationFailure? Failure)
 {
-    public bool IsUndoEligible =>
+    public bool IsUndoCandidate =>
+        !Entry.IsDirectory &&
         State == FileOperationActionEntryState.Committed &&
         UndoKind == FileOperationUndoKind.DeleteCreatedDestination &&
         DestinationIdentity.HasValue;
@@ -115,8 +116,8 @@ public sealed record FileOperationActionHistory
             entry.State is FileOperationActionEntryState.MutationStarted or
                 FileOperationActionEntryState.RecoveryRequired);
 
-    public IReadOnlyList<FileOperationActionEntry> UndoEligibleEntries =>
-        Entries.Where(static entry => entry.IsUndoEligible).ToArray();
+    public IReadOnlyList<FileOperationActionEntry> UndoCandidateEntries =>
+        Entries.Where(static entry => entry.IsUndoCandidate).ToArray();
 }
 
 public interface IFileOperationActionHistoryStore
