@@ -8,29 +8,45 @@ The product direction is to combine instant file search, power-user file managem
 
 The current implementation has four runtime layers plus a benchmark harness:
 
-- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, in-memory and SQLite-backed indexes, shared directory/file-type storage analytics, checkpoint persistence, the fallback bounded-channel filesystem crawler and the versioned indexing-service protocol contracts.
-- `FileOp.Windows` contains the Windows/NTFS engine plus the indexing-service backend/client boundary: NTFS volume discovery, MFT namespace enumeration through `FSCTL_ENUM_USN_DATA`, USN journal querying/reading, file-ID metadata hydration, multi-name hard-link snapshots, rename-safe journal normalization, transactional namespace synchronization and authenticated named-pipe transport.
-- `FileOp.Indexer` is the on-demand helper executable that owns native indexing and per-volume persistent index writes. It runs unelevated first; helper-only UAC elevation is limited to same-account split-token administrators so the desktop process never changes integrity level or Windows identity.
-- `FileOp.App` is the WinUI 3 desktop shell using Windows App SDK 2.3.1. Search is native-first for the NTFS volume containing the user profile, and the Storage view consumes the same active metadata source for recursive folder analysis and treemap drill-down. The reviewed bounded filesystem crawler remains an explicit fallback when the helper/provider cannot be used.
-- `FileOp.Benchmarks` provides repeatable synthetic search, directory-aggregation and file-type-aggregation baselines for the current SQLite-backed index at 100,000 and 1,000,000 files.
+- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, in-memory and SQLite-backed indexes, shared directory/file-type/category storage analytics, checkpoint persistence, the fallback crawler and versioned service contracts.
+- `FileOp.Windows` contains the Windows/NTFS engine and indexing-service boundary: NTFS discovery, MFT namespace enumeration, USN journal processing, file-ID metadata hydration, hard-link expansion, transactional namespace synchronization and authenticated named-pipe transport.
+- `FileOp.Indexer` is the on-demand helper that owns native indexing and per-volume persistent-index writes. It starts unelevated; helper-only UAC is limited to same-account split-token administrators so the desktop never changes integrity level or identity.
+- `FileOp.App` is the WinUI 3 desktop shell. Search and Storage share the same native-first metadata source and the same explicit crawler fallback.
+- `FileOp.Benchmarks` provides synthetic search, directory-aggregation and file-type/category baselines at 100,000 and 1,000,000 files.
 
-The Windows engine can read logical size, allocated size, link count, timestamps and attributes by NTFS file reference, preserve multiple namespace paths for ordinary hard-linked files, pair journal rename events, update directory subtrees without leaving stale descendant paths, reconcile targeted hard-link changes and commit namespace mutations together with the durable USN checkpoint.
+The NTFS engine can hydrate logical/allocated size, link count, timestamps and attributes by file ID, preserve multiple hard-link namespace paths, pair rename events, move directory subtrees transactionally, reconcile hard-link changes and commit namespace mutations together with durable USN checkpoints.
 
-`FileOp.Indexer` exposes only version negotiation, NTFS volume/status discovery, snapshot rebuild, incremental journal synchronization, search and read-only storage analysis. Protocol v3 supports both directory aggregation and file-type aggregation. It does not expose partition, format, cleanup or other destructive storage commands. Each NTFS volume/root pair gets its own SQLite database so rebuilding one drive cannot clear another drive's index. The per-session pipe is restricted to the current Windows user and to the exact desktop process ID that launched the helper.
+`FileOp.Indexer` exposes only version negotiation, volume/status discovery, snapshot rebuild, incremental journal synchronization, search and read-only storage analytics. **Protocol v4** supports directory analysis and `AnalyzeStorageTypes`, whose response contains bounded extension rows plus exact category rollups. It exposes no partition, format, cleanup or other destructive commands.
 
-Storage analysis consumes the same metadata rows as Search. Directory analysis returns direct entries with recursive logical bytes, allocated bytes, file count, directory count and hard-link accounting. File-type analysis groups the same indexed subtree by normalized extension, assigns a deterministic metadata-only category, and preserves the same logical-vs-physical and hard-link semantics. Whole-root totals are computed before result limits are applied. If any physical file that owns allocation lacks allocated-size metadata, physical usage remains explicitly unknown instead of substituting logical size as though it were exact.
+Each NTFS volume/root pair has its own SQLite database. Reads require a valid durable checkpoint and use shared cross-process leases; rebuild/sync operations use an exclusive maintenance lease so multiple FileOp instances cannot interleave one logical snapshot.
 
-The WinUI Storage page currently exposes directory results as summary cards, a proportional treemap and a drill-down table. In native mode it analyzes the whole indexed NTFS volume containing the user profile. In crawler fallback mode it analyzes only the already-built user-profile snapshot and states that narrower scope explicitly; it does not launch a second filesystem scan. When exact root allocation is incomplete, the treemap uses logical bytes consistently for all tiles rather than mixing logical and physical weights. If the service truncates the returned direct-entry list, the treemap derives an `Other entries` remainder from the complete root total so omitted children do not disappear from the visual accounting. The file-type engine/service contract is implemented separately so a later Types/Categories view can consume reviewed semantics without reopening the index design.
+## Search and Storage
 
-A volume is included in service-backed search or storage analysis only when it has a valid durable checkpoint and is not being maintained. If journal consistency requires a resnapshot, that checkpoint is invalidated persistently before the service reports `SnapshotRequired`.
+Search uses the persistent native NTFS index when available and falls back to the bounded user-profile crawler when required. Startup builds/resumes the primary NTFS snapshot, catches the USN cursor up in bounded batches and continues low-priority synchronization behind foreground work.
 
-Multiple FileOp desktop instances can create separate helper processes, so per-process semaphores are not sufficient to protect one shared volume database. Each persistent volume index therefore has a companion cross-process file gate: searches and storage analysis take shared read leases while snapshot rebuild and USN synchronization hold an exclusive maintenance lease for the entire semantic operation, including checkpoint invalidation. The lock file is a coordination primitive, not an authorization boundary.
+Storage consumes the same metadata rows as Search. It never performs another recursive scan merely to calculate sizes or breakdowns.
 
-The desktop starts `FileOp.Indexer` unelevated, builds or resumes the primary NTFS snapshot, and replays USN batches until the durable cursor converges. A low-priority background loop continues incremental catch-up without competing with foreground Search or Storage requests. If live NTFS access needs elevation, the UI can retain a valid existing native snapshot while explicitly marking it stale and offering helper-only UAC; if native indexing is unavailable entirely, FileOp builds a user-profile fallback snapshot instead.
+### Folders
 
-Superseded Search and Storage interactions do not cancel an in-flight service request because an interrupted IPC exchange intentionally faults that session. The UI drops stale generations and serializes queued foreground work so only still-relevant requests reach the service. Window shutdown may cancel the active exchange because the whole helper session is being torn down.
+Directory analysis returns direct entries with recursive logical bytes, nullable physical allocation, file/directory counts and hard-link accounting. The WinUI Storage page provides summary cards, drill-down, a detailed table and a proportional treemap. When direct results are truncated, the treemap derives an exact `Other entries` remainder from complete root totals.
 
-The app build places the reviewed `FileOp.Indexer` host beside `FileOp.App`, and runtime discovery accepts only that exact adjacent non-reparse executable. This is a deterministic development/runtime location rule, not an Authenticode trust claim; signed production packaging still needs publisher/signature verification before elevation is offered.
+### Types and Categories
+
+File-type analysis groups the same subtree by normalized extension and deterministic metadata-only category. Every visible hard-link name contributes logical namespace bytes; physical allocation is counted once per stable `FileIdentity`.
+
+`MaxTypes` bounds only the extension table. Root totals and complete `TypeCount` are calculated before truncation. Protocol v4 additionally returns **exact category rows over the complete extension set**, so category bars remain exact even when the UI shows only the top N extensions.
+
+Category rows report logical bytes, nullable physical allocation, file count, hard-link aliases and the complete number of extension groups in that category. If root physical allocation is incomplete, the UI uses logical weighting consistently rather than mixing units. A category may legitimately have zero physical bytes when all of its names are non-canonical hard-link aliases.
+
+The current categories are No Extension, Documents, Images, Video, Audio, Archives, Applications, Code, Data, Disk Images, Fonts and Other. Classification is extension-based only; FileOp does not inspect content to guess MIME types.
+
+## Trust and privilege boundary
+
+The desktop process always remains non-elevated. Native indexing starts with the current token and reports structured `ElevationRequired` when needed. Same-account helper-only UAC is allowed only for split-token administrators; different-admin credential elevation is deliberately unsupported until a separately reviewed service/ACL design exists.
+
+The per-session pipe is restricted to the current Windows user and to the exact desktop PID that launched the helper. Requests are versioned, framed and capped at 8 MiB. Oversized responses return retryable `ResponseTooLarge` without destroying an otherwise healthy session.
+
+The app build places the reviewed `FileOp.Indexer` host beside `FileOp.App`. Runtime resolution accepts only that exact adjacent non-reparse executable. This is a deterministic location rule, not an Authenticode trust claim; signed packaging still needs publisher/signature verification before elevation is offered.
 
 ## Query examples
 
@@ -46,18 +62,17 @@ ext:zip size:>1gb backup
 Requirements:
 
 - .NET 10 SDK
-- Windows 10 1809 or later for the native engine/indexer
-- Windows 10 1809 or later for the desktop app
+- Windows 10 1809 or later for the native engine/indexer and desktop app
 - Python 3 for the zero-Actions Storage verifiers
 
-Build the core library and benchmark harness on any supported .NET platform:
+Core/benchmarks:
 
 ```powershell
 dotnet build src/FileOp.Core/FileOp.Core.csproj
 dotnet build benchmarks/FileOp.Benchmarks/FileOp.Benchmarks.csproj
 ```
 
-Build the native engine, indexing helper, run its regression tests and build the Windows app on Windows:
+Windows stack:
 
 ```powershell
 dotnet build src/FileOp.Windows/FileOp.Windows.csproj
@@ -66,33 +81,32 @@ dotnet test tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj
 dotnet build src/FileOp.App/FileOp.App.csproj -p:Platform=x64
 ```
 
-The desktop build copies the indexer host executable, assembly, dependency manifest and runtime configuration into the application output directory. The normal hosted workflow verifies those bundled artifacts and performs a real helper-process handshake using the copy beside the built app; the same gate can be run locally without GitHub Actions.
+The desktop build copies the indexer host executable, assembly, dependency manifest and runtime configuration beside the app. The full local gate verifies those artifacts and performs a real helper-process handshake using the bundled copy.
 
-### Local verification without GitHub Actions
+## Local verification without GitHub Actions
 
-The Storage UI has a standard-library-only verifier for XAML/source wiring, treemap geometry, truncation accounting and Windows path containment:
+Standard-library-only Storage checks:
 
 ```powershell
 python tools/verify_storage_ui.py --self-test-only
 python tools/verify_storage_ui.py
-```
-
-File-type analytics has a second standard-library-only verifier that executes the recursive SQLite query against synthetic fixtures and guards protocol/source wiring:
-
-```powershell
+python tools/verify_storage_ui_edgecases.py
 python tools/verify_storage_types.py --self-test-only
 python tools/verify_storage_types.py
+python tools/verify_storage_types_fuzz.py --cases 1000
 ```
 
-On Windows, `tools/test-local.ps1` mirrors the hosted build/test sequence locally: both offline Storage verifiers, Core and benchmark builds, native Windows/indexer builds, regression/integration tests, WinUI x64 build, bundled-helper artifact verification and the real helper-process handshake from the app output directory.
+The file-type verifier executes the exact SQLite query from `SqliteStorageAnalytics`, including protocol-v4 bounded type rows and exact category aggregates. The randomized verifier compares that SQL against an independent hard-link/nullable-allocation reference model.
+
+On Windows, run the complete no-Actions gate:
 
 ```powershell
 pwsh -File tools/test-local.ps1
 ```
 
-Use `-SkipBenchmarks` for a faster development pass or `-SkipWinUI` when validating only the engine/test stack.
+It runs the offline verifiers, Core/benchmark builds, native Windows/indexer builds, regression/integration tests, WinUI x64 build, bundled-helper checks and the real process/pipe handshake. Use `-SkipBenchmarks` or `-SkipWinUI` for narrower development passes.
 
-Run the synthetic search or storage-analysis benchmarks separately from CI:
+Benchmarks remain manual:
 
 ```powershell
 dotnet run -c Release --project benchmarks/FileOp.Benchmarks -- --filter *SearchBenchmarks*
@@ -106,19 +120,26 @@ src/
   FileOp.Core/       Search/index/storage domain and service protocol contracts
   FileOp.Windows/    Windows-native NTFS/USN engine and indexing IPC client/backend
   FileOp.Indexer/    On-demand native indexing helper process
-  FileOp.App/        WinUI 3 desktop application with shared native/fallback Search + Storage coordination
+  FileOp.App/        WinUI 3 desktop app with shared native/fallback Search + Storage
+
 tests/
-  FileOp.Windows.Tests/  NTFS, shared-index analytics and indexing-service regression/integration tests
+  FileOp.Windows.Tests/  NTFS, shared-index analytics and service regression/integration tests
+
 benchmarks/
-  FileOp.Benchmarks/     Synthetic persistent-index search and storage benchmarks
+  FileOp.Benchmarks/     Synthetic persistent-index Search/Storage benchmarks
+
 tools/
-  verify_storage_ui.py     Zero-Actions Storage/XAML/property verifier
-  verify_storage_types.py  Zero-Actions file-type SQL/protocol/source verifier
-  test-local.ps1           Full local Windows build/test/handshake gate
+  verify_storage_ui.py           Storage/XAML/property verifier
+  verify_storage_ui_edgecases.py Targeted Storage UI regressions
+  verify_storage_types.py        Exact file-type/category SQL/source verifier
+  verify_storage_types_fuzz.py   Randomized SQL/reference parity verifier
+  test-local.ps1                 Full local Windows build/test/handshake gate
+
 docs/
   architecture.md        Architectural decisions and roadmap
-  indexing-service.md    Indexing helper trust boundary and desktop integration model
-  storage-analytics.md   Folder-size, hard-link, treemap and file-type accounting semantics
+  indexing-service.md    Helper trust boundary and protocol model
+  storage-analytics.md   Folder/type/category accounting semantics
+  storage-types-ui.md    WinUI Types/Categories lifecycle and presentation
 ```
 
 ## Principles
@@ -126,5 +147,5 @@ docs/
 1. Speed is a feature: no feature should silently trigger a full rescan when the shared index can answer it.
 2. Expensive metadata is lazy: hashes, content indexing and similar work are calculated only when requested or during idle work.
 3. Destructive actions are explainable and reversible where possible.
-4. The normal UI is not permanently elevated. Native indexing can use an on-demand same-account helper with UAC only when safe; future destructive storage administration remains a separate privileged surface.
+4. The normal UI is never permanently elevated; future destructive administration remains a separate privileged surface.
 5. Avoid fake optimisation features such as registry cleaning, RAM boosting and opaque health scores.
