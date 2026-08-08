@@ -131,6 +131,9 @@ def check_repository(repo_root: Path) -> int:
         (main, "if (state.IsBusy)"),
         (main, "_filesAnalysis = null;"),
         (main, "var target = _filesCurrentPath;"),
+        (view_code, "private string? _lastAppliedPath;"),
+        (view_code, "FilesList.ItemsSource = null;"),
+        (view_code, "The indexed directory load did not complete. Refresh to try again."),
         (view_code, "StorageDirectoryEntry entry"),
         (view_xaml, "Indexed contents"),
     ]
