@@ -88,6 +88,8 @@ Its pure standard-library path covers:
 - 4 exact-category coverage cases, including extension truncation and zero-physical alias categories;
 - 9 Windows path-containment cases.
 
-`tools/verify_storage_ui_edgecases.py` keeps the zero-physical hard-link category regression explicit. `tools/test-local.ps1` runs these verifiers before the full Windows build/test/WinUI/helper-handshake sequence.
+`tools/verify_storage_ui_edgecases.py` keeps the zero-physical hard-link category regression explicit. `tools/verify_storage_types.py` adds 5 deterministic protocol-v4 SQL/category fixtures, and `tools/verify_storage_types_fuzz.py` checks 1,000 randomized nested-directory/hard-link/nullable-allocation cases against an independent reference model using the 142 extension patterns parsed from the committed C# classifier across all 12 category values.
+
+`tools/test-local.ps1` runs these verifiers before the full Windows build/test/WinUI/helper-handshake sequence.
 
 When hosted Actions usage is unavailable, review branches use the repository's `offline/**` convention and a `[skip actions]` review-head commit. This suppresses hosted workflow consumption but is not represented as a Windows compiler/runtime result.
