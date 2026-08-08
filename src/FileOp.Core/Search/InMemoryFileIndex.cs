@@ -293,6 +293,21 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
             .ThenByDescending(static entry => entry.LogicalBytes)
             .ThenBy(static entry => entry.Extension, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var categories = allTypes
+            .GroupBy(static entry => entry.Category)
+            .Select(static group => new StorageFileCategoryEntry(
+                group.Key,
+                group.Sum(static entry => entry.LogicalBytes),
+                group.All(static entry => entry.AllocatedBytes.HasValue)
+                    ? group.Sum(static entry => entry.AllocatedBytes!.Value)
+                    : null,
+                group.Sum(static entry => entry.FileCount),
+                group.Sum(static entry => entry.HardLinkAliasCount),
+                group.Count()))
+            .OrderByDescending(entry => usePhysicalOrdering ? entry.AllocatedBytes!.Value : entry.LogicalBytes)
+            .ThenByDescending(static entry => entry.LogicalBytes)
+            .ThenBy(static entry => entry.Category)
+            .ToArray();
 
         return ValueTask.FromResult(new StorageFileTypeAnalysis(
             normalizedRoot,
@@ -301,7 +316,10 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
             orderedTypes.Sum(static entry => entry.FileCount),
             orderedTypes.Sum(static entry => entry.HardLinkAliasCount),
             orderedTypes.Length,
-            orderedTypes.Take(maxTypes).ToArray()));
+            orderedTypes.Take(maxTypes).ToArray())
+        {
+            Categories = categories,
+        });
     }
 
     private void Upsert(FileRecord record)
