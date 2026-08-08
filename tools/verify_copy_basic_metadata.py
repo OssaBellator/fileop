@@ -53,9 +53,16 @@ def check_repository(root: Path) -> int:
     primitive_path = root / "src/FileOp.Windows/Operations/WindowsFileCopyMutationPrimitive.cs"
     tests_path = root / "tests/FileOp.Windows.Tests/WindowsFileCopyMutationPrimitiveMetadataTests.cs"
     wrapper_path = root / "tools/test-copy-executor-local.ps1"
+    windows_wrapper_path = root / "tools/test-windows-copy-local.ps1"
     missing = [
         str(path)
-        for path in (helper_path, primitive_path, tests_path, wrapper_path)
+        for path in (
+            helper_path,
+            primitive_path,
+            tests_path,
+            wrapper_path,
+            windows_wrapper_path,
+        )
         if not path.is_file()
     ]
     if missing:
@@ -65,6 +72,7 @@ def check_repository(root: Path) -> int:
     primitive = primitive_path.read_text(encoding="utf-8")
     tests = tests_path.read_text(encoding="utf-8")
     wrapper = wrapper_path.read_text(encoding="utf-8")
+    windows_wrapper = windows_wrapper_path.read_text(encoding="utf-8")
 
     required_helper = [
         "WindowsFileCopyBasicMetadata",
@@ -111,7 +119,8 @@ def check_repository(root: Path) -> int:
         assert test_name in tests, test_name
 
     assert "verify_copy_basic_metadata.py" in wrapper
-    return len(required_helper) + len(forbidden_helper) + 8
+    assert "WindowsFileCopyMutationPrimitiveMetadataTests" in windows_wrapper
+    return len(required_helper) + len(forbidden_helper) + 9
 
 
 def main() -> int:
