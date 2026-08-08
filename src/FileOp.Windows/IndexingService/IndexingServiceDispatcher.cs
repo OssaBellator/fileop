@@ -170,7 +170,21 @@ public sealed class IndexingServiceDispatcher
             throw new JsonException("maxEntries must be between 1 and 4096.");
         }
 
-        return request;
+        try
+        {
+            return request with
+            {
+                VolumeRootPath = Path.GetFullPath(request.VolumeRootPath),
+                DirectoryPath = Path.GetFullPath(request.DirectoryPath),
+            };
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or
+            NotSupportedException or
+            PathTooLongException)
+        {
+            throw new JsonException("Storage analysis paths are invalid.", exception);
+        }
     }
 
     private static T Deserialize<T>(JsonElement payload)
