@@ -7,7 +7,7 @@ import random
 import re
 import sys
 import xml.etree.ElementTree as ET
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
 
 def _normalize(path: str) -> str:
@@ -128,6 +128,9 @@ def check_repository(repo_root: Path) -> int:
         (main, "DesktopSearchMode.Native"),
         (main, "DesktopSearchMode.Fallback"),
         (main, "SetStorageViewMode(StorageViewMode.Folders)"),
+        (main, "if (state.IsBusy)"),
+        (main, "_filesAnalysis = null;"),
+        (main, "var target = _filesCurrentPath;"),
         (view_code, "StorageDirectoryEntry entry"),
         (view_xaml, "Indexed contents"),
     ]
@@ -146,7 +149,7 @@ def check_repository(repo_root: Path) -> int:
 
     assert "Content=\"Files\"" in main_xaml and "IsEnabled=\"False\"" in main_xaml
     assert "FilesView" not in main_xaml
-    assert main.count("Interlocked.Increment(ref _filesGeneration)") >= 3
+    assert main.count("Interlocked.Increment(ref _filesGeneration)") >= 4
     assert "generation != Volatile.Read(ref _filesGeneration)" in main
     assert "_filesVisible" in main
     assert "omitted entries remain available through Search and future paging work" in view_code
