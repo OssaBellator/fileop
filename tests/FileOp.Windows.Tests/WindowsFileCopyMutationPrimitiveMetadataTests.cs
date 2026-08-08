@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
+using FileOp.Core.Operations;
 using FileOp.Windows.Operations;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -29,15 +31,7 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
             var expectedCreation = new DateTime(2021, 2, 3, 4, 5, 6, DateTimeKind.Utc);
             var expectedAccess = new DateTime(2022, 3, 4, 5, 6, 7, DateTimeKind.Utc);
             var expectedWrite = new DateTime(2023, 4, 5, 6, 7, 8, DateTimeKind.Utc);
-            File.SetCreationTimeUtc(sourcePath, expectedCreation);
-            File.SetLastAccessTimeUtc(sourcePath, expectedAccess);
-            File.SetLastWriteTimeUtc(sourcePath, expectedWrite);
-            File.SetAttributes(
-                sourcePath,
-                FileAttributes.ReadOnly |
-                FileAttributes.Hidden |
-                FileAttributes.Archive |
-                FileAttributes.NotContentIndexed);
+            SetExpectedMetadata(sourcePath, expectedCreation, expectedAccess, expectedWrite);
 
             using (var sourceHandle = File.OpenHandle(
                        sourcePath,
@@ -54,12 +48,12 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
                 WindowsFileCopyBasicMetadata.Apply(destinationHandle, snapshot);
             }
 
-            AssertTimeClose(expectedCreation, File.GetCreationTimeUtc(destinationPath));
-            AssertTimeClose(expectedAccess, File.GetLastAccessTimeUtc(destinationPath));
-            AssertTimeClose(expectedWrite, File.GetLastWriteTimeUtc(destinationPath));
-            Assert.AreEqual(
-                File.GetAttributes(sourcePath) & PreservedAttributes,
-                File.GetAttributes(destinationPath) & PreservedAttributes);
+            AssertMetadata(
+                sourcePath,
+                destinationPath,
+                expectedCreation,
+                expectedAccess,
+                expectedWrite);
         }
         finally
         {
@@ -99,6 +93,96 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
             ResetAttributes(sourcePath);
             DeleteRoot(root);
         }
+    }
+
+    [TestMethod]
+    public async Task CopyPrimitivePreservesSafeBasicMetadata()
+    {
+        var root = CreateRoot();
+        var sourceDirectory = Path.Combine(root, "source");
+        var destinationDirectory = Path.Combine(root, "destination");
+        Directory.CreateDirectory(sourceDirectory);
+        Directory.CreateDirectory(destinationDirectory);
+        var sourcePath = Path.Combine(sourceDirectory, "payload.bin");
+        var destinationPath = Path.Combine(destinationDirectory, "payload.bin");
+        try
+        {
+            File.WriteAllText(sourcePath, "source-content");
+            var expectedCreation = new DateTime(2020, 5, 6, 7, 8, 9, DateTimeKind.Utc);
+            var expectedAccess = new DateTime(2021, 6, 7, 8, 9, 10, DateTimeKind.Utc);
+            var expectedWrite = new DateTime(2022, 7, 8, 9, 10, 11, DateTimeKind.Utc);
+            SetExpectedMetadata(sourcePath, expectedCreation, expectedAccess, expectedWrite);
+
+            var entry = new FileOperationEntry(sourcePath, "payload.bin", IsDirectory: false);
+            var plan = new FileOperationPlan(
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow,
+                FileOperationKind.Copy,
+                FileOperationCollisionPolicy.Stop,
+                new FileOperationIntent(
+                    "Left",
+                    Guid.NewGuid(),
+                    sourceDirectory,
+                    new[] { entry },
+                    "Right",
+                    Guid.NewGuid(),
+                    destinationDirectory));
+            var validation = await new WindowsFileOperationExecutionValidator().ValidateAsync(plan);
+            Assert.AreEqual(FileOperationExecutionValidationDecision.Ready, validation.Items[0].Decision);
+
+            var lease = await new WindowsFileCopyMutationPrimitive().CopyNewFileAsync(
+                new FileCopyMutationRequest(
+                    validation.Items[0],
+                    validation.SourceDirectory,
+                    validation.DestinationDirectory));
+            await lease.DisposeAsync();
+
+            Assert.AreEqual("source-content", await File.ReadAllTextAsync(destinationPath));
+            AssertMetadata(
+                sourcePath,
+                destinationPath,
+                expectedCreation,
+                expectedAccess,
+                expectedWrite);
+        }
+        finally
+        {
+            ResetAttributes(sourcePath);
+            ResetAttributes(destinationPath);
+            DeleteRoot(root);
+        }
+    }
+
+    private static void SetExpectedMetadata(
+        string path,
+        DateTime creation,
+        DateTime access,
+        DateTime write)
+    {
+        File.SetCreationTimeUtc(path, creation);
+        File.SetLastAccessTimeUtc(path, access);
+        File.SetLastWriteTimeUtc(path, write);
+        File.SetAttributes(
+            path,
+            FileAttributes.ReadOnly |
+            FileAttributes.Hidden |
+            FileAttributes.Archive |
+            FileAttributes.NotContentIndexed);
+    }
+
+    private static void AssertMetadata(
+        string sourcePath,
+        string destinationPath,
+        DateTime expectedCreation,
+        DateTime expectedAccess,
+        DateTime expectedWrite)
+    {
+        AssertTimeClose(expectedCreation, File.GetCreationTimeUtc(destinationPath));
+        AssertTimeClose(expectedAccess, File.GetLastAccessTimeUtc(destinationPath));
+        AssertTimeClose(expectedWrite, File.GetLastWriteTimeUtc(destinationPath));
+        Assert.AreEqual(
+            File.GetAttributes(sourcePath) & PreservedAttributes,
+            File.GetAttributes(destinationPath) & PreservedAttributes);
     }
 
     private static string CreateRoot()
