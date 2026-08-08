@@ -129,13 +129,26 @@ def check_repository(root: Path) -> int:
     ]:
         assert test_name in tests, test_name
 
+    metadata_setup_start = tests.index("private static void SetExpectedMetadata(")
+    metadata_setup_end = tests.index("private static void AssertMetadata(", metadata_setup_start)
+    metadata_setup = tests[metadata_setup_start:metadata_setup_end]
+    preserved_test_attributes = [
+        "FileAttributes.ReadOnly",
+        "FileAttributes.Hidden",
+        "FileAttributes.System",
+        "FileAttributes.Archive",
+        "FileAttributes.NotContentIndexed",
+    ]
+    for attribute in preserved_test_attributes:
+        assert attribute in metadata_setup, attribute
+
     metadata_assertion = tests.index("AssertMetadata(", tests.index("CopyPrimitivePreservesSafeBasicMetadata"))
     content_read = tests.index("File.ReadAllTextAsync(destinationPath)", metadata_assertion)
     assert metadata_assertion < content_read
 
     assert "verify_copy_basic_metadata.py" in wrapper
     assert "WindowsFileCopyMutationPrimitiveMetadataTests" in windows_wrapper
-    return len(required_helper) + len(forbidden_helper) + 11
+    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 11
 
 
 def main() -> int:
