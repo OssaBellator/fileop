@@ -41,7 +41,7 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
             using (var destinationHandle = File.OpenHandle(
                        destinationPath,
                        FileMode.Open,
-                       FileAccess.Write,
+                       FileAccess.ReadWrite,
                        FileShare.ReadWrite | FileShare.Delete))
             {
                 var snapshot = WindowsFileCopyBasicMetadata.Capture(sourceHandle);
