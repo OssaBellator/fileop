@@ -80,6 +80,23 @@ def ordered(block: str, needles: list[str]) -> None:
         cursor = block.index(needle, cursor) + len(needle)
 
 
+def require_pack_8_before(helper: str, struct_start: int) -> None:
+    assert "[StructLayout(LayoutKind.Sequential, Pack = 8)]" in helper[max(0, struct_start - 100):struct_start]
+
+
+def require_kernel32_bool_import(helper: str, method_start: int) -> None:
+    attribute_start = helper.rfind("[DllImport(", 0, method_start)
+    assert attribute_start >= 0
+    attributes = helper[attribute_start:method_start]
+    for needle in (
+        '"kernel32.dll"',
+        "SetLastError = true",
+        "CallingConvention = CallingConvention.Winapi",
+        "[return: MarshalAs(UnmanagedType.Bool)]",
+    ):
+        assert needle in attributes, needle
+
+
 def check_repository(root: Path) -> int:
     helper_path = root / "src/FileOp.Windows/Operations/WindowsFileCopyBasicMetadata.cs"
     interop_tests_path = root / "tests/FileOp.Windows.Tests/WindowsFileCopyBasicMetadataInteropTests.cs"
@@ -95,7 +112,7 @@ def check_repository(root: Path) -> int:
     windows_wrapper = windows_wrapper_path.read_text(encoding="utf-8")
 
     basic_start = helper.index("private struct FileBasicInformation")
-    basic_end = helper.index("[StructLayout(LayoutKind.Sequential)]", basic_start)
+    basic_end = helper.index("[StructLayout", basic_start)
     basic_block = helper[basic_start:basic_end]
     ordered(
         basic_block,
@@ -107,10 +124,10 @@ def check_repository(root: Path) -> int:
             "public uint FileAttributes;",
         ],
     )
-    assert "[StructLayout(LayoutKind.Sequential, Pack = 8)]" in helper[max(0, basic_start - 100):basic_start]
+    require_pack_8_before(helper, basic_start)
 
     by_handle_start = helper.index("private struct ByHandleFileInformation")
-    by_handle_end = helper.index("private struct FileTime", by_handle_start)
+    by_handle_end = helper.index("[StructLayout", by_handle_start)
     by_handle_block = helper[by_handle_start:by_handle_end]
     ordered(
         by_handle_block,
@@ -127,15 +144,19 @@ def check_repository(root: Path) -> int:
             "public uint FileIndexLow;",
         ],
     )
+    require_pack_8_before(helper, by_handle_start)
 
     file_time_start = helper.index("private struct FileTime")
     file_time_end = helper.index("[DllImport", file_time_start)
     file_time_block = helper[file_time_start:file_time_end]
     ordered(file_time_block, ["public uint LowDateTime;", "public uint HighDateTime;"])
+    require_pack_8_before(helper, file_time_start)
 
     enum_start = helper.index("private enum FileInfoByHandleClass")
     enum_end = helper.index("[StructLayout", enum_start)
-    assert "FileBasicInfo = 0" in helper[enum_start:enum_end]
+    enum_block = helper[enum_start:enum_end]
+    assert "private enum FileInfoByHandleClass : int" in enum_block
+    assert "FileBasicInfo = 0" in enum_block
 
     suppress_start = helper.index("internal static void SuppressAutomaticTimestampUpdates")
     suppress_end = helper.index("internal static void Apply(", suppress_start)
@@ -191,8 +212,7 @@ def check_repository(root: Path) -> int:
             "uint dwBufferSize",
         ],
     )
-    assert "[return: MarshalAs(UnmanagedType.Bool)]" in helper[max(0, set_method - 180):set_method]
-    assert "[DllImport(\"kernel32.dll\", SetLastError = true)]" in helper[max(0, set_method - 180):set_method]
+    require_kernel32_bool_import(helper, set_method)
 
     get_method = helper.index("private static extern bool GetFileInformationByHandle(")
     get_signature = helper[get_method:get_method + 300]
@@ -203,8 +223,7 @@ def check_repository(root: Path) -> int:
             "out ByHandleFileInformation lpFileInformation",
         ],
     )
-    assert "[return: MarshalAs(UnmanagedType.Bool)]" in helper[max(0, get_method - 180):get_method]
-    assert "[DllImport(\"kernel32.dll\", SetLastError = true)]" in helper[max(0, get_method - 180):get_method]
+    require_kernel32_bool_import(helper, get_method)
 
     for needle in (
         "FileBasicInfoInteropContractMatchesWindowsAbi",
@@ -225,6 +244,7 @@ def check_repository(root: Path) -> int:
     for needle in (
         "<TargetFramework>net10.0</TargetFramework>",
         "<LangVersion>14.0</LangVersion>",
+        "<EnableNETAnalyzers>false</EnableNETAnalyzers>",
         "<NuGetAudit>false</NuGetAudit>",
         "shutil.copy2(helper",
         "Marshal.SizeOf(basic)",
@@ -243,7 +263,7 @@ def check_repository(root: Path) -> int:
 
     assert "verify_copy_basic_metadata_dotnet.py" in windows_wrapper
     assert "WindowsFileCopyBasicMetadataInteropTests" in windows_wrapper
-    return 59
+    return 65
 
 
 C_PROBE = r"""
