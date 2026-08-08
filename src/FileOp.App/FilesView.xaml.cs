@@ -15,7 +15,7 @@ public sealed partial class FilesView : UserControl
 
     public event EventHandler? RefreshRequested;
 
-    public event EventHandler<FileBrowserRow>? EntryInvoked;
+    public event Action<FileBrowserRow>? EntryInvoked;
 
     public void SetSourceDescription(string description)
     {
@@ -84,7 +84,7 @@ public sealed partial class FilesView : UserControl
     {
         if (e.ClickedItem is FileBrowserRow row)
         {
-            EntryInvoked?.Invoke(this, row);
+            EntryInvoked?.Invoke(row);
         }
     }
 }
