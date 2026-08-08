@@ -101,6 +101,52 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
     }
 
     [TestMethod]
+    public void BasicMetadataApplyLeavesZeroTimestampsDestinationOwned()
+    {
+        var root = CreateRoot();
+        var destinationPath = Path.Combine(root, "destination.bin");
+        try
+        {
+            File.WriteAllText(destinationPath, "destination-content");
+            var expectedCreation = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+            var expectedAccess = new DateTime(2021, 2, 3, 4, 5, 6, DateTimeKind.Utc);
+            var expectedWrite = new DateTime(2022, 3, 4, 5, 6, 7, DateTimeKind.Utc);
+            File.SetCreationTimeUtc(destinationPath, expectedCreation);
+            File.SetLastAccessTimeUtc(destinationPath, expectedAccess);
+            File.SetLastWriteTimeUtc(destinationPath, expectedWrite);
+            File.SetAttributes(destinationPath, FileAttributes.Temporary);
+
+            using (var destinationHandle = File.OpenHandle(
+                       destinationPath,
+                       FileMode.Open,
+                       FileAccess.ReadWrite,
+                       FileShare.ReadWrite | FileShare.Delete))
+            {
+                WindowsFileCopyBasicMetadata.SuppressAutomaticTimestampUpdates(destinationHandle);
+                WindowsFileCopyBasicMetadata.Apply(
+                    destinationHandle,
+                    new WindowsFileCopyBasicMetadata.Snapshot(
+                        CreationTime: 0,
+                        LastAccessTime: 0,
+                        LastWriteTime: 0,
+                        FileAttributes: (uint)FileAttributes.Hidden));
+            }
+
+            AssertTimeClose(expectedCreation, File.GetCreationTimeUtc(destinationPath));
+            AssertTimeClose(expectedAccess, File.GetLastAccessTimeUtc(destinationPath));
+            AssertTimeClose(expectedWrite, File.GetLastWriteTimeUtc(destinationPath));
+            var actualAttributes = File.GetAttributes(destinationPath);
+            Assert.IsTrue((actualAttributes & FileAttributes.Hidden) != 0);
+            Assert.IsTrue((actualAttributes & FileAttributes.Temporary) != 0);
+        }
+        finally
+        {
+            ResetAttributes(destinationPath);
+            DeleteRoot(root);
+        }
+    }
+
+    [TestMethod]
     public void BasicMetadataMergePreservesDestinationOwnedAttributes()
     {
         var destinationSettableOwned = (uint)(
