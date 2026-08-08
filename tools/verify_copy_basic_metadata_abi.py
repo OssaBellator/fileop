@@ -48,9 +48,11 @@ def layout(fields: list[tuple[str, int, int]], pack: int) -> tuple[int, dict[str
 
 
 def check_layout_model() -> int:
+    checks = 0
     basic_size, basic_offsets = layout(BASIC_FIELDS, pack=8)
     by_handle_size, by_handle_offsets = layout(BY_HANDLE_FIELDS, pack=8)
     assert basic_size == 40
+    checks += 1
     assert basic_offsets == {
         "CreationTime": 0,
         "LastAccessTime": 8,
@@ -58,7 +60,9 @@ def check_layout_model() -> int:
         "ChangeTime": 24,
         "FileAttributes": 32,
     }
+    checks += 1
     assert by_handle_size == 52
+    checks += 1
     assert by_handle_offsets == {
         "FileAttributes": 0,
         "CreationTime": 4,
@@ -71,22 +75,26 @@ def check_layout_model() -> int:
         "FileIndexHigh": 44,
         "FileIndexLow": 48,
     }
-    return 4
+    checks += 1
+    return checks
 
 
-def ordered(block: str, needles: list[str]) -> None:
+def ordered(block: str, needles: list[str]) -> int:
     cursor = 0
     for needle in needles:
         cursor = block.index(needle, cursor) + len(needle)
+    return len(needles)
 
 
-def require_pack_8_before(helper: str, struct_start: int) -> None:
+def require_pack_8_before(helper: str, struct_start: int) -> int:
     assert "[StructLayout(LayoutKind.Sequential, Pack = 8)]" in helper[max(0, struct_start - 100):struct_start]
+    return 1
 
 
-def require_kernel32_bool_import(helper: str, method_start: int) -> None:
+def require_kernel32_bool_import(helper: str, method_start: int) -> int:
     attribute_start = helper.rfind("[DllImport(", 0, method_start)
     assert attribute_start >= 0
+    checks = 1
     attributes = helper[attribute_start:method_start]
     for needle in (
         '"kernel32.dll"',
@@ -95,6 +103,8 @@ def require_kernel32_bool_import(helper: str, method_start: int) -> None:
         "[return: MarshalAs(UnmanagedType.Bool)]",
     ):
         assert needle in attributes, needle
+        checks += 1
+    return checks
 
 
 def check_repository(root: Path) -> int:
@@ -102,9 +112,12 @@ def check_repository(root: Path) -> int:
     interop_tests_path = root / "tests/FileOp.Windows.Tests/WindowsFileCopyBasicMetadataInteropTests.cs"
     dotnet_probe_path = root / "tools/verify_copy_basic_metadata_dotnet.py"
     windows_wrapper_path = root / "tools/test-windows-copy-local.ps1"
-    for path in (helper_path, interop_tests_path, dotnet_probe_path, windows_wrapper_path):
+    paths = (helper_path, interop_tests_path, dotnet_probe_path, windows_wrapper_path)
+    checks = 0
+    for path in paths:
         if not path.is_file():
             raise FileNotFoundError(path)
+        checks += 1
 
     helper = helper_path.read_text(encoding="utf-8")
     interop_tests = interop_tests_path.read_text(encoding="utf-8")
@@ -114,7 +127,7 @@ def check_repository(root: Path) -> int:
     basic_start = helper.index("private struct FileBasicInformation")
     basic_end = helper.index("[StructLayout", basic_start)
     basic_block = helper[basic_start:basic_end]
-    ordered(
+    checks += ordered(
         basic_block,
         [
             "public long CreationTime;",
@@ -124,12 +137,12 @@ def check_repository(root: Path) -> int:
             "public uint FileAttributes;",
         ],
     )
-    require_pack_8_before(helper, basic_start)
+    checks += require_pack_8_before(helper, basic_start)
 
     by_handle_start = helper.index("private struct ByHandleFileInformation")
     by_handle_end = helper.index("[StructLayout", by_handle_start)
     by_handle_block = helper[by_handle_start:by_handle_end]
-    ordered(
+    checks += ordered(
         by_handle_block,
         [
             "public uint FileAttributes;",
@@ -144,19 +157,21 @@ def check_repository(root: Path) -> int:
             "public uint FileIndexLow;",
         ],
     )
-    require_pack_8_before(helper, by_handle_start)
+    checks += require_pack_8_before(helper, by_handle_start)
 
     file_time_start = helper.index("private struct FileTime")
     file_time_end = helper.index("[DllImport", file_time_start)
     file_time_block = helper[file_time_start:file_time_end]
-    ordered(file_time_block, ["public uint LowDateTime;", "public uint HighDateTime;"])
-    require_pack_8_before(helper, file_time_start)
+    checks += ordered(file_time_block, ["public uint LowDateTime;", "public uint HighDateTime;"])
+    checks += require_pack_8_before(helper, file_time_start)
 
     enum_start = helper.index("private enum FileInfoByHandleClass")
     enum_end = helper.index("[StructLayout", enum_start)
     enum_block = helper[enum_start:enum_end]
     assert "private enum FileInfoByHandleClass : int" in enum_block
+    checks += 1
     assert "FileBasicInfo = 0" in enum_block
+    checks += 1
 
     suppress_start = helper.index("internal static void SuppressAutomaticTimestampUpdates")
     suppress_end = helper.index("internal static void Apply(", suppress_start)
@@ -169,12 +184,14 @@ def check_repository(root: Path) -> int:
         "FileAttributes = 0",
     ):
         assert needle in suppress, needle
+        checks += 1
     assert "-2" not in suppress
+    checks += 1
 
     apply_start = suppress_end
     apply_end = helper.index("internal static uint MergeDestinationAttributes", apply_start)
     apply = helper[apply_start:apply_end]
-    ordered(
+    checks += ordered(
         apply,
         [
             "GetFileInformationByHandle(destinationHandle, out var destinationInformation)",
@@ -190,7 +207,7 @@ def check_repository(root: Path) -> int:
     wrapper_start = helper.index("private static void SetBasicInformation(")
     wrapper_end = helper.index("private static void ValidateHandle(", wrapper_start)
     wrapper = helper[wrapper_start:wrapper_end]
-    ordered(
+    checks += ordered(
         wrapper,
         [
             "SetFileInformationByHandle(",
@@ -203,7 +220,7 @@ def check_repository(root: Path) -> int:
 
     set_method = helper.index("private static extern bool SetFileInformationByHandle(")
     set_signature = helper[set_method:set_method + 450]
-    ordered(
+    checks += ordered(
         set_signature,
         [
             "SafeFileHandle hFile",
@@ -212,18 +229,18 @@ def check_repository(root: Path) -> int:
             "uint dwBufferSize",
         ],
     )
-    require_kernel32_bool_import(helper, set_method)
+    checks += require_kernel32_bool_import(helper, set_method)
 
     get_method = helper.index("private static extern bool GetFileInformationByHandle(")
     get_signature = helper[get_method:get_method + 300]
-    ordered(
+    checks += ordered(
         get_signature,
         [
             "SafeFileHandle hFile",
             "out ByHandleFileInformation lpFileInformation",
         ],
     )
-    require_kernel32_bool_import(helper, get_method)
+    checks += require_kernel32_bool_import(helper, get_method)
 
     for needle in (
         "FileBasicInfoInteropContractMatchesWindowsAbi",
@@ -240,6 +257,7 @@ def check_repository(root: Path) -> int:
         "HighDateTime",
     ):
         assert needle in interop_tests, needle
+        checks += 1
 
     for needle in (
         "<TargetFramework>net10.0</TargetFramework>",
@@ -257,16 +275,22 @@ def check_repository(root: Path) -> int:
         "CallingConvention.Winapi",
         "SetFileInformationByHandle",
         "GetFileInformationByHandle",
+        ".empty-feed",
+        '"--source"',
         "dotnet, \"restore\"",
         "dotnet, \"build\"",
         "dotnet, \"run\"",
     ):
         assert needle in dotnet_probe, needle
+        checks += 1
     assert "PackageReference" not in dotnet_probe
+    checks += 1
 
     assert "verify_copy_basic_metadata_dotnet.py" in windows_wrapper
+    checks += 1
     assert "WindowsFileCopyBasicMetadataInteropTests" in windows_wrapper
-    return 68
+    checks += 1
+    return checks
 
 
 C_PROBE = r"""
@@ -309,6 +333,7 @@ def run_clang_probe() -> int:
         "i686-pc-windows-msvc",
         "aarch64-pc-windows-msvc",
     )
+    checks = 0
     with tempfile.TemporaryDirectory(prefix="fileop-copy-metadata-abi-") as temp_dir:
         source = Path(temp_dir) / "probe.c"
         source.write_text(C_PROBE, encoding="utf-8")
@@ -321,8 +346,10 @@ def run_clang_probe() -> int:
                 stderr=subprocess.PIPE,
                 text=True,
             )
+            checks += 4  # four _Static_assert statements compiled for this target
             assert output.is_file() and output.stat().st_size > 0
-    return len(targets) * 4
+            checks += 1
+    return checks
 
 
 def main() -> int:
