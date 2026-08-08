@@ -68,7 +68,7 @@ def run_model(cases: int) -> int:
             checks += 1
 
         destination = rng.getrandbits(32) & KNOWN_DESTINATION
-        merged = merge_destination(destination, result)
+        merged = merge_destination(destination, value)
         expected_owned = destination & DESTINATION_SETTABLE
         expected_preserved = value & PRESERVED
         assert merged & DESTINATION_SETTABLE == expected_owned
