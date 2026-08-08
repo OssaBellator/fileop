@@ -67,6 +67,10 @@ Invoke-Step "Offline file operation state verifier" {
     python tools/verify_file_operation_state.py --repo-root $repoRoot --cases 20000
 }
 
+Invoke-Step "Offline file operation preflight verifier" {
+    python tools/verify_file_operation_preflight.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline paged directory browse verifier" {
     python tools/verify_directory_browse.py --repo-root $repoRoot --cases 10000
 }
