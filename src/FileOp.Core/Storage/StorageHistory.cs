@@ -67,7 +67,10 @@ public sealed record StorageHistoryDelta(
         ArgumentNullException.ThrowIfNull(older);
         ArgumentNullException.ThrowIfNull(newer);
 
-        if (!string.Equals(older.RootPath, newer.RootPath, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(
+                NormalizeRoot(older.RootPath),
+                NormalizeRoot(newer.RootPath),
+                StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException("Storage history snapshots must describe the same root.", nameof(newer));
         }
@@ -91,7 +94,7 @@ public sealed record StorageHistoryDelta(
                 delta.FileCountDelta != 0 ||
                 delta.HardLinkAliasCountDelta != 0 ||
                 delta.TypeCountDelta != 0)
-            .OrderByDescending(static delta => Math.Abs(delta.AllocatedBytesDelta ?? delta.LogicalBytesDelta))
+            .OrderByDescending(static delta => Magnitude(delta.AllocatedBytesDelta ?? delta.LogicalBytesDelta))
             .ThenBy(static delta => delta.Category)
             .ToArray();
 
@@ -130,4 +133,22 @@ public sealed record StorageHistoryDelta(
 
     private static long? GetAllocatedOrZero(StorageHistoryCategorySnapshot? snapshot) =>
         snapshot is null ? 0L : snapshot.AllocatedBytes;
+
+    private static ulong Magnitude(long value) =>
+        value >= 0 ? (ulong)value : (ulong)(-(value + 1)) + 1;
+
+    private static string NormalizeRoot(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var trimmed = path.Trim();
+        if (trimmed.Length == 3 &&
+            char.IsLetter(trimmed[0]) &&
+            trimmed[1] == ':' &&
+            (trimmed[2] == '\\' || trimmed[2] == '/'))
+        {
+            return $"{char.ToUpperInvariant(trimmed[0])}:\\";
+        }
+
+        return trimmed.TrimEnd('\\', '/');
+    }
 }
