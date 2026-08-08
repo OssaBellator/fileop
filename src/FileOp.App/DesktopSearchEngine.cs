@@ -2,6 +2,7 @@ using FileOp.Core.Indexing;
 using FileOp.Core.Indexing.Service;
 using FileOp.Core.Models;
 using FileOp.Core.Search;
+using FileOp.Core.Storage;
 using FileOp.Windows.IndexingService;
 
 namespace FileOp.App;
@@ -28,6 +29,7 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
     private const int InitialCatchUpBatchLimit = 64;
     private const int BackgroundCatchUpBatchLimit = 8;
     private const int CatchUpBusyRetryLimit = 8;
+    private const int MaximumStorageEntryLimit = 4_096;
     private static readonly TimeSpan BackgroundSyncInterval = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan CatchUpBusyRetryDelay = TimeSpan.FromMilliseconds(75);
 
@@ -52,6 +54,16 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
         IsBusy: true,
         CanElevate: false,
         IsCurrent: false);
+
+    public string? StorageRootPath => State.Mode switch
+    {
+        DesktopSearchMode.Native => _primaryVolume?.RootPath,
+        DesktopSearchMode.Fallback when _fallbackReady => _fallbackRoot,
+        _ => null,
+    };
+
+    public bool StorageCoversWholeVolume =>
+        State.Mode == DesktopSearchMode.Native && _primaryVolume is not null;
 
     public event Action<DesktopSearchEngineState>? StateChanged;
 
@@ -218,6 +230,64 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
             }
 
             return await SearchFallbackAsync(query).ConfigureAwait(false);
+        }
+        finally
+        {
+            _searchOperationGate.Release();
+        }
+    }
+
+    public async ValueTask<StorageDirectoryAnalysis> AnalyzeStorageAsync(
+        string directoryPath,
+        int maxEntries = 256)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
+        ThrowIfDisposed();
+        if (maxEntries <= 0 || maxEntries > MaximumStorageEntryLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxEntries),
+                maxEntries,
+                $"Storage analysis entry limits must be between 1 and {MaximumStorageEntryLimit:N0}.");
+        }
+
+        var fullPath = Path.GetFullPath(directoryPath);
+        await _searchOperationGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            if (_nativeSession is { Client.IsConnected: true } && _primaryVolume is not null)
+            {
+                await _nativeOperationGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+                try
+                {
+                    if (_nativeSession is { Client.IsConnected: true } session &&
+                        _primaryVolume is { } volume)
+                    {
+                        EnsurePathWithinRoot(fullPath, volume.RootPath);
+                        return await AnalyzeNativeStorageAsync(
+                            session,
+                            volume,
+                            fullPath,
+                            maxEntries).ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    _nativeOperationGate.Release();
+                }
+            }
+
+            if (!_fallbackReady || string.IsNullOrWhiteSpace(_fallbackRoot))
+            {
+                throw new InvalidOperationException("Storage analytics is not currently available.");
+            }
+
+            EnsurePathWithinRoot(fullPath, _fallbackRoot);
+            return await _fallbackIndex.AnalyzeDirectoryAsync(
+                fullPath,
+                maxEntries,
+                _lifetimeCancellation.Token).ConfigureAwait(false);
         }
         finally
         {
@@ -591,6 +661,34 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
         }
     }
 
+    private async ValueTask<StorageDirectoryAnalysis> AnalyzeNativeStorageAsync(
+        IndexingServiceProcessSession session,
+        IndexingVolumeDescriptor volume,
+        string directoryPath,
+        int maxEntries)
+    {
+        var limit = maxEntries;
+        while (true)
+        {
+            try
+            {
+                var response = await session.Client.AnalyzeStorageAsync(
+                    new IndexingStorageAnalysisRequest(
+                        volume.VolumeIdentity,
+                        volume.RootPath,
+                        directoryPath,
+                        limit),
+                    _lifetimeCancellation.Token).ConfigureAwait(false);
+                return response.Analysis;
+            }
+            catch (IndexingServiceRemoteException exception)
+                when (exception.Error.Code == IndexingServiceErrorCode.ResponseTooLarge && limit > 16)
+            {
+                limit = Math.Max(16, limit / 2);
+            }
+        }
+    }
+
     private void ApplyNativePreparation(NativePreparationResult preparation)
     {
         _nativeSession = preparation.Session
@@ -853,6 +951,27 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
     private static string NormalizeRoot(string path) =>
         Path.GetFullPath(path)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+    private static void EnsurePathWithinRoot(string path, string rootPath)
+    {
+        var normalizedPath = Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedRoot = Path.GetFullPath(rootPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (string.Equals(normalizedPath, normalizedRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var rootPrefix = normalizedRoot + Path.DirectorySeparatorChar;
+        if (!normalizedPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"Storage directory {path} is outside the available index root {rootPath}.",
+                nameof(path));
+        }
+    }
 
     private static FileRecord ToFileRecord(IndexingSearchResult result) => new(
         result.Path,
