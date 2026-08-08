@@ -84,6 +84,18 @@ public sealed class IndexingServiceDispatcher
                         DeserializeStorageFileTypes(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
+                IndexingServiceOperation.CaptureStorageHistory => Success(
+                    request.RequestId,
+                    await _backend.CaptureStorageHistoryAsync(
+                        DeserializeStorageHistoryCapture(request.Payload),
+                        cancellationToken).ConfigureAwait(false)),
+
+                IndexingServiceOperation.GetStorageHistory => Success(
+                    request.RequestId,
+                    await _backend.GetStorageHistoryAsync(
+                        DeserializeStorageHistoryQuery(request.Payload),
+                        cancellationToken).ConfigureAwait(false)),
+
                 _ => Failure(
                     request.RequestId,
                     IndexingServiceErrorCode.InvalidRequest,
@@ -181,6 +193,37 @@ public sealed class IndexingServiceDispatcher
         if (request.MaxTypes <= 0 || request.MaxTypes > 4_096)
         {
             throw new JsonException("maxTypes must be between 1 and 4096.");
+        }
+
+        return request with
+        {
+            VolumeRootPath = volumeRootPath,
+            DirectoryPath = directoryPath,
+        };
+    }
+
+    private static IndexingStorageHistoryCaptureRequest DeserializeStorageHistoryCapture(JsonElement payload)
+    {
+        var request = Deserialize<IndexingStorageHistoryCaptureRequest>(payload);
+        var (volumeRootPath, directoryPath) = NormalizeStoragePaths(
+            request.VolumeRootPath,
+            request.DirectoryPath);
+        return request with
+        {
+            VolumeRootPath = volumeRootPath,
+            DirectoryPath = directoryPath,
+        };
+    }
+
+    private static IndexingStorageHistoryQueryRequest DeserializeStorageHistoryQuery(JsonElement payload)
+    {
+        var request = Deserialize<IndexingStorageHistoryQueryRequest>(payload);
+        var (volumeRootPath, directoryPath) = NormalizeStoragePaths(
+            request.VolumeRootPath,
+            request.DirectoryPath);
+        if (request.Limit <= 0 || request.Limit > 4_096)
+        {
+            throw new JsonException("limit must be between 1 and 4096.");
         }
 
         return request with
