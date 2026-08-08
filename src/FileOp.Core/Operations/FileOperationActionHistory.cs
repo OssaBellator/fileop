@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
@@ -82,6 +83,13 @@ public interface IFileOperationActionHistoryStore
         Guid operationId,
         int ordinal,
         DateTimeOffset startedAtUtc,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<FileOperationActionHistory> MarkEntryFailedBeforeMutationAsync(
+        Guid operationId,
+        int ordinal,
+        FileOperationFailure failure,
+        DateTimeOffset failedAtUtc,
         CancellationToken cancellationToken = default);
 
     ValueTask<FileOperationActionHistory> CommitCopyAsync(
