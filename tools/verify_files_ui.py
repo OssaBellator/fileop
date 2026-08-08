@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zero-Actions checks for FileOp's first indexed Files browsing surface."""
+"""Zero-Actions checks for FileOp's exact paged Files UI."""
 from __future__ import annotations
 
 import argparse
@@ -26,51 +26,46 @@ def _within(path: str, root: str) -> bool:
     return normalized_path.startswith(prefix)
 
 
-def _browser_sort_key(entry: tuple[bool, str, str]) -> tuple[int, str, str]:
-    is_directory, name, path = entry
-    return (0 if is_directory else 1, name.casefold(), path.casefold())
+def _append_unique(existing: list[str], page: list[str]) -> list[str]:
+    seen = {value.casefold() for value in existing}
+    result = list(existing)
+    for value in page:
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
 
 
 def check_properties(cases: int = 10_000) -> int:
-    fixed = [
-        (False, "z.txt", r"C:\Data\z.txt"),
-        (True, "beta", r"C:\Data\beta"),
-        (False, "A.txt", r"C:\Data\A.txt"),
-        (True, "Alpha", r"C:\Data\Alpha"),
-    ]
-    ordered = sorted(fixed, key=_browser_sort_key)
-    assert [item[1] for item in ordered] == ["Alpha", "beta", "A.txt", "z.txt"]
-
     assert _within(r"C:\Data", r"C:\Data")
     assert _within(r"C:\Data\Child\file.bin", r"c:\data\")
     assert not _within(r"C:\Database\file.bin", r"C:\Data")
     assert not _within(r"D:\Data\file.bin", r"C:\Data")
 
-    rng = random.Random(20260808)
-    alphabet = "abcdefghijklmnopqrstuvwxyz"
-    for _ in range(cases):
-        entries: list[tuple[bool, str, str]] = []
-        for ordinal in range(rng.randint(1, 80)):
-            is_directory = bool(rng.getrandbits(1))
-            name = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 10)))
-            if not is_directory:
-                name += rng.choice([".txt", ".bin", ".jpg", ""])
-            entries.append((is_directory, name, rf"C:\Root\{name}-{ordinal}"))
-        ordered = sorted(entries, key=_browser_sort_key)
-        seen_file = False
-        previous_name: str | None = None
-        previous_kind: bool | None = None
-        for is_directory, name, _ in ordered:
-            if not is_directory:
-                seen_file = True
-            else:
-                assert not seen_file, "a directory sorted after a file"
-            if previous_kind == is_directory and previous_name is not None:
-                assert previous_name.casefold() <= name.casefold()
-            previous_kind = is_directory
-            previous_name = name
+    assert _append_unique([], [r"C:\A", r"C:\B"]) == [r"C:\A", r"C:\B"]
+    assert _append_unique([r"C:\A"], [r"c:\a", r"C:\B"]) == [r"C:\A", r"C:\B"]
 
-    return cases + 5
+    rng = random.Random(20260808)
+    checks = 6
+    for case in range(cases):
+        count = rng.randint(0, 500)
+        reference = [rf"C:\Root\entry-{case}-{index}" for index in range(count)]
+        page_size = rng.randint(1, 64)
+        loaded: list[str] = []
+        offset = 0
+        while offset < len(reference):
+            page = reference[offset:offset + page_size]
+            if loaded and rng.random() < 0.3:
+                page = [loaded[-1], *page]
+            loaded = _append_unique(loaded, page)
+            offset += page_size
+        assert [value.casefold() for value in loaded] == [value.casefold() for value in reference]
+        assert len({value.casefold() for value in loaded}) == len(loaded)
+        checks += 2
+
+    return checks
 
 
 def _method_names(source: str) -> set[str]:
@@ -86,8 +81,9 @@ def check_repository(repo_root: Path) -> int:
     view_xaml_path = repo_root / "src/FileOp.App/FilesView.xaml"
     view_code_path = repo_root / "src/FileOp.App/FilesView.xaml.cs"
     main_xaml_path = repo_root / "src/FileOp.App/MainWindow.xaml"
+    engine_path = repo_root / "src/FileOp.App/DesktopSearchEngine.DirectoryBrowse.cs"
 
-    paths = [app_path, main_path, view_xaml_path, view_code_path, main_xaml_path]
+    paths = [app_path, main_path, view_xaml_path, view_code_path, main_xaml_path, engine_path]
     missing = [str(path) for path in paths if not path.is_file()]
     if missing:
         raise FileNotFoundError("Missing repository files: " + ", ".join(missing))
@@ -97,6 +93,7 @@ def check_repository(repo_root: Path) -> int:
     view_xaml = view_xaml_path.read_text(encoding="utf-8")
     view_code = view_code_path.read_text(encoding="utf-8")
     main_xaml = main_xaml_path.read_text(encoding="utf-8")
+    engine = engine_path.read_text(encoding="utf-8")
 
     ET.fromstring(view_xaml)
     click_handlers = set(re.findall(r'\b(?:Click|ItemClick)="([A-Za-z_]\w*)"', view_xaml))
@@ -112,52 +109,76 @@ def check_repository(repo_root: Path) -> int:
     assert launch < initialize < activate
 
     required = [
-        (main, "private const int FilesDirectoryEntryLimit = 4_096;"),
+        (main, "private const int FilesPageSize = 256;"),
+        (main, "private readonly List<FileBrowserRow> _filesRows = [];"),
+        (main, "private FileDirectoryBrowseCursor? _filesNextCursor;"),
+        (main, "private int _filesLoadingGeneration;"),
+        (main, "private bool _filesLoadedForSource;"),
         (main, "button.Content as string, \"Files\""),
         (main, "SearchView.Parent is not Grid contentGrid"),
         (main, "contentGrid.Children.Add(_filesView)"),
-        (main, "SearchNavigationButton.Click += FilesOtherNavigationButton_Click"),
-        (main, "StorageNavigationButton.Click += FilesOtherNavigationButton_Click"),
+        (main, "_filesView.LoadMoreRequested += FilesView_LoadMoreRequested"),
+        (main, "_filesView.LoadMoreRequested -= FilesView_LoadMoreRequested"),
         (main, "_searchEngine.StateChanged += FilesEngine_StateChanged"),
         (main, "_storageGate.WaitAsync(_lifetimeCancellation.Token)"),
-        (main, "_searchEngine.AnalyzeStorageAsync("),
-        (main, "FilesDirectoryEntryLimit"),
-        (main, "analysis.DirectEntryCount"),
-        (main, "OrderByDescending(static entry => entry.IsDirectory)"),
-        (main, "ThenBy(static entry => entry.Name, StringComparer.OrdinalIgnoreCase)"),
+        (main, "_searchEngine.BrowseDirectoryAsync("),
+        (main, "FilesPageSize"),
+        (main, "preserveRows: append"),
+        (main, "ApplyFilesPage(page, root, append)"),
+        (main, "new HashSet<string>(_filesRows.Select(static row => row.Path), StringComparer.OrdinalIgnoreCase)"),
+        (main, "_filesNextCursor = page.NextCursor;"),
+        (main, "_filesLoadedForSource = true;"),
+        (main, "_filesLoadingGeneration == 0"),
+        (main, "generation != Volatile.Read(ref _filesGeneration)"),
         (main, "DesktopSearchMode.Native"),
         (main, "DesktopSearchMode.Fallback"),
         (main, "SetStorageViewMode(StorageViewMode.Folders)"),
-        (main, "if (state.IsBusy)"),
-        (main, "_filesAnalysis = null;"),
-        (main, "var target = _filesCurrentPath;"),
-        (view_code, "private string? _lastAppliedPath;"),
+        (view_code, "public event EventHandler? LoadMoreRequested;"),
+        (view_code, "public static FileBrowserRow FromRecord(FileRecord record)"),
+        (view_code, "record.IsDirectory ? \"—\" : ByteFormatter.Format(record.Length)"),
+        (view_code, "record.LastWriteTime.ToLocalTime().ToString(\"g\")"),
         (view_code, "FilesList.ItemsSource = null;"),
-        (view_code, "The indexed directory load did not complete. Refresh to try again."),
-        (view_code, "StorageDirectoryEntry entry"),
-        (view_xaml, "Indexed contents"),
+        (view_code, "The live directory changed while pages were being read."),
+        (view_xaml, 'Content="Load more"'),
+        (view_xaml, 'Text="Modified"'),
+        (view_xaml, 'Text="{Binding ModifiedText}"'),
+        (engine, "public async ValueTask<FileDirectoryBrowsePage> BrowseDirectoryAsync("),
     ]
     for source, needle in required:
-        assert needle in source, f"required Files invariant missing: {needle}"
+        assert needle in source, f"required exact Files invariant missing: {needle}"
 
-    forbidden = [
+    forbidden_main = [
+        "AnalyzeStorageAsync(",
+        "StorageDirectoryAnalysis",
+        "StorageDirectoryEntry",
+        "FilesDirectoryEntryLimit",
+        "OrderByDescending(",
+        "ThenBy(",
         "Directory.Enumerate",
         "Directory.GetFiles",
         "Directory.GetDirectories",
         "EnumerateFileSystemEntries",
         "FileSystemWatcher",
     ]
-    for needle in forbidden:
-        assert needle not in main, f"Files browser must not rescan the filesystem: {needle}"
+    for needle in forbidden_main:
+        assert needle not in main, f"exact Files coordinator must not use legacy/rescan path: {needle}"
+
+    forbidden_view = [
+        "StorageDirectoryEntry",
+        "Indexed contents",
+        "omitted entries",
+        "bounded",
+    ]
+    for needle in forbidden_view:
+        assert needle not in view_code + view_xaml, f"exact Files view still exposes legacy bounded semantics: {needle}"
 
     assert "Content=\"Files\"" in main_xaml and "IsEnabled=\"False\"" in main_xaml
     assert "FilesView" not in main_xaml
     assert main.count("Interlocked.Increment(ref _filesGeneration)") >= 4
-    assert "generation != Volatile.Read(ref _filesGeneration)" in main
     assert "_filesVisible" in main
-    assert "omitted entries remain available through Search and future paging work" in view_code
+    assert view_xaml.count("LoadMoreButton") >= 1
 
-    return len(required) + len(forbidden) + len(click_handlers) + 7
+    return len(required) + len(forbidden_main) + len(forbidden_view) + len(click_handlers) + 6
 
 
 def main() -> int:
@@ -170,11 +191,11 @@ def main() -> int:
         parser.error("--cases must be greater than zero")
 
     properties = check_properties(args.cases)
-    print(f"PASS indexed Files browser properties: {properties} checks")
+    print(f"PASS exact paged Files UI properties: {properties} checks")
 
     if not args.self_test_only:
         source = check_repository(args.repo_root.resolve())
-        print(f"PASS indexed Files UI/source wiring: {source} checks")
+        print(f"PASS exact paged Files UI/source wiring: {source} checks")
     return 0
 
 
