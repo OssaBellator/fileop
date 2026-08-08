@@ -171,6 +171,7 @@ def check_repository(root: Path) -> int:
     for test_name in [
         "BasicMetadataHelperPreservesTimestampsAndSafeAttributes",
         "BasicMetadataCaptureDropsUnsupportedStorageStateAttributes",
+        "BasicMetadataApplyLeavesZeroTimestampsDestinationOwned",
         "BasicMetadataMergePreservesDestinationOwnedAttributes",
         "CopyPrimitivePreservesSafeBasicMetadata",
     ]:
@@ -183,6 +184,22 @@ def check_repository(root: Path) -> int:
     assert "File.SetAttributes(destinationPath, FileAttributes.Temporary)" in helper_test
     assert "SuppressAutomaticTimestampUpdates(destinationHandle)" in helper_test
     assert "FileAttributes.Temporary) != 0" in helper_test
+
+    zero_test_start = tests.index("public void BasicMetadataApplyLeavesZeroTimestampsDestinationOwned()")
+    zero_test_end = tests.index("public void BasicMetadataMergePreservesDestinationOwnedAttributes()", zero_test_start)
+    zero_test = tests[zero_test_start:zero_test_end]
+    for sentinel in [
+        "CreationTime: 0",
+        "LastAccessTime: 0",
+        "LastWriteTime: 0",
+    ]:
+        assert sentinel in zero_test, sentinel
+    assert "SuppressAutomaticTimestampUpdates(destinationHandle)" in zero_test
+    assert "AssertTimeClose(expectedCreation" in zero_test
+    assert "AssertTimeClose(expectedAccess" in zero_test
+    assert "AssertTimeClose(expectedWrite" in zero_test
+    assert "FileAttributes.Hidden" in zero_test
+    assert "FileAttributes.Temporary" in zero_test
 
     merge_test_start = tests.index("public void BasicMetadataMergePreservesDestinationOwnedAttributes()")
     merge_test_end = tests.index("public async Task CopyPrimitivePreservesSafeBasicMetadata()", merge_test_start)
@@ -231,7 +248,7 @@ def check_repository(root: Path) -> int:
     assert "test-windows-copy-local.ps1" in windows_cmd
     assert "gh workflow" not in windows_cmd.lower()
     assert "gh run" not in windows_cmd.lower()
-    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 35
+    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 44
 
 
 def main() -> int:
