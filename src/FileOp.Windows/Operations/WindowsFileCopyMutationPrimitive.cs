@@ -357,11 +357,6 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
                 0);
             if (status < 0)
             {
-                if (rawHandle != IntPtr.Zero && rawHandle != new IntPtr(-1))
-                {
-                    CloseHandle(rawHandle);
-                }
-
                 if (status == StatusObjectNameCollision)
                 {
                     throw new IOException(
@@ -637,10 +632,6 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
     private static extern bool GetFileInformationByHandle(
         SafeFileHandle hFile,
         out ByHandleFileInformation lpFileInformation);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CloseHandle(IntPtr hObject);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct UnicodeString
