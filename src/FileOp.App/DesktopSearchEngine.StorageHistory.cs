@@ -217,6 +217,14 @@ internal sealed partial class DesktopSearchEngine
             return;
         }
 
+        var now = DateTimeOffset.UtcNow;
+        var bucketTicks = StorageHistoryCapturePolicy.GetHourlyBucket(now).UtcDateTime.Ticks;
+        if (Volatile.Read(ref _lastSuccessfulHistoryBucketUtcTicks) == bucketTicks ||
+            now.UtcDateTime.Ticks < Volatile.Read(ref _nextHistoryCaptureAttemptUtcTicks))
+        {
+            return;
+        }
+
         _ = RunScheduledStorageHistoryCaptureAsync();
     }
 
