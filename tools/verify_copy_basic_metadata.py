@@ -22,7 +22,7 @@ INTEGRITY_STREAM = 0x00008000
 PRESERVED = READ_ONLY | HIDDEN | SYSTEM | ARCHIVE | NOT_CONTENT_INDEXED
 DESTINATION_SETTABLE = TEMPORARY | OFFLINE
 NON_SETTABLE_STORAGE = SPARSE | REPARSE_POINT | COMPRESSED | ENCRYPTED | INTEGRITY_STREAM
-KNOWN_DESTINATION = PRESERVED | NORMAL | DESTINATION_SETTABLE | NON_SETTABLE_STORAGE
+ALLOWED_MERGED = PRESERVED | DESTINATION_SETTABLE | NORMAL
 
 
 def sanitize(attributes: int) -> int:
@@ -68,7 +68,7 @@ def run_model(cases: int) -> int:
             assert result == NORMAL
             checks += 1
 
-        destination = rng.getrandbits(32) & KNOWN_DESTINATION
+        destination = rng.getrandbits(32)
         merged = merge_destination(destination, value)
         expected_owned = destination & DESTINATION_SETTABLE
         expected_preserved = value & PRESERVED
@@ -77,6 +77,8 @@ def run_model(cases: int) -> int:
         assert merged & PRESERVED == expected_preserved
         checks += 1
         assert merged & NON_SETTABLE_STORAGE == 0
+        checks += 1
+        assert merged & ~ALLOWED_MERGED == 0
         checks += 1
         assert (merged & NORMAL) == (NORMAL if (expected_owned | expected_preserved) == 0 else 0)
         checks += 1
