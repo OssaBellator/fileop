@@ -147,6 +147,48 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
     }
 
     [TestMethod]
+    public void BasicMetadataApplyNormalClearsDestinationSafeAttributes()
+    {
+        var root = CreateRoot();
+        var destinationPath = Path.Combine(root, "destination.bin");
+        try
+        {
+            File.WriteAllText(destinationPath, "destination-content");
+            File.SetAttributes(
+                destinationPath,
+                FileAttributes.Hidden |
+                FileAttributes.Archive);
+
+            using (var destinationHandle = File.OpenHandle(
+                       destinationPath,
+                       FileMode.Open,
+                       FileAccess.ReadWrite,
+                       FileShare.ReadWrite | FileShare.Delete))
+            {
+                WindowsFileCopyBasicMetadata.SuppressAutomaticTimestampUpdates(destinationHandle);
+                WindowsFileCopyBasicMetadata.Apply(
+                    destinationHandle,
+                    new WindowsFileCopyBasicMetadata.Snapshot(
+                        CreationTime: 0,
+                        LastAccessTime: 0,
+                        LastWriteTime: 0,
+                        FileAttributes: (uint)FileAttributes.Normal));
+            }
+
+            var actualAttributes = File.GetAttributes(destinationPath);
+            Assert.AreEqual(
+                (FileAttributes)0,
+                actualAttributes & PreservedAttributes,
+                "FILE_ATTRIBUTE_NORMAL must clear destination safe attributes when no source fidelity bits remain.");
+        }
+        finally
+        {
+            ResetAttributes(destinationPath);
+            DeleteRoot(root);
+        }
+    }
+
+    [TestMethod]
     public void BasicMetadataMergePreservesDestinationOwnedAttributes()
     {
         var destinationSettableOwned = (uint)(
