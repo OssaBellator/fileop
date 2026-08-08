@@ -6,9 +6,11 @@ Canonical execution validation proves that a queued plan is safe enough to appro
 
 `IFileOperationActionHistoryStore` and `SqliteFileOperationActionHistoryStore` provide that persistence boundary. This slice writes only FileOp's own SQLite recovery metadata. It does **not** implement `IFileOperationExecutor`, Copy/Move/Delete, or an Undo command.
 
+Action-history schema v1 is intentionally **file-mutation-only**. A directory may be recorded as `Skipped`, but a ready directory entry is rejected before the history transaction can commit. Recursive directory Copy needs child-level recovery/commit semantics and is not being inferred from one directory-root record.
+
 ## Commit barrier
 
-A future executor must treat durable history as part of the entry commit protocol:
+A future file Copy executor must treat durable history as part of the entry commit protocol:
 
 ```text
 canonical execution validation
@@ -18,7 +20,7 @@ Begin action history
 Pending
         ↓ durable MarkMutationStarted
 MutationStarted
-        ↓ perform one filesystem mutation
+        ↓ perform one file mutation
         ↓ capture resulting destination identity
         ↓ durable CommitCopy
 Committed
@@ -33,28 +35,28 @@ A process crash while an entry remains `MutationStarted` is intentionally ambigu
 
 Action entries use these durable states:
 
-- `Pending` — execution validation said the destination was missing and mutation has not been declared started;
+- `Pending` — execution validation said a file destination was missing and mutation has not been declared started;
 - `MutationStarted` — the durable pre-mutation barrier was crossed; a crash from here is recovery-sensitive;
-- `Committed` — Copy completed and the created destination's stable identity was durably captured;
+- `Committed` — file Copy completed and the created destination's stable identity was durably captured;
 - `Skipped` — execution validation selected non-destructive Skip; no mutation is expected;
 - `Failed` — failure occurred before mutation began, so no recovery ambiguity is introduced;
 - `RecoveryRequired` — mutation began but the effect cannot be represented as a clean committed Copy.
 
 An operation can end `Succeeded` only when every entry is `Committed` or `Skipped`. If any entry is `MutationStarted` or `RecoveryRequired`, the operation may terminate only as `RecoveryRequired`.
 
-## Copy undo eligibility
+## Copy undo candidates
 
-This slice defines only one undo record:
+This slice defines one recovery hint:
 
 ```text
 DeleteCreatedDestination
 ```
 
-It is attached only by `CommitCopyAsync`, and only after a `Pending → MutationStarted` transition. A `Pending` entry exists only when canonical execution validation saw the destination leaf as missing. Therefore the history record represents a destination that FileOp intended to create rather than an existing object it replaced.
+It is attached only by `CommitCopyAsync`, and only after a file entry crosses `Pending → MutationStarted`. A `Pending` entry exists only when canonical execution validation saw the destination leaf as missing. Therefore the history record represents a destination FileOp intended to create rather than an existing object it replaced.
 
-Undo eligibility additionally requires the exact `FileIdentity` captured from the resulting destination after Copy. A future undo implementation must resolve the current destination again and require that identity to match before deleting anything. Path equality alone is not sufficient because another object could have replaced the original destination after the Copy.
+A committed file with the exact destination `FileIdentity` becomes an **undo candidate**, not deletion authorization. Identity matching is necessary to prove the path still names the same filesystem object, but it is **not sufficient** to prove the user or another program has not modified that object's contents or metadata since Copy. A future Undo implementation must add an explicit no-user-change guard—such as carefully selected post-copy metadata and/or content verification—before deleting anything. Path equality alone is also insufficient because a different object can later occupy the same path.
 
-Existing destinations handled by `Skip` never receive undo metadata. Replace/overwrite remains unsupported. Move does not receive Copy-style undo eligibility because Move has additional source-removal and cross-volume partial-failure semantics that are not designed yet.
+Directory entries are never undo candidates in schema v1. Existing destinations handled by `Skip` never receive undo metadata. Replace/overwrite remains unsupported. Move does not receive Copy-style undo candidates because Move has additional source-removal and cross-volume partial-failure semantics that are not designed yet.
 
 ## Persistence model
 
@@ -67,6 +69,8 @@ file_operation_action_entries
 ```
 
 The operation row stores queued/validated/started/completed timestamps, operation/collision kind, captured roots, canonical roots and terminal state. Each entry stores its original source metadata, canonical source/destination paths, durable state timestamps, source/destination identities, undo kind and structured failure information.
+
+The public `FileOperationActionHistory` aggregate defensively snapshots its entry sequence. Callers cannot retain a mutable list and rewrite the apparent durable history after construction.
 
 Writes are serialized per store instance and state transitions use conditional SQL predicates against both the expected entry state and a non-terminal operation. This makes duplicate/out-of-order transitions fail rather than silently rewriting history.
 
@@ -96,7 +100,7 @@ Run the standard-library model directly:
 python tools/verify_file_operation_action_history.py --repo-root . --cases 20000
 ```
 
-The verifier exercises successful Copy commit barriers, skip entries, pre-mutation failures, crash-sensitive mutation starts, recovery-required settlement, undo candidate selection, terminal-state restrictions and schema/source guards.
+The verifier exercises successful file-Copy commit barriers, skipped file/directory entries, rejection of ready directory mutation, pre-mutation failures, crash-sensitive mutation starts, recovery-required settlement, undo candidate selection, terminal-state restrictions and schema/source guards.
 
 The whole no-Actions gate remains:
 
@@ -108,4 +112,4 @@ The normal Windows local gate additionally compiles Core/Windows, executes the S
 
 ## Next boundary
 
-With canonical validation and durable recovery records defined, the next mutation slice can be a deliberately narrow **Copy-only executor**. It should operate one entry at a time, revalidate immediately at the mutation boundary, never overwrite, honor the durable history commit barrier, and stop on any recovery ambiguity. Move and actual Undo execution should remain separate follow-up slices.
+With canonical validation and durable recovery records defined, the next mutation slice can be a deliberately narrow **file Copy-only executor**. It should operate one file at a time, revalidate immediately at the mutation boundary, never overwrite, honor the durable history commit barrier, and stop on any recovery ambiguity. Directory Copy, Move and actual Undo execution should remain separate follow-up slices.
