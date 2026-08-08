@@ -77,6 +77,14 @@ public sealed class IndexingServiceClient : IAsyncDisposable, IDisposable
             request,
             cancellationToken);
 
+    public ValueTask<IndexingDirectoryBrowseResponse> BrowseDirectoryAsync(
+        IndexingDirectoryBrowseRequest request,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IndexingDirectoryBrowseRequest, IndexingDirectoryBrowseResponse>(
+            IndexingServiceOperation.BrowseDirectory,
+            request,
+            cancellationToken);
+
     public ValueTask<IndexingStorageAnalysisResponse> AnalyzeStorageAsync(
         IndexingStorageAnalysisRequest request,
         CancellationToken cancellationToken = default) =>

@@ -6,9 +6,9 @@ The first File manager slice turns the existing **Files** navigation placeholder
 
 Native mode browses the primary whole-volume NTFS index. Fallback mode browses the completed user-profile crawler snapshot. The Files surface does not call `Directory.Enumerate*`, `GetFiles`, `GetDirectories`, `FileSystemWatcher` or another recursive scanner.
 
-## Reused read boundary
+## Current UI compatibility bridge
 
-This slice does not change protocol v5. Direct-child browsing currently routes through the reviewed `AnalyzeStorage` path:
+The currently rendered Files UI still routes through the reviewed `AnalyzeStorage` path:
 
 ```text
 FileOp.App Files
@@ -19,28 +19,42 @@ FileOp.App Files
 
 That gives the browser indexed direct children plus recursive per-entry metadata while preserving the existing foreground/native gates, checkpoint validation, cross-process lease behavior and fallback policy.
 
-The rows show:
+The rows show directory/file name, type, recursive logical/allocated size for folders, file size for files, indexed descendant counts and hard-link alias status where relevant. Invoking a directory drills down without scanning disk. Invoking a file uses the existing shell-open path. No copy, move, delete or mutation command exists yet.
 
-- directory/file name;
-- file type derived from the indexed name;
-- recursive logical bytes for directories and logical file size for files;
-- physical allocation when exact metadata is available;
-- indexed descendant file/folder counts for directories;
-- hard-link alias status for file rows when relevant.
+## Protocol v6 exact browse boundary
 
-Invoking a directory drills down without scanning disk. Invoking a file uses the existing shell-open path. This slice adds no copy, move, delete or other mutation command.
+Protocol v6 now adds the dedicated `BrowseDirectory` operation that the Files UI needs to replace the compatibility bridge.
 
-## Ordering and bounded-directory limitation
+The exact page model contains:
 
-The existing `AnalyzeStorage` contract is optimized for Storage visualization, not general directory paging. It returns at most 4,096 direct entries and may reduce that limit further if a named-pipe response would exceed the frame cap. The service chooses the bounded subset using Storage weight ordering before the Files UI reorders returned rows into:
+```text
+DirectoryPath
+TotalCount
+Entries[]
+NextCursor?
+```
 
-1. directories first;
-2. case-insensitive name order;
-3. case-insensitive path tie-breaker.
+Each entry is direct `FileRecord` metadata. Recursive folder sizes are intentionally excluded so directory browsing does not become an analytics query.
 
-Therefore a directory whose `DirectEntryCount` exceeds the returned row count is **not a complete alphabetical listing**. The Files UI says `Showing N of M` and explicitly identifies the view as bounded rather than hiding the omission.
+Ordering is directories first, then normalized name and normalized path. Continuation uses a keyset cursor containing the last row's directory/file kind, name and absolute path. The native SQL requests `pageSize + 1`; the extra row only proves another page exists and is not returned to the caller.
 
-This is acceptable for the first browsing foundation because it reuses a reviewed read boundary without protocol churn, but it should not become the long-term file-manager contract. Before tabs, dual-pane workflows or destructive file operations depend on exhaustive directory selection, FileOp should add a dedicated exact paged direct-child operation with a stable ordering/cursor model.
+Native browsing opens SQLite read-only, takes the existing shared cross-process lease and requires a valid durable checkpoint. When the directory has a stable identity, its children are filtered by the existing parent-identity index rather than by a whole-index path scan.
+
+`DesktopSearchEngine.BrowseDirectoryAsync` exposes the same page contract for fallback mode. Fallback paging reads the already-completed in-memory profile snapshot and performs no filesystem enumeration. It can scan that in-memory snapshot per page; native mode is the performance-critical path and does not materialize the persistent index.
+
+## Why keyset rather than offset paging
+
+Offset paging is unstable when the live namespace changes between requests. If a row is inserted before offset 256, the next `OFFSET 256` query can repeat a row the caller already consumed; deletion before the offset can skip one.
+
+The v6 cursor advances after the last observed ordering key instead. Inserts before that cursor do not shift consumed rows into the next page. Inserts after it may naturally appear in a later page. This is deliberate live-index behavior, not a claim that a multi-page browse is one database snapshot transaction.
+
+## Existing bounded-UI limitation
+
+Until the UI migrates to protocol v6, `AnalyzeStorage` still limits the visible compatibility view to at most 4,096 direct entries and may reduce that result further if a named-pipe response would exceed the frame cap. The service chooses the bounded subset using Storage weight ordering before the Files UI reorders the returned subset alphabetically.
+
+Therefore a directory whose `DirectEntryCount` exceeds the returned row count is **not yet a complete alphabetical UI listing**. The Files view says `Showing N of M` and identifies the result as bounded rather than hiding the omission.
+
+This limitation is now isolated to presentation wiring rather than the service model. The next Files UI slice should consume `BrowseDirectory` incrementally and remove the Storage-analysis bridge.
 
 ## UI lifecycle
 
@@ -60,23 +74,13 @@ When index maintenance begins while Files is visible, the cached directory resul
 
 ## Validation without hosted Actions
 
-`tools/verify_files_ui.py` is standard-library-only and checks:
+`tools/verify_files_ui.py` continues to guard the current UI bridge. `tools/verify_directory_browse.py` covers the new exact service boundary with randomized SQLite keyset paging, read-only/lease/checkpoint source checks, protocol/client/dispatcher wiring and native/fallback no-rescan guards.
 
-- directory-first, case-insensitive browser ordering over randomized fixtures;
-- Windows root/path containment edge cases;
-- exact XAML event-handler wiring;
-- Files initialization after `MainWindow` XAML construction and before activation;
-- use of the existing Files placeholder and dynamic content-grid insertion;
-- shared `AnalyzeStorageAsync` routing and Storage UI gate use;
-- native/fallback source handling;
-- generation-based stale-result suppression;
-- explicit bounded-directory disclosure;
-- absence of direct filesystem-enumeration APIs in the Files coordinator.
-
-Run it directly with:
+Run either directly:
 
 ```powershell
 python tools/verify_files_ui.py --repo-root . --cases 10000
+python tools/verify_directory_browse.py --repo-root . --cases 10000
 ```
 
 The local gate also supports verifier-only operation when the .NET SDK is unavailable:
@@ -89,4 +93,6 @@ Without `-OfflineOnly`, `tools/test-local.ps1` continues into the .NET/Windows b
 
 ## Next file-manager boundary
 
-The next high-value file-manager change should be a dedicated paged direct-child query contract rather than immediately adding mutations. That contract should define exhaustive stable ordering, page/cursor semantics, source-generation behavior and response-size handling. Tabs and dual-pane state can then build on an actual browser API instead of the Storage-analysis compatibility bridge.
+The next high-value file-manager change is now the **UI migration to exact pages**: replace `AnalyzeStorageAsync` in `MainWindow.Files.cs` with `BrowseDirectoryAsync`, maintain the continuation cursor, and expose an explicit Load more or incremental-scroll behavior.
+
+After that migration, tabs and dual-pane navigation can be added on top of an exhaustive browser API. Mutation workflows should still wait until selection semantics, collision policy, operation queues and safe undo boundaries are separately designed and reviewed.

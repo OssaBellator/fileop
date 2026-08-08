@@ -8,23 +8,31 @@ The product direction is to combine instant file search, power-user file managem
 
 The current implementation has four runtime layers plus a benchmark harness:
 
-- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, in-memory and SQLite-backed indexes, shared directory/file-type/category storage analytics, aggregate storage-history persistence/deltas, checkpoint persistence, the fallback crawler and versioned service contracts.
-- `FileOp.Windows` contains the Windows/NTFS engine and indexing-service boundary: NTFS discovery, MFT namespace enumeration, USN journal processing, file-ID metadata hydration, hard-link expansion, transactional namespace synchronization, authenticated named-pipe transport and history-aware service composition.
+- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, exact paged directory-browse models, in-memory and SQLite-backed indexes, shared directory/file-type/category storage analytics, aggregate storage-history persistence/deltas, checkpoint persistence, the fallback crawler and versioned service contracts.
+- `FileOp.Windows` contains the Windows/NTFS engine and indexing-service boundary: NTFS discovery, MFT namespace enumeration, USN journal processing, file-ID metadata hydration, hard-link expansion, transactional namespace synchronization, authenticated named-pipe transport and read-only browse/history service composition.
 - `FileOp.Indexer` is the on-demand helper that owns native indexing and per-volume persistent-index writes. It starts unelevated; helper-only UAC is limited to same-account split-token administrators so the desktop never changes integrity level or identity.
-- `FileOp.App` is the WinUI 3 desktop shell. Search and Storage share the same native-first metadata source and explicit crawler fallback; native Storage also exposes an aggregate history timeline.
+- `FileOp.App` is the WinUI 3 desktop shell. Search, Files and Storage share the same native-first metadata source and explicit crawler fallback; native Storage also exposes an aggregate history timeline.
 - `FileOp.Benchmarks` provides synthetic search, directory-aggregation and file-type/category baselines at 100,000 and 1,000,000 files.
 
 The NTFS engine can hydrate logical/allocated size, link count, timestamps and attributes by file ID, preserve multiple hard-link namespace paths, pair rename events, move directory subtrees transactionally, reconcile hard-link changes and commit namespace mutations together with durable USN checkpoints.
 
-`FileOp.Indexer` exposes version negotiation, volume/status discovery, snapshot rebuild, incremental journal synchronization, search, read-only Storage analytics and aggregate Storage-history capture/query. **Protocol v5** adds `CaptureStorageHistory` and `GetStorageHistory` on top of the reviewed v4 exact-category model. It exposes no partition, format, cleanup or other destructive commands.
+`FileOp.Indexer` exposes version negotiation, volume/status discovery, snapshot rebuild, incremental journal synchronization, search, exact paged direct-child browsing, read-only Storage analytics and aggregate Storage-history capture/query. **Protocol v6** adds `BrowseDirectory` with a directory-first keyset cursor on top of the reviewed v5 history model. It exposes no partition, format, cleanup or other destructive commands.
 
 Each NTFS volume/root pair has its own SQLite database. Live reads require a valid durable checkpoint and use shared cross-process leases; rebuild/sync operations use an exclusive maintenance lease so multiple FileOp instances cannot interleave one logical snapshot.
 
-## Search and Storage
+## Search, Files and Storage
 
 Search uses the persistent native NTFS index when available and falls back to the bounded user-profile crawler when required. Startup builds/resumes the primary NTFS snapshot, catches the USN cursor up in bounded batches and continues low-priority synchronization behind foreground work.
 
-Storage consumes the same metadata rows as Search. It never performs another recursive scan merely to calculate sizes or breakdowns.
+Files and Storage consume the same metadata rows as Search. Neither performs another recursive filesystem scan merely to browse indexed names or calculate storage breakdowns.
+
+### Files
+
+The current Files UI is a read-only indexed browser. Its first implementation reuses the existing bounded Storage-analysis path for visible rows, while protocol v6 establishes the dedicated exact paging boundary that replaces that compatibility bridge next.
+
+`BrowseDirectory` returns direct `FileRecord` metadata rather than recursive Storage aggregates. Native paging uses the persisted parent identity when available, the existing cross-process read lease and a valid durable checkpoint. Ordering is stable within the indexed snapshot: directories first, then normalized name and normalized path. Continuation is keyset-based rather than offset-based, so inserts before an existing cursor do not shift already-consumed rows into later pages.
+
+The desktop coordinator exposes the same paged model for fallback mode by paging the already-completed in-memory profile snapshot. That path does not touch the filesystem again; native mode reads SQLite directly and does not materialize the whole index.
 
 ### Folders
 
@@ -40,7 +48,7 @@ File-type analysis groups the same subtree by normalized extension and determini
 
 Aggregate history stores root totals plus exact category rollups in the same per-volume database; it does **not** retain per-file history or trigger another filesystem scan. Namespace rebuilds do not erase prior observations, and root identity uses ordinal-ignore-case semantics rather than SQLite's ASCII-only `NOCASE`.
 
-Protocol v5 exposes trusted native history:
+Protocol v5 introduced trusted native history and those operations remain part of v6:
 
 - `CaptureStorageHistory` has no client timestamp. The service first materializes a valid exact-category live analysis, then writes it into the current UTC-hour bucket. Repeated captures in one hour are idempotent replacements.
 - `GetStorageHistory` returns a bounded persisted series. It requires the physical volume/root to remain attached but does not require the current namespace checkpoint to still be valid.
@@ -76,7 +84,7 @@ Requirements:
 
 - .NET 10 SDK
 - Windows 10 1809 or later for native engine/indexer and desktop app
-- Python 3 for the zero-Actions Storage verifiers
+- Python 3 for the zero-Actions verifiers
 
 Core/benchmarks:
 
@@ -98,7 +106,7 @@ The desktop build copies the indexer host executable, assembly, dependency manif
 
 ## Local verification without GitHub Actions
 
-Standard-library-only Storage checks include:
+Standard-library-only checks include:
 
 ```powershell
 python tools/verify_storage_ui.py --self-test-only
@@ -108,9 +116,17 @@ python tools/verify_storage_history.py --self-test-only --cases 1000
 python tools/verify_storage_history_unicode.py --self-test-only
 python tools/verify_storage_history_service.py --self-test-only --cases 2000
 python tools/verify_storage_history_ui.py --self-test-only --cases 10000
+python tools/verify_files_ui.py --self-test-only --cases 10000
+python tools/verify_directory_browse.py --self-test-only --cases 10000
 ```
 
-Repository-mode variants validate source wiring as well. The history-UI verifier additionally checks engine-owned scheduling, low-priority gate acquisition, whole-volume capture scope, fallback exclusion, consistent timeline units, WinUI UserControl handler wiring and sync-safe loading state.
+Repository-mode variants validate source wiring as well. The paged-browse verifier additionally exercises SQLite keyset pagination over randomized fixtures and guards read-only database access, cross-process lease/checkpoint wiring, native/fallback routing and the no-rescan rule.
+
+Run all standard-library verifiers without requiring the .NET SDK:
+
+```powershell
+pwsh -File tools/test-local.ps1 -OfflineOnly
+```
 
 On Windows, run the complete no-Actions gate:
 
@@ -131,13 +147,13 @@ dotnet run -c Release --project benchmarks/FileOp.Benchmarks -- --filter *Storag
 
 ```text
 src/
-  FileOp.Core/       Search/index/storage/history domain and service protocol contracts
-  FileOp.Windows/    Windows-native NTFS/USN engine and indexing IPC client/backend
+  FileOp.Core/       Search/index/browse/storage/history domain and service contracts
+  FileOp.Windows/    Windows-native NTFS/USN engine and indexing IPC client/backends
   FileOp.Indexer/    On-demand native indexing helper process
-  FileOp.App/        WinUI 3 desktop app with Search + Folders/Types/History Storage
+  FileOp.App/        WinUI 3 desktop app with Search + indexed Files + Storage
 
 tests/
-  FileOp.Windows.Tests/  NTFS, analytics/history and service regression/integration tests
+  FileOp.Windows.Tests/  NTFS, browsing, analytics/history and service regression/integration tests
 
 benchmarks/
   FileOp.Benchmarks/     Synthetic persistent-index Search/Storage benchmarks
@@ -149,13 +165,16 @@ tools/
   verify_storage_types_fuzz.py      Randomized SQL/reference parity verifier
   verify_storage_history.py         Aggregate history SQLite/delta verifier
   verify_storage_history_unicode.py Ordinal-ignore-case history-root verifier
-  verify_storage_history_service.py Protocol-v5 capture/query verifier
+  verify_storage_history_service.py Protocol-v6 history capture/query verifier
   verify_storage_history_ui.py      Native history scheduler/WinUI verifier
-  test-local.ps1                    Full local Windows build/test/handshake gate
+  verify_files_ui.py                Indexed Files UI/source verifier
+  verify_directory_browse.py        Protocol-v6 keyset browse verifier
+  test-local.ps1                    Offline-only or full local Windows gate
 
 docs/
   architecture.md        Architectural decisions and roadmap
   indexing-service.md    Helper trust boundary and protocol model
+  files-browser.md       Indexed Files UI and paging roadmap
   storage-analytics.md   Folder/type/category accounting semantics
   storage-history.md     Aggregate history persistence/service/delta semantics
   storage-types-ui.md    WinUI Types/Categories lifecycle and presentation

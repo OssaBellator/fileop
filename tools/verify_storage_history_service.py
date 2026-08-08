@@ -50,6 +50,7 @@ def check_repository(repo_root: Path) -> int:
     protocol_path = repo_root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs"
     policy_path = repo_root / "src/FileOp.Core/Storage/StorageHistoryCapturePolicy.cs"
     backend_path = repo_root / "src/FileOp.Windows/IndexingService/StorageHistoryIndexingServiceBackend.cs"
+    paged_backend_path = repo_root / "src/FileOp.Windows/IndexingService/PagedDirectoryIndexingServiceBackend.cs"
     native_backend_path = repo_root / "src/FileOp.Windows/IndexingService/NtfsIndexingServiceBackend.cs"
     client_path = repo_root / "src/FileOp.Windows/IndexingService/IndexingServiceClient.cs"
     dispatcher_path = repo_root / "src/FileOp.Windows/IndexingService/IndexingServiceDispatcher.cs"
@@ -59,6 +60,7 @@ def check_repository(repo_root: Path) -> int:
         protocol_path,
         policy_path,
         backend_path,
+        paged_backend_path,
         native_backend_path,
         client_path,
         dispatcher_path,
@@ -72,6 +74,7 @@ def check_repository(repo_root: Path) -> int:
     protocol = protocol_path.read_text(encoding="utf-8")
     policy = policy_path.read_text(encoding="utf-8")
     backend = backend_path.read_text(encoding="utf-8")
+    paged_backend = paged_backend_path.read_text(encoding="utf-8")
     native_backend = native_backend_path.read_text(encoding="utf-8")
     client = client_path.read_text(encoding="utf-8")
     dispatcher = dispatcher_path.read_text(encoding="utf-8")
@@ -79,7 +82,7 @@ def check_repository(repo_root: Path) -> int:
     tests = tests_path.read_text(encoding="utf-8")
 
     required = [
-        (protocol, "public const int CurrentVersion = 5;"),
+        (protocol, "public const int CurrentVersion = 6;"),
         (protocol, "CaptureStorageHistory,"),
         (protocol, "GetStorageHistory,"),
         (protocol, "IndexingStorageHistoryCaptureRequest"),
@@ -95,7 +98,8 @@ def check_repository(repo_root: Path) -> int:
         (dispatcher, "DeserializeStorageHistoryCapture"),
         (dispatcher, "DeserializeStorageHistoryQuery"),
         (dispatcher, 'throw new JsonException("limit must be between 1 and 4096.")'),
-        (program, "new StorageHistoryIndexingServiceBackend(databaseDirectory)"),
+        (program, "new PagedDirectoryIndexingServiceBackend(databaseDirectory)"),
+        (paged_backend, "_inner = new StorageHistoryIndexingServiceBackend(_databaseDirectory)"),
         (tests, "NamedPipeRoundTripPreservesCaptureAndHistoryPayloads"),
         (tests, "CapturePolicyUsesUtcHourlyBuckets"),
     ]
@@ -138,19 +142,20 @@ def check_repository(repo_root: Path) -> int:
     assert "IndexingServiceErrorCode.Busy" in backend
     assert "canRetry: true" in backend
 
-    # Keep the wrapper's database-key formula aligned with the reviewed native backend.
+    # Keep every wrapper's database-key formula aligned with the reviewed native backend.
     for needle in [
         'new string(root.Where(static character => char.IsLetterOrDigit(character)).ToArray())',
         'rootToken = "root";',
         'ntfs-{volumeIdentity:X16}-{rootToken.ToLowerInvariant()}',
     ]:
         assert needle in backend, f"history database-key formula missing: {needle}"
+        assert needle in paged_backend, f"paged-browse database-key formula missing: {needle}"
     assert 'ntfs-{volume.VolumeIdentity:X16}-{rootToken.ToLowerInvariant()}' in native_backend
 
     assert "CaptureStorageHistoryAsync" not in native_backend, (
         "history integration should remain in the wrapper, not alter reviewed NTFS lifecycle code"
     )
-    return len(required) + 12
+    return len(required) + 15
 
 
 def main() -> int:

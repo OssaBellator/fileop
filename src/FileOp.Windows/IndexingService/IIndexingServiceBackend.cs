@@ -26,6 +26,14 @@ public interface IIndexingServiceBackend : IDisposable
         IndexingSearchRequest request,
         CancellationToken cancellationToken = default);
 
+    ValueTask<IndexingDirectoryBrowseResponse> BrowseDirectoryAsync(
+        IndexingDirectoryBrowseRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromException<IndexingDirectoryBrowseResponse>(
+            new IndexingServiceException(
+                IndexingServiceErrorCode.InvalidRequest,
+                "This indexing backend does not support directory browsing."));
+
     ValueTask<IndexingStorageAnalysisResponse> AnalyzeStorageAsync(
         IndexingStorageAnalysisRequest request,
         CancellationToken cancellationToken = default) =>

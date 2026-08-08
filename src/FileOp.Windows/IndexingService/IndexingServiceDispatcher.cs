@@ -72,6 +72,12 @@ public sealed class IndexingServiceDispatcher
                         DeserializeSearch(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
+                IndexingServiceOperation.BrowseDirectory => Success(
+                    request.RequestId,
+                    await _backend.BrowseDirectoryAsync(
+                        DeserializeDirectoryBrowse(request.Payload),
+                        cancellationToken).ConfigureAwait(false)),
+
                 IndexingServiceOperation.AnalyzeStorage => Success(
                     request.RequestId,
                     await _backend.AnalyzeStorageAsync(
@@ -164,6 +170,67 @@ public sealed class IndexingServiceDispatcher
         return request;
     }
 
+    private static IndexingDirectoryBrowseRequest DeserializeDirectoryBrowse(JsonElement payload)
+    {
+        var request = Deserialize<IndexingDirectoryBrowseRequest>(payload);
+        var (volumeRootPath, directoryPath) = NormalizeStoragePaths(
+            request.VolumeRootPath,
+            request.DirectoryPath);
+        if (request.PageSize <= 0 || request.PageSize > 1_024)
+        {
+            throw new JsonException("pageSize must be between 1 and 1024.");
+        }
+
+        var cursor = request.Cursor;
+        if (cursor is not null)
+        {
+            if (string.IsNullOrWhiteSpace(cursor.Name) || string.IsNullOrWhiteSpace(cursor.Path))
+            {
+                throw new JsonException("Directory browse cursors require both name and path.");
+            }
+
+            if (!Path.IsPathFullyQualified(cursor.Path))
+            {
+                throw new JsonException("Directory browse cursor paths must be absolute.");
+            }
+
+            try
+            {
+                var cursorPath = Path.GetFullPath(cursor.Path);
+                var cursorParent = Path.GetDirectoryName(cursorPath);
+                if (string.IsNullOrWhiteSpace(cursorParent) ||
+                    !string.Equals(
+                        NormalizeComparablePath(cursorParent),
+                        NormalizeComparablePath(directoryPath),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new JsonException(
+                        "The directory browse cursor does not belong to the requested directory.");
+                }
+
+                cursor = cursor with { Path = cursorPath };
+            }
+            catch (JsonException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException or
+                NotSupportedException or
+                PathTooLongException)
+            {
+                throw new JsonException("Directory browse cursor paths are invalid.", exception);
+            }
+        }
+
+        return request with
+        {
+            VolumeRootPath = volumeRootPath,
+            DirectoryPath = directoryPath,
+            Cursor = cursor,
+        };
+    }
+
     private static IndexingStorageAnalysisRequest DeserializeStorageAnalysis(JsonElement payload)
     {
         var request = Deserialize<IndexingStorageAnalysisRequest>(payload);
@@ -250,7 +317,7 @@ public sealed class IndexingServiceDispatcher
         if (!Path.IsPathFullyQualified(volumeRootPath) ||
             !Path.IsPathFullyQualified(directoryPath))
         {
-            throw new JsonException("Storage analysis paths must be absolute.");
+            throw new JsonException("volumeRootPath and directoryPath must be absolute paths.");
         }
 
         try
@@ -262,8 +329,24 @@ public sealed class IndexingServiceDispatcher
             NotSupportedException or
             PathTooLongException)
         {
-            throw new JsonException("Storage analysis paths are invalid.", exception);
+            throw new JsonException("volumeRootPath or directoryPath is invalid.", exception);
         }
+    }
+
+    private static string NormalizeComparablePath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(fullPath);
+        if (!string.IsNullOrEmpty(root) &&
+            string.Equals(
+                fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return root;
+        }
+
+        return fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
     private static T Deserialize<T>(JsonElement payload)

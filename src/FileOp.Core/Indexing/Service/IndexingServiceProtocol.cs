@@ -6,7 +6,7 @@ namespace FileOp.Core.Indexing.Service;
 
 public static class IndexingServiceProtocol
 {
-    public const int CurrentVersion = 5;
+    public const int CurrentVersion = 6;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -18,6 +18,7 @@ public enum IndexingServiceOperation
     RebuildVolume,
     SyncVolume,
     Search,
+    BrowseDirectory,
     AnalyzeStorage,
     AnalyzeStorageTypes,
     CaptureStorageHistory,
@@ -96,6 +97,19 @@ public sealed record IndexingVolumeOperationResponse(
 public sealed record IndexingSearchRequest(string Query, int Limit = 250);
 
 public sealed record IndexingSearchResponse(IReadOnlyList<IndexingSearchResult> Results);
+
+public sealed record IndexingDirectoryBrowseRequest(
+    ulong VolumeIdentity,
+    string VolumeRootPath,
+    string DirectoryPath,
+    int PageSize = 256,
+    FileDirectoryBrowseCursor? Cursor = null);
+
+public sealed record IndexingDirectoryBrowseResponse(
+    string DirectoryPath,
+    int TotalCount,
+    IReadOnlyList<IndexingSearchResult> Entries,
+    FileDirectoryBrowseCursor? NextCursor);
 
 public sealed record IndexingStorageAnalysisRequest(
     ulong VolumeIdentity,

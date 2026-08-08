@@ -11,8 +11,8 @@ The priorities are speed, transparency, safety and user control. Registry cleane
 ```text
 FileOp.App (WinUI, asInvoker)
       |
-      | shared Search/Storage/history coordinator
-      |   \-- bounded crawler fallback (no history)
+      | shared Search/Files/Storage/history coordinator
+      |   \-- completed user-profile crawler fallback (no history)
       |
       | authenticated versioned named pipe
       v
@@ -24,11 +24,12 @@ FileOp.Indexer (on-demand helper)
 FileOp.Core                    FileOp.Windows
   |-- domain/query model         |-- NTFS discovery
   |-- IFileIndex                 |-- MFT namespace enumeration
-  |-- SQLite persistence         |-- USN journal reader/coalescer
-  |-- storage analytics/history  |-- file-ID metadata hydration
-  |-- service protocol DTOs      |-- hard-link expansion
-  |-- fallback crawler           |-- namespace synchronization
-      |                              |-- service/pipe backend
+  |-- exact browse page model    |-- USN journal reader/coalescer
+  |-- SQLite browse/storage      |-- file-ID metadata hydration
+  |-- storage analytics/history  |-- hard-link expansion
+  |-- service protocol DTOs      |-- namespace synchronization
+  |-- fallback crawler           |-- service/pipe wrappers
+      |                              |
       +---------------+--------------+
                       v
                 per-volume SQLite
@@ -83,9 +84,38 @@ Requests also carry the current volume root because persisted namespace paths ar
 
 Every NTFS volume/root pair gets one deterministic SQLite file under the current user's `LocalApplicationData\FileOp\Index`. That database contains the current namespace/index plus additive aggregate-history tables.
 
+## Exact directory browsing
+
+The file-manager browse boundary is deliberately separate from Storage analytics. `FileDirectoryBrowsePage` carries:
+
+```text
+DirectoryPath
+TotalCount
+Entries[]
+NextCursor?
+```
+
+Rows are direct `FileRecord` metadata only. Recursive folder sizes, category totals and treemap weights remain Storage work.
+
+Protocol v6 native paging orders rows by:
+
+1. directories before files;
+2. normalized name ascending;
+3. normalized path ascending as a deterministic tie-breaker.
+
+The continuation cursor stores the last returned row's directory/file kind, name and absolute path. SQLite uses a keyset predicate rather than `OFFSET`. This prevents rows already consumed by the client from being shifted into a later page when another namespace row is inserted before the cursor between requests.
+
+A multi-page browse is intentionally not advertised as one transactionally frozen snapshot. Inserts after the cursor may appear later; inserts before it do not rewind the cursor. Rebuild/sync exclusion is still enforced per page through the existing cross-process lease and durable-checkpoint model.
+
+`SqliteFileDirectoryBrowser` opens SQLite in read-only mode. It first resolves the requested directory identity; when that identity exists, child filtering uses the persisted `(parent_volume_serial, parent_file_reference)` columns and their existing index. Path filtering is a fallback for rows without provider identity.
+
+The desktop fallback uses the completed in-memory crawler snapshot. It can filter/sort that snapshot per page without touching the filesystem again. Native mode is the performance path and never materializes the complete persistent index merely to browse one directory.
+
+The current Files UI still uses bounded `AnalyzeStorage` rows; protocol v6 plus `DesktopSearchEngine.BrowseDirectoryAsync` is the exact boundary that the next UI slice will consume incrementally.
+
 ## Shared Storage analytics
 
-Storage analytics reads the same indexed rows as Search. It never launches another recursive filesystem scan merely to calculate sizes, types or categories.
+Storage analytics reads the same indexed rows as Search and Files. It never launches another recursive filesystem scan merely to calculate sizes, types or categories.
 
 `IStorageAnalytics` exposes:
 
@@ -118,14 +148,7 @@ Extensions are normalized metadata; no content/MIME sniffing occurs. `StorageFil
 
 History stores observations of the already-reviewed aggregate model rather than per-file event history.
 
-Each observation contains:
-
-- root logical bytes;
-- nullable physical allocation;
-- file-name count;
-- hard-link alias count;
-- complete extension-group count;
-- exact category rows with the same metrics.
+Each observation contains root logical bytes, nullable physical allocation, file-name count, hard-link alias count, complete extension-group count and exact category rows with the same metrics.
 
 History uses an independently versioned `storage_history_*` sub-schema in the same per-volume SQLite database. Namespace rebuilds clear current file/checkpoint state without erasing prior trustworthy observations.
 
@@ -137,11 +160,12 @@ Root uniqueness uses a custom SQLite ordinal-ignore-case collation backed by `St
 
 `FileOp.Indexer` owns native NTFS indexing and persistent writes for one desktop session. It accepts one authenticated client and exits when that client or launching desktop process exits.
 
-Current **protocol v5** operations are:
+Current **protocol v6** operations are:
 
 - Hello / GetVolumes / GetStatus;
 - RebuildVolume / SyncVolume;
 - Search;
+- BrowseDirectory;
 - AnalyzeStorage;
 - AnalyzeStorageTypes;
 - CaptureStorageHistory;
@@ -153,32 +177,33 @@ Protocol history:
 - v2 added directory Storage;
 - v3 added file-type analysis;
 - v4 enriched type analysis with exact categories;
-- v5 adds aggregate history capture/query.
+- v5 added aggregate history capture/query;
+- v6 adds exact paged direct-child browsing.
 
 Strict version negotiation prevents mismatched desktop/helper binaries from silently disagreeing about operations or payloads.
 
 The pipe uses a random session name, current-user-only ACL, exact connected-client PID verification, non-empty request IDs and an 8 MiB frame cap. Oversized responses return retryable `ResponseTooLarge`; interrupted exchanges fault the session rather than risk request/response desynchronization.
 
-### History service composition
+### Service composition
 
-`StorageHistoryIndexingServiceBackend` wraps the reviewed `NtfsIndexingServiceBackend` and delegates all pre-v5 operations unchanged.
+`StorageHistoryIndexingServiceBackend` wraps the reviewed `NtfsIndexingServiceBackend` and provides v5 history behavior. `PagedDirectoryIndexingServiceBackend` wraps that history-aware backend and adds the v6 browse operation. Existing operations continue to delegate inward unchanged.
 
-`CaptureStorageHistory` accepts volume/root/directory but no client timestamp. It calls the existing native `AnalyzeStorageTypes` path with `MaxTypes = 1`. That live call resolves the attached volume, validates containment, acquires the existing operation gate/shared cross-process lease, validates the durable checkpoint and fully materializes exact category totals.
+Browse independently resolves the attached volume, validates directory containment, takes a shared `IndexingVolumeFileGate` lease, checks the durable checkpoint through a read-only SQLite query, verifies the directory exists in the index and then performs the keyset query. No schema initialization or write-capable `SqliteFileIndex` object is created on the browse path.
 
-The service then canonicalizes capture time to the start of the current UTC hour and persists the immutable aggregate. Repeated captures in one hour overwrite the same bucket. The separate history write does not extend the NTFS semantic read lease because the aggregate is already fully materialized.
+`CaptureStorageHistory` accepts volume/root/directory but no client timestamp. It calls the existing native `AnalyzeStorageTypes` path with `MaxTypes = 1`, canonicalizes capture time to the current UTC-hour start and persists the immutable aggregate. Repeated captures in one hour overwrite the same bucket.
 
-`GetStorageHistory` requires the physical volume/root to remain attached and validates directory containment, but it does not require a current live checkpoint. Historical observations remain readable while the current namespace needs repair. Detached-volume history browsing is future work.
+`GetStorageHistory` requires the physical volume/root to remain attached and validates directory containment, but it does not require a current live checkpoint. Historical observations remain readable while the current namespace needs repair.
 
-The wrapper currently mirrors the native backend's deterministic database-key formula. The zero-Actions service verifier guards that parity; centralizing the formula into one shared helper is a later cleanup that should not change database names.
+Both wrappers currently mirror the native backend's deterministic database-key formula. Offline verifiers guard parity; centralizing the formula into one shared helper is a future cleanup that must preserve database names.
 
 ## Persistence, validity and concurrency
 
 Live namespace reads have two coordination layers:
 
-- process-local non-blocking operation gate;
+- process-local desktop/native operation discipline;
 - cross-process reader/writer file lease.
 
-Search and live Storage analytics take shared leases. Rebuild and journal synchronization take an exclusive lease across the entire semantic operation, including checkpoint invalidation. A partial rebuild therefore cannot be exposed as a valid live analysis.
+Search, exact browse and live Storage analytics take shared leases. Rebuild and journal synchronization take an exclusive lease across the entire semantic operation, including checkpoint invalidation. A partial rebuild therefore cannot be exposed as a valid live analysis.
 
 If synchronization requires a fresh snapshot, the durable checkpoint is deleted before `SnapshotRequired` is returned. Invalid state survives helper restarts.
 
@@ -207,12 +232,12 @@ The desktop coordinator:
 3. builds or resumes a durable snapshot;
 4. replays bounded USN batches until the cursor converges or startup budget expires;
 5. exposes the valid native index while low-priority catch-up continues;
-6. gives foreground Search/Storage priority over maintenance;
+6. gives foreground Search/Files/Storage priority over maintenance;
 7. keeps a valid but stale native snapshot usable when live sync needs elevation;
 8. falls back to the bounded user-profile crawler when native indexing is unavailable;
 9. transitions back to fallback if a live native session later becomes unusable.
 
-Search, Folders, Types/Categories and native History share this lifecycle. Fallback remains valid for current Search/Storage analysis but does not contribute observations to the native history series.
+Search, Files, Folders, Types/Categories and native History share this lifecycle. Fallback remains valid for Search/Files/Storage but does not contribute observations to the native history series.
 
 ### Native history scheduling
 
@@ -220,35 +245,17 @@ Search, Folders, Types/Categories and native History share this lifecycle. Fallb
 
 When engine state reports a current native index, the scheduler yields briefly after the state notification because background synchronization raises `StateChanged` before releasing the native operation gate. It then attempts both desktop foreground/native gates with `WaitAsync(0)`.
 
-This is deliberately opportunistic:
+Existing Search/Files/Storage work therefore wins immediately. Service/SQLite contention and unavailable current-state conditions use cooldowns; a successful bucket suppresses more automatic captures for that UTC hour. The service remains authoritative for hourly idempotency.
 
-- existing Search/Storage work wins immediately;
-- desktop-gate contention defers another attempt instead of queueing;
-- service/SQLite `Busy` defers with a longer cooldown;
-- unavailable current-state conditions such as `SnapshotRequired`/elevation defer without creating history;
-- a successful bucket suppresses more automatic captures for that UTC hour.
+The first desktop history policy captures only the whole primary native volume. It does not turn every folder visited in Storage into an implicitly tracked time series.
 
-The service still owns the authoritative hourly bucket, so retries and app restarts remain idempotent at persistence time.
-
-The first desktop policy captures only the **whole primary native volume**. It does not turn every folder visited in Storage into an implicitly tracked time series. Protocol v5 can already represent directory-root history if a future explicit tracking feature needs it.
-
-### UI supersession and history presentation
+### UI supersession
 
 A newer query/navigation invalidates the visible generation but does not cancel an already-transmitted service request. Stale queued work is discarded before transmission and stale completed work before rendering. Only shutdown deliberately interrupts the active exchange.
 
-Automatic capture follows the same pipe rule: it avoids queueing behind foreground work, but once its named-pipe request has been transmitted it is allowed to finish rather than faulting the reusable session.
+Automatic history follows the same pipe rule: it avoids queueing behind foreground work, but once its named-pipe request has been transmitted it is allowed to finish rather than faulting the reusable session.
 
-Storage now has three views:
-
-- **Folders** — direct-child table and treemap;
-- **Types** — bounded extensions plus exact categories;
-- **History** — persisted native whole-volume observations plus latest-two category deltas.
-
-The History view is a separate WinUI `UserControl` inserted into the existing Storage layout after `MainWindow.InitializeComponent`; the reviewed `MainWindow.xaml` remains unchanged. History queries use the normal foreground service path and may serialize behind an in-progress native operation, but they do not require the current live checkpoint to be valid.
-
-Timeline points use one coherent unit: physical allocation only when every displayed observation has exact allocation, otherwise logical size for the entire series. The “What grew?” panel compares only the newest two observations with `StorageHistoryDelta`; it reports signed growth/shrinkage and does not claim forecasting.
-
-Loaded-empty history is cached like any other result, and recurring synchronization status updates do not reset the visible History summary or stop an active history query.
+Storage has three views: Folders, Types and History. Files is a separate read-only main navigation surface. The exact browse coordinator follows the same foreground `_searchOperationGate` / `_nativeOperationGate` order as Search and Storage.
 
 ## Validation strategy
 
@@ -257,21 +264,24 @@ Hosted CI is useful but not the only gate. FileOp carries reproducible no-Action
 - `verify_storage_ui.py` / `verify_storage_ui_edgecases.py` — XAML, treemap, path and category presentation;
 - `verify_storage_types.py` / `verify_storage_types_fuzz.py` — exact SQLite type/category semantics;
 - `verify_storage_history.py` / `verify_storage_history_unicode.py` — history persistence, deltas, corruption and Unicode root identity;
-- `verify_storage_history_service.py` — protocol-v5 capture/query wiring, service-owned timestamps, live-analysis-before-persist ordering, contention mapping and database-key parity;
-- `verify_storage_history_ui.py` — engine-owned low-priority scheduling, UTC-hour cadence, whole-volume scope, fallback exclusion, timeline unit consistency and History UserControl/source wiring;
+- `verify_storage_history_service.py` — protocol-v6 history wiring, service-owned timestamps, live-analysis-before-persist ordering, contention mapping and database-key parity;
+- `verify_storage_history_ui.py` — engine-owned low-priority scheduling, UTC-hour cadence, whole-volume scope, fallback exclusion, timeline unit consistency and History UI/source wiring;
+- `verify_files_ui.py` — indexed Files compatibility UI lifecycle and no-rescan behavior;
+- `verify_directory_browse.py` — randomized SQLite keyset paging plus protocol/read-only/lease/checkpoint/native-fallback source wiring;
+- `test-local.ps1 -OfflineOnly` — all standard-library verifiers without the .NET SDK;
 - `test-local.ps1` — full Windows Core/native/indexer/tests/WinUI/bundled-helper build and real process handshake.
 
 ## Roadmap
 
 ### Fast NTFS/storage engine — current
 
-Implemented foundations include MFT/USN ingestion, durable SQLite metadata, hard-link namespaces, journal-safe mutation/checkpoints, authenticated helper IPC, native-first Search with fallback, multi-instance index leases, directory Storage, treemap drill-down, file-type analytics, exact categories, aggregate history persistence, protocol-v5 history capture/query, low-priority native hourly capture and a read-only growth timeline.
+Implemented foundations include MFT/USN ingestion, durable SQLite metadata, hard-link namespaces, journal-safe mutation/checkpoints, authenticated helper IPC, native-first Search with fallback, multi-instance index leases, exact paged native directory browsing, directory Storage, treemap drill-down, file-type analytics, exact categories, aggregate history persistence, protocol-v5 history capture/query, low-priority native hourly capture and a read-only growth timeline.
 
-Next engine/lifecycle work includes sparse/compressed/reparse semantics, measured search/analytics latency and memory budgets, specialized filename/path acceleration, case-sensitive namespace policy, shadow-index rebuild and broader multi-volume orchestration.
+Next engine/lifecycle work includes browse-query indexing/latency measurement, sparse/compressed/reparse semantics, measured search/analytics memory budgets, specialized filename/path acceleration, case-sensitive namespace policy, shadow-index rebuild and broader multi-volume orchestration.
 
 ### File manager
 
-Planned: indexed directory browsing, tabs, dual pane, queued copy/move/delete, collision policies, pause/resume, action history and safe undo.
+Implemented: a first read-only indexed Files surface plus the protocol-v6 exact page boundary. Next: migrate the Files UI from bounded Storage-analysis rows to incremental exact pages, then add tabs/dual pane. Queued copy/move/delete, collision policies, pause/resume, action history and safe undo remain later reviewed slices.
 
 ### Storage intelligence
 
