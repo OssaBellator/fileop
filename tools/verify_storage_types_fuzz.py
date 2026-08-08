@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Randomized zero-Actions property checks for storage file-type analytics."""
+"""Randomized zero-Actions property checks for storage file-type/category analytics."""
 from __future__ import annotations
 
 import argparse
@@ -65,32 +65,61 @@ def _reference(records: list[dict[str, object]], root: str, limit: int) -> list[
     total_files = sum(item["files"] for item in aggregates.values())
     total_aliases = sum(item["aliases"] for item in aggregates.values())
     type_count = len(aggregates)
+    totals = (total_logical, total_allocated, total_unknown, total_files, total_aliases, type_count)
 
-    rows = [
+    ranked_types = [
         (
             extension,
+            base._category(extension),
             aggregate["logical"],
             aggregate["allocated"],
             aggregate["unknown"],
             aggregate["files"],
             aggregate["aliases"],
-            total_logical,
-            total_allocated,
-            total_unknown,
-            total_files,
-            total_aliases,
-            type_count,
         )
         for extension, aggregate in aggregates.items()
     ]
-    rows.sort(
+    ranked_types.sort(
         key=lambda row: (
-            -(row[2] if total_unknown == 0 else row[1]),
-            -row[1],
+            -(row[3] if total_unknown == 0 else row[2]),
+            -row[2],
             row[0].lower(),
         )
     )
-    return rows[:limit]
+
+    rows = [
+        (0, extension, category, logical, allocated, unknown, file_count, aliases, 1, *totals)
+        for extension, category, logical, allocated, unknown, file_count, aliases in ranked_types[:limit]
+    ]
+
+    category_aggregates: dict[int, dict[str, int]] = defaultdict(
+        lambda: {"logical": 0, "allocated": 0, "unknown": 0, "files": 0, "aliases": 0, "types": 0}
+    )
+    for extension, category, logical, allocated, unknown, file_count, aliases in ranked_types:
+        aggregate = category_aggregates[category]
+        aggregate["logical"] += logical
+        aggregate["allocated"] += allocated
+        aggregate["unknown"] += unknown
+        aggregate["files"] += file_count
+        aggregate["aliases"] += aliases
+        aggregate["types"] += 1
+
+    rows.extend(
+        (
+            1,
+            "",
+            category,
+            aggregate["logical"],
+            aggregate["allocated"],
+            aggregate["unknown"],
+            aggregate["files"],
+            aggregate["aliases"],
+            aggregate["types"],
+            *totals,
+        )
+        for category, aggregate in category_aggregates.items()
+    )
+    return rows
 
 
 def _fixture(seed: int) -> list[dict[str, object]]:
@@ -147,6 +176,10 @@ def _fixture(seed: int) -> list[dict[str, object]]:
     return records
 
 
+def _normalized(rows: list[tuple]) -> list[tuple]:
+    return sorted(rows, key=lambda row: (row[0], str(row[1]).lower(), row[2]))
+
+
 def check_randomized(cases: int) -> None:
     for seed in range(cases):
         records = _fixture(seed)
@@ -169,7 +202,9 @@ def check_randomized(cases: int) -> None:
             connection.close()
 
         expected = _reference(records, ROOT, limit)
-        assert actual == expected, f"seed {seed} diverged\nactual={actual}\nexpected={expected}"
+        assert _normalized(actual) == _normalized(expected), (
+            f"seed {seed} diverged\nactual={actual}\nexpected={expected}"
+        )
 
 
 def main() -> int:
@@ -180,7 +215,7 @@ def main() -> int:
         parser.error("--cases must be greater than zero")
 
     check_randomized(args.cases)
-    print(f"PASS storage file-type randomized parity: {args.cases} cases")
+    print(f"PASS storage file-type/category randomized parity: {args.cases} cases")
     return 0
 
 
