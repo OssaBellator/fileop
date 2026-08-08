@@ -1,19 +1,71 @@
 #!/usr/bin/env python3
-"""Randomized zero-Actions property checks for storage file-type analytics."""
+"""Randomized zero-Actions parity for storage file-type/category analytics.
+
+The randomized SQLite function is derived from the committed C# category switch and
+its enum ordering, so SQL/reference agreement cannot hide classifier drift.
+"""
 from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from pathlib import Path
 import random
+import re
 
 import verify_storage_types as base
 
 ROOT = r"C:\Data"
 SIBLING = r"C:\Database"
-EXTENSIONS = ("", "txt", "jpg", "png", "bin", "ts", "m2ts", "zip", "db")
+EXTENSIONS = ("", "txt", "jpg", "png", "bin", "ts", "m2ts", "zip", "db", "iso", "ttf", "exe", "mp3")
 
 
-def _reference(records: list[dict[str, object]], root: str, limit: int) -> list[tuple]:
+def _load_classifier(repo_root: Path):
+    contract = (repo_root / "src/FileOp.Core/Storage/IStorageAnalytics.cs").read_text(encoding="utf-8")
+    classifier = (repo_root / "src/FileOp.Core/Storage/StorageFileCategoryClassifier.cs").read_text(encoding="utf-8")
+
+    enum_match = re.search(r"public enum StorageFileCategory\s*\{(?P<body>.*?)\}", contract, re.S)
+    assert enum_match, "StorageFileCategory enum could not be parsed"
+    enum_names = [
+        line.strip().rstrip(",")
+        for line in enum_match.group("body").splitlines()
+        if line.strip() and not line.strip().startswith("//")
+    ]
+    enum_values = {name: index for index, name in enumerate(enum_names)}
+    assert "NoExtension" in enum_values and "Other" in enum_values
+
+    switch_match = re.search(
+        r"return normalized switch\s*\{(?P<body>.*?)_ => StorageFileCategory\.Other",
+        classifier,
+        re.S,
+    )
+    assert switch_match, "StorageFileCategoryClassifier switch could not be parsed"
+    switch_body = switch_match.group("body")
+
+    extension_map: dict[str, int] = {}
+    arm_pattern = re.compile(
+        r"(?P<values>(?:\s*\"[^\"]+\"\s*(?:or\s*)?)+)"
+        r"=>\s*StorageFileCategory\.(?P<category>\w+)\s*,",
+        re.S,
+    )
+    for arm in arm_pattern.finditer(switch_body):
+        category_name = arm.group("category")
+        assert category_name in enum_values, category_name
+        for extension in re.findall(r'\"([^\"]+)\"', arm.group("values")):
+            assert extension not in extension_map, f"Duplicate classifier extension: {extension}"
+            extension_map[extension] = enum_values[category_name]
+
+    assert len(extension_map) >= 100, f"Classifier parser found only {len(extension_map)} extensions"
+
+    def classify(extension: str) -> int:
+        normalized = (extension or "").strip().lstrip(".").lower()
+        if not normalized:
+            return enum_values["NoExtension"]
+        return extension_map.get(normalized, enum_values["Other"])
+
+    return classify, enum_values, extension_map
+
+
+def _reference(records: list[dict[str, object]], root: str, limit: int, classify) -> list[tuple]:
     children: dict[str, list[dict[str, object]]] = defaultdict(list)
     for record in records:
         children[str(record["parent"]).lower()].append(record)
@@ -65,32 +117,61 @@ def _reference(records: list[dict[str, object]], root: str, limit: int) -> list[
     total_files = sum(item["files"] for item in aggregates.values())
     total_aliases = sum(item["aliases"] for item in aggregates.values())
     type_count = len(aggregates)
+    totals = (total_logical, total_allocated, total_unknown, total_files, total_aliases, type_count)
 
-    rows = [
+    ranked_types = [
         (
             extension,
+            classify(extension),
             aggregate["logical"],
             aggregate["allocated"],
             aggregate["unknown"],
             aggregate["files"],
             aggregate["aliases"],
-            total_logical,
-            total_allocated,
-            total_unknown,
-            total_files,
-            total_aliases,
-            type_count,
         )
         for extension, aggregate in aggregates.items()
     ]
-    rows.sort(
+    ranked_types.sort(
         key=lambda row: (
-            -(row[2] if total_unknown == 0 else row[1]),
-            -row[1],
+            -(row[3] if total_unknown == 0 else row[2]),
+            -row[2],
             row[0].lower(),
         )
     )
-    return rows[:limit]
+
+    rows = [
+        (0, extension, category, logical, allocated, unknown, file_count, aliases, 1, *totals)
+        for extension, category, logical, allocated, unknown, file_count, aliases in ranked_types[:limit]
+    ]
+
+    category_aggregates: dict[int, dict[str, int]] = defaultdict(
+        lambda: {"logical": 0, "allocated": 0, "unknown": 0, "files": 0, "aliases": 0, "types": 0}
+    )
+    for _, category, logical, allocated, unknown, file_count, aliases in ranked_types:
+        aggregate = category_aggregates[category]
+        aggregate["logical"] += logical
+        aggregate["allocated"] += allocated
+        aggregate["unknown"] += unknown
+        aggregate["files"] += file_count
+        aggregate["aliases"] += aliases
+        aggregate["types"] += 1
+
+    rows.extend(
+        (
+            1,
+            "",
+            category,
+            aggregate["logical"],
+            aggregate["allocated"],
+            aggregate["unknown"],
+            aggregate["files"],
+            aggregate["aliases"],
+            aggregate["types"],
+            *totals,
+        )
+        for category, aggregate in category_aggregates.items()
+    )
+    return rows
 
 
 def _fixture(seed: int) -> list[dict[str, object]]:
@@ -147,11 +228,31 @@ def _fixture(seed: int) -> list[dict[str, object]]:
     return records
 
 
-def check_randomized(cases: int) -> None:
+def _normalized(rows: list[tuple]) -> list[tuple]:
+    return sorted(rows, key=lambda row: (row[0], str(row[1]).lower(), row[2]))
+
+
+def check_randomized(cases: int, repo_root: Path) -> tuple[int, int]:
+    classify, enum_values, extension_map = _load_classifier(repo_root)
+
+    # Explicitly prove the randomized set spans every major classifier family.
+    assert classify("ts") == enum_values["Code"]
+    assert classify("m2ts") == enum_values["Video"]
+    assert classify("zip") == enum_values["Archives"]
+    assert classify("exe") == enum_values["Applications"]
+    assert classify("mp3") == enum_values["Audio"]
+    assert classify("iso") == enum_values["DiskImages"]
+    assert classify("ttf") == enum_values["Fonts"]
+    assert classify("jpg") == enum_values["Images"]
+    assert classify("txt") == enum_values["Documents"]
+    assert classify("db") == enum_values["Data"]
+    assert classify("") == enum_values["NoExtension"]
+
     for seed in range(cases):
         records = _fixture(seed)
         limit = random.Random(seed ^ 0x5A17).randint(1, 8)
         connection = base._db()
+        connection.create_function("fileop_category", 1, classify, deterministic=True)
         try:
             for record in records:
                 base._add(
@@ -168,19 +269,27 @@ def check_randomized(cases: int) -> None:
         finally:
             connection.close()
 
-        expected = _reference(records, ROOT, limit)
-        assert actual == expected, f"seed {seed} diverged\nactual={actual}\nexpected={expected}"
+        expected = _reference(records, ROOT, limit, classify)
+        assert _normalized(actual) == _normalized(expected), (
+            f"seed {seed} diverged\nactual={actual}\nexpected={expected}"
+        )
+
+    return len(extension_map), len(enum_values)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cases", type=int, default=1000)
+    parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     args = parser.parse_args()
     if args.cases <= 0:
         parser.error("--cases must be greater than zero")
 
-    check_randomized(args.cases)
-    print(f"PASS storage file-type randomized parity: {args.cases} cases")
+    pattern_count, category_count = check_randomized(args.cases, args.repo_root.resolve())
+    print(
+        f"PASS storage type/category randomized parity: {args.cases} cases; "
+        f"{pattern_count} classifier patterns across {category_count} categories"
+    )
     return 0
 
 

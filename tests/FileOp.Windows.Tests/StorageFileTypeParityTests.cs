@@ -8,7 +8,7 @@ namespace FileOp.Windows.Tests;
 public sealed class StorageFileTypeParityTests
 {
     [TestMethod]
-    public async Task SqliteAndInMemoryFileTypeAnalysisMatch()
+    public async Task SqliteAndInMemoryFileTypeAnalysisMatchWithExactCategoriesWhenTypesAreTruncated()
     {
         var databasePath = Path.Combine(
             Path.GetTempPath(),
@@ -26,7 +26,7 @@ public sealed class StorageFileTypeParityTests
                 Directory(@"C:\Data\A", @"C:\Data", "A"),
                 Directory(@"C:\Data\B", @"C:\Data", "B"),
                 File(@"C:\Data\A\shared.bin", @"C:\Data\A", "shared.bin", 300, 384, identity),
-                File(@"C:\Data\B\shared.dat", @"C:\Data\B", "shared.dat", 300, 384, identity),
+                File(@"C:\Data\B\shared.jpg", @"C:\Data\B", "shared.jpg", 300, 384, identity),
             ];
 
             using var sqliteIndex = new SqliteFileIndex(databasePath);
@@ -36,8 +36,8 @@ public sealed class StorageFileTypeParityTests
             using var memory = new InMemoryFileIndex();
             await memory.AddBatchAsync(fixture);
 
-            var sqlite = await sqliteAnalytics.AnalyzeFileTypesAsync(@"C:\Data", maxTypes: 128);
-            var fallback = await memory.AnalyzeFileTypesAsync(@"C:\Data", maxTypes: 128);
+            var sqlite = await sqliteAnalytics.AnalyzeFileTypesAsync(@"C:\Data", maxTypes: 1);
+            var fallback = await memory.AnalyzeFileTypesAsync(@"C:\Data", maxTypes: 1);
 
             Assert.AreEqual(sqlite.RootPath, fallback.RootPath);
             Assert.AreEqual(sqlite.LogicalBytes, fallback.LogicalBytes);
@@ -46,12 +46,43 @@ public sealed class StorageFileTypeParityTests
             Assert.AreEqual(sqlite.UniqueFileCount, fallback.UniqueFileCount);
             Assert.AreEqual(sqlite.HardLinkAliasCount, fallback.HardLinkAliasCount);
             Assert.AreEqual(sqlite.TypeCount, fallback.TypeCount);
-            Assert.AreEqual(sqlite.Types.Count, fallback.Types.Count);
+            Assert.IsTrue(sqlite.TypeCount > 1);
+            Assert.AreEqual(1, sqlite.Types.Count);
+            Assert.AreEqual(1, fallback.Types.Count);
+            Assert.AreEqual(sqlite.Types[0], fallback.Types[0]);
 
-            for (var index = 0; index < sqlite.Types.Count; index++)
+            Assert.AreEqual(sqlite.Categories.Count, fallback.Categories.Count);
+            Assert.IsTrue(sqlite.Categories.Count > 1);
+            for (var index = 0; index < sqlite.Categories.Count; index++)
             {
-                Assert.AreEqual(sqlite.Types[index], fallback.Types[index]);
+                Assert.AreEqual(sqlite.Categories[index], fallback.Categories[index]);
             }
+
+            Assert.AreEqual(
+                sqlite.LogicalBytes,
+                sqlite.Categories.Sum(static category => category.LogicalBytes));
+            Assert.AreEqual(
+                sqlite.FileCount,
+                sqlite.Categories.Sum(static category => category.FileCount));
+            Assert.AreEqual(
+                sqlite.HardLinkAliasCount,
+                sqlite.Categories.Sum(static category => category.HardLinkAliasCount));
+            Assert.AreEqual(
+                sqlite.TypeCount,
+                sqlite.Categories.Sum(static category => category.TypeCount));
+            Assert.IsNull(sqlite.AllocatedBytes);
+            Assert.IsTrue(sqlite.Categories.Any(static category => !category.AllocatedBytes.HasValue));
+
+            var data = sqlite.Categories.Single(static category => category.Category == StorageFileCategory.Data);
+            Assert.AreEqual(300L, data.LogicalBytes);
+            Assert.AreEqual(384L, data.AllocatedBytes);
+            Assert.AreEqual(0, data.HardLinkAliasCount);
+
+            var images = sqlite.Categories.Single(static category => category.Category == StorageFileCategory.Images);
+            Assert.AreEqual(500L, images.LogicalBytes);
+            Assert.AreEqual(256L, images.AllocatedBytes);
+            Assert.AreEqual(1, images.HardLinkAliasCount);
+            Assert.AreEqual(1, images.TypeCount);
         }
         finally
         {

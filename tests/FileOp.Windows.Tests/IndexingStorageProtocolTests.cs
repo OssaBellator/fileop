@@ -46,7 +46,7 @@ public sealed class IndexingStorageProtocolTests
     }
 
     [TestMethod]
-    public async Task NamedPipeRoundTripReturnsTypedStorageFileTypes()
+    public async Task NamedPipeRoundTripReturnsTypedStorageFileTypesAndExactCategories()
     {
         var pipeName = $"fileop-storage-types-test-{Guid.NewGuid():N}";
         using var backend = new StorageBackend();
@@ -76,6 +76,12 @@ public sealed class IndexingStorageProtocolTests
             Assert.AreEqual(1, response.Analysis.TypeCount);
             Assert.AreEqual("jpg", response.Analysis.Types[0].Extension);
             Assert.AreEqual(StorageFileCategory.Images, response.Analysis.Types[0].Category);
+            Assert.AreEqual(1, response.Analysis.Categories.Count);
+            Assert.AreEqual(StorageFileCategory.Images, response.Analysis.Categories[0].Category);
+            Assert.AreEqual(300L, response.Analysis.Categories[0].LogicalBytes);
+            Assert.AreEqual(384L, response.Analysis.Categories[0].AllocatedBytes);
+            Assert.AreEqual(2, response.Analysis.Categories[0].FileCount);
+            Assert.AreEqual(1, response.Analysis.Categories[0].TypeCount);
             Assert.AreEqual(@"C:\", backend.LastTypeRequest?.VolumeRootPath);
             Assert.AreEqual(@"C:\Data", backend.LastTypeRequest?.DirectoryPath);
             Assert.AreEqual(24, backend.LastTypeRequest?.MaxTypes);
@@ -158,21 +164,33 @@ public sealed class IndexingStorageProtocolTests
             CancellationToken cancellationToken = default)
         {
             LastTypeRequest = request;
-            return ValueTask.FromResult(new IndexingStorageFileTypeResponse(
-                new StorageFileTypeAnalysis(
-                    request.DirectoryPath,
+            var analysis = new StorageFileTypeAnalysis(
+                request.DirectoryPath,
+                300,
+                384,
+                2,
+                0,
+                1,
+                [new StorageFileTypeEntry(
+                    "jpg",
+                    StorageFileCategory.Images,
                     300,
                     384,
                     2,
-                    0,
-                    1,
-                    [new StorageFileTypeEntry(
-                        "jpg",
+                    0)])
+            {
+                Categories =
+                [
+                    new StorageFileCategoryEntry(
                         StorageFileCategory.Images,
                         300,
                         384,
                         2,
-                        0)])));
+                        0,
+                        1),
+                ],
+            };
+            return ValueTask.FromResult(new IndexingStorageFileTypeResponse(analysis));
         }
 
         public void Dispose()

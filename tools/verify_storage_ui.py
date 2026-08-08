@@ -80,7 +80,6 @@ def _layout_treemap(
     height: float,
     output: list[_Rect],
 ) -> None:
-    """Python transcription of MainWindow.LayoutTreemap for property testing."""
     if count <= 0 or width <= 0 or height <= 0:
         return
     if count == 1:
@@ -253,63 +252,48 @@ def check_treemap_coverage() -> int:
     return cases
 
 
-def _prepare_category_weights(
-    returned: list[tuple[str, int]],
+def _assert_exact_categories(
+    categories: list[tuple[str, int, int]],
     root_weight: int,
     complete_type_count: int,
-) -> tuple[dict[str, int], int, int]:
-    categories: dict[str, int] = {}
-    for category, weight in returned:
-        categories[category] = categories.get(category, 0) + max(0, weight)
-
-    represented = sum(categories.values())
-    omitted_count = max(0, complete_type_count - len(returned))
-    omitted_weight = max(0, root_weight - represented) if omitted_count > 0 else 0
-    return categories, omitted_count, omitted_weight
+    displayed_type_count: int,
+) -> None:
+    assert 0 <= displayed_type_count <= complete_type_count
+    assert sum(max(0, weight) for _, weight, _ in categories) == root_weight
+    assert sum(type_count for _, _, type_count in categories) == complete_type_count
+    assert len({name for name, _, _ in categories}) == len(categories)
 
 
 def check_category_coverage() -> int:
     cases = 0
 
-    categories, omitted_count, omitted_weight = _prepare_category_weights(
-        [("Images", 60), ("Documents", 25), ("Images", 15)],
-        100,
-        3,
+    _assert_exact_categories(
+        [("Images", 75, 2), ("Documents", 25, 1)],
+        root_weight=100,
+        complete_type_count=3,
+        displayed_type_count=3,
     )
-    assert categories == {"Images": 75, "Documents": 25}
-    assert omitted_count == 0
-    assert omitted_weight == 0
-    assert sum(categories.values()) == 100
     cases += 1
 
-    categories, omitted_count, omitted_weight = _prepare_category_weights(
-        [("Images", 400), ("Documents", 300)],
-        1000,
-        5,
+    # Only one extension is displayed, but exact categories still cover all five types.
+    _assert_exact_categories(
+        [("Images", 400, 2), ("Documents", 300, 1), ("Data", 300, 2)],
+        root_weight=1000,
+        complete_type_count=5,
+        displayed_type_count=1,
     )
-    assert omitted_count == 3
-    assert omitted_weight == 300
-    assert sum(categories.values()) + omitted_weight == 1000
     cases += 1
 
-    categories, omitted_count, omitted_weight = _prepare_category_weights(
-        [("Data", 128), ("Images", 0)],
-        128,
-        2,
+    # A category may legitimately carry zero physical bytes when its names are aliases.
+    _assert_exact_categories(
+        [("Data", 128, 1), ("Images", 0, 1)],
+        root_weight=128,
+        complete_type_count=2,
+        displayed_type_count=1,
     )
-    assert categories == {"Data": 128, "Images": 0}
-    assert omitted_count == 0
-    assert omitted_weight == 0
     cases += 1
 
-    categories, omitted_count, omitted_weight = _prepare_category_weights(
-        [("Code", 700), ("Documents", 200)],
-        1200,
-        4,
-    )
-    assert omitted_count == 2
-    assert omitted_weight == 300
-    assert sum(categories.values()) + omitted_weight == 1200
+    _assert_exact_categories([], root_weight=0, complete_type_count=0, displayed_type_count=0)
     cases += 1
 
     return cases
@@ -411,8 +395,10 @@ def check_repository(repo_root: Path) -> tuple[int, int]:
     assert "_fallbackIndex.AnalyzeFileTypesAsync(" in engine_text
     assert "session.Client.AnalyzeStorageTypesAsync(" in engine_text
     assert "AnalyzeStorageFileTypesAsync(" in engine_text
-    assert "Other {omittedTypeCount:N0} types (not returned)" in code_text
-    assert "omitted remainder is left unclassified" in code_text
+    assert "foreach (var category in analysis.Categories)" in code_text
+    assert "Exact category totals" in code_text
+    assert "Other {omittedTypeCount:N0} types (not returned)" not in code_text
+    assert "omitted remainder is left unclassified" not in code_text
     assert "Interlocked.Increment(ref _storageGeneration);" in code_text
     assert "Interlocked.Increment(ref _storageTypeGeneration);" in code_text
 
@@ -435,7 +421,7 @@ def main() -> int:
     path_cases = check_path_properties()
     print(f"PASS treemap properties: {treemap_cases} cases")
     print(f"PASS treemap coverage: {coverage_cases} cases")
-    print(f"PASS category coverage: {category_cases} cases")
+    print(f"PASS exact category coverage: {category_cases} cases")
     print(f"PASS path containment: {path_cases} cases")
 
     if not args.self_test_only:

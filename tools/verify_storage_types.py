@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline checks for FileOp storage file-type analytics.
+"""Offline checks for FileOp storage file-type/category analytics.
 
 No third-party packages, .NET SDK, Windows runtime, or GitHub Actions required.
 
@@ -16,6 +16,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+# Keep this byte-for-byte equivalent (after raw-string dedent) to
+# SqliteStorageAnalytics.FileTypeAnalysisSql. Repository mode enforces that.
 FILE_TYPE_SQL = """
 WITH RECURSIVE tree(
     path,
@@ -89,9 +91,10 @@ aggregates AS (
     WHERE is_directory = 0
     GROUP BY extension_norm
 ),
-ranked AS (
+ranked_types AS (
     SELECT
         extension_norm,
+        fileop_category(extension_norm) AS category,
         logical_bytes,
         allocated_known_bytes,
         unknown_allocated_files,
@@ -104,34 +107,102 @@ ranked AS (
         SUM(hard_link_alias_count) OVER () AS total_hard_link_alias_count,
         COUNT(*) OVER () AS type_count
     FROM aggregates
+),
+ordered_types AS (
+    SELECT
+        *,
+        ROW_NUMBER() OVER (
+            ORDER BY
+                CASE
+                    WHEN total_unknown_allocated_files = 0 THEN allocated_known_bytes
+                    ELSE logical_bytes
+                END DESC,
+                logical_bytes DESC,
+                extension_norm COLLATE NOCASE
+        ) AS type_rank
+    FROM ranked_types
+),
+category_aggregates AS (
+    SELECT
+        category,
+        SUM(logical_bytes) AS logical_bytes,
+        SUM(allocated_known_bytes) AS allocated_known_bytes,
+        SUM(unknown_allocated_files) AS unknown_allocated_files,
+        SUM(file_count) AS file_count,
+        SUM(hard_link_alias_count) AS hard_link_alias_count,
+        COUNT(*) AS category_type_count,
+        MAX(total_logical_bytes) AS total_logical_bytes,
+        MAX(total_allocated_known_bytes) AS total_allocated_known_bytes,
+        MAX(total_unknown_allocated_files) AS total_unknown_allocated_files,
+        MAX(total_file_count) AS total_file_count,
+        MAX(total_hard_link_alias_count) AS total_hard_link_alias_count,
+        MAX(type_count) AS type_count
+    FROM ranked_types
+    GROUP BY category
 )
 SELECT
+    0 AS row_kind,
     extension_norm,
+    category,
     logical_bytes,
     allocated_known_bytes,
     unknown_allocated_files,
     file_count,
     hard_link_alias_count,
+    1 AS category_type_count,
     total_logical_bytes,
     total_allocated_known_bytes,
     total_unknown_allocated_files,
     total_file_count,
     total_hard_link_alias_count,
     type_count
-FROM ranked
-ORDER BY
-    CASE
-        WHEN total_unknown_allocated_files = 0 THEN allocated_known_bytes
-        ELSE logical_bytes
-    END DESC,
-    logical_bytes DESC,
-    extension_norm COLLATE NOCASE
-LIMIT @limit;
+FROM ordered_types
+WHERE type_rank <= @limit
+
+UNION ALL
+
+SELECT
+    1 AS row_kind,
+    '' AS extension_norm,
+    category,
+    logical_bytes,
+    allocated_known_bytes,
+    unknown_allocated_files,
+    file_count,
+    hard_link_alias_count,
+    category_type_count,
+    total_logical_bytes,
+    total_allocated_known_bytes,
+    total_unknown_allocated_files,
+    total_file_count,
+    total_hard_link_alias_count,
+    type_count
+FROM category_aggregates;
 """.strip()
+
+NO_EXTENSION = 0
+DOCUMENTS = 1
+IMAGES = 2
+DATA = 8
+OTHER = 11
+
+
+def _category(extension: str) -> int:
+    extension = (extension or "").strip().lstrip(".").lower()
+    if extension == "":
+        return NO_EXTENSION
+    if extension in {"txt", "pdf", "doc", "docx"}:
+        return DOCUMENTS
+    if extension in {"jpg", "jpeg", "png"}:
+        return IMAGES
+    if extension in {"bin", "dat", "db", "sqlite"}:
+        return DATA
+    return OTHER
 
 
 def _db() -> sqlite3.Connection:
     connection = sqlite3.connect(":memory:")
+    connection.create_function("fileop_category", 1, _category, deterministic=True)
     connection.execute(
         """
         CREATE TABLE files(
@@ -166,8 +237,7 @@ def _add(
         INSERT INTO files(
             path, path_norm, parent_path, extension_norm, length,
             allocated_length, is_directory, volume_serial, file_reference
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         (
             path,
@@ -187,54 +257,81 @@ def _query(connection: sqlite3.Connection, root: str, limit: int = 128) -> list[
     return connection.execute(FILE_TYPE_SQL, {"root": root, "limit": limit}).fetchall()
 
 
+def _split(rows: list[tuple]) -> tuple[list[tuple], list[tuple]]:
+    return ([row for row in rows if row[0] == 0], [row for row in rows if row[0] == 1])
+
+
+def _category_map(rows: list[tuple]) -> dict[int, tuple]:
+    return {row[2]: row for row in rows}
+
+
 def check_sql_semantics() -> int:
     cases = 0
 
+    # Nested extension aggregation + exact category rollup.
     connection = _db()
     _add(connection, r"C:\Data\Images", r"C:\Data", directory=True)
     _add(connection, r"C:\Data\Images\one.JPG", r"C:\Data\Images", "JPG", 100, 128)
     _add(connection, r"C:\Data\Images\two.jpg", r"C:\Data\Images", "jpg", 200, 256)
     _add(connection, r"C:\Data\notes.txt", r"C:\Data", "txt", 50, 64)
     _add(connection, r"C:\Data\README", r"C:\Data", "", 25, 32)
-    rows = _query(connection, r"C:\Data", 10)
-    by_ext = {row[0]: row for row in rows}
+    types, categories = _split(_query(connection, r"C:\Data", 10))
+    by_ext = {row[1]: row for row in types}
+    by_category = _category_map(categories)
     assert set(by_ext) == {"jpg", "txt", ""}
-    assert by_ext["jpg"][1:6] == (300, 384, 0, 2, 0)
-    assert rows[0][6:12] == (375, 480, 0, 4, 0, 3)
+    assert by_ext["jpg"][3:8] == (300, 384, 0, 2, 0)
+    assert by_category[IMAGES][3:9] == (300, 384, 0, 2, 0, 1)
+    assert by_category[DOCUMENTS][3:9] == (50, 64, 0, 1, 0, 1)
+    assert by_category[NO_EXTENSION][3:9] == (25, 32, 0, 1, 0, 1)
+    assert types[0][9:15] == (375, 480, 0, 4, 0, 3)
+    assert sum(row[3] for row in categories) == 375
+    assert sum(row[8] for row in categories) == 3
     cases += 1
 
+    # Cross-extension hard link: namespace bytes in both types, physical bytes once.
     connection = _db()
     identity = (0xAABB, 0x2233)
     _add(connection, r"C:\Data\A", r"C:\Data", directory=True)
     _add(connection, r"C:\Data\B", r"C:\Data", directory=True)
     _add(connection, r"C:\Data\A\shared.jpg", r"C:\Data\A", "jpg", 100, 128, identity=identity)
     _add(connection, r"C:\Data\B\shared.png", r"C:\Data\B", "png", 100, 128, identity=identity)
-    rows = _query(connection, r"C:\Data", 10)
-    by_ext = {row[0]: row for row in rows}
-    assert by_ext["jpg"][1:6] == (100, 128, 0, 1, 0)
-    assert by_ext["png"][1:6] == (100, 0, 0, 1, 1)
-    assert rows[0][6:12] == (200, 128, 0, 2, 1, 2)
+    types, categories = _split(_query(connection, r"C:\Data", 10))
+    by_ext = {row[1]: row for row in types}
+    images = _category_map(categories)[IMAGES]
+    assert by_ext["jpg"][3:8] == (100, 128, 0, 1, 0)
+    assert by_ext["png"][3:8] == (100, 0, 0, 1, 1)
+    assert images[3:9] == (200, 128, 0, 2, 1, 2)
+    assert images[9:15] == (200, 128, 0, 2, 1, 2)
     cases += 1
 
+    # LIMIT truncates extensions only; categories remain exact and preserve unknown allocation.
     connection = _db()
     _add(connection, r"C:\Data\a.bin", r"C:\Data", "bin", 300, 384)
     _add(connection, r"C:\Data\b.txt", r"C:\Data", "txt", 200, None)
     _add(connection, r"C:\Data\c.jpg", r"C:\Data", "jpg", 100, 128)
-    rows = _query(connection, r"C:\Data", 1)
-    assert len(rows) == 1
-    assert rows[0][0] == "bin"
-    assert rows[0][6] == 600
-    assert rows[0][8] == 1
-    assert rows[0][9] == 3
-    assert rows[0][11] == 3
+    types, categories = _split(_query(connection, r"C:\Data", 1))
+    assert len(types) == 1 and types[0][1] == "bin"
+    assert len(categories) == 3
+    assert types[0][9] == 600
+    assert types[0][11] == 1
+    assert types[0][12] == 3
+    assert types[0][14] == 3
+    by_category = _category_map(categories)
+    assert by_category[DATA][3:9] == (300, 384, 0, 1, 0, 1)
+    assert by_category[DOCUMENTS][3:9] == (200, 0, 1, 1, 0, 1)
+    assert by_category[IMAGES][3:9] == (100, 128, 0, 1, 0, 1)
+    assert sum(row[3] for row in categories) == 600
+    assert sum(row[6] for row in categories) == 3
+    assert sum(row[8] for row in categories) == 3
     cases += 1
 
+    # Similar path prefixes must not leak sibling roots into the recursive tree.
     connection = _db()
     _add(connection, r"C:\Data\inside.txt", r"C:\Data", "txt", 10, 16)
     _add(connection, r"C:\Database\sibling.txt", r"C:\Database", "txt", 999, 1024)
-    rows = _query(connection, r"C:\Data", 10)
-    assert len(rows) == 1
-    assert rows[0][1] == 10
+    types, categories = _split(_query(connection, r"C:\Data", 10))
+    assert len(types) == 1 and types[0][3] == 10
+    assert len(categories) == 1 and categories[0][3] == 10
     cases += 1
 
     connection = _db()
@@ -254,9 +351,6 @@ def check_repository(repo_root: Path) -> int:
         "client": repo_root / "src/FileOp.Windows/IndexingService/IndexingServiceClient.cs",
         "dispatcher": repo_root / "src/FileOp.Windows/IndexingService/IndexingServiceDispatcher.cs",
         "backend": repo_root / "src/FileOp.Windows/IndexingService/NtfsIndexingServiceBackend.cs",
-        "memory_tests": repo_root / "tests/FileOp.Windows.Tests/InMemoryStorageAnalyticsTests.cs",
-        "sqlite_tests": repo_root / "tests/FileOp.Windows.Tests/SqliteStorageFileTypeAnalyticsTests.cs",
-        "classifier_tests": repo_root / "tests/FileOp.Windows.Tests/StorageFileCategoryClassifierTests.cs",
         "protocol_tests": repo_root / "tests/FileOp.Windows.Tests/IndexingStorageProtocolTests.cs",
         "parity_tests": repo_root / "tests/FileOp.Windows.Tests/StorageFileTypeParityTests.cs",
     }
@@ -266,25 +360,21 @@ def check_repository(repo_root: Path) -> int:
 
     text = {name: path.read_text(encoding="utf-8") for name, path in files.items()}
     required = [
-        ("contract", "AnalyzeFileTypesAsync"),
-        ("contract", "StorageFileTypeAnalysis"),
-        ("classifier", '"ts" or "tsx"'),
-        ("sqlite", "FileTypeAnalysisSql"),
-        ("memory", "AnalyzeFileTypesAsync"),
-        ("protocol", "public const int CurrentVersion = 3;"),
+        ("contract", "StorageFileCategoryEntry"),
+        ("contract", "IReadOnlyList<StorageFileCategoryEntry> Categories"),
+        ("sqlite", "fileop_category(extension_norm)"),
+        ("sqlite", "category_aggregates AS"),
+        ("sqlite", "Categories = orderedCategories"),
+        ("memory", "Categories = categories"),
+        ("protocol", "public const int CurrentVersion = 4;"),
         ("protocol", "AnalyzeStorageTypes"),
-        ("protocol", "IndexingStorageFileTypeRequest"),
         ("client", "AnalyzeStorageTypesAsync"),
-        ("client", "IndexingServiceOperation.AnalyzeStorageTypes"),
         ("dispatcher", "IndexingServiceOperation.AnalyzeStorageTypes"),
-        ("dispatcher", "DeserializeStorageFileTypes"),
         ("backend", "AnalyzeStorageTypesAsync"),
-        ("backend", "EnsureStorageCheckpointAsync"),
-        ("memory_tests", "AnalyzeFileTypesCountsCrossExtensionHardLinksOnceForPhysicalUsage"),
-        ("sqlite_tests", "AnalyzeFileTypesCountsCrossExtensionHardLinksOnceForPhysicalUsage"),
-        ("classifier_tests", 'DataRow(".ts", StorageFileCategory.Code)'),
-        ("protocol_tests", "NamedPipeRoundTripReturnsTypedStorageFileTypes"),
-        ("parity_tests", "SqliteAndInMemoryFileTypeAnalysisMatch"),
+        ("protocol_tests", "NamedPipeRoundTripReturnsTypedStorageFileTypesAndExactCategories"),
+        ("protocol_tests", "response.Analysis.Categories"),
+        ("parity_tests", "MatchWithExactCategoriesWhenTypesAreTruncated"),
+        ("parity_tests", "sqlite.Categories"),
     ]
     for name, needle in required:
         assert needle in text[name], f"{needle!r} missing from {files[name]}"
@@ -297,7 +387,6 @@ def check_repository(repo_root: Path) -> int:
     duplicates = sorted(name for name, count in Counter(extensions).items() if count > 1)
     assert not duplicates, f"Duplicate extension switch patterns: {duplicates}"
     assert extensions.count("ts") == 1, ".ts must have exactly one deterministic category"
-    assert '"mpeg" or "mpg" or "mts" or "m2ts"' in text["classifier"]
 
     marker = 'private const string FileTypeAnalysisSql = """'
     start = text["sqlite"].find(marker)
@@ -308,7 +397,7 @@ def check_repository(repo_root: Path) -> int:
     extracted = textwrap.dedent(text["sqlite"][start:end]).strip()
     assert extracted == FILE_TYPE_SQL, "Offline SQL verifier drifted from SqliteStorageAnalytics.FileTypeAnalysisSql"
 
-    return len(required) + 5
+    return len(required) + 4
 
 
 def main() -> int:
@@ -318,11 +407,11 @@ def main() -> int:
     args = parser.parse_args()
 
     sql_cases = check_sql_semantics()
-    print(f"PASS storage file-type SQL semantics: {sql_cases} cases")
+    print(f"PASS storage file-type/category SQL semantics: {sql_cases} cases")
 
     if not args.self_test_only:
         source_checks = check_repository(args.repo_root.resolve())
-        print(f"PASS storage file-type source wiring: {source_checks} checks")
+        print(f"PASS storage file-type/category source wiring: {source_checks} checks")
 
     return 0
 

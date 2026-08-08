@@ -79,9 +79,10 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
             WHERE is_directory = 0
             GROUP BY extension_norm
         ),
-        ranked AS (
+        ranked_types AS (
             SELECT
                 extension_norm,
+                fileop_category(extension_norm) AS category,
                 logical_bytes,
                 allocated_known_bytes,
                 unknown_allocated_files,
@@ -94,29 +95,77 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
                 SUM(hard_link_alias_count) OVER () AS total_hard_link_alias_count,
                 COUNT(*) OVER () AS type_count
             FROM aggregates
+        ),
+        ordered_types AS (
+            SELECT
+                *,
+                ROW_NUMBER() OVER (
+                    ORDER BY
+                        CASE
+                            WHEN total_unknown_allocated_files = 0 THEN allocated_known_bytes
+                            ELSE logical_bytes
+                        END DESC,
+                        logical_bytes DESC,
+                        extension_norm COLLATE NOCASE
+                ) AS type_rank
+            FROM ranked_types
+        ),
+        category_aggregates AS (
+            SELECT
+                category,
+                SUM(logical_bytes) AS logical_bytes,
+                SUM(allocated_known_bytes) AS allocated_known_bytes,
+                SUM(unknown_allocated_files) AS unknown_allocated_files,
+                SUM(file_count) AS file_count,
+                SUM(hard_link_alias_count) AS hard_link_alias_count,
+                COUNT(*) AS category_type_count,
+                MAX(total_logical_bytes) AS total_logical_bytes,
+                MAX(total_allocated_known_bytes) AS total_allocated_known_bytes,
+                MAX(total_unknown_allocated_files) AS total_unknown_allocated_files,
+                MAX(total_file_count) AS total_file_count,
+                MAX(total_hard_link_alias_count) AS total_hard_link_alias_count,
+                MAX(type_count) AS type_count
+            FROM ranked_types
+            GROUP BY category
         )
         SELECT
+            0 AS row_kind,
             extension_norm,
+            category,
             logical_bytes,
             allocated_known_bytes,
             unknown_allocated_files,
             file_count,
             hard_link_alias_count,
+            1 AS category_type_count,
             total_logical_bytes,
             total_allocated_known_bytes,
             total_unknown_allocated_files,
             total_file_count,
             total_hard_link_alias_count,
             type_count
-        FROM ranked
-        ORDER BY
-            CASE
-                WHEN total_unknown_allocated_files = 0 THEN allocated_known_bytes
-                ELSE logical_bytes
-            END DESC,
-            logical_bytes DESC,
-            extension_norm COLLATE NOCASE
-        LIMIT @limit;
+        FROM ordered_types
+        WHERE type_rank <= @limit
+
+        UNION ALL
+
+        SELECT
+            1 AS row_kind,
+            '' AS extension_norm,
+            category,
+            logical_bytes,
+            allocated_known_bytes,
+            unknown_allocated_files,
+            file_count,
+            hard_link_alias_count,
+            category_type_count,
+            total_logical_bytes,
+            total_allocated_known_bytes,
+            total_unknown_allocated_files,
+            total_file_count,
+            total_hard_link_alias_count,
+            type_count
+        FROM category_aggregates;
         """;
 
     private readonly string _connectionString;
@@ -346,6 +395,7 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
         command.Parameters.AddWithValue("@limit", maxTypes);
 
         var types = new List<StorageFileTypeEntry>(Math.Min(maxTypes, 128));
+        var categories = new List<StorageFileCategoryEntry>(12);
         long totalLogicalBytes = 0;
         long totalAllocatedKnownBytes = 0;
         long totalUnknownAllocatedFiles = 0;
@@ -356,32 +406,59 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            totalLogicalBytes = reader.GetInt64(6);
-            totalAllocatedKnownBytes = reader.GetInt64(7);
-            totalUnknownAllocatedFiles = reader.GetInt64(8);
-            totalFileCount = reader.GetInt64(9);
-            totalHardLinkAliasCount = reader.GetInt64(10);
-            typeCount = reader.GetInt64(11);
+            totalLogicalBytes = reader.GetInt64(9);
+            totalAllocatedKnownBytes = reader.GetInt64(10);
+            totalUnknownAllocatedFiles = reader.GetInt64(11);
+            totalFileCount = reader.GetInt64(12);
+            totalHardLinkAliasCount = reader.GetInt64(13);
+            typeCount = reader.GetInt64(14);
 
-            var extension = reader.GetString(0);
-            var unknownAllocatedFiles = reader.GetInt64(3);
-            types.Add(new StorageFileTypeEntry(
-                extension,
-                StorageFileCategoryClassifier.Classify(extension),
-                reader.GetInt64(1),
-                unknownAllocatedFiles == 0 ? reader.GetInt64(2) : null,
-                CheckedCount(reader.GetInt64(4)),
-                CheckedCount(reader.GetInt64(5))));
+            var unknownAllocatedFiles = reader.GetInt64(5);
+            var category = (StorageFileCategory)reader.GetInt32(2);
+            if (reader.GetInt32(0) == 0)
+            {
+                types.Add(new StorageFileTypeEntry(
+                    reader.GetString(1),
+                    category,
+                    reader.GetInt64(3),
+                    unknownAllocatedFiles == 0 ? reader.GetInt64(4) : null,
+                    CheckedCount(reader.GetInt64(6)),
+                    CheckedCount(reader.GetInt64(7))));
+                continue;
+            }
+
+            categories.Add(new StorageFileCategoryEntry(
+                category,
+                reader.GetInt64(3),
+                unknownAllocatedFiles == 0 ? reader.GetInt64(4) : null,
+                CheckedCount(reader.GetInt64(6)),
+                CheckedCount(reader.GetInt64(7)),
+                CheckedCount(reader.GetInt64(8))));
         }
+
+        var usePhysicalOrdering = totalUnknownAllocatedFiles == 0;
+        var orderedTypes = types
+            .OrderByDescending(entry => usePhysicalOrdering ? entry.AllocatedBytes!.Value : entry.LogicalBytes)
+            .ThenByDescending(static entry => entry.LogicalBytes)
+            .ThenBy(static entry => entry.Extension, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var orderedCategories = categories
+            .OrderByDescending(entry => usePhysicalOrdering ? entry.AllocatedBytes!.Value : entry.LogicalBytes)
+            .ThenByDescending(static entry => entry.LogicalBytes)
+            .ThenBy(static entry => entry.Category)
+            .ToArray();
 
         return new StorageFileTypeAnalysis(
             normalizedRoot,
             totalLogicalBytes,
-            totalUnknownAllocatedFiles == 0 ? totalAllocatedKnownBytes : null,
+            usePhysicalOrdering ? totalAllocatedKnownBytes : null,
             CheckedCount(totalFileCount),
             CheckedCount(totalHardLinkAliasCount),
             CheckedCount(typeCount),
-            types);
+            orderedTypes)
+        {
+            Categories = orderedCategories,
+        };
     }
 
     public void Dispose()
@@ -401,6 +478,10 @@ public sealed class SqliteStorageAnalytics : IStorageAnalytics, IDisposable
     {
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
+        connection.CreateFunction<string, int>(
+            "fileop_category",
+            static extension => (int)StorageFileCategoryClassifier.Classify(extension),
+            isDeterministic: true);
 
         using var command = connection.CreateCommand();
         command.CommandText = queryOnly
