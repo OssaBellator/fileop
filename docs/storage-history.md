@@ -77,7 +77,7 @@ The store validates before persistence:
 - logical/file/alias/type category totals must reconcile exactly to the root;
 - known physical category totals must reconcile exactly to a known physical root.
 
-Corrupt persisted category enum values are rejected on read rather than mapped to an arbitrary display category.
+Persisted observations are validated again on read. Invalid UTC ticks, unknown category enum values, impossible counts, duplicate categories, or root/category totals that no longer reconcile fail closed with `InvalidDataException` rather than becoming growth data for the UI.
 
 ## Delta semantics
 
@@ -86,6 +86,8 @@ Corrupt persisted category enum values are rejected on read rather than mapped t
 Root and category logical/file/alias/type deltas are signed. Growth is positive; shrinkage is negative.
 
 Physical deltas are available only when both compared values are known. An absent category means a known zero baseline because the complete category set for that observation contains no files in that category. A present category with unknown physical allocation remains unknown, so the delta remains null rather than substituting logical bytes.
+
+Physical uncertainty alone is not treated as evidence of change. If every logical/count metric is unchanged and physical allocation is unknown in both observations, that category is omitted from the changed-category list.
 
 Category deltas are ordered by absolute physical change when available, otherwise absolute logical change. This provides a useful default for a future “what grew?” surface without changing the underlying signed values.
 
@@ -108,11 +110,12 @@ Retention is global to the history store/database and cascades category rows tra
 - same-root/same-timestamp overwrite identity;
 - namespace-clear survival;
 - retention cascade behavior;
+- an unchanged category with unknown physical allocation;
 - randomized signed-delta reconciliation across all 12 categories.
 
-Repository mode additionally guards source-level invariants: the history store and tests must exist, the current `SqliteFileIndex.ClearAsync` must not erase history, and history schema versioning must remain independent of the core index schema.
+Repository mode additionally guards source-level invariants: the history store and corruption/delta tests must exist, persisted rows must be revalidated on read, the current `SqliteFileIndex.ClearAsync` must not erase history, and history schema versioning must remain independent of the core index schema.
 
-`tools/test-local.ps1` invokes the history verifier before the full .NET/Windows test stack, so a Windows developer machine can run the complete gate without GitHub Actions usage.
+`tools/test-local.ps1` invokes the history verifier before the full .NET/Windows test stack, so a Windows development machine can run the complete gate without GitHub Actions usage.
 
 ## Deliberate limitations
 
