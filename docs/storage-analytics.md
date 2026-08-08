@@ -13,7 +13,7 @@ FileOp distinguishes namespace size from physical disk usage:
 - `LogicalBytes` sums the logical length of every file name in the analyzed namespace. Hard-linked names therefore each contribute logical bytes because each name represents a visible file entry.
 - `AllocatedBytes` represents physical allocation and counts each stable `FileIdentity` at most once inside the analyzed root.
 - `AllocatedBytes` is nullable. If any physical file that owns allocation in an aggregate lacks allocated-size metadata, the aggregate remains unknown rather than substituting logical bytes and presenting an estimate as exact physical usage.
-- `TreemapBytes` is `AllocatedBytes ?? LogicalBytes`. This gives rendering a usable weight while preserving the distinction in the data model.
+- `TreemapBytes` is `AllocatedBytes ?? LogicalBytes`. This gives rendering a usable per-entry weight while preserving the distinction in the data model.
 
 Files without a stable provider identity are treated as unique. That is the correct conservative behavior for crawler/fallback providers that cannot prove two paths refer to the same physical file.
 
@@ -65,7 +65,9 @@ An additive `parent_path` index accelerates recursive child lookup. It does not 
 
 `InMemoryFileIndex` implements the same `IStorageAnalytics` contract over the completed crawler snapshot. It groups descendants by direct child and applies the same canonical hard-link rule whenever stable identities are present.
 
-The normal crawler currently does not supply stable NTFS identities or allocated sizes, so fallback results generally report logical size and unknown allocation. The UI must preserve that distinction rather than claiming the fallback snapshot knows exact physical usage.
+The normal crawler currently does not supply stable NTFS identities or allocated sizes, so fallback results generally report logical size and unknown allocation. The UI preserves that distinction rather than claiming the fallback snapshot knows exact physical usage.
+
+The desktop does not run another fallback crawl when the user opens Storage. It reuses the same in-memory snapshot already built for Search. The available fallback root is therefore the user profile, not the entire drive, and the Storage page labels that scope explicitly.
 
 ## Protocol
 
@@ -81,6 +83,33 @@ MaxEntries
 The helper verifies that the requested physical volume/root pair exists, the target directory remains inside that root, and a durable checkpoint is valid before serving data. Invalid snapshots return `SnapshotRequired`; maintenance contention returns retryable `Busy`.
 
 The operation is read-only. It does not add cleanup, deletion, partition, formatting, BitLocker, or other destructive capabilities to `FileOp.Indexer`.
+
+## WinUI consumption
+
+`DesktopSearchEngine` is the desktop's shared foreground coordinator for both Search and Storage. Storage does not start a second helper session and does not open the SQLite database directly.
+
+In native mode, the coordinator exposes the root of the indexed NTFS volume containing the user profile and forwards directory analysis to protocol v2 `AnalyzeStorage`. In fallback mode, it exposes the already-indexed user-profile root and forwards analysis to the same `InMemoryFileIndex` used by Search.
+
+Search and Storage both pass through the coordinator's foreground operation gate. This matters because the reviewed native-to-fallback transition waits that gate before disposing the active helper session. A storage read therefore cannot race helper teardown any more than a search request can.
+
+The WinUI Storage page provides:
+
+- whole-root logical/on-disk/unique-file/hard-link summary cards;
+- Up and Refresh navigation;
+- click-through folder drill-down;
+- a detailed direct-entry list;
+- a proportional binary treemap of the largest returned entries;
+- an `Other entries` tile when more than 48 positive-weight entries are present.
+
+A newer Storage navigation request supersedes the visible generation but does not cancel an already-transmitted IPC exchange. This mirrors Search's reviewed request/response rule: interrupting an exchange faults that helper connection, so supersession is handled by discarding stale work instead. Window shutdown may cancel the active exchange because the entire helper session is being destroyed.
+
+### Treemap weighting
+
+If the analyzed root has complete `AllocatedBytes`, tile area represents hard-link-deduplicated physical allocation.
+
+If root allocated size is unknown, the UI switches **all** tile weights to logical bytes for that render. It does not mix known physical allocation for some branches with logical fallback for others, because that would produce a visually non-additive treemap with no coherent root total.
+
+Entries whose physical allocation is zero because they contain only non-canonical hard-link aliases may therefore disappear from a physical treemap while remaining visible in the detailed list. That is expected: the list describes namespace entries, while the physical treemap describes disk allocation.
 
 ## Performance validation
 
