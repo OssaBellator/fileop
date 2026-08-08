@@ -10,11 +10,8 @@ public sealed partial class MainWindow
 {
     private const int StorageHistoryDisplayLimit = 90;
 
-    private readonly StorageHistoryView _storageHistoryView = new();
-    private readonly Button _storageHistoryButton = new()
-    {
-        Content = "History",
-    };
+    private StorageHistoryView _storageHistoryView = null!;
+    private Button _storageHistoryButton = null!;
     private IReadOnlyList<StorageHistorySnapshot> _storageHistorySnapshots = [];
     private string? _storageHistorySourceKey;
     private int _storageHistoryGeneration;
@@ -29,10 +26,19 @@ public sealed partial class MainWindow
             return;
         }
 
+        // MainWindow.InitializeComponent has completed before StorageView.Loaded fires.
+        // Create child WinUI controls here instead of during MainWindow field initialization.
+        _storageHistoryView = new StorageHistoryView
+        {
+            Visibility = Visibility.Collapsed,
+        };
+        _storageHistoryButton = new Button
+        {
+            Content = "History",
+        };
         _storageHistoryInitialized = true;
         _storageHistoryButton.Click += StorageHistoryButton_Click;
         _storageHistoryView.RefreshRequested += StorageHistoryView_RefreshRequested;
-        _storageHistoryView.Visibility = Visibility.Collapsed;
 
         if (StorageFoldersButton.Parent is StackPanel modePanel)
         {
