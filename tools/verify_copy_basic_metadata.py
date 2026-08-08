@@ -180,6 +180,7 @@ def check_repository(root: Path) -> int:
         "BasicMetadataHelperPreservesTimestampsAndSafeAttributes",
         "BasicMetadataCaptureDropsUnsupportedStorageStateAttributes",
         "BasicMetadataApplyLeavesZeroTimestampsDestinationOwned",
+        "BasicMetadataApplyNormalClearsDestinationSafeAttributes",
         "BasicMetadataMergePreservesDestinationOwnedAttributes",
         "CopyPrimitivePreservesSafeBasicMetadata",
     ]:
@@ -199,7 +200,7 @@ def check_repository(root: Path) -> int:
         checks += 1
 
     zero_test_start = tests.index("public void BasicMetadataApplyLeavesZeroTimestampsDestinationOwned()")
-    zero_test_end = tests.index("public void BasicMetadataMergePreservesDestinationOwnedAttributes()", zero_test_start)
+    zero_test_end = tests.index("public void BasicMetadataApplyNormalClearsDestinationSafeAttributes()", zero_test_start)
     zero_test = tests[zero_test_start:zero_test_end]
     for sentinel in [
         "CreationTime: 0",
@@ -219,7 +220,20 @@ def check_repository(root: Path) -> int:
         assert needle in zero_test, needle
         checks += 1
 
-    merge_test_start = tests.index("public void BasicMetadataMergePreservesDestinationOwnedAttributes()")
+    normal_test_start = tests.index("public void BasicMetadataApplyNormalClearsDestinationSafeAttributes()")
+    normal_test_end = tests.index("public void BasicMetadataMergePreservesDestinationOwnedAttributes()", normal_test_start)
+    normal_test = tests[normal_test_start:normal_test_end]
+    for needle in (
+        "FileAttributes.Hidden",
+        "FileAttributes.Archive",
+        "FileAttributes: (uint)FileAttributes.Normal",
+        "(FileAttributes)0",
+        "actualAttributes & PreservedAttributes",
+    ):
+        assert needle in normal_test, needle
+        checks += 1
+
+    merge_test_start = normal_test_end
     merge_test_end = tests.index("public async Task CopyPrimitivePreservesSafeBasicMetadata()", merge_test_start)
     merge_test = tests[merge_test_start:merge_test_end]
     for attribute in [
