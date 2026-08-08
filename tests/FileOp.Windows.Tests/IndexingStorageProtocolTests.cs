@@ -45,9 +45,50 @@ public sealed class IndexingStorageProtocolTests
         await serverTask.WaitAsync(cancellation.Token);
     }
 
+    [TestMethod]
+    public async Task NamedPipeRoundTripReturnsTypedStorageFileTypes()
+    {
+        var pipeName = $"fileop-storage-types-test-{Guid.NewGuid():N}";
+        using var backend = new StorageBackend();
+        var server = new IndexingPipeServer(
+            pipeName,
+            Environment.ProcessId,
+            new IndexingServiceDispatcher(backend));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var serverTask = server.RunSingleClientAsync(cancellation.Token);
+
+        await using (var client = new IndexingServiceClient(pipeName))
+        {
+            await client.ConnectAsync(cancellation.Token);
+            var response = await client.AnalyzeStorageTypesAsync(
+                new IndexingStorageFileTypeRequest(
+                    0x1234,
+                    @"C:\Folder\..",
+                    @"C:\Data\Nested\..",
+                    MaxTypes: 24),
+                cancellation.Token);
+
+            Assert.AreEqual(@"C:\Data", response.Analysis.RootPath);
+            Assert.AreEqual(300L, response.Analysis.LogicalBytes);
+            Assert.AreEqual(384L, response.Analysis.AllocatedBytes);
+            Assert.AreEqual(2, response.Analysis.FileCount);
+            Assert.AreEqual(2, response.Analysis.UniqueFileCount);
+            Assert.AreEqual(1, response.Analysis.TypeCount);
+            Assert.AreEqual("jpg", response.Analysis.Types[0].Extension);
+            Assert.AreEqual(StorageFileCategory.Images, response.Analysis.Types[0].Category);
+            Assert.AreEqual(@"C:\", backend.LastTypeRequest?.VolumeRootPath);
+            Assert.AreEqual(@"C:\Data", backend.LastTypeRequest?.DirectoryPath);
+            Assert.AreEqual(24, backend.LastTypeRequest?.MaxTypes);
+        }
+
+        await serverTask.WaitAsync(cancellation.Token);
+    }
+
     private sealed class StorageBackend : IIndexingServiceBackend
     {
         public IndexingStorageAnalysisRequest? LastRequest { get; private set; }
+
+        public IndexingStorageFileTypeRequest? LastTypeRequest { get; private set; }
 
         public ValueTask<IndexingHelloResponse> HelloAsync(
             IndexingHelloRequest request,
@@ -109,6 +150,28 @@ public sealed class IndexingStorageProtocolTests
                         384,
                         2,
                         1,
+                        0)])));
+        }
+
+        public ValueTask<IndexingStorageFileTypeResponse> AnalyzeStorageTypesAsync(
+            IndexingStorageFileTypeRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastTypeRequest = request;
+            return ValueTask.FromResult(new IndexingStorageFileTypeResponse(
+                new StorageFileTypeAnalysis(
+                    request.DirectoryPath,
+                    300,
+                    384,
+                    2,
+                    0,
+                    1,
+                    [new StorageFileTypeEntry(
+                        "jpg",
+                        StorageFileCategory.Images,
+                        300,
+                        384,
+                        2,
                         0)])));
         }
 
