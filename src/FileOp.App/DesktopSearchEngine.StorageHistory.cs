@@ -21,6 +21,7 @@ internal sealed record StorageHistoryCaptureAttempt(
 internal sealed partial class DesktopSearchEngine
 {
     private const int MaximumStorageHistoryLimit = 4_096;
+    private static readonly TimeSpan HistoryPostSyncYieldDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan HistoryForegroundBusyRetryDelay = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan HistoryServiceBusyRetryDelay = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan HistoryUnavailableRetryDelay = TimeSpan.FromMinutes(15);
@@ -29,10 +30,17 @@ internal sealed partial class DesktopSearchEngine
     private long _nextHistoryCaptureAttemptUtcTicks;
     private int _historyCaptureInProgress;
 
+    internal DesktopSearchEngine()
+    {
+        StateChanged += StorageHistoryCapture_StateChanged;
+    }
+
     public bool StorageHistoryAvailable =>
         State.Mode == DesktopSearchMode.Native &&
         _primaryVolume is not null &&
         _nativeSession is { Client.IsConnected: true };
+
+    public event Action<StorageHistorySnapshot>? StorageHistoryCaptured;
 
     public async ValueTask<StorageHistoryCaptureAttempt> TryCaptureStorageHistoryAsync()
     {
@@ -196,6 +204,38 @@ internal sealed partial class DesktopSearchEngine
         finally
         {
             _searchOperationGate.Release();
+        }
+    }
+
+    private void StorageHistoryCapture_StateChanged(DesktopSearchEngineState state)
+    {
+        if (_disposed ||
+            state.Mode != DesktopSearchMode.Native ||
+            !state.IsCurrent ||
+            state.IsBusy)
+        {
+            return;
+        }
+
+        _ = RunScheduledStorageHistoryCaptureAsync();
+    }
+
+    private async Task RunScheduledStorageHistoryCaptureAsync()
+    {
+        try
+        {
+            // Background synchronization raises StateChanged before it releases the
+            // native operation gate. Yield beyond that callback, then make one
+            // non-blocking attempt so foreground Search/Storage always wins.
+            await Task.Delay(HistoryPostSyncYieldDelay, _lifetimeCancellation.Token).ConfigureAwait(false);
+            var attempt = await TryCaptureStorageHistoryAsync().ConfigureAwait(false);
+            if (attempt.Kind == StorageHistoryCaptureAttemptKind.Captured && attempt.Snapshot is not null)
+            {
+                StorageHistoryCaptured?.Invoke(attempt.Snapshot);
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
         }
     }
 
