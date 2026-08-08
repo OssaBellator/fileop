@@ -79,6 +79,7 @@ public sealed partial class FilesView : UserControl
         RefreshButton.IsEnabled = canRefresh;
         LoadMoreButton.Visibility = hasMore ? Visibility.Visible : Visibility.Collapsed;
         LoadMoreButton.IsEnabled = hasMore && canRefresh;
+        FilesList.ItemsSource = null;
         FilesList.ItemsSource = rows;
         EmptyText.Visibility = rows.Count == 0
             ? Visibility.Visible
