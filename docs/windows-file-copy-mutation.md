@@ -70,13 +70,21 @@ A successful primitive return does not by itself mean the operation is committed
 
 ## Validation without GitHub Actions
 
-For the pure standard-library property models, run:
+For the full cross-platform offline gate using Python only, run:
+
+```text
+python tools/test-copy-executor-local.py --repo-root .
+```
+
+That entry point requires neither PowerShell nor the .NET SDK. It runs the existing offline FileOp verifiers plus the Copy executor, Windows handle-binding model and basic-metadata model in one process-independent sequence.
+
+The existing PowerShell wrapper remains available and runs the same Copy-focused verification on top of the established offline gate:
 
 ```powershell
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-That gate needs Python but no .NET SDK. It includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes both the preserved source-attribute mask and destination-owned settable-attribute merge, rejects unsupported source storage-state flags, requires non-settable storage flags to stay out of the `FileBasicInfo` input, requires explicit destination read-attribute access, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, guards the ordering `capture -> destination create/read access -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`, and requires the concrete regression to exercise every advertised safe attribute with its expected metadata established after validation.
+The offline gate includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes both the preserved source-attribute mask and destination-owned settable-attribute merge, rejects unsupported source storage-state flags, requires non-settable storage flags to stay out of the `FileBasicInfo` input, requires explicit destination read-attribute access, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, guards the ordering `capture -> destination create/read access -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`, and requires the concrete regression to exercise every advertised safe attribute with its expected metadata established after validation.
 
 For the focused real Windows compiler/native gate, run on Windows with Python and the .NET 10 SDK. PowerShell 7 remains supported:
 
