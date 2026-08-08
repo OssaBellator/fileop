@@ -158,22 +158,37 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
             FileAttributes.Encrypted);
         var destinationSafe = (uint)(FileAttributes.ReadOnly | FileAttributes.System);
         var sourceSafe = (uint)(FileAttributes.Hidden | FileAttributes.Archive);
+        var sourceSettableButNotCopied = (uint)(
+            FileAttributes.Temporary |
+            FileAttributes.Offline);
+        var sourceNonSettableStorage = (uint)(
+            FileAttributes.SparseFile |
+            FileAttributes.ReparsePoint |
+            FileAttributes.Compressed |
+            FileAttributes.Encrypted);
 
         var merged = WindowsFileCopyBasicMetadata.MergeDestinationAttributes(
             destinationSettableOwned |
                 destinationNonSettableStorage |
                 destinationSafe,
-            sourceSafe);
+            sourceSafe |
+                sourceSettableButNotCopied |
+                sourceNonSettableStorage |
+                (uint)FileAttributes.Normal);
 
         Assert.AreEqual(sourceSafe, merged & (uint)PreservedAttributes);
         Assert.AreEqual(destinationSettableOwned, merged & destinationSettableOwned);
         Assert.AreEqual(0u, merged & destinationNonSettableStorage);
+        Assert.AreEqual(0u, merged & (uint)FileAttributes.ReparsePoint);
         Assert.AreEqual(0u, merged & (uint)FileAttributes.Normal);
+
+        var unsupportedSourceOnly = WindowsFileCopyBasicMetadata.MergeDestinationAttributes(
+            (uint)FileAttributes.Normal,
+            sourceSettableButNotCopied | sourceNonSettableStorage);
         Assert.AreEqual(
             (uint)FileAttributes.Normal,
-            WindowsFileCopyBasicMetadata.MergeDestinationAttributes(
-                (uint)FileAttributes.Normal,
-                (uint)FileAttributes.Normal));
+            unsupportedSourceOnly,
+            "Unsupported source state must not be introduced; Normal is the explicit clear-all encoding when no retained attributes remain.");
     }
 
     [TestMethod]
