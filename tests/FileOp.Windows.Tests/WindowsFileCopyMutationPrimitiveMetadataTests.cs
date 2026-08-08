@@ -56,9 +56,8 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
                 expectedCreation,
                 expectedAccess,
                 expectedWrite);
-            Assert.AreNotEqual(
-                0,
-                File.GetAttributes(destinationPath) & FileAttributes.Temporary,
+            Assert.IsTrue(
+                (File.GetAttributes(destinationPath) & FileAttributes.Temporary) != 0,
                 "Applying source basic metadata must not clear destination-owned Temporary state.");
         }
         finally
