@@ -2,8 +2,9 @@
 """Compile and inspect FileOp's Copy metadata helper with a local .NET 10 SDK.
 
 This probe is intentionally package-free and does not call any Windows API. It
-compiles the actual helper source against net10.0, then exercises the runtime
-marshaller/reflection contract that can be validated on any .NET 10 host.
+compiles the actual helper source against net10.0, executes the pure metadata
+mask/merge implementation, then exercises the runtime marshaller/reflection
+contract that can be validated on any .NET 10 host.
 """
 from __future__ import annotations
 
@@ -36,12 +37,41 @@ using System.Runtime.InteropServices;
 using FileOp.Windows.Operations;
 using Microsoft.Win32.SafeHandles;
 
+const uint ReadOnly = 0x00000001;
+const uint Hidden = 0x00000002;
+const uint SystemAttribute = 0x00000004;
+const uint Archive = 0x00000020;
+const uint Normal = 0x00000080;
+const uint Temporary = 0x00000100;
+const uint Sparse = 0x00000200;
+const uint ReparsePoint = 0x00000400;
+const uint Compressed = 0x00000800;
+const uint Offline = 0x00001000;
+const uint NotContentIndexed = 0x00002000;
+const uint Encrypted = 0x00004000;
+const uint IntegrityStream = 0x00008000;
+const uint Preserved = ReadOnly | Hidden | SystemAttribute | Archive | NotContentIndexed;
+const uint DestinationOwned = Temporary | Offline;
+
 static void Require(bool condition, string message)
 {
     if (!condition)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static uint SelectBits(uint[] bits, int selection)
+{
+    uint value = 0;
+    for (var index = 0; index < bits.Length; index++)
+    {
+        if ((selection & (1 << index)) != 0)
+        {
+            value |= bits[index];
+        }
+    }
+    return value;
 }
 
 static Type Nested(Type owner, string name) =>
@@ -82,6 +112,76 @@ static void Import(MethodInfo method)
 }
 
 var helper = typeof(WindowsFileCopyBasicMetadata);
+var sanitize = Method(helper, "SanitizeAttributes");
+long implementationChecks = 0;
+for (uint raw = 0; raw <= ushort.MaxValue; raw++)
+{
+    var actual = (uint)(sanitize.Invoke(null, new object[] { raw })
+        ?? throw new InvalidOperationException("SanitizeAttributes returned null."));
+    var expected = raw & Preserved;
+    if (expected == 0)
+    {
+        expected = Normal;
+    }
+    Require(actual == expected, $"SanitizeAttributes mismatch for 0x{raw:X8}.");
+    implementationChecks++;
+}
+
+uint fuzz = 0xC0FFEE01;
+for (var index = 0; index < 50_000; index++)
+{
+    fuzz = unchecked((fuzz * 1664525u) + 1013904223u);
+    var actual = (uint)(sanitize.Invoke(null, new object[] { fuzz })
+        ?? throw new InvalidOperationException("SanitizeAttributes returned null."));
+    var expected = fuzz & Preserved;
+    if (expected == 0)
+    {
+        expected = Normal;
+    }
+    Require(actual == expected, $"SanitizeAttributes fuzz mismatch for 0x{fuzz:X8}.");
+    implementationChecks++;
+}
+
+var safeBits = new[] { ReadOnly, Hidden, SystemAttribute, Archive, NotContentIndexed };
+var ignoredSourceBits = new[]
+{
+    Normal,
+    Temporary,
+    Offline,
+    Sparse,
+    ReparsePoint,
+    Compressed,
+    Encrypted,
+    IntegrityStream,
+};
+var destinationOwnedBits = new[] { Temporary, Offline };
+const uint DestinationNoise = Preserved | Normal | Sparse | ReparsePoint | Compressed | Encrypted | IntegrityStream;
+for (var safeSelection = 0; safeSelection < (1 << safeBits.Length); safeSelection++)
+{
+    var sourceSafe = SelectBits(safeBits, safeSelection);
+    for (var ignoredSelection = 0; ignoredSelection < (1 << ignoredSourceBits.Length); ignoredSelection++)
+    {
+        var sourceIgnored = SelectBits(ignoredSourceBits, ignoredSelection);
+        for (var ownedSelection = 0; ownedSelection < (1 << destinationOwnedBits.Length); ownedSelection++)
+        {
+            var destinationOwned = SelectBits(destinationOwnedBits, ownedSelection);
+            var actual = WindowsFileCopyBasicMetadata.MergeDestinationAttributes(
+                DestinationNoise | destinationOwned,
+                sourceSafe | sourceIgnored);
+            var expected = destinationOwned | sourceSafe;
+            if (expected == 0)
+            {
+                expected = Normal;
+            }
+            Require(
+                actual == expected,
+                $"MergeDestinationAttributes mismatch: source=0x{(sourceSafe | sourceIgnored):X8}, destination=0x{(DestinationNoise | destinationOwned):X8}.");
+            implementationChecks++;
+        }
+    }
+}
+Console.WriteLine($"PASS: actual C# metadata mask/merge implementation: {implementationChecks:N0} deterministic checks.");
+
 var basic = Nested(helper, "FileBasicInformation");
 var infoClass = Nested(helper, "FileInfoByHandleClass");
 var byHandle = Nested(helper, "ByHandleFileInformation");
