@@ -144,16 +144,20 @@ def check_repository(root: Path) -> int:
         assert needle not in helper, needle
 
     capture = primitive.index("WindowsFileCopyBasicMetadata.Capture(sourceFile)")
+    destination_read_access = primitive.index(
+        "GenericWrite | FileReadAttributes | Synchronize",
+        capture,
+    )
     suppress = primitive.index(
         "WindowsFileCopyBasicMetadata.SuppressAutomaticTimestampUpdates(destinationFile)",
-        capture,
+        destination_read_access,
     )
     copy = primitive.index("CopyContents(sourceFile, destinationFile)", suppress)
     data_flush = primitive.index("FlushFileBuffers(destinationFile)", copy)
     apply = primitive.index("WindowsFileCopyBasicMetadata.Apply(destinationFile, sourceMetadata)", data_flush)
     metadata_flush = primitive.index("FlushFileBuffers(destinationFile)", apply)
     validate_destination = primitive.index("ValidateCreatedFileHandle(", metadata_flush)
-    assert capture < suppress < copy < data_flush < apply < metadata_flush < validate_destination
+    assert capture < destination_read_access < suppress < copy < data_flush < apply < metadata_flush < validate_destination
 
     for test_name in [
         "BasicMetadataHelperPreservesTimestampsAndSafeAttributes",
@@ -162,6 +166,11 @@ def check_repository(root: Path) -> int:
         "CopyPrimitivePreservesSafeBasicMetadata",
     ]:
         assert test_name in tests, test_name
+
+    helper_test_start = tests.index("public void BasicMetadataHelperPreservesTimestampsAndSafeAttributes()")
+    helper_test_end = tests.index("public void BasicMetadataCaptureDropsUnsupportedStorageStateAttributes()", helper_test_start)
+    helper_test = tests[helper_test_start:helper_test_end]
+    assert "FileAccess.ReadWrite" in helper_test
 
     merge_test_start = tests.index("public void BasicMetadataMergePreservesDestinationOwnedAttributes()")
     merge_test_end = tests.index("public async Task CopyPrimitivePreservesSafeBasicMetadata()", merge_test_start)
@@ -206,7 +215,7 @@ def check_repository(root: Path) -> int:
 
     assert "verify_copy_basic_metadata.py" in wrapper
     assert "WindowsFileCopyMutationPrimitiveMetadataTests" in windows_wrapper
-    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 22
+    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 25
 
 
 def main() -> int:
