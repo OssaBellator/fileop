@@ -258,6 +258,7 @@ def check_repository(repo_root: Path) -> int:
         "sqlite_tests": repo_root / "tests/FileOp.Windows.Tests/SqliteStorageFileTypeAnalyticsTests.cs",
         "classifier_tests": repo_root / "tests/FileOp.Windows.Tests/StorageFileCategoryClassifierTests.cs",
         "protocol_tests": repo_root / "tests/FileOp.Windows.Tests/IndexingStorageProtocolTests.cs",
+        "parity_tests": repo_root / "tests/FileOp.Windows.Tests/StorageFileTypeParityTests.cs",
     }
     missing = [str(path) for path in files.values() if not path.is_file()]
     if missing:
@@ -283,6 +284,7 @@ def check_repository(repo_root: Path) -> int:
         ("sqlite_tests", "AnalyzeFileTypesCountsCrossExtensionHardLinksOnceForPhysicalUsage"),
         ("classifier_tests", 'DataRow(".ts", StorageFileCategory.Code)'),
         ("protocol_tests", "NamedPipeRoundTripReturnsTypedStorageFileTypes"),
+        ("parity_tests", "SqliteAndInMemoryFileTypeAnalysisMatch"),
     ]
     for name, needle in required:
         assert needle in text[name], f"{needle!r} missing from {files[name]}"
