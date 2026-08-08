@@ -137,13 +137,15 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
                     validation.DestinationDirectory));
             await lease.DisposeAsync();
 
-            Assert.AreEqual("source-content", await File.ReadAllTextAsync(destinationPath));
+            // Inspect metadata before any subsequent content read can legitimately
+            // update LastAccessTime through a different handle.
             AssertMetadata(
                 sourcePath,
                 destinationPath,
                 expectedCreation,
                 expectedAccess,
                 expectedWrite);
+            Assert.AreEqual("source-content", await File.ReadAllTextAsync(destinationPath));
         }
         finally
         {
