@@ -203,9 +203,28 @@ def check_repository(root: Path) -> int:
         'public event EventHandler? IntentStateChanged;',
         'ClearActiveSelection();',
         'OpenButton.IsEnabled =',
+        'ReplaceItemsSourceWithoutForgettingSelection(rows);',
     ]
     for needle in required_selection:
         assert needle in s['panex'] + s['panec'], needle
+
+    replacement_guard = re.search(
+        r'private void ReplaceItemsSourceWithoutForgettingSelection\(IReadOnlyList<FileBrowserRow> rows\)\s*'
+        r'\{.*?_restoringSelection = true;.*?FilesList\.ItemsSource = null;.*?'
+        r'FilesList\.ItemsSource = rows;.*?finally\s*\{\s*_restoringSelection = false;\s*\}\s*\}',
+        s['panec'],
+        re.S,
+    )
+    assert replacement_guard, 'ItemsSource replacement must suppress SelectionChanged so remembered paths survive paging'
+
+    apply_method = re.search(
+        r'public void Apply\(.*?\n    \}\n\n    public void SetReady',
+        s['panec'],
+        re.S,
+    )
+    assert apply_method, 'FilesPaneView.Apply not found'
+    assert 'ReplaceItemsSourceWithoutForgettingSelection(rows);' in apply_method.group(0)
+    assert 'FilesList.ItemsSource = null;' not in apply_method.group(0)
 
     required_intent = [
         'Content="Prepare Left → Right"',
@@ -250,7 +269,7 @@ def check_repository(root: Path) -> int:
 
     return (
         len(required_main) + len(required_selection) + len(required_intent) +
-        len(pane_handlers) + len(view_handlers) + 12
+        len(pane_handlers) + len(view_handlers) + 15
     )
 
 
