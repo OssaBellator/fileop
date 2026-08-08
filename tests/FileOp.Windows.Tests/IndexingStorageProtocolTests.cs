@@ -25,8 +25,8 @@ public sealed class IndexingStorageProtocolTests
             var response = await client.AnalyzeStorageAsync(
                 new IndexingStorageAnalysisRequest(
                     0x1234,
-                    @"C:\",
-                    @"C:\Data",
+                    @"C:\Folder\..",
+                    @"C:\Data\Nested\..",
                     MaxEntries: 32),
                 cancellation.Token);
 
@@ -37,6 +37,8 @@ public sealed class IndexingStorageProtocolTests
             Assert.AreEqual(0, response.Analysis.HardLinkAliasCount);
             Assert.AreEqual(1, response.Analysis.Entries.Count);
             Assert.AreEqual("Alpha", response.Analysis.Entries[0].Name);
+            Assert.AreEqual(@"C:\", backend.LastRequest?.VolumeRootPath);
+            Assert.AreEqual(@"C:\Data", backend.LastRequest?.DirectoryPath);
             Assert.AreEqual(32, backend.LastRequest?.MaxEntries);
         }
 
