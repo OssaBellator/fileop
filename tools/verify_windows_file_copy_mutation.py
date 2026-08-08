@@ -128,25 +128,30 @@ def check_repository(root: Path) -> int:
         root
         / "src/FileOp.Windows/Operations/WindowsFileCopyMutationPrimitive.cs"
     )
-    validation_path = (
+    executor_path = root / "src/FileOp.Core/Operations/FileCopyOperationExecutor.cs"
+    tests_path = (
         root
-        / "src/FileOp.Core/Operations/FileOperationExecutionValidation.cs"
+        / "tests/FileOp.Windows.Tests/WindowsFileCopyMutationPrimitiveTests.cs"
     )
     wrapper_path = root / "tools/test-copy-executor-local.ps1"
     missing = [
         str(path)
-        for path in (primitive_path, validation_path, wrapper_path)
+        for path in (primitive_path, executor_path, tests_path, wrapper_path)
         if not path.is_file()
     ]
     if missing:
         raise FileNotFoundError(", ".join(missing))
 
     source = primitive_path.read_text(encoding="utf-8")
-    validation = validation_path.read_text(encoding="utf-8")
+    executor = executor_path.read_text(encoding="utf-8")
+    tests = tests_path.read_text(encoding="utf-8")
     wrapper = wrapper_path.read_text(encoding="utf-8")
 
     required_source = [
         "class WindowsFileCopyMutationPrimitive",
+        "FileCopyMutationRequest request",
+        "request.SourceDirectory.Identity",
+        "request.DestinationDirectory.Identity",
         "NtCreateFile(",
         "RootDirectory",
         "FileCreate",
@@ -167,16 +172,23 @@ def check_repository(root: Path) -> int:
     for needle in required_source:
         assert needle in source, needle
 
-    required_validation = [
-        "FileOperationExecutionValidationRootBinding",
-        "ConditionalWeakTable<",
-        "MutationRootBinding",
-        "BindMutationRoots(rootBinding)",
-        "private FileOperationExecutionValidationItem(FileOperationExecutionValidationItem original)",
-        "Items = Array.AsReadOnly(items.ToArray());",
+    required_executor = [
+        "public sealed record FileCopyMutationRequest(",
+        ".CopyNewFileAsync(new FileCopyMutationRequest(",
+        "freshValidation.SourceDirectory",
+        "freshValidation.DestinationDirectory",
     ]
-    for needle in required_validation:
-        assert needle in validation, needle
+    for needle in required_executor:
+        assert needle in executor, needle
+
+    for test_name in [
+        "CopyCreatesExclusiveIdentityBoundDestinationAndLeaseBlocksDelete",
+        "CollisionAppearingAfterValidationNeverOverwritesExistingFile",
+        "SourceIdentityReplacementAfterValidationFailsBeforeDestinationCreation",
+        "DestinationRootReplacementAfterValidationFailsBeforeCreation",
+        "PrimitiveRejectsRootWithoutStableIdentity",
+    ]:
+        assert test_name in tests, test_name
 
     for forbidden in [
         "File.Copy(",
@@ -188,7 +200,7 @@ def check_repository(root: Path) -> int:
         assert forbidden not in source, forbidden
 
     assert "verify_windows_file_copy_mutation.py" in wrapper
-    return len(required_source) + len(required_validation) + 6
+    return len(required_source) + len(required_executor) + 5 + 6
 
 
 def main() -> int:
