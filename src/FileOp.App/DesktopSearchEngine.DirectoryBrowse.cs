@@ -121,8 +121,8 @@ internal sealed partial class DesktopSearchEngine
                     directoryPath,
                     StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(static record => record.IsDirectory)
-            .ThenBy(static record => record.Name, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(static record => record.Path, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static record => record.Name.ToLowerInvariant(), StringComparer.Ordinal)
+            .ThenBy(static record => record.Path.ToLowerInvariant(), StringComparer.Ordinal)
             .ToArray();
 
         IEnumerable<FileRecord> remaining = directChildren;
@@ -157,10 +157,14 @@ internal sealed partial class DesktopSearchEngine
             return rankComparison;
         }
 
-        var nameComparison = StringComparer.OrdinalIgnoreCase.Compare(record.Name, cursor.Name);
+        var nameComparison = StringComparer.Ordinal.Compare(
+            record.Name.ToLowerInvariant(),
+            cursor.Name.ToLowerInvariant());
         return nameComparison != 0
             ? nameComparison
-            : StringComparer.OrdinalIgnoreCase.Compare(record.Path, cursor.Path);
+            : StringComparer.Ordinal.Compare(
+                record.Path.ToLowerInvariant(),
+                cursor.Path.ToLowerInvariant());
     }
 
     private static void ValidateBrowseCursor(FileDirectoryBrowseCursor? cursor, string directoryPath)
