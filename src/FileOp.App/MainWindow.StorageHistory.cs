@@ -9,7 +9,6 @@ namespace FileOp.App;
 public sealed partial class MainWindow
 {
     private const int StorageHistoryDisplayLimit = 90;
-    private static readonly TimeSpan StorageHistoryPostSyncYieldDelay = TimeSpan.FromMilliseconds(250);
 
     private readonly StorageHistoryView _storageHistoryView = new();
     private readonly Button _storageHistoryButton = new()
@@ -54,6 +53,7 @@ public sealed partial class MainWindow
         }
 
         _searchEngine.StateChanged += StorageHistoryEngine_StateChanged;
+        _searchEngine.StorageHistoryCaptured += SearchEngine_StorageHistoryCaptured;
         Closed += StorageHistoryWindow_Closed;
         HandleStorageHistoryEngineState(_searchEngine.State);
     }
@@ -61,6 +61,7 @@ public sealed partial class MainWindow
     private void StorageHistoryWindow_Closed(object sender, WindowEventArgs args)
     {
         _searchEngine.StateChanged -= StorageHistoryEngine_StateChanged;
+        _searchEngine.StorageHistoryCaptured -= SearchEngine_StorageHistoryCaptured;
         _storageHistoryButton.Click -= StorageHistoryButton_Click;
         _storageHistoryView.RefreshRequested -= StorageHistoryView_RefreshRequested;
         Closed -= StorageHistoryWindow_Closed;
@@ -71,11 +72,6 @@ public sealed partial class MainWindow
         if (_closed)
         {
             return;
-        }
-
-        if (state.Mode == DesktopSearchMode.Native && state.IsCurrent && !state.IsBusy)
-        {
-            _ = RunScheduledStorageHistoryCaptureAsync();
         }
 
         if (DispatcherQueue.HasThreadAccess)
@@ -89,6 +85,28 @@ public sealed partial class MainWindow
             if (!_closed)
             {
                 HandleStorageHistoryEngineState(state);
+            }
+        });
+    }
+
+    private void SearchEngine_StorageHistoryCaptured(StorageHistorySnapshot snapshot)
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            _storageHistoryLoadedForSource = false;
+            if (_storageViewMode == StorageViewMode.History)
+            {
+                _ = LoadStorageHistoryAsync(forceRefresh: true);
             }
         });
     }
@@ -162,50 +180,6 @@ public sealed partial class MainWindow
         {
             _ = LoadStorageHistoryAsync(forceRefresh: true);
         }
-    }
-
-    private async Task RunScheduledStorageHistoryCaptureAsync()
-    {
-        try
-        {
-            // Background SyncVolume raises StateChanged before releasing the native gate.
-            // Yield past that callback so this low-priority operation gets one fair,
-            // non-blocking attempt after the synchronization lease is released.
-            await Task.Delay(StorageHistoryPostSyncYieldDelay, _lifetimeCancellation.Token);
-        }
-        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
-        {
-            return;
-        }
-
-        StorageHistoryCaptureAttempt attempt;
-        try
-        {
-            attempt = await _searchEngine.TryCaptureStorageHistoryAsync();
-        }
-        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
-        {
-            return;
-        }
-
-        if (attempt.Kind != StorageHistoryCaptureAttemptKind.Captured || attempt.Snapshot is null || _closed)
-        {
-            return;
-        }
-
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            if (_closed)
-            {
-                return;
-            }
-
-            _storageHistoryLoadedForSource = false;
-            if (_storageViewMode == StorageViewMode.History)
-            {
-                _ = LoadStorageHistoryAsync(forceRefresh: true);
-            }
-        });
     }
 
     private async void StorageHistoryButton_Click(object sender, RoutedEventArgs e)
