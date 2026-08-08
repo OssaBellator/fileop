@@ -176,7 +176,7 @@ public sealed class FileOperationExecutionValidationTests
                 Path.Combine(canonicalSourceRoot, "a.txt"),
                 FileOperationCanonicalPathState.File,
                 IsLeafReparsePoint: true,
-                new FileIdentity(1, 100)),
+                Identity: new FileIdentity(1, 100)),
             [destinationPath] = Missing(destinationPath, Path.Combine(canonicalDestinationRoot, "a.txt")),
         });
         var plan = CreatePlan(
@@ -315,7 +315,7 @@ public sealed class FileOperationExecutionValidationTests
             canonical,
             FileOperationCanonicalPathState.Directory,
             IsLeafReparsePoint: false,
-            identity);
+            Identity: identity);
 
     private static FileOperationCanonicalPath File(
         string requested,
@@ -326,7 +326,7 @@ public sealed class FileOperationExecutionValidationTests
             canonical,
             FileOperationCanonicalPathState.File,
             IsLeafReparsePoint: false,
-            identity);
+            Identity: identity);
 
     private static FileOperationCanonicalPath Missing(
         string requested,
