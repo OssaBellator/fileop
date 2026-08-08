@@ -20,7 +20,7 @@ The Windows engine can read logical size, allocated size, link count, timestamps
 
 Storage analysis consumes the same metadata rows as Search. A directory request returns direct entries with recursive logical bytes, allocated bytes, file count, directory count and hard-link accounting. Whole-root totals are computed before the result limit is applied. If any physical file in an aggregate lacks allocated-size metadata, physical usage remains explicitly unknown instead of substituting logical size as though it were exact.
 
-The WinUI Storage page exposes those results as summary cards, a proportional treemap and a drill-down table. In native mode it analyzes the whole indexed NTFS volume containing the user profile. In crawler fallback mode it analyzes only the already-built user-profile snapshot and states that narrower scope explicitly; it does not launch a second filesystem scan. When exact root allocation is incomplete, the treemap uses logical bytes consistently for all tiles rather than mixing logical and physical weights.
+The WinUI Storage page exposes those results as summary cards, a proportional treemap and a drill-down table. In native mode it analyzes the whole indexed NTFS volume containing the user profile. In crawler fallback mode it analyzes only the already-built user-profile snapshot and states that narrower scope explicitly; it does not launch a second filesystem scan. When exact root allocation is incomplete, the treemap uses logical bytes consistently for all tiles rather than mixing logical and physical weights. If the service truncates the returned direct-entry list, the treemap derives an `Other entries` remainder from the complete root total so omitted children do not disappear from the visual accounting.
 
 A volume is included in service-backed search or storage analysis only when it has a valid durable checkpoint and is not being maintained. If journal consistency requires a resnapshot, that checkpoint is invalidated persistently before the service reports `SnapshotRequired`.
 
@@ -48,6 +48,7 @@ Requirements:
 - .NET 10 SDK
 - Windows 10 1809 or later for the native engine/indexer
 - Windows 10 1809 or later for the desktop app
+- Python 3 for the zero-Actions Storage UI/property verifier
 
 Build the core library and benchmark harness on any supported .NET platform:
 
@@ -66,6 +67,28 @@ dotnet build src/FileOp.App/FileOp.App.csproj -p:Platform=x64
 ```
 
 The desktop build copies the indexer host executable, assembly, dependency manifest and runtime configuration into the application output directory. CI verifies those bundled artifacts and performs a real helper-process handshake using the copy beside the built app.
+
+### Local verification without GitHub Actions
+
+The Storage view has a standard-library-only verifier that does not consume GitHub Actions minutes and does not require the .NET SDK for its pure property tests:
+
+```powershell
+python tools/verify_storage_ui.py --self-test-only
+```
+
+From a repository checkout, run the full structural verifier to parse `MainWindow.xaml`, check required named controls and event-handler wiring, and guard the current treemap/path invariants:
+
+```powershell
+python tools/verify_storage_ui.py
+```
+
+On Windows, `tools/test-local.ps1` mirrors the hosted build/test sequence locally: offline Storage verification, Core and benchmark builds, native Windows/indexer builds, regression/integration tests, WinUI x64 build, bundled-helper artifact verification and the real helper-process handshake from the app output directory.
+
+```powershell
+pwsh -File tools/test-local.ps1
+```
+
+Use `-SkipBenchmarks` for a faster development pass or `-SkipWinUI` when validating only the engine/test stack.
 
 Run the synthetic search or storage-analysis benchmarks separately from CI:
 
@@ -86,6 +109,9 @@ tests/
   FileOp.Windows.Tests/  NTFS, shared-index analytics and indexing-service regression/integration tests
 benchmarks/
   FileOp.Benchmarks/     Synthetic persistent-index search and storage benchmarks
+tools/
+  verify_storage_ui.py  Zero-Actions Storage/XAML/property verifier
+  test-local.ps1        Full local Windows build/test/handshake gate
 docs/
   architecture.md        Architectural decisions and roadmap
   indexing-service.md    Indexing helper trust boundary and desktop integration model
