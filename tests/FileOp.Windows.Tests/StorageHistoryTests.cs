@@ -48,7 +48,10 @@ public sealed class StorageHistoryTests
             Assert.AreEqual(1024L, snapshots[0].AllocatedBytes);
             Assert.AreEqual(4, snapshots[0].UniqueFileCount);
             Assert.AreEqual(3, snapshots[0].Categories.Count);
-            Assert.AreEqual(StorageFileCategory.Archives, snapshots[0].Categories[0].Category);
+            Assert.AreEqual(
+                150L,
+                snapshots[0].Categories.Single(
+                    static category => category.Category == StorageFileCategory.Archives).LogicalBytes);
             Assert.AreEqual(600L, snapshots[1].LogicalBytes);
         }
         finally
