@@ -18,6 +18,8 @@ internal static class WindowsFileCopyBasicMetadata
     private const uint FileAttributeSystem = 0x00000004;
     private const uint FileAttributeArchive = 0x00000020;
     private const uint FileAttributeNormal = 0x00000080;
+    private const uint FileAttributeTemporary = 0x00000100;
+    private const uint FileAttributeOffline = 0x00001000;
     private const uint FileAttributeNotContentIndexed = 0x00002000;
 
     private const uint PreservedAttributeMask =
@@ -26,6 +28,16 @@ internal static class WindowsFileCopyBasicMetadata
         FileAttributeSystem |
         FileAttributeArchive |
         FileAttributeNotContentIndexed;
+
+    // MS-FSA FileBasicInformation permits TEMPORARY and OFFLINE to be changed
+    // through the same basic-information operation. They are destination-owned
+    // for Copy, so preserve their current destination values when overlaying the
+    // source fidelity subset. Compression, sparse, encryption and integrity state
+    // are not in the FileBasicInformation valid-set mask and are left untouched by
+    // the filesystem without carrying those flags through the input structure.
+    private const uint DestinationOwnedSettableAttributeMask =
+        FileAttributeTemporary |
+        FileAttributeOffline;
 
     internal static Snapshot Capture(SafeFileHandle sourceHandle)
     {
@@ -85,9 +97,6 @@ internal static class WindowsFileCopyBasicMetadata
             LastWriteTime = snapshot.LastWriteTime,
             // Zero leaves destination change-time ownership with the filesystem.
             ChangeTime = 0,
-            // FileBasicInfo replaces the settable basic-attribute subset. Merge the
-            // copied safe bits over the destination's current attributes so storage
-            // state that belongs to the destination is not accidentally normalized.
             FileAttributes = MergeDestinationAttributes(
                 destinationInformation.FileAttributes,
                 snapshot.FileAttributes),
@@ -102,7 +111,7 @@ internal static class WindowsFileCopyBasicMetadata
         uint destinationAttributes,
         uint sourceAttributes)
     {
-        var destinationOwned = destinationAttributes & ~(PreservedAttributeMask | FileAttributeNormal);
+        var destinationOwned = destinationAttributes & DestinationOwnedSettableAttributeMask;
         var sourcePreserved = sourceAttributes & PreservedAttributeMask;
         var merged = destinationOwned | sourcePreserved;
         return merged == 0 ? FileAttributeNormal : merged;
