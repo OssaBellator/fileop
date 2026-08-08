@@ -76,7 +76,7 @@ For the full cross-platform offline gate using Python only, run:
 python tools/test-copy-executor-local.py --repo-root .
 ```
 
-That entry point requires neither PowerShell nor the .NET SDK. It runs the existing offline FileOp verifiers plus the Copy executor, Windows handle-binding model and basic-metadata model in one process-independent sequence.
+That entry point requires neither PowerShell nor the .NET SDK. It runs the existing offline FileOp verifiers plus the Copy executor, Windows handle-binding model, basic-metadata model and basic-metadata interop/ABI source guard in one process-independent sequence.
 
 The existing PowerShell wrapper remains available and runs the same Copy-focused verification on top of the established offline gate:
 
@@ -84,7 +84,13 @@ The existing PowerShell wrapper remains available and runs the same Copy-focused
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-The offline gate includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes both the preserved source-attribute mask and destination-owned settable-attribute merge, rejects unsupported source storage-state flags, requires non-settable storage flags to stay out of the `FileBasicInfo` input, requires explicit destination read-attribute access, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, guards the ordering `capture -> destination create/read access -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`, and requires the concrete regression to exercise every advertised safe attribute with its expected metadata established after validation.
+The offline gate includes the executor state/lease model, the Windows namespace/identity model, `verify_copy_basic_metadata.py` and `verify_copy_basic_metadata_abi.py`. The metadata verifier fuzzes both the preserved source-attribute mask and destination-owned settable-attribute merge, rejects unsupported source storage-state flags, requires non-settable storage flags to stay out of the `FileBasicInfo` input, requires explicit destination read-attribute access, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, guards the ordering `capture -> destination create/read access -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`, and requires the concrete regression to exercise every advertised safe attribute with its expected metadata established after validation.
+
+The ABI verifier independently models the unmanaged layout, guards the C# field order, `FileBasicInfo = 0`, `DllImport`/`BOOL` marshalling signatures, timestamp sentinel buffers and inclusion of the .NET reflection regression in the Windows gate. If Clang is available, the same verifier can additionally compile static ABI assertions for both x64 and x86 Windows COFF targets:
+
+```text
+python tools/verify_copy_basic_metadata_abi.py --repo-root . --clang
+```
 
 For the focused real Windows compiler/native gate, run on Windows with Python and the .NET 10 SDK. PowerShell 7 remains supported:
 
@@ -98,9 +104,9 @@ PowerShell 7 is not required. From a stock Windows 10/11 Command Prompt, use the
 tools\test-windows-copy-local.cmd
 ```
 
-The `.cmd` launcher runs `powershell.exe` with a process-local execution-policy override and delegates to the same `.ps1` gate. The gate first runs the zero-Actions property models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs the focused action-history, Copy-executor, mutation-primitive and metadata-regression test classes. Pass `-SkipOfflineModels` to either launcher when the Python gate has already been run. None of these commands invoke GitHub Actions.
+The `.cmd` launcher runs `powershell.exe` with a process-local execution-policy override and delegates to the same `.ps1` gate. The gate first runs the zero-Actions property/source models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs the focused action-history, Copy-executor, mutation-primitive, metadata and interop-reflection test classes. Pass `-SkipOfflineModels` to either launcher when the Python gate has already been run. None of these commands invoke GitHub Actions.
 
-Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported source-attribute filtering, destination-owned settable-attribute merging, destination `Temporary` preservation through the real Win32 helper, omission of non-settable storage flags from `FileBasicInfo`, and metadata preservation through the concrete mutation primitive after the mutation lease is disposed.
+Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported source-attribute filtering, destination-owned settable-attribute merging, destination `Temporary` preservation through the real Win32 helper, omission of non-settable storage flags from `FileBasicInfo`, .NET/native interop layout/signature checks, and metadata preservation through the concrete mutation primitive after the mutation lease is disposed.
 
 ## Next boundary
 
