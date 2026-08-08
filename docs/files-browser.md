@@ -118,16 +118,17 @@ Planned
       -> Running
           -> Succeeded
           -> Failed
-          -> CancellationRequested -> Cancelled
+          -> CancellationRequested -> Cancelled | Succeeded
       -> Failed
-      -> CancellationRequested -> Cancelled
+      -> Cancelled
+  -> Cancelled
 ```
 
-A plan may also go directly from `Planned` to `Cancelled` because no work has started yet.
+Planning and validation can be cancelled immediately because no filesystem mutation is in flight. Only `Running` enters `CancellationRequested`, where an executor must wait for an entry-safe boundary before settling the request.
 
 Progress is monotonic: `CompletedEntryCount` can never decrease or exceed the plan's entry count. `Succeeded` is allowed only after every entry has completed. Failure is terminal and stores a structured code/message/path plus a `Retryable` hint.
 
-User cancellation is deliberately distinct from arbitrary task cancellation. A running or validating operation first becomes `CancellationRequested`; the executor is expected to stop only at an entry-safe boundary. If a late cancellation request arrives while the final in-flight entry is completing, safe-boundary settlement reports `Succeeded` when every entry is already done rather than falsely labelling a fully completed operation as cancelled.
+User cancellation is deliberately distinct from arbitrary task cancellation. Validation can be cancelled immediately; once a mutation is running, normal user cancellation first becomes `CancellationRequested` and is settled only at an entry-safe boundary. If a late cancellation request arrives while the final in-flight entry is completing, safe-boundary settlement reports `Succeeded` when every entry is already done rather than falsely labelling a fully completed operation as cancelled.
 
 The `IFileOperationExecutor` contract exposes `RequestCancellationAsync` separately. Its `ExecuteAsync` cancellation token is named `shutdownCancellationToken` to reserve that token for host/application teardown rather than normal user cancellation of an in-flight file mutation.
 
@@ -156,7 +157,7 @@ Native browsing opens SQLite read-only, takes the existing shared cross-process 
 - per-pane generation checks around `_storageGate`;
 - `BrowseDirectoryAsync` usage and absence of legacy Storage-analysis, direct enumeration or filesystem mutation paths.
 
-`tools/verify_file_operation_state.py` independently models the execution state machine with randomized transitions and source guards. It checks monotonic progress, terminal-state rejection, safe-boundary cancellation including late cancellation, shared Core plan ownership, absence of in-place retry and absence of mutation APIs.
+`tools/verify_file_operation_state.py` independently models the execution state machine with randomized transitions and source guards. It checks monotonic progress, terminal-state rejection, immediate pre-mutation cancellation, safe-boundary running cancellation including late cancellation, shared Core plan ownership, absence of in-place retry and absence of mutation APIs.
 
 `tools/verify_directory_browse.py` separately covers the protocol/service keyset algorithm, read-only SQLite access, lease/checkpoint enforcement and native/fallback source wiring.
 
