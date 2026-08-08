@@ -19,6 +19,7 @@ public sealed class WindowsFileCopyBasicMetadataInteropTests
         var basicType = GetNestedType(helperType, "FileBasicInformation");
         var classType = GetNestedType(helperType, "FileInfoByHandleClass");
 
+        AssertSequentialPack8(basicType);
         Assert.AreEqual(40, Marshal.SizeOf(basicType));
         AssertOffset(basicType, "CreationTime", 0);
         AssertOffset(basicType, "LastAccessTime", 8);
@@ -51,10 +52,12 @@ public sealed class WindowsFileCopyBasicMetadataInteropTests
         var informationType = GetNestedType(helperType, "ByHandleFileInformation");
         var fileTimeType = GetNestedType(helperType, "FileTime");
 
+        AssertSequentialPack8(fileTimeType);
         Assert.AreEqual(8, Marshal.SizeOf(fileTimeType));
         AssertOffset(fileTimeType, "LowDateTime", 0);
         AssertOffset(fileTimeType, "HighDateTime", 4);
 
+        AssertSequentialPack8(informationType);
         Assert.AreEqual(52, Marshal.SizeOf(informationType));
         AssertOffset(informationType, "FileAttributes", 0);
         AssertOffset(informationType, "CreationTime", 4);
@@ -87,6 +90,14 @@ public sealed class WindowsFileCopyBasicMetadataInteropTests
     private static MethodInfo GetPrivateStaticMethod(Type declaringType, string name) =>
         declaringType.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)
         ?? throw new AssertFailedException($"Missing private interop method '{name}'.");
+
+    private static void AssertSequentialPack8(Type type)
+    {
+        var layout = type.StructLayoutAttribute
+            ?? throw new AssertFailedException($"{type.Name} is missing StructLayoutAttribute.");
+        Assert.AreEqual(LayoutKind.Sequential, layout.Value);
+        Assert.AreEqual(8, layout.Pack);
+    }
 
     private static void AssertOffset(Type type, string fieldName, int expected) =>
         Assert.AreEqual(new IntPtr(expected), Marshal.OffsetOf(type, fieldName));
