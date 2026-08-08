@@ -18,6 +18,7 @@ public sealed partial class MainWindow
     private IReadOnlyList<StorageHistorySnapshot> _storageHistorySnapshots = [];
     private string? _storageHistorySourceKey;
     private int _storageHistoryGeneration;
+    private int _storageHistoryLoadingGeneration;
     private bool _storageHistoryInitialized;
     private bool _storageHistoryLoadedForSource;
 
@@ -104,7 +105,7 @@ public sealed partial class MainWindow
             }
 
             _storageHistoryLoadedForSource = false;
-            if (_storageViewMode == StorageViewMode.History)
+            if (_storageViewMode == StorageViewMode.History && _storageHistoryLoadingGeneration == 0)
             {
                 _ = LoadStorageHistoryAsync(forceRefresh: true);
             }
@@ -122,11 +123,15 @@ public sealed partial class MainWindow
         var historyAvailable = _searchEngine.StorageHistoryAvailable;
         _storageHistoryButton.IsEnabled =
             _storageViewMode != StorageViewMode.History && historyAvailable;
-        _storageHistoryView.SetReadyForRefresh(historyAvailable);
+        if (_storageHistoryLoadingGeneration == 0)
+        {
+            _storageHistoryView.SetReadyForRefresh(historyAvailable);
+        }
 
         if (root is null)
         {
             _storageHistoryLoadedForSource = false;
+            _storageHistoryLoadingGeneration = 0;
             if (_storageViewMode == StorageViewMode.History)
             {
                 _storageHistoryView.SetUnavailable(
@@ -145,6 +150,7 @@ public sealed partial class MainWindow
             _storageHistorySourceKey = sourceKey;
             _storageHistorySnapshots = [];
             _storageHistoryLoadedForSource = false;
+            _storageHistoryLoadingGeneration = 0;
             Interlocked.Increment(ref _storageHistoryGeneration);
         }
 
@@ -176,7 +182,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (sourceChanged || !_storageHistoryLoadedForSource)
+        if ((sourceChanged || !_storageHistoryLoadedForSource) && _storageHistoryLoadingGeneration == 0)
         {
             _ = LoadStorageHistoryAsync(forceRefresh: true);
         }
@@ -214,6 +220,7 @@ public sealed partial class MainWindow
         var root = _searchEngine.StorageRootPath;
         if (root is null || !_searchEngine.StorageHistoryAvailable)
         {
+            _storageHistoryLoadingGeneration = 0;
             _storageHistoryView.SetUnavailable(
                 "Native storage history is not currently available.");
             SetStorageStatus("Native storage history is not currently available.");
@@ -226,6 +233,7 @@ public sealed partial class MainWindow
             _storageHistorySourceKey = sourceKey;
             _storageHistorySnapshots = [];
             _storageHistoryLoadedForSource = false;
+            _storageHistoryLoadingGeneration = 0;
             forceRefresh = true;
         }
 
@@ -236,6 +244,7 @@ public sealed partial class MainWindow
         }
 
         var generation = Interlocked.Increment(ref _storageHistoryGeneration);
+        _storageHistoryLoadingGeneration = generation;
         _storageHistoryView.SetLoading("Loading native hourly observations from the shared index database…");
         SetStorageStatus("Loading storage history…");
 
@@ -257,6 +266,7 @@ public sealed partial class MainWindow
 
                 _storageHistorySnapshots = snapshots;
                 _storageHistoryLoadedForSource = true;
+                _storageHistoryLoadingGeneration = 0;
                 ApplyStorageHistory(snapshots, root);
             }
             finally
@@ -272,6 +282,7 @@ public sealed partial class MainWindow
         {
             if (!_closed && generation == Volatile.Read(ref _storageHistoryGeneration))
             {
+                _storageHistoryLoadingGeneration = 0;
                 _storageHistoryView.SetReadyForRefresh(true);
                 SetStorageStatus("Storage history is temporarily busy. Refresh after the other index operation completes.");
             }
@@ -280,8 +291,19 @@ public sealed partial class MainWindow
         {
             if (!_closed && generation == Volatile.Read(ref _storageHistoryGeneration))
             {
+                _storageHistoryLoadingGeneration = 0;
                 _storageHistoryView.SetReadyForRefresh(_searchEngine.StorageHistoryAvailable);
                 SetStorageStatus($"Storage history could not be loaded: {exception.Message}");
+            }
+        }
+        finally
+        {
+            if (!_closed &&
+                generation == Volatile.Read(ref _storageHistoryGeneration) &&
+                _storageHistoryLoadingGeneration == generation)
+            {
+                _storageHistoryLoadingGeneration = 0;
+                _storageHistoryView.SetReadyForRefresh(_searchEngine.StorageHistoryAvailable);
             }
         }
     }
