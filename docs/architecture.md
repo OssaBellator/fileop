@@ -11,8 +11,8 @@ The priorities are speed, transparency, safety and user control. Registry cleane
 ```text
 FileOp.App (WinUI, asInvoker)
       |
-      | shared Search/Storage coordinator
-      |   \-- bounded crawler fallback
+      | shared Search/Storage/history coordinator
+      |   \-- bounded crawler fallback (no history)
       |
       | authenticated versioned named pipe
       v
@@ -212,15 +212,43 @@ The desktop coordinator:
 8. falls back to the bounded user-profile crawler when native indexing is unavailable;
 9. transitions back to fallback if a live native session later becomes unusable.
 
-Search, Folders and Types/Categories already share this lifecycle. History is service-accessible in v5 but is not yet scheduled or presented by the desktop.
+Search, Folders, Types/Categories and native History share this lifecycle. Fallback remains valid for current Search/Storage analysis but does not contribute observations to the native history series.
 
-Fallback-history semantics are deliberately undefined. A static crawler snapshot should not silently join the same series as durable native observations without an explicit source model.
+### Native history scheduling
 
-### UI supersession
+`DesktopSearchEngine` owns automatic history scheduling; it does not depend on a History page or even the Storage page being opened.
+
+When engine state reports a current native index, the scheduler yields briefly after the state notification because background synchronization raises `StateChanged` before releasing the native operation gate. It then attempts both desktop foreground/native gates with `WaitAsync(0)`.
+
+This is deliberately opportunistic:
+
+- existing Search/Storage work wins immediately;
+- desktop-gate contention defers another attempt instead of queueing;
+- service/SQLite `Busy` defers with a longer cooldown;
+- unavailable current-state conditions such as `SnapshotRequired`/elevation defer without creating history;
+- a successful bucket suppresses more automatic captures for that UTC hour.
+
+The service still owns the authoritative hourly bucket, so retries and app restarts remain idempotent at persistence time.
+
+The first desktop policy captures only the **whole primary native volume**. It does not turn every folder visited in Storage into an implicitly tracked time series. Protocol v5 can already represent directory-root history if a future explicit tracking feature needs it.
+
+### UI supersession and history presentation
 
 A newer query/navigation invalidates the visible generation but does not cancel an already-transmitted service request. Stale queued work is discarded before transmission and stale completed work before rendering. Only shutdown deliberately interrupts the active exchange.
 
-A future history scheduler must follow the same rule: capture should run only when foreground native work is idle and must not cancel an in-flight helper exchange.
+Automatic capture follows the same pipe rule: it avoids queueing behind foreground work, but once its named-pipe request has been transmitted it is allowed to finish rather than faulting the reusable session.
+
+Storage now has three views:
+
+- **Folders** — direct-child table and treemap;
+- **Types** — bounded extensions plus exact categories;
+- **History** — persisted native whole-volume observations plus latest-two category deltas.
+
+The History view is a separate WinUI `UserControl` inserted into the existing Storage layout after `MainWindow.InitializeComponent`; the reviewed `MainWindow.xaml` remains unchanged. History queries use the normal foreground service path and may serialize behind an in-progress native operation, but they do not require the current live checkpoint to be valid.
+
+Timeline points use one coherent unit: physical allocation only when every displayed observation has exact allocation, otherwise logical size for the entire series. The “What grew?” panel compares only the newest two observations with `StorageHistoryDelta`; it reports signed growth/shrinkage and does not claim forecasting.
+
+Loaded-empty history is cached like any other result, and recurring synchronization status updates do not reset the visible History summary or stop an active history query.
 
 ## Validation strategy
 
@@ -229,16 +257,17 @@ Hosted CI is useful but not the only gate. FileOp carries reproducible no-Action
 - `verify_storage_ui.py` / `verify_storage_ui_edgecases.py` — XAML, treemap, path and category presentation;
 - `verify_storage_types.py` / `verify_storage_types_fuzz.py` — exact SQLite type/category semantics;
 - `verify_storage_history.py` / `verify_storage_history_unicode.py` — history persistence, deltas, corruption and Unicode root identity;
-- `verify_storage_history_service.py` — protocol-v5 capture/query wiring, 2,000+ timezone bucket cases, service-owned timestamps, live-analysis-before-persist ordering and database-key parity;
+- `verify_storage_history_service.py` — protocol-v5 capture/query wiring, service-owned timestamps, live-analysis-before-persist ordering, contention mapping and database-key parity;
+- `verify_storage_history_ui.py` — engine-owned low-priority scheduling, UTC-hour cadence, whole-volume scope, fallback exclusion, timeline unit consistency and History UserControl/source wiring;
 - `test-local.ps1` — full Windows Core/native/indexer/tests/WinUI/bundled-helper build and real process handshake.
 
 ## Roadmap
 
 ### Fast NTFS/storage engine — current
 
-Implemented foundations include MFT/USN ingestion, durable SQLite metadata, hard-link namespaces, journal-safe mutation/checkpoints, authenticated helper IPC, native-first Search with fallback, multi-instance index leases, directory Storage, treemap drill-down, file-type analytics, exact categories, aggregate history persistence and protocol-v5 history capture/query.
+Implemented foundations include MFT/USN ingestion, durable SQLite metadata, hard-link namespaces, journal-safe mutation/checkpoints, authenticated helper IPC, native-first Search with fallback, multi-instance index leases, directory Storage, treemap drill-down, file-type analytics, exact categories, aggregate history persistence, protocol-v5 history capture/query, low-priority native hourly capture and a read-only growth timeline.
 
-Next engine/lifecycle work includes desktop history capture scheduling/timeline UI, sparse/compressed/reparse semantics, measured search/analytics latency and memory budgets, specialized filename/path acceleration, case-sensitive namespace policy, shadow-index rebuild and broader multi-volume orchestration.
+Next engine/lifecycle work includes sparse/compressed/reparse semantics, measured search/analytics latency and memory budgets, specialized filename/path acceleration, case-sensitive namespace policy, shadow-index rebuild and broader multi-volume orchestration.
 
 ### File manager
 
@@ -246,7 +275,7 @@ Planned: indexed directory browsing, tabs, dual pane, queued copy/move/delete, c
 
 ### Storage intelligence
 
-Planned beyond the current history foundation: historical folder contributors, duplicate discovery, safe cleanup candidates, Downloads/installer analysis and transparent explanations for every reclaim recommendation.
+Planned beyond the current whole-volume history: explicit historical folder contributors, duplicate discovery, safe cleanup candidates, Downloads/installer analysis and transparent explanations for every reclaim recommendation.
 
 ### Disk and performance surfaces
 
