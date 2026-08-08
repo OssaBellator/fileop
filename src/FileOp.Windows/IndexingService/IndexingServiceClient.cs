@@ -93,6 +93,22 @@ public sealed class IndexingServiceClient : IAsyncDisposable, IDisposable
             request,
             cancellationToken);
 
+    public ValueTask<IndexingStorageHistoryCaptureResponse> CaptureStorageHistoryAsync(
+        IndexingStorageHistoryCaptureRequest request,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IndexingStorageHistoryCaptureRequest, IndexingStorageHistoryCaptureResponse>(
+            IndexingServiceOperation.CaptureStorageHistory,
+            request,
+            cancellationToken);
+
+    public ValueTask<IndexingStorageHistoryQueryResponse> GetStorageHistoryAsync(
+        IndexingStorageHistoryQueryRequest request,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IndexingStorageHistoryQueryRequest, IndexingStorageHistoryQueryResponse>(
+            IndexingServiceOperation.GetStorageHistory,
+            request,
+            cancellationToken);
+
     public void Dispose()
     {
         if (_disposed)

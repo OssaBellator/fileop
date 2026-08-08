@@ -25,26 +25,25 @@ FileOp.Core                    FileOp.Windows
   |-- domain/query model         |-- NTFS discovery
   |-- IFileIndex                 |-- MFT namespace enumeration
   |-- SQLite persistence         |-- USN journal reader/coalescer
-  |-- storage analytics          |-- file-ID metadata hydration
+  |-- storage analytics/history  |-- file-ID metadata hydration
   |-- service protocol DTOs      |-- hard-link expansion
   |-- fallback crawler           |-- namespace synchronization
-      |                              |
+      |                              |-- service/pipe backend
       +---------------+--------------+
                       v
-              per-volume indexes
-                  /   |   \
-            search analytics cleanup
+                per-volume SQLite
+          current index + aggregate history
 
 FileOp.Benchmarks
       |
       +---- synthetic Search/Storage baselines
 ```
 
-`FileOp.Core` is discovery-provider independent. Windows filesystem controls, P/Invoke and the helper/pipe implementation remain in `FileOp.Windows`. `FileOp.Indexer` is a thin process host around that backend. Destructive disk administration will use a separate future privileged surface rather than expanding the indexing helper.
+`FileOp.Core` is discovery-provider independent. Windows filesystem controls, P/Invoke and helper/pipe implementation remain in `FileOp.Windows`. `FileOp.Indexer` is a thin process host. Destructive disk administration remains a separate future privileged surface.
 
 ## Unified filesystem model
 
-A persisted file record is more than a path. The core model can carry:
+A persisted file record can carry stable provider identity in addition to its namespace path:
 
 ```text
 FileIdentity   = (VolumeIdentity, FileReferenceNumber)
@@ -53,13 +52,13 @@ ParentIdentity = (VolumeIdentity, ParentFileReferenceNumber)
 
 Path is a namespace attribute, not durable identity. Rename, move and hard-link operations can change names without changing the underlying NTFS file.
 
-Indexed metadata currently includes path/name/extension, logical and allocated size, timestamps, attributes, provider volume identity, file/parent identity and hard-link-relevant state. Expensive metadata such as hashes/content extraction remains lazy work rather than blocking filename/path availability.
+Indexed metadata includes path/name/extension, logical and allocated size, timestamps, attributes, provider volume identity and file/parent identity. Expensive metadata such as hashes and content extraction stays lazy.
 
 ## NTFS ingestion
 
-The native fast path uses supported NTFS metadata interfaces rather than recursively opening every directory:
+The native path uses supported NTFS metadata interfaces rather than recursively opening every directory:
 
-1. discover ready NTFS volumes, serials and stable Windows volume GUID paths when available;
+1. discover ready NTFS volumes and stable volume GUID paths when available;
 2. open the volume device handle;
 3. query journal identity/range;
 4. enumerate MFT-backed namespace records with `FSCTL_ENUM_USN_DATA`;
@@ -67,28 +66,22 @@ The native fast path uses supported NTFS metadata interfaces rather than recursi
 6. hydrate logical size, allocation, link count, timestamps and attributes by file ID;
 7. expand ordinary multi-name hard links;
 8. persist the snapshot plus durable journal checkpoint;
-9. consume subsequent `FSCTL_READ_USN_JOURNAL` batches;
+9. consume `FSCTL_READ_USN_JOURNAL` batches;
 10. normalize rename/upsert/delete/hard-link-refresh events;
 11. commit namespace mutations and checkpoint advancement atomically;
 12. require a fresh snapshot on journal discontinuity or inconsistent namespace evidence.
 
-The current parser handles USN record major version 2 explicitly. Unsupported record formats fail instead of being interpreted using the wrong layout.
+Rename-old/new records may cross read-buffer boundaries, so the coalescer does not advance the durable cursor beyond an unmatched old-name record. Directory renames are subtree moves. Hard-link changes trigger targeted namespace reconciliation.
 
-### Rename and hard-link correctness
+The current path schema is case-insensitive, matching ordinary Windows behavior. Per-directory case-sensitive NTFS namespaces remain an explicit future capability.
 
-Rename-old/new records can cross a read-buffer boundary. The coalescer therefore does not advance the durable cursor beyond an unmatched old-name record. Directory renames are applied as subtree moves so descendants cannot retain stale absolute paths.
+## Volume and database identity
 
-Persistent namespace rows are keyed by path because one physical NTFS file can have multiple names. Stable `FileIdentity` is an indexed relationship across those rows.
+When Windows exposes `\\?\Volume{GUID}\`, FileOp derives the provider volume token from that stable identity; serial-only identity remains a fallback.
 
-For files with multiple links, the snapshot enumerates ordinary hard-link names and requires the observed namespace count to match hydrated link-count evidence. Journal hard-link changes trigger targeted reconciliation. Ordinary metadata changes propagate to every persisted alias row.
+Requests also carry the current volume root because persisted namespace paths are absolute. A drive-letter/root change therefore uses a fresh absolute namespace database even when the physical volume identity is stable.
 
-The current path schema is case-insensitive, matching ordinary Windows behavior. Per-directory case-sensitive NTFS namespaces remain an explicit future capability rather than being represented incorrectly.
-
-## Volume identity
-
-Raw NTFS serials are only 32-bit and can collide across disks. When Windows exposes `\\?\Volume{GUID}\`, FileOp derives the provider volume token from that stable GUID; serial-only identity remains a fallback for environments where the GUID is unavailable.
-
-Requests also carry the current volume root because persisted paths are absolute. A drive-letter change therefore creates a fresh absolute namespace even when the physical volume identity remains stable.
+Every NTFS volume/root pair gets one deterministic SQLite file under the current user's `LocalApplicationData\FileOp\Index`. That database contains the current namespace/index plus additive aggregate-history tables.
 
 ## Shared Storage analytics
 
@@ -107,7 +100,7 @@ Every visible file name contributes logical bytes. Stable hard-linked names shar
 
 Unknown allocated-size metadata stays unknown. FileOp does not substitute logical size and label the result exact physical usage.
 
-These invariants hold when allocation is complete:
+When allocation is complete:
 
 ```text
 sum(directory child allocated bytes) = root allocated bytes
@@ -115,73 +108,93 @@ sum(extension allocated bytes)       = root allocated bytes
 sum(category allocated bytes)        = root allocated bytes
 ```
 
-Logical totals intentionally count all namespace names, including hard-link aliases.
-
 ### File types and exact categories
 
-Extensions are normalized metadata; no content/MIME sniffing occurs. `StorageFileCategoryClassifier` deterministically maps extensions to NoExtension, Documents, Images, Video, Audio, Archives, Applications, Code, Data, DiskImages, Fonts or Other. Ambiguous extensions use one stable policy; `.ts` is Code while `.mts`/`.m2ts` are Video.
+Extensions are normalized metadata; no content/MIME sniffing occurs. `StorageFileCategoryClassifier` deterministically maps extensions into a small fixed category set.
 
-`MaxTypes` bounds only extension rows. Complete root totals and `TypeCount` are calculated before that limit.
+`MaxTypes` bounds only returned extension rows. Complete root totals and `TypeCount` are calculated before that limit, and exact category rows are calculated over the complete extension aggregate set. SQLite performs the recursive subtree/physical-identity work once and emits bounded extension rows plus complete categories.
 
-Protocol v4 also returns exact category rows over the complete extension aggregate set. Category totals therefore remain exact even when the extension table contains only the top N types. A category can legitimately have zero physical bytes when it contains only non-canonical hard-link aliases.
+## Aggregate Storage history
 
-SQLite performs the expensive recursive subtree/physical-identity aggregation once and emits two row kinds from the same query: bounded extension rows plus all category rows. The deterministic classifier is registered on the connection as `fileop_category`. The in-memory fallback groups exact categories from its complete pre-truncation extension set.
+History stores observations of the already-reviewed aggregate model rather than per-file event history.
 
-## Search and analytics performance
+Each observation contains:
 
-SQLite is the durable metadata store and current reference implementation of search/analytics semantics. It is not assumed to be the final Everything/WizTree-class specialized structure.
+- root logical bytes;
+- nullable physical allocation;
+- file-name count;
+- hard-link alias count;
+- complete extension-group count;
+- exact category rows with the same metrics.
 
-`FileOp.Benchmarks` provides synthetic 100k/1M baselines for:
+History uses an independently versioned `storage_history_*` sub-schema in the same per-volume SQLite database. Namespace rebuilds clear current file/checkpoint state without erasing prior trustworthy observations.
 
-- filename/path search;
-- extension/size filtering;
-- recursive directory aggregation;
-- file-type/category aggregation.
+Root uniqueness uses a custom SQLite ordinal-ignore-case collation backed by `StringComparer.OrdinalIgnoreCase`, avoiding SQLite built-in `NOCASE`'s ASCII-only behavior for Windows Unicode paths.
 
-Future specialized filename/path structures or incrementally maintained analytics may sit beside SQLite without changing the public semantics established here.
+`StorageHistoryDelta.Between` produces signed logical/count deltas and nullable physical deltas. Missing categories are known zero baselines; present categories with unknown physical allocation remain unknown. Physical uncertainty by itself is not treated as evidence of growth.
 
 ## Indexing service boundary
 
 `FileOp.Indexer` owns native NTFS indexing and persistent writes for one desktop session. It accepts one authenticated client and exits when that client or launching desktop process exits.
 
-Current **protocol v4** operations are:
+Current **protocol v5** operations are:
 
 - Hello / GetVolumes / GetStatus;
 - RebuildVolume / SyncVolume;
 - Search;
 - AnalyzeStorage;
-- AnalyzeStorageTypes.
+- AnalyzeStorageTypes;
+- CaptureStorageHistory;
+- GetStorageHistory.
 
-Protocol history: v1 established indexing/search, v2 added directory Storage, v3 added file-type analysis, and v4 enriches the existing type-analysis response with exact category rows. Strict version negotiation prevents mismatched desktop/helper binaries from silently disagreeing about the response schema.
+Protocol history:
 
-The pipe uses a random session name, current-user-only ACL, exact connected-client PID verification, non-empty request IDs and an 8 MiB frame cap. Oversized responses return retryable `ResponseTooLarge` while preserving the session. Interrupted exchanges fault the connection rather than risk request/response desynchronization.
+- v1 established indexing/search;
+- v2 added directory Storage;
+- v3 added file-type analysis;
+- v4 enriched type analysis with exact categories;
+- v5 adds aggregate history capture/query.
 
-## Persistence, validity and multi-instance concurrency
+Strict version negotiation prevents mismatched desktop/helper binaries from silently disagreeing about operations or payloads.
 
-Every NTFS volume/root pair has a separate SQLite database. A rebuild of one volume therefore cannot clear another volume's data.
+The pipe uses a random session name, current-user-only ACL, exact connected-client PID verification, non-empty request IDs and an 8 MiB frame cap. Oversized responses return retryable `ResponseTooLarge`; interrupted exchanges fault the session rather than risk request/response desynchronization.
 
-A volume is eligible for service-backed Search/Storage only with a valid durable checkpoint and while no maintenance operation owns it.
+### History service composition
 
-Per-volume coordination has two layers:
+`StorageHistoryIndexingServiceBackend` wraps the reviewed `NtfsIndexingServiceBackend` and delegates all pre-v5 operations unchanged.
+
+`CaptureStorageHistory` accepts volume/root/directory but no client timestamp. It calls the existing native `AnalyzeStorageTypes` path with `MaxTypes = 1`. That live call resolves the attached volume, validates containment, acquires the existing operation gate/shared cross-process lease, validates the durable checkpoint and fully materializes exact category totals.
+
+The service then canonicalizes capture time to the start of the current UTC hour and persists the immutable aggregate. Repeated captures in one hour overwrite the same bucket. The separate history write does not extend the NTFS semantic read lease because the aggregate is already fully materialized.
+
+`GetStorageHistory` requires the physical volume/root to remain attached and validates directory containment, but it does not require a current live checkpoint. Historical observations remain readable while the current namespace needs repair. Detached-volume history browsing is future work.
+
+The wrapper currently mirrors the native backend's deterministic database-key formula. The zero-Actions service verifier guards that parity; centralizing the formula into one shared helper is a later cleanup that should not change database names.
+
+## Persistence, validity and concurrency
+
+Live namespace reads have two coordination layers:
 
 - process-local non-blocking operation gate;
 - cross-process reader/writer file lease.
 
-Search and Storage take shared leases. Rebuild and journal synchronization take an exclusive lease across the entire semantic operation, including checkpoint invalidation. This prevents two independent FileOp helpers from interleaving one multi-transaction snapshot.
+Search and live Storage analytics take shared leases. Rebuild and journal synchronization take an exclusive lease across the entire semantic operation, including checkpoint invalidation. A partial rebuild therefore cannot be exposed as a valid live analysis.
 
-If synchronization requires a fresh snapshot, the durable checkpoint is deleted before `SnapshotRequired` is returned. Invalid state therefore survives helper restarts.
+If synchronization requires a fresh snapshot, the durable checkpoint is deleted before `SnapshotRequired` is returned. Invalid state survives helper restarts.
 
-The current rebuild path temporarily removes the affected volume from reads. Shadow-database rebuild plus atomic swap remains a future improvement for uninterrupted reads.
+History query is independent of live checkpoint validity because persisted observations are validated on write and read. History persistence uses ordinary SQLite transactions in its independent sub-schema.
+
+The current rebuild path temporarily removes the affected volume from live reads. Shadow-database rebuild plus atomic swap remains a future improvement.
 
 ## Privilege policy
 
 `FileOp.App` always remains `asInvoker`. The helper starts unelevated; access denied maps to structured `ElevationRequired`.
 
-Helper-only UAC is currently permitted only for a limited split administrator token, preserving the same Windows account SID. Credential-over-the-shoulder elevation from a standard user is deliberately unsupported until a separately reviewed Windows service/ACL design exists.
+Helper-only UAC is permitted only for a limited split administrator token, preserving the same Windows account SID. Credential-over-the-shoulder elevation from a standard user remains unsupported until a separately reviewed Windows service/ACL design exists.
 
-The helper chooses its index root under the current account's `LocalApplicationData\FileOp\Index`; an elevated helper does not accept arbitrary database paths.
+The helper chooses its index root under the current account's LocalAppData and never accepts an arbitrary database path from the desktop.
 
-The desktop build bundles `FileOp.Indexer` beside the app and resolves only that exact adjacent non-reparse executable. This is not a cryptographic trust assertion. Production packaging still needs Authenticode/publisher verification before elevation is exposed.
+The app bundles `FileOp.Indexer` beside the desktop executable and resolves only that exact adjacent non-reparse helper. This is a deterministic location rule, not an Authenticode trust assertion; production packaging still needs publisher/signature verification before elevation is exposed.
 
 Partition management, formatting, BitLocker changes and other destructive administration remain outside this protocol.
 
@@ -189,7 +202,7 @@ Partition management, formatting, BitLocker changes and other destructive admini
 
 The desktop coordinator:
 
-1. resolves and starts the helper unelevated;
+1. starts the helper unelevated;
 2. discovers the NTFS volume containing the user profile;
 3. builds or resumes a durable snapshot;
 4. replays bounded USN batches until the cursor converges or startup budget expires;
@@ -199,39 +212,33 @@ The desktop coordinator:
 8. falls back to the bounded user-profile crawler when native indexing is unavailable;
 9. transitions back to fallback if a live native session later becomes unusable.
 
-The first-run orchestrator targets the user-profile NTFS volume. Other valid attached-volume databases can participate in Search, while automatic bootstrap of every attached NTFS volume remains future lifecycle work.
+Search, Folders and Types/Categories already share this lifecycle. History is service-accessible in v5 but is not yet scheduled or presented by the desktop.
+
+Fallback-history semantics are deliberately undefined. A static crawler snapshot should not silently join the same series as durable native observations without an explicit source model.
 
 ### UI supersession
 
 A newer query/navigation invalidates the visible generation but does not cancel an already-transmitted service request. Stale queued work is discarded before transmission and stale completed work before rendering. Only shutdown deliberately interrupts the active exchange.
 
-### Storage UI
-
-The WinUI Storage page has Folders and Types modes sharing one current path/source.
-
-Folders provides summary cards, drill-down, direct-entry table and proportional treemap with an exact root-derived `Other entries` tile when children are truncated.
-
-Types provides a bounded extension table and exact category bars from protocol v4. Category completeness is independent of the extension-table result limit. Native and fallback modes use the same UI/controller semantics and neither triggers another filesystem scan.
+A future history scheduler must follow the same rule: capture should run only when foreground native work is idle and must not cancel an in-flight helper exchange.
 
 ## Validation strategy
 
 Hosted CI is useful but not the only gate. FileOp carries reproducible no-Actions validation:
 
-- `tools/verify_storage_ui.py` — XAML/source/treemap/path/exact-category checks;
-- `tools/verify_storage_ui_edgecases.py` — targeted hard-link/category UI regression;
-- `tools/verify_storage_types.py` — exact SQLite v4 query and source/protocol wiring;
-- `tools/verify_storage_types_fuzz.py` — 1,000 randomized SQL/reference parity cases;
-- `tools/test-local.ps1` — full Windows Core/native/indexer/tests/WinUI/bundled-helper build and real process handshake.
-
-The SQL verifier extracts the committed raw query and fails if its executable fixture drifts from source.
+- `verify_storage_ui.py` / `verify_storage_ui_edgecases.py` — XAML, treemap, path and category presentation;
+- `verify_storage_types.py` / `verify_storage_types_fuzz.py` — exact SQLite type/category semantics;
+- `verify_storage_history.py` / `verify_storage_history_unicode.py` — history persistence, deltas, corruption and Unicode root identity;
+- `verify_storage_history_service.py` — protocol-v5 capture/query wiring, 2,000+ timezone bucket cases, service-owned timestamps, live-analysis-before-persist ordering and database-key parity;
+- `test-local.ps1` — full Windows Core/native/indexer/tests/WinUI/bundled-helper build and real process handshake.
 
 ## Roadmap
 
-### Fast NTFS engine — current
+### Fast NTFS/storage engine — current
 
-Implemented foundations include MFT/USN ingestion, durable SQLite metadata, hard-link namespaces, journal-safe mutations/checkpoints, authenticated helper IPC, native-first Search with fallback, multi-instance index leases, directory Storage, treemap drill-down, file-type analytics and exact category rollups.
+Implemented foundations include MFT/USN ingestion, durable SQLite metadata, hard-link namespaces, journal-safe mutation/checkpoints, authenticated helper IPC, native-first Search with fallback, multi-instance index leases, directory Storage, treemap drill-down, file-type analytics, exact categories, aggregate history persistence and protocol-v5 history capture/query.
 
-Next engine work includes sparse/compressed/reparse semantics, measured search/analytics latency and memory budgets, specialized filename/path acceleration, case-sensitive namespace policy, shadow-index rebuild and broader multi-volume orchestration.
+Next engine/lifecycle work includes desktop history capture scheduling/timeline UI, sparse/compressed/reparse semantics, measured search/analytics latency and memory budgets, specialized filename/path acceleration, case-sensitive namespace policy, shadow-index rebuild and broader multi-volume orchestration.
 
 ### File manager
 
@@ -239,10 +246,8 @@ Planned: indexed directory browsing, tabs, dual pane, queued copy/move/delete, c
 
 ### Storage intelligence
 
-Implemented: recursive folder sizes, hard-link-aware physical accounting, treemap, extension types and exact categories.
+Planned beyond the current history foundation: historical folder contributors, duplicate discovery, safe cleanup candidates, Downloads/installer analysis and transparent explanations for every reclaim recommendation.
 
-Next: growth history/forecasting, duplicate pipeline, application/storage ownership and explainable cleanup recommendations.
+### Disk and performance surfaces
 
-### Storage administration
-
-Future separate privileged surface: SMART/NVMe health, BitLocker/volume information, TRIM/filesystem diagnostics and partition operations with explicit pre-flight validation/review.
+Planned: SMART/health, volumes/partitions/filesystems, TRIM/defrag controls where appropriate, BitLocker status, storage I/O bottleneck attribution and startup/disk activity diagnostics. Destructive/admin actions remain isolated behind a separately reviewed privileged helper.

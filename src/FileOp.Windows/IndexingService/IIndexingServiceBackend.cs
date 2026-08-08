@@ -41,4 +41,20 @@ public interface IIndexingServiceBackend : IDisposable
             new IndexingServiceException(
                 IndexingServiceErrorCode.InvalidRequest,
                 "This indexing backend does not support storage file-type analytics."));
+
+    ValueTask<IndexingStorageHistoryCaptureResponse> CaptureStorageHistoryAsync(
+        IndexingStorageHistoryCaptureRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromException<IndexingStorageHistoryCaptureResponse>(
+            new IndexingServiceException(
+                IndexingServiceErrorCode.InvalidRequest,
+                "This indexing backend does not support storage history capture."));
+
+    ValueTask<IndexingStorageHistoryQueryResponse> GetStorageHistoryAsync(
+        IndexingStorageHistoryQueryRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromException<IndexingStorageHistoryQueryResponse>(
+            new IndexingServiceException(
+                IndexingServiceErrorCode.InvalidRequest,
+                "This indexing backend does not support storage history queries."));
 }

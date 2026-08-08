@@ -4,7 +4,7 @@
 
 Storage history turns FileOp's current indexed Storage analysis into a compact time series without retaining per-file event history or rescanning the filesystem.
 
-The first history slice stores aggregate observations only:
+Each observation stores aggregate state only:
 
 - root logical bytes;
 - nullable root physical allocation;
@@ -13,9 +13,9 @@ The first history slice stores aggregate observations only:
 - complete extension-group count;
 - exact category rollups for the same observation.
 
-This is enough for future UI to answer questions such as “how much did this root grow?” and “which category drove the change?” while keeping persistence proportional to observations and categories rather than files and time.
+This is enough for future UI to answer “how much did this root grow?” and “which category drove the change?” while keeping persistence proportional to observations and categories rather than files and time.
 
-Folder-level historical contributors are intentionally left for a later slice. Per-file temporal logging is not part of this model.
+Folder-level historical contributors remain a later slice. Per-file temporal logging is not part of this model.
 
 ## Storage model
 
@@ -27,9 +27,9 @@ storage_history_snapshots
 storage_history_categories
 ```
 
-The history objects have their own schema version. The existing core `schema_info` version continues to describe the current namespace/index schema. This keeps optional historical-analytics migrations independent without creating a second database.
+The history objects have their own schema version. The existing core `schema_info` version continues to describe the current namespace/index schema. This keeps historical-analytics migrations independent without creating a second database.
 
-A snapshot row is unique by case-insensitive root path plus UTC capture ticks. Repeating a write for the same root/timestamp updates the root row and replaces its category rows transactionally, making canonical time buckets idempotent for later scheduling.
+A snapshot row is unique by ordinal-ignore-case root path plus UTC capture ticks. The store registers `FILEOP_ORDINAL_NOCASE`, backed by `StringComparer.OrdinalIgnoreCase`, rather than SQLite's ASCII-only built-in `NOCASE`. Repeating a write for the same root/timestamp updates the root row and replaces its category rows transactionally.
 
 Category rows are keyed by snapshot plus `StorageFileCategory`. Foreign-key cascade deletion removes category rows whenever retention deletes the owning snapshot.
 
@@ -39,24 +39,46 @@ The existing `SqliteFileIndex.ClearAsync` clears `files` and durable source chec
 
 That is deliberate: a rebuild changes the current representation of the volume but should not erase trustworthy observations captured before the rebuild.
 
-History is still scoped by root path inside one per-volume/root database. The native indexing architecture creates a fresh database when the same physical disk moves to a different root because current namespace paths are absolute. Historical observations therefore do not silently cross a drive-letter/root-identity change.
+History is scoped by root path inside one per-volume/root database. The native indexing architecture creates a fresh database when the same physical disk moves to a different root because current namespace paths are absolute. Historical observations therefore do not silently cross a drive-letter/root-identity change.
 
-## Snapshot validity boundary
+## Protocol v5 service boundary
 
-`SqliteStorageHistoryStore` is a persistence primitive, not a capture scheduler and not an authority on NTFS snapshot validity.
+Protocol v5 exposes two history operations:
 
-A future service integration must capture only while the existing indexing-service rules say the current namespace is readable:
+```text
+CaptureStorageHistory
+  VolumeIdentity
+  VolumeRootPath
+  DirectoryPath
 
-1. resolve the requested volume/root;
-2. take the process-local operation gate;
-3. take the shared cross-process volume lease;
-4. validate the durable checkpoint;
-5. calculate exact storage/category analytics;
-6. persist the observation before releasing the semantic read lease.
+GetStorageHistory
+  VolumeIdentity
+  VolumeRootPath
+  DirectoryPath
+  Limit
+```
 
-This keeps a historical row tied to a coherent indexed state rather than a partially rebuilt or invalid namespace.
+The capture request deliberately contains **no timestamp**. The indexer owns capture time and canonicalizes it to the start of the current UTC hour. Repeated successful captures for the same root during one hour therefore replace the same observation bucket instead of creating timestamp noise.
 
-The history write changes only `storage_history_*` tables. It must not mutate `files`, source checkpoints or NTFS journal state.
+`GetStorageHistory` defaults to 90 observations and is bounded to the same 4096-row safety ceiling used by the history store. Large framed responses still inherit the existing 8 MiB service cap and `ResponseTooLarge` behavior.
+
+### Capture validity
+
+`StorageHistoryIndexingServiceBackend` wraps the reviewed native backend. Capture first calls native `AnalyzeStorageTypes` with `MaxTypes = 1`.
+
+That call is the trusted semantic read boundary: it resolves the attached volume/root, validates the target path, acquires the process-local operation gate and shared cross-process volume lease, validates the durable NTFS checkpoint, and materializes complete root totals plus exact category rows. Protocol v4/v5 category exactness is independent of the one returned extension row.
+
+Once the immutable aggregate has been materialized successfully, the wrapper persists it to `storage_history_*`. The history SQLite write does not need to keep the NTFS semantic read lease open: a later rebuild cannot retroactively change the already-materialized observation. This keeps the cross-process lease duration limited to filesystem/index reading rather than extending it through an unrelated history transaction.
+
+A failed or `SnapshotRequired` live analysis cannot create history.
+
+### Query validity
+
+Historical observations are independently persisted and validated, so querying history intentionally does **not** require the current namespace checkpoint to remain valid. A previous trustworthy observation should still be readable while the live index needs a rebuild.
+
+The initial service implementation still requires the physical volume/root to be currently attached and resolvable. Offline/detached-volume history browsing remains a separate product decision.
+
+The query reads only `storage_history_*`; it does not scan the filesystem or recalculate live Storage analytics.
 
 ## Accounting semantics
 
@@ -64,7 +86,7 @@ History persists the same logical-versus-physical model as live Storage analytic
 
 Logical bytes describe namespace names. Every visible hard-link name contributes logical bytes and a file-name count.
 
-Physical allocation is counted once per stable `FileIdentity` by live analytics before the history store sees the observation. History never reinterprets or re-deduplicates those numbers.
+Physical allocation is counted once per stable `FileIdentity` by live analytics before the history store sees the observation. History never reinterprets or re-deduplicates those values.
 
 `AllocatedBytes` remains nullable. The store rejects a root marked physically exact if category physical totals do not add back to that root. It also rejects a non-empty root marked physically unknown when every exact category row claims known physical allocation.
 
@@ -89,43 +111,44 @@ Physical deltas are available only when both compared values are known. An absen
 
 Physical uncertainty alone is not treated as evidence of change. If every logical/count metric is unchanged and physical allocation is unknown in both observations, that category is omitted from the changed-category list.
 
-Category deltas are ordered by absolute physical change when available, otherwise absolute logical change. This provides a useful default for a future “what grew?” surface without changing the underlying signed values.
-
-Equivalent root spellings such as `C:\Data` and `c:\data\` compare as the same indexed root.
+Category deltas are ordered by absolute physical change when available, otherwise absolute logical change. Equivalent root spellings compare using ordinal-ignore-case semantics.
 
 ## Retention
 
-The persistence API exposes `PruneBeforeAsync(cutoff)` but deliberately does not choose a product retention cadence yet.
+The persistence API exposes `PruneBeforeAsync(cutoff)` but protocol v5 does not expose deletion/pruning and does not choose a product retention cadence yet.
 
-Scheduling policy belongs with service integration because capture interval, idle-time behavior and retention should be measured against real index sizes and user value. A later slice can choose a canonical time bucket and retention horizon without changing the stored snapshot contract.
-
-Retention is global to the history store/database and cascades category rows transactionally through SQLite foreign keys.
+Capture scheduling and retention policy should be measured against real user value and index sizes. A future desktop/service scheduler can choose when to request hourly-bucket captures and when to prune without changing the stored snapshot contract.
 
 ## Validation without hosted Actions
 
-`tools/verify_storage_history.py` uses only Python's standard library. Its executable checks cover:
+`tools/verify_storage_history.py` covers persistence, Unicode root identity, rebuild survival, retention cascade, corruption rejection and randomized signed-delta reconciliation.
 
-- history schema creation;
-- case-insensitive root lookup;
-- same-root/same-timestamp overwrite identity;
-- namespace-clear survival;
-- retention cascade behavior;
-- an unchanged category with unknown physical allocation;
-- randomized signed-delta reconciliation across all 12 categories.
+`tools/verify_storage_history_service.py` adds protocol/service checks without a .NET SDK:
 
-Repository mode additionally guards source-level invariants: the history store and corruption/delta tests must exist, persisted rows must be revalidated on read, the current `SqliteFileIndex.ClearAsync` must not erase history, and history schema versioning must remain independent of the core index schema.
+- UTC-hour bucket behavior across randomized timezone offsets;
+- protocol v5 capture/query DTO and client/dispatcher wiring;
+- absence of a client-controlled capture timestamp;
+- capture ordering: validated live analytics before persistence;
+- query independence from live analysis/checkpoint state;
+- production indexer host selection;
+- parity between the history wrapper and native backend's deterministic database-key formula.
 
-`tools/test-local.ps1` invokes the history verifier before the full .NET/Windows test stack, so a Windows development machine can run the complete gate without GitHub Actions usage.
+`tests/FileOp.Windows.Tests/IndexingStorageHistoryProtocolTests.cs` adds the real typed named-pipe round trip for capture/query and request validation when the Windows/.NET gate is available.
+
+`tools/test-local.ps1` runs the history and history-service verifiers before the full .NET/Windows test stack, so a Windows development machine can run the complete gate without GitHub Actions usage.
+
+For this service slice, the hourly-bucket property was also exercised over 20,000 randomized timezone-offset cases in the available sandbox; Windows/.NET compilation remains delegated to the local Windows gate rather than being inferred from those Python checks.
 
 ## Deliberate limitations
 
 This slice does not yet:
 
-- schedule automatic captures;
-- expose history through the indexing-service protocol;
-- render a chart or growth list in WinUI;
+- schedule automatic captures from the desktop/background coordinator;
+- render a history chart or “what grew?” list in WinUI;
+- expose retention deletion through IPC;
 - persist direct-folder historical breakdowns;
 - retain per-file historical events;
-- infer deleted-file history from USN records.
+- infer deleted-file history from USN records;
+- browse history for physically detached volumes.
 
-The next vertical slice should integrate capture/query through the indexing service under the existing checkpoint and cross-process lease rules, then add a read-only WinUI growth timeline from those trusted observations.
+The next vertical slice should add a low-priority capture cadence to the existing desktop/native lifecycle and expose a read-only growth timeline using `GetStorageHistory`, without adding another scanner or cancelling in-flight helper exchanges.

@@ -17,9 +17,7 @@ Folders and Types share one current Storage path. **Up** and **Refresh** act on 
 
 Each mode keeps its own last analysis result. Switching modes reuses that cached result only when its `RootPath` still matches the current Storage path and the native/fallback source key has not changed. Otherwise the selected mode requests fresh analytics from the shared source.
 
-Only the visible mode is fetched. Folder and type requests share the existing Storage UI semaphore and the desktop engine's foreground/native gates. Newer view/navigation work invalidates the older generation instead of cancelling an already-transmitted named-pipe exchange, preserving the reviewed IPC session rule.
-
-When native/fallback source ownership changes while Types is visible, the Types-aware state handler runs before the existing folder-only handler and suppresses an otherwise redundant folder refresh. Folder mode retains the existing source-transition behavior.
+Only the visible mode is fetched. Folder and type requests share the existing Storage UI semaphore and the desktop engine's foreground/native gates. Newer work invalidates the older generation instead of cancelling an already-transmitted named-pipe exchange.
 
 ## Summary cards
 
@@ -30,35 +28,34 @@ The existing Storage summary cards remain authoritative in both modes:
 - unique physical files;
 - hard-link aliases.
 
-This keeps folder, extension and category presentations anchored to the same accounting model.
-
 ## Type table
 
-The Types table shows each returned normalized extension with:
+The Types table shows each returned normalized extension with extension display name, deterministic metadata-only category, logical bytes, nullable physical allocation, namespace file count and hard-link aliases.
 
-- extension display name, including an explicit `(no extension)` row;
-- deterministic metadata-only category;
-- logical bytes;
-- nullable physical allocation;
-- namespace file count;
-- hard-link alias count.
+`MaxTypes` bounds only this extension table. The UI reports either all extension groups or `Top N of M extension groups shown` when truncated.
 
-`MaxTypes` bounds only this extension table. The UI reports either all extension groups or `Top N of M extension groups shown` when the response is truncated.
-
-The UI does not perform MIME sniffing or open file contents. Classification is the reviewed engine policy from `StorageFileCategoryClassifier`.
+The UI does not perform MIME sniffing or open file contents.
 
 ## Exact category bars
 
-Protocol v4 enriches the same `AnalyzeStorageTypes` response with an exact `Categories` collection calculated before extension truncation. The UI renders category bars directly from those rows; it no longer derives categories from the returned top-N extension list and no longer needs a synthetic `Other types` approximation.
+Protocol v4 introduced the exact `Categories` collection on `AnalyzeStorageTypes`; protocol v5 preserves that response unchanged while adding separate history operations.
 
-Category bars use one coherent unit for the whole analysis:
+The UI renders category bars directly from exact category rows rather than deriving them from returned top-N extensions. Category bars use one coherent unit for the whole analysis:
 
 - when root `AllocatedBytes` is complete, bars represent hard-link-deduplicated physical allocation;
 - otherwise every bar uses logical bytes.
 
-The view never mixes physical and logical bytes in one chart. Category logical/file/alias/type counts reconcile to the complete analysis root even when only one extension row is returned.
+An exact category may legitimately have zero physical bytes when it contains only non-canonical hard-link aliases whose allocation is attributed elsewhere.
 
-An exact category may legitimately have zero physical bytes when it contains only non-canonical hard-link aliases whose allocation is attributed to another extension/category. That row remains meaningful because it describes namespace membership while physical disk usage is accounted for elsewhere.
+## Native and fallback behavior
+
+`DesktopSearchEngine.StorageTypes.cs` routes Types through the same foreground/native gates used by Search and folder Storage.
+
+Native mode calls `AnalyzeStorageTypes` on the currently negotiated indexing protocol (v5). `ResponseTooLarge` retries can reduce the bounded extension count while preserving exact category semantics.
+
+Fallback mode calls `InMemoryFileIndex.AnalyzeFileTypesAsync` over the existing profile snapshot. Its exact categories are grouped from complete pre-truncation extension aggregates, so no second crawler or second filesystem pass is required.
+
+Storage history introduced in protocol v5 is currently native-only at the service boundary and is not yet presented by this view. A static crawler fallback snapshot is not silently mixed into native historical observations.
 
 ## Hard-link semantics
 
@@ -67,29 +64,14 @@ Types and Categories inherit the same namespace-versus-physical accounting as th
 - every visible hard-link name contributes logical bytes and a file-name count;
 - physical allocation is attributed once per stable `FileIdentity` to the canonical path inside the analysis root;
 - non-canonical names increment alias counts without adding allocation;
-- category `TypeCount` counts complete extension groups, not only the bounded extension rows shown in the table.
-
-## Native and fallback behavior
-
-`DesktopSearchEngine.StorageTypes.cs` routes the Types request through the same private foreground/native gates used by Search and folder Storage.
-
-Native mode calls protocol-v4 `AnalyzeStorageTypes`. `ResponseTooLarge` is handled by retrying with a smaller bounded extension count while preserving the healthy helper session. The exact category collection remains bounded by the fixed category enum rather than by `MaxTypes`.
-
-Fallback mode calls `InMemoryFileIndex.AnalyzeFileTypesAsync` over the already-built profile snapshot. Its exact categories are grouped from the complete pre-truncation extension aggregates, so no second crawler or second index pass is required.
+- category `TypeCount` counts complete extension groups, not only bounded extension rows shown in the table.
 
 ## Validation without hosted Actions
 
-`tools/verify_storage_ui.py` understands the split `MainWindow*.cs` and `DesktopSearchEngine*.cs` partial files. It checks XAML controls/event handlers, native/fallback routing, treemap invariants and the exact-category UI source contract.
+`tools/verify_storage_ui.py` checks the split `MainWindow*.cs` / `DesktopSearchEngine*.cs` source structure, XAML handlers, native/fallback type routes, treemap invariants and exact-category presentation.
 
-Its pure standard-library path covers:
+Its pure standard-library path covers 2,011 binary-treemap geometry cases, treemap truncation/root coverage, exact-category coverage and Windows path containment. `tools/verify_storage_ui_edgecases.py` keeps the zero-physical hard-link category regression explicit.
 
-- 2,011 binary-treemap geometry cases;
-- 4 treemap truncation/root-coverage cases;
-- 4 exact-category coverage cases, including extension truncation and zero-physical alias categories;
-- 9 Windows path-containment cases.
+`tools/verify_storage_types.py` and `verify_storage_types_fuzz.py` cover the exact category SQL contract. `tools/verify_storage_history_service.py` separately guards protocol-v5 history capture/query so history changes cannot silently alter this Types view.
 
-`tools/verify_storage_ui_edgecases.py` keeps the zero-physical hard-link category regression explicit. `tools/verify_storage_types.py` adds 5 deterministic protocol-v4 SQL/category fixtures, and `tools/verify_storage_types_fuzz.py` checks 1,000 randomized nested-directory/hard-link/nullable-allocation cases against an independent reference model using the 142 extension patterns parsed from the committed C# classifier across all 12 category values.
-
-`tools/test-local.ps1` runs these verifiers before the full Windows build/test/WinUI/helper-handshake sequence.
-
-When hosted Actions usage is unavailable, review branches use the repository's `offline/**` convention and a `[skip actions]` review-head commit. This suppresses hosted workflow consumption but is not represented as a Windows compiler/runtime result.
+`tools/test-local.ps1` runs all verifiers before the full Windows build/test/WinUI/helper-handshake sequence.
