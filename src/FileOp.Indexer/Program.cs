@@ -46,7 +46,7 @@ internal static class Program
 
                 Console.CancelKeyPress += CancelOnConsoleInterrupt;
                 var databaseDirectory = Path.Combine(localAppData, "FileOp", "Index");
-                using var backend = new NtfsIndexingServiceBackend(databaseDirectory);
+                using var backend = new StorageHistoryIndexingServiceBackend(databaseDirectory);
                 var dispatcher = new IndexingServiceDispatcher(backend);
                 var server = new IndexingPipeServer(pipeName, parentProcessId, dispatcher);
                 await server.RunSingleClientAsync(lifetimeCancellation.Token).ConfigureAwait(false);
