@@ -82,7 +82,7 @@ public sealed class StorageFileTypeParityTests
             Assert.AreEqual(500L, images.LogicalBytes);
             Assert.AreEqual(256L, images.AllocatedBytes);
             Assert.AreEqual(1, images.HardLinkAliasCount);
-            Assert.AreEqual(2, images.TypeCount);
+            Assert.AreEqual(1, images.TypeCount);
         }
         finally
         {
