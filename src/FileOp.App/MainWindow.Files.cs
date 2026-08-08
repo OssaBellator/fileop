@@ -142,6 +142,12 @@ public sealed partial class MainWindow
 
         if (!sourceAvailable)
         {
+            if (state.IsBusy)
+            {
+                _filesAnalysis = null;
+                Interlocked.Increment(ref _filesGeneration);
+            }
+
             _filesView.SetUnavailable("Indexed Files browsing is temporarily unavailable while the shared index is changing.");
             SetFilesStatus("Files will be available when indexing is ready.");
             return;
@@ -149,7 +155,13 @@ public sealed partial class MainWindow
 
         if (sourceChanged || _filesAnalysis is null || _filesCurrentPath is null)
         {
-            _ = LoadFilesDirectoryAsync(root, forceRefresh: true);
+            var target = _filesCurrentPath;
+            if (string.IsNullOrWhiteSpace(target) || !IsPathWithinRoot(target, root))
+            {
+                target = root;
+            }
+
+            _ = LoadFilesDirectoryAsync(target, forceRefresh: true);
             return;
         }
 
