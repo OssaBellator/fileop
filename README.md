@@ -8,7 +8,7 @@ The product direction is to combine instant file search, power-user file managem
 
 The current implementation has four runtime layers plus a benchmark harness:
 
-- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, in-memory and SQLite-backed indexes, shared directory/file-type/category storage analytics, checkpoint persistence, the fallback crawler and versioned service contracts.
+- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, in-memory and SQLite-backed indexes, shared directory/file-type/category storage analytics, aggregate storage-history persistence/deltas, checkpoint persistence, the fallback crawler and versioned service contracts.
 - `FileOp.Windows` contains the Windows/NTFS engine and indexing-service boundary: NTFS discovery, MFT namespace enumeration, USN journal processing, file-ID metadata hydration, hard-link expansion, transactional namespace synchronization and authenticated named-pipe transport.
 - `FileOp.Indexer` is the on-demand helper that owns native indexing and per-volume persistent-index writes. It starts unelevated; helper-only UAC is limited to same-account split-token administrators so the desktop never changes integrity level or identity.
 - `FileOp.App` is the WinUI 3 desktop shell. Search and Storage share the same native-first metadata source and the same explicit crawler fallback.
@@ -39,6 +39,14 @@ File-type analysis groups the same subtree by normalized extension and determini
 Category rows report logical bytes, nullable physical allocation, file count, hard-link aliases and the complete number of extension groups in that category. If root physical allocation is incomplete, the UI uses logical weighting consistently rather than mixing units. A category may legitimately have zero physical bytes when all of its names are non-canonical hard-link aliases.
 
 The current categories are No Extension, Documents, Images, Video, Audio, Archives, Applications, Code, Data, Disk Images, Fonts and Other. Classification is extension-based only; FileOp does not inspect content to guess MIME types.
+
+### Growth history
+
+`FileOp.Core` now has an aggregate history store for Storage observations. A snapshot persists root logical/physical totals plus the exact category rollups already produced by file-type analysis; it does **not** retain per-file history or trigger another filesystem scan.
+
+History lives in the same per-volume SQLite database as the current index, under an independently versioned `storage_history_*` sub-schema. Namespace rebuilds clear current file/checkpoint state without erasing prior observations. Same-root/same-timestamp writes are idempotent, retention pruning cascades category rows, and signed deltas preserve unknown physical usage whenever either observation is incomplete.
+
+This slice is persistence/domain only. Capture scheduling and the user-facing growth timeline must be integrated through the indexing-service validity/lease boundary so historical observations are taken only from a trustworthy indexed snapshot.
 
 ## Trust and privilege boundary
 
@@ -94,9 +102,11 @@ python tools/verify_storage_ui_edgecases.py
 python tools/verify_storage_types.py --self-test-only
 python tools/verify_storage_types.py
 python tools/verify_storage_types_fuzz.py --cases 1000
+python tools/verify_storage_history.py --self-test-only --cases 1000
+python tools/verify_storage_history.py --cases 1000
 ```
 
-The file-type verifier executes the exact SQLite query from `SqliteStorageAnalytics`, including protocol-v4 bounded type rows and exact category aggregates. The randomized verifier compares that SQL against an independent hard-link/nullable-allocation reference model.
+The file-type verifier executes the exact SQLite query from `SqliteStorageAnalytics`, including protocol-v4 bounded type rows and exact category aggregates. The randomized verifier compares that SQL against an independent hard-link/nullable-allocation reference model. The history verifier exercises idempotent snapshots, rebuild survival, cascade pruning and randomized signed-delta reconciliation.
 
 On Windows, run the complete no-Actions gate:
 
@@ -117,13 +127,13 @@ dotnet run -c Release --project benchmarks/FileOp.Benchmarks -- --filter *Storag
 
 ```text
 src/
-  FileOp.Core/       Search/index/storage domain and service protocol contracts
+  FileOp.Core/       Search/index/storage/history domain and service protocol contracts
   FileOp.Windows/    Windows-native NTFS/USN engine and indexing IPC client/backend
   FileOp.Indexer/    On-demand native indexing helper process
   FileOp.App/        WinUI 3 desktop app with shared native/fallback Search + Storage
 
 tests/
-  FileOp.Windows.Tests/  NTFS, shared-index analytics and service regression/integration tests
+  FileOp.Windows.Tests/  NTFS, shared-index analytics/history and service regression/integration tests
 
 benchmarks/
   FileOp.Benchmarks/     Synthetic persistent-index Search/Storage benchmarks
@@ -133,12 +143,14 @@ tools/
   verify_storage_ui_edgecases.py Targeted Storage UI regressions
   verify_storage_types.py        Exact file-type/category SQL/source verifier
   verify_storage_types_fuzz.py   Randomized SQL/reference parity verifier
+  verify_storage_history.py      Aggregate history SQLite/delta verifier
   test-local.ps1                 Full local Windows build/test/handshake gate
 
 docs/
   architecture.md        Architectural decisions and roadmap
   indexing-service.md    Helper trust boundary and protocol model
   storage-analytics.md   Folder/type/category accounting semantics
+  storage-history.md     Aggregate Storage history persistence and delta semantics
   storage-types-ui.md    WinUI Types/Categories lifecycle and presentation
 ```
 
