@@ -64,6 +64,46 @@ public sealed class WindowsFileCopyMutationPrimitiveTests
     }
 
     [TestMethod]
+    public async Task LeaseBlocksParentDirectoryRenameUntilDisposed()
+    {
+        using var fixture = new CopyFixture();
+        await File.WriteAllTextAsync(fixture.SourcePath, "source-content");
+        var validation = await fixture.ValidateAsync();
+        var lease = await new WindowsFileCopyMutationPrimitive()
+            .CopyNewFileAsync(CreateMutationRequest(validation));
+        var movedDestination = fixture.DestinationDirectory + ".moved";
+        try
+        {
+            var renameWasBlocked = false;
+            try
+            {
+                Directory.Move(fixture.DestinationDirectory, movedDestination);
+            }
+            catch (IOException)
+            {
+                renameWasBlocked = true;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                renameWasBlocked = true;
+            }
+
+            Assert.IsTrue(
+                renameWasBlocked,
+                "The mutation lease must retain a destination-directory handle without delete sharing.");
+            Assert.IsTrue(Directory.Exists(fixture.DestinationDirectory));
+            Assert.IsFalse(Directory.Exists(movedDestination));
+        }
+        finally
+        {
+            await lease.DisposeAsync();
+        }
+
+        Directory.Move(fixture.DestinationDirectory, movedDestination);
+        Assert.IsTrue(Directory.Exists(movedDestination));
+    }
+
+    [TestMethod]
     public async Task CollisionAppearingAfterValidationNeverOverwritesExistingFile()
     {
         using var fixture = new CopyFixture();
