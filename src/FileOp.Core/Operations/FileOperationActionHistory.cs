@@ -50,21 +50,65 @@ public sealed record FileOperationActionEntry(
         DestinationIdentity.HasValue;
 }
 
-public sealed record FileOperationActionHistory(
-    Guid OperationId,
-    DateTimeOffset QueuedAtUtc,
-    DateTimeOffset ValidatedAtUtc,
-    DateTimeOffset StartedAtUtc,
-    DateTimeOffset? CompletedAtUtc,
-    FileOperationKind Kind,
-    FileOperationCollisionPolicy CollisionPolicy,
-    string SourceDirectoryPath,
-    string DestinationDirectoryPath,
-    string CanonicalSourceDirectoryPath,
-    string CanonicalDestinationDirectoryPath,
-    FileOperationActionTerminalState? TerminalState,
-    IReadOnlyList<FileOperationActionEntry> Entries)
+public sealed record FileOperationActionHistory
 {
+    public FileOperationActionHistory(
+        Guid operationId,
+        DateTimeOffset queuedAtUtc,
+        DateTimeOffset validatedAtUtc,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset? completedAtUtc,
+        FileOperationKind kind,
+        FileOperationCollisionPolicy collisionPolicy,
+        string sourceDirectoryPath,
+        string destinationDirectoryPath,
+        string canonicalSourceDirectoryPath,
+        string canonicalDestinationDirectoryPath,
+        FileOperationActionTerminalState? terminalState,
+        IEnumerable<FileOperationActionEntry> entries)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        OperationId = operationId;
+        QueuedAtUtc = queuedAtUtc;
+        ValidatedAtUtc = validatedAtUtc;
+        StartedAtUtc = startedAtUtc;
+        CompletedAtUtc = completedAtUtc;
+        Kind = kind;
+        CollisionPolicy = collisionPolicy;
+        SourceDirectoryPath = sourceDirectoryPath;
+        DestinationDirectoryPath = destinationDirectoryPath;
+        CanonicalSourceDirectoryPath = canonicalSourceDirectoryPath;
+        CanonicalDestinationDirectoryPath = canonicalDestinationDirectoryPath;
+        TerminalState = terminalState;
+        Entries = Array.AsReadOnly(entries.ToArray());
+    }
+
+    public Guid OperationId { get; }
+
+    public DateTimeOffset QueuedAtUtc { get; }
+
+    public DateTimeOffset ValidatedAtUtc { get; }
+
+    public DateTimeOffset StartedAtUtc { get; }
+
+    public DateTimeOffset? CompletedAtUtc { get; }
+
+    public FileOperationKind Kind { get; }
+
+    public FileOperationCollisionPolicy CollisionPolicy { get; }
+
+    public string SourceDirectoryPath { get; }
+
+    public string DestinationDirectoryPath { get; }
+
+    public string CanonicalSourceDirectoryPath { get; }
+
+    public string CanonicalDestinationDirectoryPath { get; }
+
+    public FileOperationActionTerminalState? TerminalState { get; }
+
+    public IReadOnlyList<FileOperationActionEntry> Entries { get; }
+
     public bool RequiresRecovery =>
         TerminalState == FileOperationActionTerminalState.RecoveryRequired ||
         Entries.Any(static entry =>
