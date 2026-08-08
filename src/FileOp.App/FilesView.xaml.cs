@@ -29,6 +29,8 @@ public sealed partial class FilesView : UserControl
         LoadingRing.IsActive = true;
         UpButton.IsEnabled = false;
         RefreshButton.IsEnabled = false;
+        FilesList.ItemsSource = null;
+        EmptyText.Visibility = Visibility.Collapsed;
     }
 
     public void SetUnavailable(string message)
