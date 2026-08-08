@@ -72,7 +72,7 @@ Destination directory
 
 Any pane/tab/path/selection readiness change clears the prepared intent. A prepared intent can then be converted into a queued Copy or Move plan, but preparing or queueing still performs no filesystem write.
 
-The operation plan/intent records and operation/collision enums now live in `FileOp.Core.Operations`; the WinUI surface consumes that shared domain model instead of owning a second App-only copy.
+The operation plan/intent records and operation/collision enums live in `FileOp.Core.Operations`; the WinUI surface consumes that shared domain model instead of owning a second App-only copy.
 
 ## Planned operation queue
 
@@ -108,7 +108,7 @@ Destructive replacement is deliberately not a queue policy yet. Safe replacement
 
 ## Execution contract and state machine
 
-`FileOp.Core.Operations` now defines the execution boundary without providing an implementation that can mutate files.
+`FileOp.Core.Operations` defines the execution boundary without providing an implementation that can mutate files.
 
 The immutable `FileOperationExecutionSnapshot` state sequence is:
 
@@ -136,7 +136,39 @@ The cancellation token on `RequestCancellationAsync` only controls the request c
 
 Failed snapshots do not have an in-place retry transition. A retry creates a new plan after current source/destination state is revalidated. This avoids pretending that replaying a partially completed multi-entry operation is automatically safe or idempotent.
 
-There is still no concrete `IFileOperationExecutor` implementation, no running queue coordinator and no filesystem mutation call in this slice.
+There is still no concrete `IFileOperationExecutor` implementation, no running queue coordinator and no filesystem mutation call.
+
+## Read-only live preflight
+
+`IFileOperationPreflightValidator` and the Windows `WindowsFileOperationPreflightValidator` add a dry-run boundary between queued intent and any future executor. Preflight reads current path metadata only; it does not enumerate directories and does not write, rename, delete or create files.
+
+The Windows path probe uses `File.GetAttributes` on individual captured paths. It classifies each lookup as file, directory, missing, inaccessible or error and records whether the inspected path itself is a reparse point.
+
+Before classifying collisions, preflight rechecks the captured invariants against live state:
+
+- source and destination roots must still be existing ordinary directories;
+- source and destination roots cannot themselves be reparse points;
+- source and destination roots must differ;
+- each source must still be a direct child of the captured source root;
+- the current source leaf name must match the captured name;
+- the live source kind must still match the captured file/directory kind;
+- source entries that are reparse points are blocked;
+- alternate-data-stream names are blocked;
+- a directory cannot target itself or a lexical descendant.
+
+Collision classification is deliberately non-destructive:
+
+```text
+Destination missing      -> Ready
+Destination exists + Ask -> NeedsDecision
+Destination exists + Skip -> Skip
+Destination exists + Stop -> Blocked
+Destination inaccessible/error -> Blocked
+```
+
+A `Ready` preflight result means only that the plan can proceed to a later execution-grade validation. It is **not execution authorization**. The current check does not claim to prove canonical ancestry through every possible junction/reparse ancestor, and any real executor must re-resolve and revalidate paths immediately before mutation.
+
+The preflight probe is cancellable because it performs read-only inspection. That cancellation mechanism is separate from the safe-boundary mutation cancellation contract because no mutation has begun.
 
 ## Native and fallback behavior
 
@@ -146,27 +178,18 @@ Native browsing opens SQLite read-only, takes the existing shared cross-process 
 
 ## Validation without hosted Actions
 
-`tools/verify_files_ui.py` guards the dual-pane browse, selection, prepared-intent and queue boundaries. It checks:
+`tools/verify_files_ui.py` guards the dual-pane browse, selection, prepared-intent and queue boundaries. It checks exact paging, pane/tab isolation, selection lifecycle, immutable plans, collision policy UI and absence of filesystem mutation APIs.
 
-- exact page accumulation with duplicate-boundary suppression;
-- left/right pane and per-tab isolation;
-- maintenance/source invalidation;
-- case-insensitive selection identity and selection preservation during page append;
-- immutable prepared-intent and queued-operation snapshots;
-- same-folder, non-direct-child and recursive-directory target rejection;
-- exact XAML handler wiring;
-- explicit `Ask`, `Skip` and `Stop` collision policies with no replacement policy;
-- per-pane generation checks around `_storageGate`;
-- `BrowseDirectoryAsync` usage and absence of legacy Storage-analysis, direct enumeration or filesystem mutation paths.
+`tools/verify_file_operation_state.py` independently models the execution state machine with randomized transitions and source guards. It checks monotonic progress, terminal-state rejection, immediate pre-mutation cancellation, safe-boundary running cancellation including late cancellation, the single cancellation path, shared Core plan ownership and absence of mutation APIs.
 
-`tools/verify_file_operation_state.py` independently models the execution state machine with randomized transitions and source guards. It checks monotonic progress, terminal-state rejection, immediate pre-mutation cancellation, safe-boundary running cancellation including late cancellation, the single cancellation path, shared Core plan ownership, absence of in-place retry and absence of mutation APIs.
+`tools/verify_file_operation_preflight.py` models live preflight decisions and guards the committed implementation. It covers collision policy classification, source disappearance/type changes, direct-child/name/ADS checks, reparse blocking, recursive targets, inaccessible paths, read-only probing and the absence of enumeration/mutation APIs.
 
 `tools/verify_directory_browse.py` separately covers the protocol/service keyset algorithm, read-only SQLite access, lease/checkpoint enforcement and native/fallback source wiring.
 
-Run the operation-state verifier directly:
+Run the operation preflight verifier directly:
 
 ```powershell
-python tools/verify_file_operation_state.py --repo-root . --cases 20000
+python tools/verify_file_operation_preflight.py --repo-root . --cases 50000
 ```
 
 Or run the whole standard-library suite without the .NET SDK:
@@ -179,4 +202,4 @@ Without `-OfflineOnly`, the local Windows gate continues into the .NET builds, r
 
 ## Next file-manager boundary
 
-The next mutation slice should implement a validation-only/dry-run executor first: resolve every queued source/destination against live filesystem state, classify collisions and produce per-item decisions without writing anything. A later reviewed slice can then add actual Copy semantics, durable action history and undo records on top of that validated boundary before Move is enabled.
+The next slice should surface preflight results in the Files queue UI and add an execution-grade canonical-path validation contract. Actual Copy should remain disabled until that final validation can produce durable action-history/undo records; Move should remain later still because partial cross-volume moves combine copy and deletion failure modes.

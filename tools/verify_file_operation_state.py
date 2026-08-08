@@ -186,13 +186,18 @@ def check_repository(root: Path) -> int:
     execution = source['execution']
     view = source['view']
 
-    for needle in [
+    required_plan = [
         'namespace FileOp.Core.Operations;',
         'public enum FileOperationKind',
         'public enum FileOperationCollisionPolicy',
-        'public sealed record FileOperationIntent(',
+        'public sealed record FileOperationIntent',
+        'public FileOperationIntent(',
+        'IEnumerable<FileOperationEntry>? entries',
+        'var entrySnapshot = entries.ToArray();',
+        'Entries = Array.AsReadOnly(entrySnapshot);',
         'public sealed record FileOperationPlan(',
-    ]:
+    ]
+    for needle in required_plan:
         assert needle in plan, needle
 
     for state in [
@@ -276,7 +281,7 @@ def check_repository(root: Path) -> int:
     assert 'retry creates a new plan' in source['docs']
     assert 'verify_file_operation_state.py' in source['local']
 
-    return len(required_execution) + 5 + 8 + 5 + 12
+    return len(required_plan) + len(required_execution) + 8 + 5 + 12
 
 
 def main() -> int:
