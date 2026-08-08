@@ -70,6 +70,19 @@ public sealed record StorageFileTypeEntry(
     public long TreemapBytes => AllocatedBytes ?? LogicalBytes;
 }
 
+public sealed record StorageFileCategoryEntry(
+    StorageFileCategory Category,
+    long LogicalBytes,
+    long? AllocatedBytes,
+    int FileCount,
+    int HardLinkAliasCount,
+    int TypeCount)
+{
+    public int UniqueFileCount => FileCount - HardLinkAliasCount;
+
+    public long TreemapBytes => AllocatedBytes ?? LogicalBytes;
+}
+
 public sealed record StorageFileTypeAnalysis(
     string RootPath,
     long LogicalBytes,
@@ -80,4 +93,6 @@ public sealed record StorageFileTypeAnalysis(
     IReadOnlyList<StorageFileTypeEntry> Types)
 {
     public int UniqueFileCount => FileCount - HardLinkAliasCount;
+
+    public IReadOnlyList<StorageFileCategoryEntry> Categories { get; init; } = [];
 }
