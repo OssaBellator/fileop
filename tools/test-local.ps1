@@ -75,6 +75,10 @@ Invoke-Step "Offline file operation execution validation verifier" {
     python tools/verify_file_operation_execution_validation.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline file operation action-history verifier" {
+    python tools/verify_file_operation_action_history.py --repo-root $repoRoot --cases 20000
+}
+
 Invoke-Step "Offline paged directory browse verifier" {
     python tools/verify_directory_browse.py --repo-root $repoRoot --cases 10000
 }
