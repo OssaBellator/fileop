@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
 using FileOp.Core.Operations;
+using Microsoft.Data.Sqlite;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace FileOp.Windows.Tests;
@@ -303,9 +304,24 @@ public sealed class FileOperationActionHistoryTests
 
         public void Dispose()
         {
-            if (Directory.Exists(_directory))
+            SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })
+            {
+                try
+                {
+                    File.Delete(DatabasePath + suffix);
+                }
+                catch (IOException)
+                {
+                }
+            }
+
+            try
             {
                 Directory.Delete(_directory, recursive: true);
+            }
+            catch (IOException)
+            {
             }
         }
     }
