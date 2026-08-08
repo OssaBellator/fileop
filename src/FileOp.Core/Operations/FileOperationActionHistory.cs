@@ -69,6 +69,16 @@ public sealed record FileOperationActionHistory
         IEnumerable<FileOperationActionEntry> entries)
     {
         ArgumentNullException.ThrowIfNull(entries);
+        var entrySnapshot = entries.ToArray();
+        if (entrySnapshot.Any(static entry =>
+            entry.Entry.IsDirectory &&
+            entry.State != FileOperationActionEntryState.Skipped))
+        {
+            throw new ArgumentException(
+                "Action-history schema v1 supports mutation state only for files; directory entries may be recorded only as skipped.",
+                nameof(entries));
+        }
+
         OperationId = operationId;
         QueuedAtUtc = queuedAtUtc;
         ValidatedAtUtc = validatedAtUtc;
@@ -81,7 +91,7 @@ public sealed record FileOperationActionHistory
         CanonicalSourceDirectoryPath = canonicalSourceDirectoryPath;
         CanonicalDestinationDirectoryPath = canonicalDestinationDirectoryPath;
         TerminalState = terminalState;
-        Entries = Array.AsReadOnly(entries.ToArray());
+        Entries = Array.AsReadOnly(entrySnapshot);
     }
 
     public Guid OperationId { get; }
