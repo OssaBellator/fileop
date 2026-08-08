@@ -281,7 +281,7 @@ def check_repository(repo_root: Path) -> int:
     required = [
         (history_text, "IStorageHistoryStore"),
         (history_text, "StorageHistoryDelta Between"),
-        (history_text, "AllocatedBytesDelta is not null and not 0"),
+        (history_text, "delta.AllocatedBytesDelta is { } allocatedDelta && allocatedDelta != 0"),
         (store_text, "storage_history_schema_info"),
         (store_text, "UNIQUE(root_path, captured_utc_ticks)"),
         (store_text, "ON DELETE CASCADE"),
