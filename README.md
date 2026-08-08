@@ -11,7 +11,7 @@ The current implementation has four runtime layers plus a benchmark harness:
 - `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, in-memory and SQLite-backed indexes, shared directory/file-type/category storage analytics, aggregate storage-history persistence/deltas, checkpoint persistence, the fallback crawler and versioned service contracts.
 - `FileOp.Windows` contains the Windows/NTFS engine and indexing-service boundary: NTFS discovery, MFT namespace enumeration, USN journal processing, file-ID metadata hydration, hard-link expansion, transactional namespace synchronization, authenticated named-pipe transport and history-aware service composition.
 - `FileOp.Indexer` is the on-demand helper that owns native indexing and per-volume persistent-index writes. It starts unelevated; helper-only UAC is limited to same-account split-token administrators so the desktop never changes integrity level or identity.
-- `FileOp.App` is the WinUI 3 desktop shell. Search and Storage share the same native-first metadata source and explicit crawler fallback.
+- `FileOp.App` is the WinUI 3 desktop shell. Search and Storage share the same native-first metadata source and explicit crawler fallback; native Storage also exposes an aggregate history timeline.
 - `FileOp.Benchmarks` provides synthetic search, directory-aggregation and file-type/category baselines at 100,000 and 1,000,000 files.
 
 The NTFS engine can hydrate logical/allocated size, link count, timestamps and attributes by file ID, preserve multiple hard-link namespace paths, pair rename events, move directory subtrees transactionally, reconcile hard-link changes and commit namespace mutations together with durable USN checkpoints.
@@ -45,7 +45,13 @@ Protocol v5 exposes trusted native history:
 - `CaptureStorageHistory` has no client timestamp. The service first materializes a valid exact-category live analysis, then writes it into the current UTC-hour bucket. Repeated captures in one hour are idempotent replacements.
 - `GetStorageHistory` returns a bounded persisted series. It requires the physical volume/root to remain attached but does not require the current namespace checkpoint to still be valid.
 
-The desktop does not schedule captures or render a timeline yet. Fallback-history semantics are intentionally undefined so a static crawler snapshot cannot silently be mixed into the native durable series.
+The desktop now schedules **whole-primary-volume native observations opportunistically**. Scheduling belongs to `DesktopSearchEngine`, so it does not depend on the Storage page being opened. A capture is attempted only when the native index is current, yields briefly after synchronization, and takes both foreground/native gates with non-blocking acquisition. Existing Search/Storage work therefore wins; contention defers history instead of queuing it ahead of the user. Once a named-pipe capture request has been transmitted it is allowed to complete, preserving the existing IPC synchronization rule.
+
+Within one desktop session, a successful UTC-hour bucket suppresses further automatic captures until the next hour. Server-side bucket idempotency also prevents duplicate rows across retries or app restarts.
+
+Storage now has **Folders, Types and History** modes. History is native-only and intentionally tracks the whole primary indexed volume rather than every folder the user happens to browse. Its timeline displays physical allocation only when every displayed observation has exact allocation; otherwise the entire timeline uses logical size. “What grew?” compares the newest two observations using `StorageHistoryDelta` and shows signed category changes. It does not present forecasting or claim a long-term trend from two points.
+
+Fallback-history semantics remain deliberately undefined so a static crawler snapshot cannot silently be mixed into the native durable series.
 
 ## Trust and privilege boundary
 
@@ -101,9 +107,12 @@ python tools/verify_storage_types_fuzz.py --cases 1000
 python tools/verify_storage_history.py --self-test-only --cases 1000
 python tools/verify_storage_history_unicode.py --self-test-only
 python tools/verify_storage_history_service.py --self-test-only --cases 2000
+python tools/verify_storage_history_ui.py --self-test-only --cases 10000
 ```
 
-Repository-mode variants validate source wiring as well. On Windows, run the complete no-Actions gate:
+Repository-mode variants validate source wiring as well. The history-UI verifier additionally checks engine-owned scheduling, low-priority gate acquisition, whole-volume capture scope, fallback exclusion, consistent timeline units, WinUI UserControl handler wiring and sync-safe loading state.
+
+On Windows, run the complete no-Actions gate:
 
 ```powershell
 pwsh -File tools/test-local.ps1
@@ -125,7 +134,7 @@ src/
   FileOp.Core/       Search/index/storage/history domain and service protocol contracts
   FileOp.Windows/    Windows-native NTFS/USN engine and indexing IPC client/backend
   FileOp.Indexer/    On-demand native indexing helper process
-  FileOp.App/        WinUI 3 desktop app with shared native/fallback Search + Storage
+  FileOp.App/        WinUI 3 desktop app with Search + Folders/Types/History Storage
 
 tests/
   FileOp.Windows.Tests/  NTFS, analytics/history and service regression/integration tests
@@ -141,6 +150,7 @@ tools/
   verify_storage_history.py         Aggregate history SQLite/delta verifier
   verify_storage_history_unicode.py Ordinal-ignore-case history-root verifier
   verify_storage_history_service.py Protocol-v5 capture/query verifier
+  verify_storage_history_ui.py      Native history scheduler/WinUI verifier
   test-local.ps1                    Full local Windows build/test/handshake gate
 
 docs/
