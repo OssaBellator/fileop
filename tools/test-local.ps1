@@ -1,4 +1,5 @@
 param(
+    [switch]$OfflineOnly,
     [switch]$SkipBenchmarks,
     [switch]$SkipWinUI
 )
@@ -20,10 +21,6 @@ function Invoke-Step {
     if ($LASTEXITCODE -ne 0) {
         throw "$Name failed with exit code $LASTEXITCODE."
     }
-}
-
-if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-    throw ".NET SDK is required. Install the .NET 10 SDK before running this verifier."
 }
 
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
@@ -64,6 +61,15 @@ Invoke-Step "Offline Storage history UI/scheduler verifier" {
 
 Invoke-Step "Offline indexed Files browser verifier" {
     python tools/verify_files_ui.py --repo-root $repoRoot --cases 10000
+}
+
+if ($OfflineOnly) {
+    Write-Host "`nPASS: offline FileOp verification completed without GitHub Actions or the .NET SDK." -ForegroundColor Green
+    return
+}
+
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    throw ".NET SDK is required for the build/test portion. Install the .NET 10 SDK or rerun with -OfflineOnly."
 }
 
 Invoke-Step "FileOp.Core Release build" {
