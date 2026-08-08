@@ -7,6 +7,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -18,7 +19,47 @@
                        TextWrapping="Wrap" />
         </StackPanel>
 
-        <Grid Grid.Row="1" Margin="0,18,0,0" ColumnSpacing="12">
+        <Border Grid.Row="1" Margin="0,14,0,0" Padding="12,10"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1" CornerRadius="8">
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Button x:Name="PrepareLeftToRightButton"
+                        Content="Prepare Left → Right"
+                        Click="PrepareLeftToRightButton_Click"
+                        IsEnabled="False"
+                        ToolTipService.ToolTip="Capture the selected Left entries and current Right folder as an operation intent" />
+                <Button x:Name="PrepareRightToLeftButton"
+                        Grid.Column="1"
+                        Content="Prepare Right → Left"
+                        Click="PrepareRightToLeftButton_Click"
+                        IsEnabled="False"
+                        ToolTipService.ToolTip="Capture the selected Right entries and current Left folder as an operation intent" />
+
+                <TextBlock x:Name="IntentText"
+                           Grid.Column="2"
+                           Text="Select one or more entries in a source pane, then prepare a direction. No file operation is executed."
+                           Opacity="0.68"
+                           TextWrapping="Wrap"
+                           VerticalAlignment="Center" />
+
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6">
+                    <Button Content="Copy" IsEnabled="False"
+                            ToolTipService.ToolTip="Execution is intentionally not implemented in this slice" />
+                    <Button Content="Move" IsEnabled="False"
+                            ToolTipService.ToolTip="Execution is intentionally not implemented in this slice" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,12,0,0" ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
