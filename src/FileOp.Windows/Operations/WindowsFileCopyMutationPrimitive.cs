@@ -17,8 +17,8 @@ namespace FileOp.Windows.Operations;
 /// </summary>
 public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitive
 {
-    private const uint GenericRead = 0x80000000;
     private const uint GenericWrite = 0x40000000;
+    private const uint FileReadData = 0x0001;
     private const uint FileTraverse = 0x0020;
     private const uint FileReadAttributes = 0x0080;
     private const uint Synchronize = 0x00100000;
@@ -28,6 +28,7 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
     private const uint FileFlagOpenReparsePoint = 0x00200000;
 
     private const uint FileSequentialOnly = 0x00000004;
+    private const uint FileWriteThrough = 0x00000002;
     private const uint FileSynchronousIoNonAlert = 0x00000020;
     private const uint FileNonDirectoryFile = 0x00000040;
     private const uint FileOpenReparsePoint = 0x00200000;
@@ -98,7 +99,7 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
             sourceFile = OpenRelativeFile(
                 sourceDirectory,
                 sourceLeafName,
-                GenericRead | FileReadAttributes | Synchronize,
+                FileReadData | FileReadAttributes | Synchronize,
                 FileShare.Read,
                 FileOpen,
                 FileSequentialOnly | FileSynchronousIoNonAlert | FileNonDirectoryFile | FileOpenReparsePoint,
@@ -115,7 +116,11 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
                 GenericWrite | FileReadAttributes | Synchronize,
                 FileShare.Read,
                 FileCreate,
-                FileSequentialOnly | FileSynchronousIoNonAlert | FileNonDirectoryFile | FileOpenReparsePoint,
+                FileSequentialOnly |
+                    FileWriteThrough |
+                    FileSynchronousIoNonAlert |
+                    FileNonDirectoryFile |
+                    FileOpenReparsePoint,
                 out var createInformation);
             if (createInformation != FileCreated)
             {
