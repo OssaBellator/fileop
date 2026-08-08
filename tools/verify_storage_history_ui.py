@@ -77,8 +77,6 @@ def check_presentation_properties() -> int:
     assert not _growth_uses_physical(None, 200)
     assert not _growth_uses_physical(100, None)
 
-    # A timeline uses one unit for every point. It must never choose physical
-    # weighting for only the observations whose allocation happens to be known.
     logical = [100, 200, 300]
     allocated = [128, None, 384]
     use_physical = _timeline_uses_physical(allocated)
@@ -129,6 +127,8 @@ def check_repository(repo_root: Path) -> int:
         (engine, "State.Mode == DesktopSearchMode.Native"),
         (main, "_searchEngine.StorageHistoryCaptured += SearchEngine_StorageHistoryCaptured"),
         (main, "_storageHistoryLoadedForSource"),
+        (main, "_storageHistoryLoadingGeneration"),
+        (main, "_storageHistoryView = new StorageHistoryView"),
         (main, "StorageViewMode.History"),
         (main, "fallback snapshot is not mixed"),
         (modes, "InitializeStorageHistoryView()"),
@@ -142,36 +142,37 @@ def check_repository(repo_root: Path) -> int:
     for text, needle in required:
         assert needle in text, f"required history UI invariant missing: {needle}"
 
-    # Scheduled capture is low priority: both desktop gates must be attempted
-    # without waiting. Foreground history query deliberately uses normal waits.
     assert engine.count("WaitAsync(0, _lifetimeCancellation.Token)") >= 2
     query_start = engine.index("public async ValueTask<IReadOnlyList<StorageHistorySnapshot>> GetStorageHistoryAsync")
     query_text = engine[query_start:]
     assert "_searchOperationGate.WaitAsync(_lifetimeCancellation.Token)" in query_text
     assert "_nativeOperationGate.WaitAsync(_lifetimeCancellation.Token)" in query_text
 
-    # Automatic capture is whole-volume only in this slice.
     capture_start = engine.index("new IndexingStorageHistoryCaptureRequest(")
     capture_end = engine.index("_lifetimeCancellation.Token", capture_start)
     capture_text = engine[capture_start:capture_end]
     assert capture_text.count("volume.RootPath") == 2
 
-    # The scheduler must not depend on opening Storage, and MainWindow must not
-    # own another capture loop.
     assert "TryCaptureStorageHistoryAsync" not in main
     assert "StorageHistoryCapture_StateChanged" in engine
 
-    # The existing MainWindow XAML stays untouched; History is a contained
-    # UserControl inserted by the partial code-behind.
     assert "StorageHistoryView" not in main_xaml
     assert "StorageFolderPanel.Parent is Grid" in main
     assert "StorageFoldersButton.Parent is StackPanel" in main
+    assert "private StorageHistoryView _storageHistoryView = null!;" in main
+    assert "private Button _storageHistoryButton = null!;" in main
 
-    # No manual force-capture button is exposed; refresh reads persisted history.
+    # A loaded-empty source is cached, and recurring native sync status updates
+    # cannot reset the view or stop an active history load.
+    assert "if (sourceChanged)" in main
+    assert "_storageHistoryLoadedForSource = true;" in main
+    assert "if (_storageHistoryLoadingGeneration == 0)" in main
+    assert "sourceChanged || !_storageHistoryLoadedForSource" in main
+
     assert "Capture now" not in view_xaml
     assert 'Content="Refresh history"' in view_xaml
 
-    return len(required) + 11 + len(click_handlers)
+    return len(required) + 17 + len(click_handlers)
 
 
 def main() -> int:
