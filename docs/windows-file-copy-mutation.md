@@ -21,7 +21,7 @@ A path-only `File.Copy` would reopen the source and destination namespace after 
 3. opens the source **relative to the source-directory handle** with `NtCreateFile` and `FILE_OPEN_REPARSE_POINT`;
 4. compares the opened source's volume/file identity and final path with the fresh validation item, then captures the supported basic metadata from that same source handle;
 5. creates the destination **relative to the destination-directory handle** with `NtCreateFile`, `FILE_CREATE`, `FILE_WRITE_THROUGH` and `FILE_OPEN_REPARSE_POINT`;
-6. never uses an overwrite/open-if disposition;
+6. disables automatic last-access/last-write timestamp updates for subsequent I/O on that destination handle;
 7. copies bytes through the bound handles and flushes destination data;
 8. applies the supported basic metadata through the already-open destination handle with `SetFileInformationByHandle(FileBasicInfo)`, then requires another `FlushFileBuffers`;
 9. captures the destination's stable identity and final path;
@@ -50,11 +50,13 @@ The supported subset is intentionally narrow:
 - archive;
 - not-content-indexed.
 
+Windows can defer automatic access/write timestamp changes until later I/O or handle close. Immediately after creating the destination handle, FileOp therefore sets its `LastAccessTime` and `LastWriteTime` fields to `-1` through `FileBasicInfo`. Windows defines that value as suppressing automatic updates for subsequent operations on the same handle. FileOp never sends `-2`, which is the value that re-enables those automatic updates, so the explicit source timestamps applied after the byte copy remain stable through the final flush and lease disposal.
+
 `ChangeTime` is not copied. Storage-state attributes that need separate filesystem semantics are also excluded: reparse-point, sparse, compressed, encrypted, offline and temporary state. ACLs, alternate data streams and extended attributes remain separate future boundaries rather than being implied by a byte copy.
 
 ## Durability and failure semantics
 
-Destination creation requests `FILE_WRITE_THROUGH`. After all bytes are written, `FlushFileBuffers` must succeed before metadata is changed. The basic metadata is then applied through the destination handle and a second, final `FlushFileBuffers` must succeed before a lease is returned. The destination handle's generic-write access includes the attribute-write permission required by `FileBasicInfo`.
+Destination creation requests `FILE_WRITE_THROUGH`. Automatic destination access/write timestamp changes are suppressed before the first data write. After all bytes are written, `FlushFileBuffers` must succeed before metadata is changed. The captured basic metadata is then applied through the destination handle and a second, final `FlushFileBuffers` must succeed before a lease is returned. The destination handle's generic-write access includes the attribute-write permission required by `FileBasicInfo`.
 
 The executor has already persisted `MutationStarted` before invoking the primitive, so any exception after destination creation is conservatively settled as recovery-sensitive. The primitive does not guess whether a partial destination should be deleted.
 
@@ -68,7 +70,7 @@ For the pure standard-library property models, run:
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-That gate needs Python but no .NET SDK. It includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes the preserved-attribute mask, rejects unsupported storage-state flags, requires handle-only metadata APIs, and guards the ordering `capture -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`.
+That gate needs Python but no .NET SDK. It includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes the preserved-attribute mask, rejects unsupported storage-state flags, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, and guards the ordering `capture -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`.
 
 For the focused real Windows compiler/native gate, run on Windows with .NET 10:
 
@@ -76,9 +78,9 @@ For the focused real Windows compiler/native gate, run on Windows with .NET 10:
 pwsh -File tools/test-windows-copy-local.ps1
 ```
 
-That script first runs the zero-Actions property models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs only `FileOperationActionHistoryTests`, `FileCopyOperationExecutorTests` and classes whose names contain `WindowsFileCopyMutationPrimitiveTests`. Use `-SkipOfflineModels` when the Python gate has already been run. Neither script invokes GitHub Actions.
+That script first runs the zero-Actions property models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs the focused action-history, Copy-executor, mutation-primitive and metadata-regression test classes. Use `-SkipOfflineModels` when the Python gate has already been run. Neither script invokes GitHub Actions.
 
-Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported attribute filtering, and metadata preservation through the concrete mutation primitive.
+Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported attribute filtering, and metadata preservation through the concrete mutation primitive after the mutation lease is disposed.
 
 ## Next boundary
 
