@@ -55,32 +55,8 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         var queuedAt = NormalizeUtc(plan.QueuedAtUtc);
         var validatedAt = NormalizeUtc(validation.ValidatedAtUtc);
         var startedAt = NormalizeUtc(startedAtUtc);
-        var operationId = FormatOperationId(plan.Id);
-
-        var entries = new FileOperationActionEntry[validation.Items.Count];
-        for (var ordinal = 0; ordinal < validation.Items.Count; ordinal++)
-        {
-            var item = validation.Items[ordinal];
-            var state = item.Decision switch
-            {
-                FileOperationExecutionValidationDecision.Ready => FileOperationActionEntryState.Pending,
-                FileOperationExecutionValidationDecision.Skip => FileOperationActionEntryState.Skipped,
-                _ => throw new InvalidOperationException(
-                    "Only ready/skip execution validation results can begin durable action history."),
-            };
-            entries[ordinal] = new FileOperationActionEntry(
-                ordinal,
-                item.Entry,
-                item.Source.CanonicalPath,
-                item.Destination.CanonicalPath,
-                state,
-                MutationStartedAtUtc: null,
-                CompletedAtUtc: state == FileOperationActionEntryState.Skipped ? startedAt : null,
-                item.Source.Identity,
-                item.Destination.Identity,
-                FileOperationUndoKind.None,
-                Failure: null);
-        }
+        var operationKey = FormatOperationId(plan.Id);
+        var entries = CreateInitialEntries(validation, startedAt);
 
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -119,7 +95,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                         @canonical_destination_directory_path,
                         NULL);
                     """;
-                operation.Parameters.AddWithValue("@operation_id", operationId);
+                operation.Parameters.AddWithValue("@operation_id", operationKey);
                 operation.Parameters.AddWithValue("@queued_utc_ticks", ToUtcTicks(queuedAt));
                 operation.Parameters.AddWithValue("@validated_utc_ticks", ToUtcTicks(validatedAt));
                 operation.Parameters.AddWithValue("@started_utc_ticks", ToUtcTicks(startedAt));
@@ -136,96 +112,17 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 await operation.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            using (var entryCommand = connection.CreateCommand())
+            using (var entryCommand = CreateEntryInsertCommand(connection, transaction))
             {
-                entryCommand.Transaction = transaction;
-                entryCommand.CommandText = """
-                    INSERT INTO file_operation_action_entries(
-                        operation_id,
-                        ordinal,
-                        source_path,
-                        source_name,
-                        is_directory,
-                        canonical_source_path,
-                        canonical_destination_path,
-                        state,
-                        mutation_started_utc_ticks,
-                        completed_utc_ticks,
-                        source_volume_serial,
-                        source_file_reference,
-                        destination_volume_serial,
-                        destination_file_reference,
-                        undo_kind,
-                        failure_code,
-                        failure_message,
-                        failure_path,
-                        failure_retryable)
-                    VALUES(
-                        @operation_id,
-                        @ordinal,
-                        @source_path,
-                        @source_name,
-                        @is_directory,
-                        @canonical_source_path,
-                        @canonical_destination_path,
-                        @state,
-                        NULL,
-                        @completed_utc_ticks,
-                        @source_volume_serial,
-                        @source_file_reference,
-                        @destination_volume_serial,
-                        @destination_file_reference,
-                        @undo_kind,
-                        NULL,
-                        NULL,
-                        NULL,
-                        NULL);
-                    """;
-                entryCommand.Parameters.Add("@operation_id", SqliteType.Text);
-                entryCommand.Parameters.Add("@ordinal", SqliteType.Integer);
-                entryCommand.Parameters.Add("@source_path", SqliteType.Text);
-                entryCommand.Parameters.Add("@source_name", SqliteType.Text);
-                entryCommand.Parameters.Add("@is_directory", SqliteType.Integer);
-                entryCommand.Parameters.Add("@canonical_source_path", SqliteType.Text);
-                entryCommand.Parameters.Add("@canonical_destination_path", SqliteType.Text);
-                entryCommand.Parameters.Add("@state", SqliteType.Integer);
-                entryCommand.Parameters.Add("@completed_utc_ticks", SqliteType.Integer);
-                entryCommand.Parameters.Add("@source_volume_serial", SqliteType.Integer);
-                entryCommand.Parameters.Add("@source_file_reference", SqliteType.Integer);
-                entryCommand.Parameters.Add("@destination_volume_serial", SqliteType.Integer);
-                entryCommand.Parameters.Add("@destination_file_reference", SqliteType.Integer);
-                entryCommand.Parameters.Add("@undo_kind", SqliteType.Integer);
-
                 foreach (var entry in entries)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    entryCommand.Parameters["@operation_id"].Value = operationId;
-                    entryCommand.Parameters["@ordinal"].Value = entry.Ordinal;
-                    entryCommand.Parameters["@source_path"].Value = entry.Entry.Path;
-                    entryCommand.Parameters["@source_name"].Value = entry.Entry.Name;
-                    entryCommand.Parameters["@is_directory"].Value = entry.Entry.IsDirectory ? 1 : 0;
-                    entryCommand.Parameters["@canonical_source_path"].Value = entry.CanonicalSourcePath;
-                    entryCommand.Parameters["@canonical_destination_path"].Value = entry.CanonicalDestinationPath;
-                    entryCommand.Parameters["@state"].Value = (int)entry.State;
-                    entryCommand.Parameters["@completed_utc_ticks"].Value =
-                        entry.CompletedAtUtc is { } completedAt ? ToUtcTicks(completedAt) : DBNull.Value;
-                    SetIdentityParameters(
-                        entryCommand,
-                        "@source_volume_serial",
-                        "@source_file_reference",
-                        entry.SourceIdentity);
-                    SetIdentityParameters(
-                        entryCommand,
-                        "@destination_volume_serial",
-                        "@destination_file_reference",
-                        entry.DestinationIdentity);
-                    entryCommand.Parameters["@undo_kind"].Value = (int)entry.UndoKind;
+                    BindEntryInsert(entryCommand, operationKey, entry);
                     await entryCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
                 }
             }
 
-            transaction.Commit();
-            return new FileOperationActionHistory(
+            var history = new FileOperationActionHistory(
                 plan.Id,
                 queuedAt,
                 validatedAt,
@@ -239,6 +136,9 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 validation.DestinationDirectory.CanonicalPath,
                 TerminalState: null,
                 Array.AsReadOnly(entries));
+            ValidatePersistedHistory(history);
+            transaction.Commit();
+            return history;
         }
         catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
         {
@@ -264,8 +164,6 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             FileOperationActionEntryState.MutationStarted,
             NormalizeUtc(startedAtUtc),
             failure: null,
-            destinationIdentity: null,
-            undoKind: FileOperationUndoKind.None,
             cancellationToken);
 
     public ValueTask<FileOperationActionHistory> MarkEntryFailedBeforeMutationAsync(
@@ -275,7 +173,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         DateTimeOffset failedAtUtc,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(failure);
+        ValidateFailure(failure);
         return TransitionEntryAsync(
             operationId,
             ordinal,
@@ -283,8 +181,6 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             FileOperationActionEntryState.Failed,
             NormalizeUtc(failedAtUtc),
             failure,
-            destinationIdentity: null,
-            undoKind: FileOperationUndoKind.None,
             cancellationToken);
     }
 
@@ -297,8 +193,8 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
     {
         ThrowIfDisposed();
         ValidateOrdinal(ordinal);
-        var committedAt = NormalizeUtc(committedAtUtc);
         var operationKey = FormatOperationId(operationId);
+        var committedAt = NormalizeUtc(committedAtUtc);
 
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -340,7 +236,9 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             command.Parameters.AddWithValue("@undo_kind", (int)FileOperationUndoKind.DeleteCreatedDestination);
             command.Parameters.AddWithValue("@operation_id", operationKey);
             command.Parameters.AddWithValue("@ordinal", ordinal);
-            command.Parameters.AddWithValue("@mutation_started", (int)FileOperationActionEntryState.MutationStarted);
+            command.Parameters.AddWithValue(
+                "@mutation_started",
+                (int)FileOperationActionEntryState.MutationStarted);
             command.Parameters.AddWithValue("@copy_kind", (int)FileOperationKind.Copy);
 
             var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -350,8 +248,13 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                     "A Copy entry can be committed only once, after MutationStarted, while its operation remains active.");
             }
 
+            var history = await LoadRequiredAsync(
+                connection,
+                operationId,
+                cancellationToken,
+                transaction).ConfigureAwait(false);
             transaction.Commit();
-            return await LoadRequiredAsync(connection, operationId, cancellationToken).ConfigureAwait(false);
+            return history;
         }
         finally
         {
@@ -366,7 +269,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         DateTimeOffset failedAtUtc,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(failure);
+        ValidateFailure(failure);
         return TransitionEntryAsync(
             operationId,
             ordinal,
@@ -374,8 +277,6 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             FileOperationActionEntryState.RecoveryRequired,
             NormalizeUtc(failedAtUtc),
             failure,
-            destinationIdentity: null,
-            undoKind: FileOperationUndoKind.None,
             cancellationToken);
     }
 
@@ -391,8 +292,8 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             throw new ArgumentOutOfRangeException(nameof(terminalState));
         }
 
-        var completedAt = NormalizeUtc(completedAtUtc);
         var operationKey = FormatOperationId(operationId);
+        var completedAt = NormalizeUtc(completedAtUtc);
 
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -448,8 +349,13 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 }
             }
 
+            var history = await LoadRequiredAsync(
+                connection,
+                operationId,
+                cancellationToken,
+                transaction).ConfigureAwait(false);
             transaction.Commit();
-            return await LoadRequiredAsync(connection, operationId, cancellationToken).ConfigureAwait(false);
+            return history;
         }
         finally
         {
@@ -526,8 +432,6 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         FileOperationActionEntryState newState,
         DateTimeOffset timestampUtc,
         FileOperationFailure? failure,
-        FileIdentity? destinationIdentity,
-        FileOperationUndoKind undoKind,
         CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
@@ -552,8 +456,8 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                         WHEN @new_state IN (@failed, @recovery_required) THEN @timestamp_utc_ticks
                         ELSE completed_utc_ticks
                     END,
-                    destination_volume_serial = @destination_volume_serial,
-                    destination_file_reference = @destination_file_reference,
+                    destination_volume_serial = NULL,
+                    destination_file_reference = NULL,
                     undo_kind = @undo_kind,
                     failure_code = @failure_code,
                     failure_message = @failure_message,
@@ -570,16 +474,15 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                   );
                 """;
             command.Parameters.AddWithValue("@new_state", (int)newState);
-            command.Parameters.AddWithValue("@mutation_started", (int)FileOperationActionEntryState.MutationStarted);
+            command.Parameters.AddWithValue(
+                "@mutation_started",
+                (int)FileOperationActionEntryState.MutationStarted);
             command.Parameters.AddWithValue("@failed", (int)FileOperationActionEntryState.Failed);
-            command.Parameters.AddWithValue("@recovery_required", (int)FileOperationActionEntryState.RecoveryRequired);
+            command.Parameters.AddWithValue(
+                "@recovery_required",
+                (int)FileOperationActionEntryState.RecoveryRequired);
             command.Parameters.AddWithValue("@timestamp_utc_ticks", ToUtcTicks(timestampUtc));
-            SetIdentityParameters(
-                command,
-                "@destination_volume_serial",
-                "@destination_file_reference",
-                destinationIdentity);
-            command.Parameters.AddWithValue("@undo_kind", (int)undoKind);
+            command.Parameters.AddWithValue("@undo_kind", (int)FileOperationUndoKind.None);
             SetFailureParameters(command, failure);
             command.Parameters.AddWithValue("@operation_id", operationKey);
             command.Parameters.AddWithValue("@ordinal", ordinal);
@@ -592,8 +495,13 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                     $"Entry {ordinal} cannot transition from {expectedState} to {newState} in the current action-history state.");
             }
 
+            var history = await LoadRequiredAsync(
+                connection,
+                operationId,
+                cancellationToken,
+                transaction).ConfigureAwait(false);
             transaction.Commit();
-            return await LoadRequiredAsync(connection, operationId, cancellationToken).ConfigureAwait(false);
+            return history;
         }
         finally
         {
@@ -639,13 +547,13 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 validated_utc_ticks INTEGER NOT NULL,
                 started_utc_ticks INTEGER NOT NULL,
                 completed_utc_ticks INTEGER NULL,
-                kind INTEGER NOT NULL,
-                collision_policy INTEGER NOT NULL,
+                kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 1),
+                collision_policy INTEGER NOT NULL CHECK(collision_policy BETWEEN 0 AND 2),
                 source_directory_path TEXT NOT NULL,
                 destination_directory_path TEXT NOT NULL,
                 canonical_source_directory_path TEXT NOT NULL,
                 canonical_destination_directory_path TEXT NOT NULL,
-                terminal_state INTEGER NULL
+                terminal_state INTEGER NULL CHECK(terminal_state IS NULL OR terminal_state BETWEEN 0 AND 3)
             ) WITHOUT ROWID;
 
             CREATE INDEX IF NOT EXISTS ix_file_operation_actions_started
@@ -653,24 +561,24 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
 
             CREATE TABLE IF NOT EXISTS file_operation_action_entries(
                 operation_id TEXT NOT NULL,
-                ordinal INTEGER NOT NULL,
+                ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
                 source_path TEXT NOT NULL,
                 source_name TEXT NOT NULL,
-                is_directory INTEGER NOT NULL,
+                is_directory INTEGER NOT NULL CHECK(is_directory IN (0, 1)),
                 canonical_source_path TEXT NOT NULL,
                 canonical_destination_path TEXT NOT NULL,
-                state INTEGER NOT NULL,
+                state INTEGER NOT NULL CHECK(state BETWEEN 0 AND 5),
                 mutation_started_utc_ticks INTEGER NULL,
                 completed_utc_ticks INTEGER NULL,
                 source_volume_serial INTEGER NULL,
                 source_file_reference INTEGER NULL,
                 destination_volume_serial INTEGER NULL,
                 destination_file_reference INTEGER NULL,
-                undo_kind INTEGER NOT NULL,
+                undo_kind INTEGER NOT NULL CHECK(undo_kind BETWEEN 0 AND 1),
                 failure_code TEXT NULL,
                 failure_message TEXT NULL,
                 failure_path TEXT NULL,
-                failure_retryable INTEGER NULL,
+                failure_retryable INTEGER NULL CHECK(failure_retryable IS NULL OR failure_retryable IN (0, 1)),
                 PRIMARY KEY(operation_id, ordinal),
                 FOREIGN KEY(operation_id) REFERENCES file_operation_actions(operation_id) ON DELETE CASCADE
             ) WITHOUT ROWID;
@@ -692,6 +600,131 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         return connection;
     }
 
+    private static FileOperationActionEntry[] CreateInitialEntries(
+        FileOperationExecutionValidationResult validation,
+        DateTimeOffset startedAtUtc)
+    {
+        var entries = new FileOperationActionEntry[validation.Items.Count];
+        for (var ordinal = 0; ordinal < validation.Items.Count; ordinal++)
+        {
+            var item = validation.Items[ordinal];
+            var state = item.Decision switch
+            {
+                FileOperationExecutionValidationDecision.Ready => FileOperationActionEntryState.Pending,
+                FileOperationExecutionValidationDecision.Skip => FileOperationActionEntryState.Skipped,
+                _ => throw new InvalidOperationException(
+                    "Only ready/skip execution validation results can begin durable action history."),
+            };
+            entries[ordinal] = new FileOperationActionEntry(
+                ordinal,
+                item.Entry,
+                item.Source.CanonicalPath,
+                item.Destination.CanonicalPath,
+                state,
+                MutationStartedAtUtc: null,
+                CompletedAtUtc: state == FileOperationActionEntryState.Skipped ? startedAtUtc : null,
+                item.Source.Identity,
+                item.Destination.Identity,
+                FileOperationUndoKind.None,
+                Failure: null);
+        }
+
+        return entries;
+    }
+
+    private static SqliteCommand CreateEntryInsertCommand(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO file_operation_action_entries(
+                operation_id,
+                ordinal,
+                source_path,
+                source_name,
+                is_directory,
+                canonical_source_path,
+                canonical_destination_path,
+                state,
+                mutation_started_utc_ticks,
+                completed_utc_ticks,
+                source_volume_serial,
+                source_file_reference,
+                destination_volume_serial,
+                destination_file_reference,
+                undo_kind,
+                failure_code,
+                failure_message,
+                failure_path,
+                failure_retryable)
+            VALUES(
+                @operation_id,
+                @ordinal,
+                @source_path,
+                @source_name,
+                @is_directory,
+                @canonical_source_path,
+                @canonical_destination_path,
+                @state,
+                NULL,
+                @completed_utc_ticks,
+                @source_volume_serial,
+                @source_file_reference,
+                @destination_volume_serial,
+                @destination_file_reference,
+                @undo_kind,
+                NULL,
+                NULL,
+                NULL,
+                NULL);
+            """;
+        command.Parameters.Add("@operation_id", SqliteType.Text);
+        command.Parameters.Add("@ordinal", SqliteType.Integer);
+        command.Parameters.Add("@source_path", SqliteType.Text);
+        command.Parameters.Add("@source_name", SqliteType.Text);
+        command.Parameters.Add("@is_directory", SqliteType.Integer);
+        command.Parameters.Add("@canonical_source_path", SqliteType.Text);
+        command.Parameters.Add("@canonical_destination_path", SqliteType.Text);
+        command.Parameters.Add("@state", SqliteType.Integer);
+        command.Parameters.Add("@completed_utc_ticks", SqliteType.Integer);
+        command.Parameters.Add("@source_volume_serial", SqliteType.Integer);
+        command.Parameters.Add("@source_file_reference", SqliteType.Integer);
+        command.Parameters.Add("@destination_volume_serial", SqliteType.Integer);
+        command.Parameters.Add("@destination_file_reference", SqliteType.Integer);
+        command.Parameters.Add("@undo_kind", SqliteType.Integer);
+        return command;
+    }
+
+    private static void BindEntryInsert(
+        SqliteCommand command,
+        string operationKey,
+        FileOperationActionEntry entry)
+    {
+        command.Parameters["@operation_id"].Value = operationKey;
+        command.Parameters["@ordinal"].Value = entry.Ordinal;
+        command.Parameters["@source_path"].Value = entry.Entry.Path;
+        command.Parameters["@source_name"].Value = entry.Entry.Name;
+        command.Parameters["@is_directory"].Value = entry.Entry.IsDirectory ? 1 : 0;
+        command.Parameters["@canonical_source_path"].Value = entry.CanonicalSourcePath;
+        command.Parameters["@canonical_destination_path"].Value = entry.CanonicalDestinationPath;
+        command.Parameters["@state"].Value = (int)entry.State;
+        command.Parameters["@completed_utc_ticks"].Value =
+            entry.CompletedAtUtc is { } completedAt ? ToUtcTicks(completedAt) : DBNull.Value;
+        SetExistingIdentityParameters(
+            command,
+            "@source_volume_serial",
+            "@source_file_reference",
+            entry.SourceIdentity);
+        SetExistingIdentityParameters(
+            command,
+            "@destination_volume_serial",
+            "@destination_file_reference",
+            entry.DestinationIdentity);
+        command.Parameters["@undo_kind"].Value = (int)entry.UndoKind;
+    }
+
     private static void ValidateBegin(FileOperationExecutionValidationResult validation)
     {
         ArgumentNullException.ThrowIfNull(validation.Plan);
@@ -701,6 +734,16 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         {
             throw new InvalidOperationException(
                 "Durable action history can begin only after execution validation is ready.");
+        }
+
+        if (validation.SourceDirectory.State != FileOperationCanonicalPathState.Directory ||
+            validation.DestinationDirectory.State != FileOperationCanonicalPathState.Directory ||
+            string.IsNullOrWhiteSpace(validation.SourceDirectory.CanonicalPath) ||
+            string.IsNullOrWhiteSpace(validation.DestinationDirectory.CanonicalPath))
+        {
+            throw new ArgumentException(
+                "Execution validation must contain canonical source and destination directories.",
+                nameof(validation));
         }
 
         if (validation.Plan.Intent.Entries.Count == 0 ||
@@ -722,24 +765,40 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                     nameof(validation));
             }
 
-            if (string.IsNullOrWhiteSpace(item.Source.CanonicalPath) ||
+            var expectedSourceState = planned.IsDirectory
+                ? FileOperationCanonicalPathState.Directory
+                : FileOperationCanonicalPathState.File;
+            if (item.Source.State != expectedSourceState ||
+                item.Source.IsLeafReparsePoint ||
+                !item.Source.Identity.HasValue ||
+                string.IsNullOrWhiteSpace(item.Source.CanonicalPath) ||
                 string.IsNullOrWhiteSpace(item.Destination.CanonicalPath))
             {
                 throw new ArgumentException(
-                    "Execution validation must provide canonical source and destination paths.",
+                    "Execution validation does not contain a stable canonical source entry.",
                     nameof(validation));
             }
 
             if (item.Decision == FileOperationExecutionValidationDecision.Ready)
             {
-                if (item.Destination.State != FileOperationCanonicalPathState.Missing)
+                if (item.Destination.State != FileOperationCanonicalPathState.Missing ||
+                    item.Destination.Identity.HasValue)
                 {
                     throw new ArgumentException(
                         "A ready mutation entry must have a missing canonical destination leaf.",
                         nameof(validation));
                 }
             }
-            else if (item.Decision != FileOperationExecutionValidationDecision.Skip)
+            else if (item.Decision == FileOperationExecutionValidationDecision.Skip)
+            {
+                if (!item.Destination.Exists)
+                {
+                    throw new ArgumentException(
+                        "A skipped entry must describe the existing canonical destination.",
+                        nameof(validation));
+                }
+            }
+            else
             {
                 throw new ArgumentException(
                     "Action history cannot begin with blocked or unresolved validation items.",
@@ -760,7 +819,6 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         var hasAmbiguous = history.Entries.Any(static entry =>
             entry.State is FileOperationActionEntryState.MutationStarted or
                 FileOperationActionEntryState.RecoveryRequired);
-
         if (terminalState == FileOperationActionTerminalState.RecoveryRequired)
         {
             if (!hasAmbiguous)
@@ -788,6 +846,15 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         }
     }
 
+    private static void ValidateFailure(FileOperationFailure failure)
+    {
+        ArgumentNullException.ThrowIfNull(failure);
+        if (string.IsNullOrWhiteSpace(failure.Code) || string.IsNullOrWhiteSpace(failure.Message))
+        {
+            throw new ArgumentException("Action-history failures require a code and message.", nameof(failure));
+        }
+    }
+
     private static void ValidateOrdinal(int ordinal)
     {
         if (ordinal < 0)
@@ -812,7 +879,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             failure is null ? DBNull.Value : failure.Retryable ? 1 : 0);
     }
 
-    private static void SetIdentityParameters(
+    private static void SetExistingIdentityParameters(
         SqliteCommand command,
         string volumeParameter,
         string referenceParameter,
@@ -841,9 +908,9 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         SqliteTransaction? transaction = null)
     {
         var operationKey = FormatOperationId(operationId);
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
+        using var operationCommand = connection.CreateCommand();
+        operationCommand.Transaction = transaction;
+        operationCommand.CommandText = """
             SELECT
                 queued_utc_ticks,
                 validated_utc_ticks,
@@ -859,7 +926,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             FROM file_operation_actions
             WHERE operation_id = @operation_id;
             """;
-        command.Parameters.AddWithValue("@operation_id", operationKey);
+        operationCommand.Parameters.AddWithValue("@operation_id", operationKey);
 
         DateTimeOffset queuedAt;
         DateTimeOffset validatedAt;
@@ -873,7 +940,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         string canonicalDestinationDirectoryPath;
         FileOperationActionTerminalState? terminalState;
 
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        await using (var reader = await operationCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
             if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
@@ -929,30 +996,25 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 var ordinal = checked((int)reader.GetInt64(0));
-                var state = ReadEnum<FileOperationActionEntryState>(reader.GetInt64(6), "entry state");
-                var undoKind = ReadEnum<FileOperationUndoKind>(reader.GetInt64(13), "undo kind");
-                var failure = ReadFailure(reader, 14);
                 entries.Add(new FileOperationActionEntry(
                     ordinal,
                     new FileOperationEntry(
                         reader.GetString(1),
                         reader.GetString(2),
-                        reader.GetInt64(3) != 0),
+                        ReadBoolean(reader, 3, "is_directory")),
                     reader.GetString(4),
                     reader.GetString(5),
-                    state,
+                    ReadEnum<FileOperationActionEntryState>(reader.GetInt64(6), "entry state"),
                     reader.IsDBNull(7) ? null : ReadUtcTicks(reader.GetInt64(7)),
                     reader.IsDBNull(8) ? null : ReadUtcTicks(reader.GetInt64(8)),
                     ReadIdentity(reader, 9, 10),
                     ReadIdentity(reader, 11, 12),
-                    undoKind,
-                    failure));
+                    ReadEnum<FileOperationUndoKind>(reader.GetInt64(13), "undo kind"),
+                    ReadFailure(reader, 14)));
             }
         }
 
-        if (entries.Count == 0 ||
-            entries.Select(static entry => entry.Ordinal).Distinct().Count() != entries.Count ||
-            entries.Where((entry, index) => entry.Ordinal != index).Any())
+        if (entries.Count == 0 || entries.Where((entry, index) => entry.Ordinal != index).Any())
         {
             throw new InvalidDataException("Persisted action-history entries are missing or have invalid ordinals.");
         }
@@ -977,6 +1039,15 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
 
     private static void ValidatePersistedHistory(FileOperationActionHistory history)
     {
+        if (string.IsNullOrWhiteSpace(history.SourceDirectoryPath) ||
+            string.IsNullOrWhiteSpace(history.DestinationDirectoryPath) ||
+            string.IsNullOrWhiteSpace(history.CanonicalSourceDirectoryPath) ||
+            string.IsNullOrWhiteSpace(history.CanonicalDestinationDirectoryPath) ||
+            history.TerminalState.HasValue != history.CompletedAtUtc.HasValue)
+        {
+            throw new InvalidDataException("Persisted action-history operation metadata is inconsistent.");
+        }
+
         foreach (var entry in history.Entries)
         {
             if (string.IsNullOrWhiteSpace(entry.Entry.Path) ||
@@ -984,34 +1055,111 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 string.IsNullOrWhiteSpace(entry.CanonicalSourcePath) ||
                 string.IsNullOrWhiteSpace(entry.CanonicalDestinationPath))
             {
-                throw new InvalidDataException("Persisted action-history paths are invalid.");
+                throw new InvalidDataException("Persisted action-history entry paths are invalid.");
             }
 
-            if (entry.IsUndoEligible && history.Kind != FileOperationKind.Copy)
+            switch (entry.State)
             {
-                throw new InvalidDataException("Only committed Copy entries may carry delete-destination undo metadata.");
-            }
+                case FileOperationActionEntryState.Pending:
+                    RequireEntryShape(entry, mutationStarted: false, completed: false, failure: false);
+                    RequireNoUndo(entry);
+                    if (entry.DestinationIdentity.HasValue)
+                    {
+                        throw new InvalidDataException("Pending action history cannot have a destination identity.");
+                    }
+                    break;
 
-            if (entry.State == FileOperationActionEntryState.Committed &&
-                entry.UndoKind == FileOperationUndoKind.DeleteCreatedDestination &&
-                !entry.DestinationIdentity.HasValue)
-            {
-                throw new InvalidDataException("Undo-eligible Copy history is missing destination identity.");
-            }
+                case FileOperationActionEntryState.MutationStarted:
+                    RequireEntryShape(entry, mutationStarted: true, completed: false, failure: false);
+                    RequireNoUndo(entry);
+                    if (entry.DestinationIdentity.HasValue)
+                    {
+                        throw new InvalidDataException("MutationStarted action history cannot have a committed destination identity.");
+                    }
+                    break;
 
-            if (entry.State == FileOperationActionEntryState.MutationStarted &&
-                !entry.MutationStartedAtUtc.HasValue)
-            {
-                throw new InvalidDataException("MutationStarted action history is missing its start timestamp.");
+                case FileOperationActionEntryState.Committed:
+                    RequireEntryShape(entry, mutationStarted: true, completed: true, failure: false);
+                    if (history.Kind != FileOperationKind.Copy ||
+                        entry.UndoKind != FileOperationUndoKind.DeleteCreatedDestination ||
+                        !entry.DestinationIdentity.HasValue)
+                    {
+                        throw new InvalidDataException(
+                            "Committed action history must be a Copy with an exact destination identity and delete-destination undo metadata.");
+                    }
+                    break;
+
+                case FileOperationActionEntryState.Skipped:
+                    RequireEntryShape(entry, mutationStarted: false, completed: true, failure: false);
+                    RequireNoUndo(entry);
+                    break;
+
+                case FileOperationActionEntryState.Failed:
+                    RequireEntryShape(entry, mutationStarted: false, completed: true, failure: true);
+                    RequireNoUndo(entry);
+                    break;
+
+                case FileOperationActionEntryState.RecoveryRequired:
+                    RequireEntryShape(entry, mutationStarted: true, completed: true, failure: null);
+                    RequireNoUndo(entry);
+                    break;
+
+                default:
+                    throw new InvalidDataException("Persisted action-history entry state is invalid.");
             }
         }
 
+        var hasRecovery = history.Entries.Any(static entry =>
+            entry.State is FileOperationActionEntryState.MutationStarted or
+                FileOperationActionEntryState.RecoveryRequired);
         if (history.TerminalState == FileOperationActionTerminalState.Succeeded &&
             history.Entries.Any(static entry =>
                 entry.State is not FileOperationActionEntryState.Committed and
                     not FileOperationActionEntryState.Skipped))
         {
             throw new InvalidDataException("Persisted successful action history contains an incomplete entry.");
+        }
+
+        if (history.TerminalState is FileOperationActionTerminalState.Failed or
+            FileOperationActionTerminalState.Cancelled && hasRecovery)
+        {
+            throw new InvalidDataException(
+                "Persisted failed/cancelled action history cannot contain an unresolved mutation boundary.");
+        }
+
+        if (history.TerminalState == FileOperationActionTerminalState.RecoveryRequired && !hasRecovery)
+        {
+            throw new InvalidDataException(
+                "Persisted RecoveryRequired history has no recovery-sensitive entry.");
+        }
+    }
+
+    private static void RequireEntryShape(
+        FileOperationActionEntry entry,
+        bool mutationStarted,
+        bool completed,
+        bool? failure)
+    {
+        if (entry.MutationStartedAtUtc.HasValue != mutationStarted ||
+            entry.CompletedAtUtc.HasValue != completed ||
+            (failure.HasValue && entry.Failure is not null != failure.Value))
+        {
+            throw new InvalidDataException(
+                $"Persisted action-history entry {entry.Ordinal} has timestamps/failure data inconsistent with state {entry.State}.");
+        }
+
+        if (entry.Failure is { } persistedFailure)
+        {
+            ValidateFailure(persistedFailure);
+        }
+    }
+
+    private static void RequireNoUndo(FileOperationActionEntry entry)
+    {
+        if (entry.UndoKind != FileOperationUndoKind.None)
+        {
+            throw new InvalidDataException(
+                $"Persisted action-history entry {entry.Ordinal} has undo metadata that its state does not permit.");
         }
     }
 
@@ -1034,11 +1182,14 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             throw new InvalidDataException("Persisted action-history failure data is incomplete.");
         }
 
-        return new FileOperationFailure(
+        var retryable = ReadBoolean(reader, startOrdinal + 3, "failure_retryable");
+        var failure = new FileOperationFailure(
             reader.GetString(startOrdinal),
             reader.GetString(startOrdinal + 1),
             reader.IsDBNull(startOrdinal + 2) ? null : reader.GetString(startOrdinal + 2),
-            reader.GetInt64(startOrdinal + 3) != 0);
+            retryable);
+        ValidateFailure(failure);
+        return failure;
     }
 
     private static FileIdentity? ReadIdentity(
@@ -1053,14 +1204,23 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             throw new InvalidDataException("Persisted action-history file identity is incomplete.");
         }
 
-        if (!hasVolume)
-        {
-            return null;
-        }
+        return hasVolume
+            ? new FileIdentity(
+                FromSqliteInteger(reader.GetInt64(volumeOrdinal)),
+                FromSqliteInteger(reader.GetInt64(referenceOrdinal)))
+            : null;
+    }
 
-        return new FileIdentity(
-            FromSqliteInteger(reader.GetInt64(volumeOrdinal)),
-            FromSqliteInteger(reader.GetInt64(referenceOrdinal)));
+    private static bool ReadBoolean(SqliteDataReader reader, int ordinal, string description)
+    {
+        var value = reader.GetInt64(ordinal);
+        return value switch
+        {
+            0 => false,
+            1 => true,
+            _ => throw new InvalidDataException(
+                $"Persisted action-history {description} value {value} is not Boolean."),
+        };
     }
 
     private static TEnum ReadEnum<TEnum>(long value, string description)
@@ -1084,8 +1244,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
 
     private static DateTimeOffset NormalizeUtc(DateTimeOffset value) => value.ToUniversalTime();
 
-    private static long ToUtcTicks(DateTimeOffset value) =>
-        NormalizeUtc(value).UtcDateTime.Ticks;
+    private static long ToUtcTicks(DateTimeOffset value) => NormalizeUtc(value).UtcDateTime.Ticks;
 
     private static DateTimeOffset ReadUtcTicks(long ticks)
     {
@@ -1103,5 +1262,11 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
 
     private static ulong FromSqliteInteger(long value) => unchecked((ulong)value);
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(SqliteFileOperationActionHistoryStore));
+        }
+    }
 }
