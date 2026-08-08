@@ -88,14 +88,23 @@ public sealed class StorageHistoryIndexingServiceBackend : IIndexingServiceBacke
             capturedAt,
             cancellationToken).ConfigureAwait(false);
 
-        var snapshots = await history.GetSnapshotsAsync(
+        var snapshot = new StorageHistorySnapshot(
+            snapshotId,
             live.Analysis.RootPath,
-            limit: 1,
-            cancellationToken).ConfigureAwait(false);
-        var snapshot = snapshots.FirstOrDefault(item => item.Id == snapshotId)
-            ?? throw new InvalidDataException(
-                $"Storage history snapshot {snapshotId} could not be read back after capture.");
-
+            capturedAt,
+            live.Analysis.LogicalBytes,
+            live.Analysis.AllocatedBytes,
+            live.Analysis.FileCount,
+            live.Analysis.HardLinkAliasCount,
+            live.Analysis.TypeCount,
+            live.Analysis.Categories.Select(static category =>
+                new StorageHistoryCategorySnapshot(
+                    category.Category,
+                    category.LogicalBytes,
+                    category.AllocatedBytes,
+                    category.FileCount,
+                    category.HardLinkAliasCount,
+                    category.TypeCount)).ToArray());
         return new IndexingStorageHistoryCaptureResponse(snapshot);
     }
 
