@@ -65,13 +65,12 @@ public sealed record FileOperationExecutionValidationItem(
         FileOperationExecutionValidationRootBinding> RootBindings = new();
 
     private FileOperationExecutionValidationItem(FileOperationExecutionValidationItem original)
-        : this(
-            original.Entry,
-            original.Source,
-            original.Destination,
-            original.Decision,
-            original.Message)
     {
+        Entry = original.Entry;
+        Source = original.Source;
+        Destination = original.Destination;
+        Decision = original.Decision;
+        Message = original.Message;
         if (original.MutationRootBinding is { } binding)
         {
             BindMutationRoots(binding);
