@@ -140,13 +140,7 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
         cancellationToken.ThrowIfCancellationRequested();
-        if (maxEntries <= 0 || maxEntries > MaximumStorageEntryLimit)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(maxEntries),
-                maxEntries,
-                $"Storage analysis entry limits must be between 1 and {MaximumStorageEntryLimit:N0}.");
-        }
+        ValidateStorageLimit(maxEntries, nameof(maxEntries), "Storage analysis entry");
 
         var normalizedRoot = NormalizeIndexedPath(rootPath);
         var aggregates = new Dictionary<string, MutableStorageAggregate>(StringComparer.OrdinalIgnoreCase);
@@ -231,6 +225,83 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
             allEntries.Sum(static entry => entry.HardLinkAliasCount),
             allEntries.Length,
             allEntries.Take(maxEntries).ToArray()));
+    }
+
+    public ValueTask<StorageFileTypeAnalysis> AnalyzeFileTypesAsync(
+        string rootPath,
+        int maxTypes = 128,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateStorageLimit(maxTypes, nameof(maxTypes), "Storage file-type");
+
+        var normalizedRoot = NormalizeIndexedPath(rootPath);
+        var aggregates = new Dictionary<string, MutableFileTypeAggregate>(StringComparer.OrdinalIgnoreCase);
+
+        _gate.EnterReadLock();
+        try
+        {
+            var scopedFiles = _records
+                .Where(static record => !record.IsDirectory)
+                .Where(record => FindDirectChildPath(record, normalizedRoot) is not null)
+                .ToArray();
+
+            var canonicalHardLinkPaths = scopedFiles
+                .Where(static record => record.Identity.HasValue)
+                .GroupBy(static record => record.Identity!.Value)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => group
+                        .Select(static record => record.Path)
+                        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+                        .First());
+
+            foreach (var record in scopedFiles)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var extension = StorageFileCategoryClassifier.NormalizeExtension(record.Extension);
+                if (!aggregates.TryGetValue(extension, out var aggregate))
+                {
+                    aggregate = new MutableFileTypeAggregate(extension);
+                    aggregates.Add(extension, aggregate);
+                }
+
+                var ownsPhysicalAllocation = record.Identity is null ||
+                    string.Equals(
+                        canonicalHardLinkPaths[record.Identity.Value],
+                        record.Path,
+                        StringComparison.OrdinalIgnoreCase);
+                aggregate.Add(record, ownsPhysicalAllocation);
+            }
+        }
+        finally
+        {
+            _gate.ExitReadLock();
+        }
+
+        var allTypes = aggregates.Values
+            .Select(static aggregate => aggregate.ToEntry())
+            .ToArray();
+        var logicalBytes = allTypes.Sum(static entry => entry.LogicalBytes);
+        var allocatedBytes = allTypes.All(static entry => entry.AllocatedBytes.HasValue)
+            ? allTypes.Sum(static entry => entry.AllocatedBytes!.Value)
+            : null;
+        var usePhysicalOrdering = allocatedBytes.HasValue;
+        var orderedTypes = allTypes
+            .OrderByDescending(entry => usePhysicalOrdering ? entry.AllocatedBytes!.Value : entry.LogicalBytes)
+            .ThenByDescending(static entry => entry.LogicalBytes)
+            .ThenBy(static entry => entry.Extension, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return ValueTask.FromResult(new StorageFileTypeAnalysis(
+            normalizedRoot,
+            logicalBytes,
+            allocatedBytes,
+            orderedTypes.Sum(static entry => entry.FileCount),
+            orderedTypes.Sum(static entry => entry.HardLinkAliasCount),
+            orderedTypes.Length,
+            orderedTypes.Take(maxTypes).ToArray()));
     }
 
     private void Upsert(FileRecord record)
@@ -373,6 +444,17 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
         return separatorIndex < 0 ? trimmed : trimmed[(separatorIndex + 1)..];
     }
 
+    private static void ValidateStorageLimit(int limit, string parameterName, string description)
+    {
+        if (limit <= 0 || limit > MaximumStorageEntryLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                parameterName,
+                limit,
+                $"{description} limits must be between 1 and {MaximumStorageEntryLimit:N0}.");
+        }
+    }
+
     public void Dispose() => _gate.Dispose();
 
     private sealed class MutableStorageAggregate
@@ -432,6 +514,51 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
             _allocatedKnown ? _allocatedBytes : null,
             _fileCount,
             _directoryCount,
+            _hardLinkAliasCount);
+    }
+
+    private sealed class MutableFileTypeAggregate
+    {
+        private long _allocatedBytes;
+        private bool _allocatedKnown = true;
+        private int _fileCount;
+        private int _hardLinkAliasCount;
+
+        public MutableFileTypeAggregate(string extension)
+        {
+            Extension = extension;
+        }
+
+        public string Extension { get; }
+
+        public long LogicalBytes { get; private set; }
+
+        public void Add(FileRecord record, bool ownsPhysicalAllocation)
+        {
+            _fileCount++;
+            LogicalBytes += record.Length;
+            if (!ownsPhysicalAllocation)
+            {
+                _hardLinkAliasCount++;
+                return;
+            }
+
+            if (record.AllocatedLength is { } allocatedLength)
+            {
+                _allocatedBytes += allocatedLength;
+            }
+            else
+            {
+                _allocatedKnown = false;
+            }
+        }
+
+        public StorageFileTypeEntry ToEntry() => new(
+            Extension,
+            StorageFileCategoryClassifier.Classify(Extension),
+            LogicalBytes,
+            _allocatedKnown ? _allocatedBytes : null,
+            _fileCount,
             _hardLinkAliasCount);
     }
 }
