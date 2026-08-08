@@ -100,6 +100,30 @@ public sealed class WindowsFileCopyMutationPrimitiveTests
     }
 
     [TestMethod]
+    public async Task SourceRootReplacementAfterValidationFailsBeforeDestinationCreation()
+    {
+        using var fixture = new CopyFixture();
+        await File.WriteAllTextAsync(fixture.SourcePath, "source-content");
+        var validation = await fixture.ValidateAsync();
+        var request = CreateMutationRequest(validation);
+        Assert.AreEqual(FileOperationExecutionValidationDecision.Ready, request.Item.Decision);
+
+        var originalSource = fixture.SourceDirectory + ".original";
+        Directory.Move(fixture.SourceDirectory, originalSource);
+        Directory.CreateDirectory(fixture.SourceDirectory);
+        await File.WriteAllTextAsync(fixture.SourcePath, "replacement-content");
+
+        var primitive = new WindowsFileCopyMutationPrimitive();
+        await Assert.ThrowsExactlyAsync<IOException>(async () =>
+            await primitive.CopyNewFileAsync(request));
+
+        Assert.IsFalse(File.Exists(fixture.DestinationPath));
+        Assert.AreEqual(
+            "source-content",
+            await File.ReadAllTextAsync(Path.Combine(originalSource, "payload.bin")));
+    }
+
+    [TestMethod]
     public async Task DestinationRootReplacementAfterValidationFailsBeforeCreation()
     {
         using var fixture = new CopyFixture();
