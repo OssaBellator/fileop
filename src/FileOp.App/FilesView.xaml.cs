@@ -1,4 +1,4 @@
-using FileOp.Core.Storage;
+using FileOp.Core.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -17,6 +17,8 @@ public sealed partial class FilesView : UserControl
 
     public event EventHandler? RefreshRequested;
 
+    public event EventHandler? LoadMoreRequested;
+
     public event EventHandler<FileBrowserRow>? EntryInvoked;
 
     public void SetSourceDescription(string description)
@@ -24,15 +26,24 @@ public sealed partial class FilesView : UserControl
         ScopeText.Text = description;
     }
 
-    public void SetLoading(string path, string message)
+    public void SetLoading(string path, string message, bool preserveRows = false)
     {
         PathText.Text = path;
         StatusText.Text = message;
         LoadingRing.IsActive = true;
         UpButton.IsEnabled = false;
         RefreshButton.IsEnabled = false;
-        FilesList.ItemsSource = null;
-        EmptyText.Visibility = Visibility.Collapsed;
+        LoadMoreButton.IsEnabled = false;
+        if (!preserveRows)
+        {
+            FilesList.ItemsSource = null;
+            EmptyText.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    public void SetStatus(string message)
+    {
+        StatusText.Text = message;
     }
 
     public void SetUnavailable(string message)
@@ -41,6 +52,8 @@ public sealed partial class FilesView : UserControl
         LoadingRing.IsActive = false;
         UpButton.IsEnabled = false;
         RefreshButton.IsEnabled = false;
+        LoadMoreButton.IsEnabled = false;
+        LoadMoreButton.Visibility = Visibility.Collapsed;
         FilesList.ItemsSource = null;
         EmptyText.Visibility = Visibility.Visible;
     }
@@ -48,7 +61,8 @@ public sealed partial class FilesView : UserControl
     public void Apply(
         IReadOnlyList<FileBrowserRow> rows,
         string path,
-        int directEntryCount,
+        int currentTotalCount,
+        bool hasMore,
         bool canNavigateUp,
         bool canRefresh)
     {
@@ -58,17 +72,27 @@ public sealed partial class FilesView : UserControl
         LoadingRing.IsActive = false;
         UpButton.IsEnabled = canNavigateUp;
         RefreshButton.IsEnabled = canRefresh;
+        LoadMoreButton.Visibility = hasMore ? Visibility.Visible : Visibility.Collapsed;
+        LoadMoreButton.IsEnabled = hasMore && canRefresh;
         FilesList.ItemsSource = rows;
         EmptyText.Visibility = rows.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-        StatusText.Text = rows.Count == directEntryCount
-            ? $"{rows.Count:N0} indexed direct entr{(rows.Count == 1 ? "y" : "ies")}. Folders are shown first, then names are sorted case-insensitively."
-            : $"Showing {rows.Count:N0} of {directEntryCount:N0} indexed direct entries. This first browser slice is bounded; omitted entries remain available through Search and future paging work.";
+        if (!hasMore && rows.Count == currentTotalCount)
+        {
+            StatusText.Text =
+                $"{rows.Count:N0} indexed direct entr{(rows.Count == 1 ? "y" : "ies")} loaded in exact directory-first/name/path order.";
+        }
+        else
+        {
+            StatusText.Text = hasMore
+                ? $"{rows.Count:N0} loaded · current indexed count {currentTotalCount:N0} · more exact pages are available."
+                : $"{rows.Count:N0} loaded · current indexed count {currentTotalCount:N0}. The live directory changed while pages were being read.";
+        }
     }
 
-    public void SetReady(bool canNavigateUp, bool canRefresh)
+    public void SetReady(bool canNavigateUp, bool canRefresh, bool canLoadMore)
     {
         if (LoadingRing.IsActive && StatusText.Text.StartsWith("Loading ", StringComparison.Ordinal))
         {
@@ -82,6 +106,7 @@ public sealed partial class FilesView : UserControl
         LoadingRing.IsActive = false;
         UpButton.IsEnabled = canNavigateUp;
         RefreshButton.IsEnabled = canRefresh;
+        LoadMoreButton.IsEnabled = canLoadMore && canRefresh;
     }
 
     private void UpButton_Click(object sender, RoutedEventArgs e)
@@ -92,6 +117,11 @@ public sealed partial class FilesView : UserControl
     private void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
         RefreshRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void LoadMoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        LoadMoreRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void FilesList_ItemClick(object sender, ItemClickEventArgs e)
@@ -108,34 +138,31 @@ public sealed record FileBrowserRow(
     string Name,
     bool IsDirectory,
     string TypeText,
-    string LogicalText,
+    string SizeText,
     string AllocatedText,
-    string ContentsText)
+    string ModifiedText)
 {
-    public static FileBrowserRow FromEntry(StorageDirectoryEntry entry)
+    public static FileBrowserRow FromRecord(FileRecord record)
     {
-        ArgumentNullException.ThrowIfNull(entry);
-        var extension = entry.IsDirectory
-            ? string.Empty
-            : System.IO.Path.GetExtension(entry.Name).TrimStart('.');
-        var typeText = entry.IsDirectory
+        ArgumentNullException.ThrowIfNull(record);
+        var extension = record.Extension.TrimStart('.');
+        var typeText = record.IsDirectory
             ? "Folder"
             : string.IsNullOrWhiteSpace(extension)
                 ? "File"
                 : extension.ToUpperInvariant();
-        var contentsText = entry.IsDirectory
-            ? $"{entry.UniqueFileCount:N0} file(s) · {entry.DirectoryCount:N0} folder record(s)"
-            : entry.HardLinkAliasCount > 0
-                ? "Hard-link alias"
-                : "—";
 
         return new FileBrowserRow(
-            entry.Path,
-            entry.Name,
-            entry.IsDirectory,
+            record.Path,
+            record.Name,
+            record.IsDirectory,
             typeText,
-            ByteFormatter.Format(entry.LogicalBytes),
-            entry.AllocatedBytes is { } allocated ? ByteFormatter.Format(allocated) : "Unknown",
-            contentsText);
+            record.IsDirectory ? "—" : ByteFormatter.Format(record.Length),
+            record.IsDirectory
+                ? "—"
+                : record.AllocatedLength is { } allocated
+                    ? ByteFormatter.Format(allocated)
+                    : "Unknown",
+            record.LastWriteTime.ToLocalTime().ToString("g"));
     }
 }
