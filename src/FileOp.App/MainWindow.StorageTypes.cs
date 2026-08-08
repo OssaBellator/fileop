@@ -413,11 +413,11 @@ public sealed partial class MainWindow
 
         BuildStorageCategoryRows(analysis, usePhysicalWeights);
 
-        var completeTypes = analysis.Types.Count == analysis.TypeCount;
         var unit = usePhysicalWeights ? "physical allocation" : "logical size";
-        StorageCategoryStatusText.Text = completeTypes
-            ? $"Exact category totals · {unit}"
-            : $"Top {analysis.Types.Count:N0} of {analysis.TypeCount:N0} types · omitted remainder is left unclassified · {unit}";
+        var extensionStatus = analysis.Types.Count == analysis.TypeCount
+            ? $"{analysis.TypeCount:N0} extension group(s) shown"
+            : $"Top {analysis.Types.Count:N0} of {analysis.TypeCount:N0} extension groups shown";
+        StorageCategoryStatusText.Text = $"Exact category totals · {unit} · {extensionStatus}";
 
         var scope = _searchEngine.StorageCoversWholeVolume
             ? "whole-volume native index"
@@ -427,6 +427,7 @@ public sealed partial class MainWindow
             : string.Empty;
         SetStorageStatus(
             $"{analysis.Types.Count:N0} of {analysis.TypeCount:N0} file types · " +
+            $"{analysis.Categories.Count:N0} exact categories · " +
             $"{analysis.UniqueFileCount:N0} unique files{aliases} · {scope}");
 
         UpdateStorageTypesNavigationState();
@@ -436,45 +437,19 @@ public sealed partial class MainWindow
     {
         _storageCategories.Clear();
         var rootWeight = analysis.AllocatedBytes ?? analysis.LogicalBytes;
-        var groups = analysis.Types
-            .GroupBy(static type => type.Category)
-            .Select(group => new
-            {
-                Category = group.Key,
-                Weight = group.Sum(type => usePhysicalWeights ? type.AllocatedBytes ?? 0 : type.LogicalBytes),
-                Files = group.Sum(static type => type.FileCount),
-                Aliases = group.Sum(static type => type.HardLinkAliasCount),
-                TypeCount = group.Count(),
-            })
-            .OrderByDescending(static group => group.Weight)
-            .ThenBy(static group => group.Category)
-            .ToArray();
-
-        foreach (var group in groups)
+        foreach (var category in analysis.Categories)
         {
+            var weight = usePhysicalWeights
+                ? category.AllocatedBytes ?? 0
+                : category.LogicalBytes;
             _storageCategories.Add(StorageCategoryRow.Create(
-                FormatStorageCategory(group.Category),
-                group.Weight,
+                FormatStorageCategory(category.Category),
+                weight,
                 rootWeight,
-                group.Files,
-                group.Aliases,
-                group.TypeCount,
+                category.FileCount,
+                category.HardLinkAliasCount,
+                category.TypeCount,
                 isRemainder: false));
-        }
-
-        var representedWeight = groups.Sum(static group => group.Weight);
-        var omittedTypeCount = Math.Max(0, analysis.TypeCount - analysis.Types.Count);
-        var omittedWeight = Math.Max(0, rootWeight - representedWeight);
-        if (omittedTypeCount > 0 && omittedWeight > 0)
-        {
-            _storageCategories.Add(StorageCategoryRow.Create(
-                $"Other {omittedTypeCount:N0} types (not returned)",
-                omittedWeight,
-                rootWeight,
-                files: 0,
-                aliases: 0,
-                typeCount: omittedTypeCount,
-                isRemainder: true));
         }
     }
 
