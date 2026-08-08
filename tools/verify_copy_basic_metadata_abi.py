@@ -83,13 +83,15 @@ def ordered(block: str, needles: list[str]) -> None:
 def check_repository(root: Path) -> int:
     helper_path = root / "src/FileOp.Windows/Operations/WindowsFileCopyBasicMetadata.cs"
     interop_tests_path = root / "tests/FileOp.Windows.Tests/WindowsFileCopyBasicMetadataInteropTests.cs"
+    dotnet_probe_path = root / "tools/verify_copy_basic_metadata_dotnet.py"
     windows_wrapper_path = root / "tools/test-windows-copy-local.ps1"
-    for path in (helper_path, interop_tests_path, windows_wrapper_path):
+    for path in (helper_path, interop_tests_path, dotnet_probe_path, windows_wrapper_path):
         if not path.is_file():
             raise FileNotFoundError(path)
 
     helper = helper_path.read_text(encoding="utf-8")
     interop_tests = interop_tests_path.read_text(encoding="utf-8")
+    dotnet_probe = dotnet_probe_path.read_text(encoding="utf-8")
     windows_wrapper = windows_wrapper_path.read_text(encoding="utf-8")
 
     basic_start = helper.index("private struct FileBasicInformation")
@@ -126,6 +128,11 @@ def check_repository(root: Path) -> int:
         ],
     )
 
+    file_time_start = helper.index("private struct FileTime")
+    file_time_end = helper.index("[DllImport", file_time_start)
+    file_time_block = helper[file_time_start:file_time_end]
+    ordered(file_time_block, ["public uint LowDateTime;", "public uint HighDateTime;"])
+
     enum_start = helper.index("private enum FileInfoByHandleClass")
     enum_end = helper.index("[StructLayout", enum_start)
     assert "FileBasicInfo = 0" in helper[enum_start:enum_end]
@@ -156,6 +163,20 @@ def check_repository(root: Path) -> int:
             "ChangeTime = 0",
             "FileAttributes = MergeDestinationAttributes(",
             "SetBasicInformation(",
+        ],
+    )
+
+    wrapper_start = helper.index("private static void SetBasicInformation(")
+    wrapper_end = helper.index("private static void ValidateHandle(", wrapper_start)
+    wrapper = helper[wrapper_start:wrapper_end]
+    ordered(
+        wrapper,
+        [
+            "SetFileInformationByHandle(",
+            "handle",
+            "FileInfoByHandleClass.FileBasicInfo",
+            "ref information",
+            "(uint)Marshal.SizeOf<FileBasicInformation>()",
         ],
     )
 
@@ -193,12 +214,36 @@ def check_repository(root: Path) -> int:
         "BindingFlags.NonPublic",
         "DllImportAttribute",
         "MarshalAsAttribute",
+        "CallingConvention.Winapi",
         "FileBasicInfo",
         "SetLastError",
+        "FileIndexLow",
+        "HighDateTime",
     ):
         assert needle in interop_tests, needle
+
+    for needle in (
+        "<TargetFramework>net10.0</TargetFramework>",
+        "<LangVersion>14.0</LangVersion>",
+        "<NuGetAudit>false</NuGetAudit>",
+        "shutil.copy2(helper",
+        "Marshal.SizeOf(basic)",
+        "Marshal.OffsetOf(type, field)",
+        "DllImportAttribute",
+        "MarshalAsAttribute",
+        "CallingConvention.Winapi",
+        "SetFileInformationByHandle",
+        "GetFileInformationByHandle",
+        "dotnet, \"restore\"",
+        "dotnet, \"build\"",
+        "dotnet, \"run\"",
+    ):
+        assert needle in dotnet_probe, needle
+    assert "PackageReference" not in dotnet_probe
+
+    assert "verify_copy_basic_metadata_dotnet.py" in windows_wrapper
     assert "WindowsFileCopyBasicMetadataInteropTests" in windows_wrapper
-    return 39
+    return 59
 
 
 C_PROBE = r"""
