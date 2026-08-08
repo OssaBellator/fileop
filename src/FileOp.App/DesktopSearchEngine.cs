@@ -135,45 +135,53 @@ internal sealed class DesktopSearchEngine : IAsyncDisposable
                 CanElevate = false,
             });
 
-            await _nativeOperationGate.WaitAsync(token).ConfigureAwait(false);
+            await _searchOperationGate.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                var preparation = await TryStartNativeAsync(elevated: true, token).ConfigureAwait(false);
-                if (!preparation.IsNativeReady)
+                await _nativeOperationGate.WaitAsync(token).ConfigureAwait(false);
+                try
                 {
-                    SetState(State with
+                    var preparation = await TryStartNativeAsync(elevated: true, token).ConfigureAwait(false);
+                    if (!preparation.IsNativeReady)
                     {
-                        Status = preparation.Status,
-                        IsBusy = false,
-                        CanElevate = preparation.CanElevate,
-                    });
-                    return false;
-                }
+                        SetState(State with
+                        {
+                            Status = preparation.Status,
+                            IsBusy = false,
+                            CanElevate = preparation.CanElevate,
+                        });
+                        return false;
+                    }
 
-                var previousSession = _nativeSession;
-                ApplyNativePreparation(preparation);
-                await StopBackgroundSyncAsync().ConfigureAwait(false);
-                if (!preparation.CanElevate)
+                    var previousSession = _nativeSession;
+                    ApplyNativePreparation(preparation);
+                    await StopBackgroundSyncAsync().ConfigureAwait(false);
+                    if (!preparation.CanElevate)
+                    {
+                        StartBackgroundSync();
+                    }
+
+                    if (previousSession is not null && !ReferenceEquals(previousSession, _nativeSession))
+                    {
+                        await previousSession.DisposeAsync().ConfigureAwait(false);
+                    }
+
+                    if (_fallbackReady)
+                    {
+                        await _fallbackIndex.ClearAsync(token).ConfigureAwait(false);
+                        _fallbackReady = false;
+                    }
+
+                    return true;
+                }
+                finally
                 {
-                    StartBackgroundSync();
+                    _nativeOperationGate.Release();
                 }
-
-                if (previousSession is not null && !ReferenceEquals(previousSession, _nativeSession))
-                {
-                    await previousSession.DisposeAsync().ConfigureAwait(false);
-                }
-
-                if (_fallbackReady)
-                {
-                    await _fallbackIndex.ClearAsync(token).ConfigureAwait(false);
-                    _fallbackReady = false;
-                }
-
-                return true;
             }
             finally
             {
-                _nativeOperationGate.Release();
+                _searchOperationGate.Release();
             }
         }
         catch (OperationCanceledException) when (!_lifetimeCancellation.IsCancellationRequested)
