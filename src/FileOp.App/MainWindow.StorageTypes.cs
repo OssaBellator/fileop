@@ -69,7 +69,7 @@ public sealed partial class MainWindow
         var root = _searchEngine.StorageRootPath;
         var sourceAvailable = !_closed &&
             !state.IsBusy &&
-            state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback &&
+            (state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback) &&
             root is not null;
 
         StorageTypesRefreshButton.IsEnabled =
@@ -103,6 +103,19 @@ public sealed partial class MainWindow
         }
     }
 
+    private async void StorageNavigationWithTypesButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowSection(AppSection.Storage);
+        var root = _searchEngine.StorageRootPath;
+        if (root is null || _searchEngine.State.IsBusy)
+        {
+            SetStorageStatus("Storage analysis will be available when indexing is ready.");
+            return;
+        }
+
+        await LoadActiveStorageViewAsync(root, forceRefresh: false);
+    }
+
     private async void StorageFoldersButton_Click(object sender, RoutedEventArgs e)
     {
         Interlocked.Increment(ref _storageTypeGeneration);
@@ -115,14 +128,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var path = ResolveCurrentStoragePath(root);
-        if (_storageAnalysis is { } cached && PathsEqual(cached.RootPath, path))
-        {
-            ApplyStorageAnalysis(cached);
-            return;
-        }
-
-        await RunStorageAnalysisAsync(path);
+        await LoadActiveStorageViewAsync(root, forceRefresh: false);
     }
 
     private async void StorageTypesButton_Click(object sender, RoutedEventArgs e)
@@ -137,14 +143,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var path = ResolveCurrentStoragePath(root);
-        if (_storageFileTypeAnalysis is { } cached && PathsEqual(cached.RootPath, path))
-        {
-            ApplyStorageFileTypeAnalysis(cached);
-            return;
-        }
-
-        await RunStorageTypesAnalysisAsync(path);
+        await LoadActiveStorageViewAsync(root, forceRefresh: false);
     }
 
     private async void StorageTypesRefreshButton_Click(object sender, RoutedEventArgs e)
@@ -156,7 +155,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        await RunStorageTypesAnalysisAsync(ResolveCurrentStoragePath(root));
+        await LoadActiveStorageViewAsync(root, forceRefresh: true);
     }
 
     private async void StorageTypesUpButton_Click(object sender, RoutedEventArgs e)
@@ -175,6 +174,113 @@ public sealed partial class MainWindow
         }
 
         await RunStorageTypesAnalysisAsync(parent);
+    }
+
+    private async void EnableFastIndexWithStorageTypesButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        var sourceBeforeElevation = _storageViewMode == StorageViewMode.Types
+            ? _storageTypesSourceKey
+            : _storageSourceKey;
+        SearchBox.IsEnabled = false;
+        StorageRefreshButton.IsEnabled = false;
+        StorageTypesRefreshButton.IsEnabled = false;
+        EnableFastIndexButton.IsEnabled = false;
+        SetSearchStatus(string.Empty);
+        Interlocked.Increment(ref _searchGeneration);
+        Interlocked.Increment(ref _storageGeneration);
+        Interlocked.Increment(ref _storageTypeGeneration);
+
+        try
+        {
+            await _searchEngine.TryElevateAsync(_lifetimeCancellation.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (!_closed)
+            {
+                ApplyEngineState(_searchEngine.State);
+            }
+        }
+
+        if (_closed)
+        {
+            return;
+        }
+
+        if (_activeSection == AppSection.Search && SearchBox.IsEnabled)
+        {
+            await RunSearchAsync();
+            return;
+        }
+
+        if (_activeSection == AppSection.Storage &&
+            !_searchEngine.State.IsBusy &&
+            _searchEngine.StorageRootPath is { } root)
+        {
+            var currentSourceKey = CreateStorageSourceKey(_searchEngine.State.Mode, root);
+            if (string.Equals(currentSourceKey, sourceBeforeElevation, StringComparison.OrdinalIgnoreCase))
+            {
+                await LoadActiveStorageViewAsync(root, forceRefresh: true);
+            }
+        }
+    }
+
+    private async Task LoadActiveStorageViewAsync(string root, bool forceRefresh)
+    {
+        var path = ResolveCurrentStoragePath(root);
+        var sourceKey = CreateStorageSourceKey(_searchEngine.State.Mode, root);
+
+        if (_storageViewMode == StorageViewMode.Types)
+        {
+            if (!string.Equals(sourceKey, _storageTypesSourceKey, StringComparison.OrdinalIgnoreCase))
+            {
+                _storageTypesSourceKey = sourceKey;
+                _storageFileTypeAnalysis = null;
+                _storageTypesPath = null;
+                _storageFileTypes.Clear();
+                _storageCategories.Clear();
+                ResetStorageTypesPresentation();
+                path = root;
+            }
+
+            if (!forceRefresh &&
+                _storageFileTypeAnalysis is { } cachedTypes &&
+                PathsEqual(cachedTypes.RootPath, path))
+            {
+                ApplyStorageFileTypeAnalysis(cachedTypes);
+                return;
+            }
+
+            await RunStorageTypesAnalysisAsync(path);
+            return;
+        }
+
+        if (!string.Equals(sourceKey, _storageSourceKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _storageSourceKey = sourceKey;
+            _storageAnalysis = null;
+            _storageEntries.Clear();
+            ResetStorageSummary();
+            path = root;
+        }
+
+        if (!forceRefresh &&
+            _storageAnalysis is { } cachedFolders &&
+            PathsEqual(cachedFolders.RootPath, path))
+        {
+            ApplyStorageAnalysis(cachedFolders);
+            return;
+        }
+
+        await RunStorageAnalysisAsync(path);
     }
 
     private async Task RunStorageTypesAnalysisAsync(string directoryPath)
