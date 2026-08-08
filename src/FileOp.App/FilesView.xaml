@@ -8,6 +8,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -29,6 +30,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
                 <Button x:Name="PrepareLeftToRightButton"
@@ -45,21 +47,87 @@
 
                 <TextBlock x:Name="IntentText"
                            Grid.Column="2"
-                           Text="Select one or more entries in a source pane, then prepare a direction. No file operation is executed."
+                           Text="Select one or more entries in a source pane, then prepare a direction. Queueing is planning only; no file operation is executed."
                            Opacity="0.68"
                            TextWrapping="Wrap"
                            VerticalAlignment="Center" />
 
-                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6">
-                    <Button Content="Copy" IsEnabled="False"
-                            ToolTipService.ToolTip="Execution is intentionally not implemented in this slice" />
-                    <Button Content="Move" IsEnabled="False"
-                            ToolTipService.ToolTip="Execution is intentionally not implemented in this slice" />
+                <StackPanel Grid.Column="3" Spacing="4">
+                    <TextBlock Text="On collision" FontSize="12" Opacity="0.65" />
+                    <ComboBox x:Name="CollisionPolicyBox"
+                              Width="142"
+                              SelectionChanged="CollisionPolicyBox_SelectionChanged">
+                        <ComboBoxItem Content="Ask later" Tag="Ask" />
+                        <ComboBoxItem Content="Skip existing" Tag="Skip" />
+                        <ComboBoxItem Content="Stop on collision" Tag="Stop" />
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom">
+                    <Button x:Name="QueueCopyButton" Content="Queue Copy"
+                            Click="QueueCopyButton_Click" IsEnabled="False"
+                            ToolTipService.ToolTip="Add an immutable copy plan to the in-memory queue; nothing is executed" />
+                    <Button x:Name="QueueMoveButton" Content="Queue Move"
+                            Click="QueueMoveButton_Click" IsEnabled="False"
+                            ToolTipService.ToolTip="Add an immutable move plan to the in-memory queue; nothing is executed" />
                 </StackPanel>
             </Grid>
         </Border>
 
-        <Grid Grid.Row="2" Margin="0,12,0,0" ColumnSpacing="12">
+        <Border Grid.Row="2" Margin="0,10,0,0" Padding="12,10"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1" CornerRadius="8">
+            <Grid RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Planned operation queue" FontWeight="SemiBold" />
+                    <TextBlock x:Name="QueueCountText" Grid.Column="1" Opacity="0.65" VerticalAlignment="Center" />
+                    <Button x:Name="RemoveQueuedOperationButton" Grid.Column="2" Content="Remove selected"
+                            Click="RemoveQueuedOperationButton_Click" IsEnabled="False" />
+                    <Button x:Name="ClearQueueButton" Grid.Column="3" Content="Clear queue"
+                            Click="ClearQueueButton_Click" IsEnabled="False" />
+                </Grid>
+
+                <TextBlock x:Name="QueueStatusText" Grid.Row="1"
+                           Text="Plans are session-only and cannot execute filesystem writes."
+                           Opacity="0.65" TextWrapping="Wrap" />
+
+                <ListView x:Name="OperationQueueList" Grid.Row="2" MaxHeight="128"
+                          SelectionMode="Single"
+                          SelectionChanged="OperationQueueList_SelectionChanged">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Padding="6,4" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="120" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding OperationText}" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="{Binding RouteText}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="2" Text="{Binding CollisionText}" Opacity="0.7" />
+                                <TextBlock Grid.Column="3" Text="{Binding QueuedText}" Opacity="0.62" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" Margin="0,12,0,0" ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />

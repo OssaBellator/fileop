@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Zero-Actions checks for FileOp's dual-pane selection and prepared-intent boundary."""
+"""Zero-Actions checks for FileOp's dual-pane selection, intent and planned-operation queue."""
 from __future__ import annotations
-import argparse, copy, random, re, sys
+import argparse, copy, ntpath, random, re, sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
 def norm(path: str) -> str:
-    value = path.replace('/', '\\').rstrip('\\')
+    value = ntpath.normpath(path.replace('/', '\\'))
     if len(value) == 2 and value[1] == ':':
         value += '\\'
     return value.casefold()
@@ -42,6 +42,17 @@ def prepare_intent(source: dict, destination: dict) -> tuple:
     )
 
 
+def validate_queue_intent(source_path: str, entries: list[tuple[str, bool]], destination_path: str) -> bool:
+    if norm(source_path) == norm(destination_path):
+        return False
+    for entry_path, is_directory in entries:
+        if norm(ntpath.dirname(ntpath.normpath(entry_path))) != norm(source_path):
+            return False
+        if is_directory and within(destination_path, entry_path):
+            return False
+    return bool(entries)
+
+
 def invalidate(panes: list[dict], clear_path: bool) -> None:
     for pane in panes:
         pane['generation'] += 1
@@ -61,8 +72,12 @@ def check_properties(cases: int) -> int:
     assert within(r'C:\Data\Child\x', 'c:\\data\\')
     assert not within(r'C:\Database\x', r'C:\Data')
     assert append_unique([r'C:\A'], [r'c:\a', r'C:\B']) == [r'C:\A', r'C:\B']
+    assert validate_queue_intent(r'C:\A', [(r'C:\A\x.txt', False)], r'C:\B')
+    assert not validate_queue_intent(r'C:\A', [(r'C:\A\x.txt', False)], r'C:\A')
+    assert not validate_queue_intent(r'C:\A', [(r'C:\A\Dir', True)], r'C:\A\Dir\Child')
+    assert not validate_queue_intent(r'C:\A', [(r'C:\Other\x.txt', False)], r'C:\B')
     rng = random.Random(20260808)
-    checks = 4
+    checks = 8
 
     for case in range(cases):
         panes = []
@@ -119,11 +134,25 @@ def check_properties(cases: int) -> int:
             'selection': set(destination_tab['selection']),
         }
         intent = prepare_intent(source, destination)
+        queued = ('Copy', 'Ask', intent)
         source['selection'].clear()
         destination['path'] = r'C:\Changed'
-        assert intent[3]
-        assert intent[-1] != destination['path']
+        assert queued[2][3]
+        assert queued[2][-1] != destination['path']
         checks += 2
+
+        queue_entries = [(row, False) for row in source_tab['rows'][:rng.randint(1, min(5, len(source_tab['rows'])))] ]
+        queue_destination = destination_tab['path']
+        assert validate_queue_intent(source_tab['path'], queue_entries, queue_destination)
+        assert not validate_queue_intent(source_tab['path'], queue_entries, source_tab['path'])
+        checks += 2
+
+        directory_entry = source_tab['path'] + r'\Directory'
+        assert not validate_queue_intent(
+            source_tab['path'],
+            [(directory_entry, True)],
+            directory_entry + r'\Child')
+        checks += 1
 
         paths = [[t['path'] for t in p['tabs']] for p in panes]
         maintenance = copy.deepcopy(panes)
@@ -170,7 +199,7 @@ def check_repository(root: Path) -> int:
     ET.fromstring(s['panex'])
 
     pane_handlers = set(re.findall(r'\b(?:Click|SelectionChanged)="([A-Za-z_]\w*)"', s['panex']))
-    view_handlers = set(re.findall(r'\bClick="([A-Za-z_]\w*)"', s['viewx']))
+    view_handlers = set(re.findall(r'\b(?:Click|SelectionChanged)="([A-Za-z_]\w*)"', s['viewx']))
     assert pane_handlers <= methods(s['panec'])
     assert view_handlers <= methods(s['viewc'])
 
@@ -229,8 +258,6 @@ def check_repository(root: Path) -> int:
     required_intent = [
         'Content="Prepare Left → Right"',
         'Content="Prepare Right → Left"',
-        'Content="Copy" IsEnabled="False"',
-        'Content="Move" IsEnabled="False"',
         'private FileBrowserOperationIntent? _preparedIntent;',
         'public FileBrowserOperationIntent? PreparedIntent => _preparedIntent;',
         'selectedRows',
@@ -242,6 +269,31 @@ def check_repository(root: Path) -> int:
     for needle in required_intent:
         assert needle in s['viewx'] + s['viewc'], needle
 
+    required_queue = [
+        'x:Name="CollisionPolicyBox"',
+        'Tag="Ask"',
+        'Tag="Skip"',
+        'Tag="Stop"',
+        'x:Name="QueueCopyButton"',
+        'x:Name="QueueMoveButton"',
+        'x:Name="OperationQueueList"',
+        'x:Name="RemoveQueuedOperationButton"',
+        'x:Name="ClearQueueButton"',
+        'private readonly List<FileBrowserQueuedOperation> _queuedOperations = [];',
+        'public IReadOnlyList<FileBrowserQueuedOperation> QueuedOperations',
+        'QueuePreparedIntent(FileBrowserOperationKind.Copy);',
+        'QueuePreparedIntent(FileBrowserOperationKind.Move);',
+        'TryValidateIntentForQueue(intent, out var validationMessage)',
+        'PathsEqual(intent.SourceDirectoryPath, intent.DestinationDirectoryPath)',
+        'IsSameOrDescendantPath(intent.DestinationDirectoryPath, entry.Path)',
+        'public enum FileBrowserCollisionPolicy',
+        'public sealed record FileBrowserQueuedOperation(',
+    ]
+    for needle in required_queue:
+        assert needle in s['viewx'] + s['viewc'], needle
+
+    assert 'Tag="Replace"' not in s['viewx']
+    assert 'Replace existing' not in s['viewx']
     assert 'ItemClick="FilesList_ItemClick"' not in s['panex']
     assert 'FilesList_ItemClick' not in s['panec']
     assert s['viewx'].count('<local:FilesPaneView') == 2
@@ -265,11 +317,13 @@ def check_repository(root: Path) -> int:
 
     assert '## Selection semantics' in s['docs']
     assert '## Prepared operation intent' in s['docs']
-    assert 'Copy and Move remain disabled' in s['docs']
+    assert '## Planned operation queue' in s['docs']
+    assert 'Ask later' in s['docs'] and 'Skip existing' in s['docs'] and 'Stop on collision' in s['docs']
+    assert 'replacement is deliberately not a queue policy' in s['docs']
 
     return (
-        len(required_main) + len(required_selection) + len(required_intent) +
-        len(pane_handlers) + len(view_handlers) + 15
+        len(required_main) + len(required_selection) + len(required_intent) + len(required_queue) +
+        len(pane_handlers) + len(view_handlers) + 20
     )
 
 
@@ -282,9 +336,9 @@ def main() -> int:
     if args.cases <= 0:
         p.error('--cases must be greater than zero')
 
-    print(f'PASS Files selection/intent properties: {check_properties(args.cases)} checks')
+    print(f'PASS Files selection/intent/queue properties: {check_properties(args.cases)} checks')
     if not args.self_test_only:
-        print(f'PASS Files selection/intent source wiring: {check_repository(args.repo_root.resolve())} checks')
+        print(f'PASS Files selection/intent/queue source wiring: {check_repository(args.repo_root.resolve())} checks')
     return 0
 
 

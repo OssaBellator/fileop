@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The **Files** surface is a read-only indexed directory browser built on the same metadata source as Search and Storage. It does not launch another recursive filesystem enumerator.
+The **Files** surface is an indexed dual-pane directory browser built on the same metadata source as Search and Storage. Browsing itself does not launch another recursive filesystem enumerator.
 
 Native mode browses the primary whole-volume NTFS index. Fallback mode browses the completed user-profile crawler snapshot. Neither UI path calls `Directory.Enumerate*`, `GetFiles`, `GetDirectories`, `FileSystemWatcher` or another filesystem scan.
 
@@ -50,7 +50,7 @@ Each pane requests 256 rows per page. `Load more` is visible only while `NextCur
 
 ## Selection semantics
 
-Each pane now uses explicit multi-selection with checkboxes. Selection belongs only to the currently active tab and is tracked by case-insensitive absolute path.
+Each pane uses explicit multi-selection with checkboxes. Selection belongs only to the currently active tab and is tracked by case-insensitive absolute path.
 
 Selection is preserved when more pages are appended. It is deliberately cleared when switching tabs, refreshing, navigating to another directory, becoming unavailable during index maintenance, or changing the underlying source. This conservative boundary prevents future mutation work from silently carrying a selection into a different navigation or namespace context.
 
@@ -70,9 +70,45 @@ Destination tab
 Destination directory
 ```
 
-Preparing intent does **not** touch the filesystem. The visible Copy and Move controls remain disabled. Any pane/tab/path/selection readiness change clears the prepared intent so a future executor cannot act on an outdated selection or destination.
+Any pane/tab/path/selection readiness change clears the prepared intent. A prepared intent can then be converted into a queued Copy or Move plan, but preparing or queueing still performs no filesystem write.
 
-This establishes the UI/state boundary needed by later mutation work without prematurely defining collision handling, queue ownership, cancellation, rollback or undo.
+## Planned operation queue
+
+Files now owns an in-memory, session-only planned-operation queue. Each queued row captures an immutable operation snapshot:
+
+```text
+Operation id
+Queued UTC timestamp
+Kind: Copy | Move
+Collision policy
+Prepared source/destination intent
+```
+
+Queue entries do not follow later navigation or selection changes. Removing or clearing a queued entry changes only this in-memory plan list.
+
+Before a plan is accepted, the UI applies path-level guards:
+
+- source and destination folders must differ;
+- every selected entry must still be a direct child of the captured source folder;
+- a selected directory cannot target itself or one of its descendants.
+
+These checks are intentionally performed before any future executor exists, so invalid intent cannot become accepted queue state.
+
+### Collision policy
+
+The queue currently offers three non-destructive policies:
+
+- **Ask later** — preserve the collision as an unresolved decision for a future executor/UI;
+- **Skip existing** — a future executor may leave an existing destination untouched and skip that item;
+- **Stop on collision** — a future executor may stop the operation before changing the colliding destination.
+
+Destructive replacement is deliberately not a queue policy yet. Safe replacement needs explicit file-vs-directory semantics, recovery behavior and undo/history guarantees before FileOp should encode it as executable intent.
+
+### Execution remains disabled
+
+`Queue Copy` and `Queue Move` create plans only. There is still no `File.Copy`, `File.Move`, `File.Delete`, `Directory.Move` or `Directory.Delete` path in the Files coordinator/view.
+
+The queue deliberately has no running/completed state, pause/resume, retry, cancellation or rollback API. Those belong to the executor boundary and should not be inferred from a list of planned operations.
 
 ## Native and fallback behavior
 
@@ -82,18 +118,18 @@ Native browsing opens SQLite read-only, takes the existing shared cross-process 
 
 ## Validation without hosted Actions
 
-`tools/verify_files_ui.py` guards the dual-pane browse, selection and intent boundary. It checks:
+`tools/verify_files_ui.py` guards the dual-pane browse, selection, prepared-intent and queue boundaries. It checks:
 
 - exact page accumulation with duplicate-boundary suppression;
 - left/right pane and per-tab isolation;
 - maintenance/source invalidation;
 - case-insensitive selection identity and selection preservation during page append;
-- immutable prepared-intent snapshots;
+- immutable prepared-intent and queued-operation snapshots;
+- same-folder, non-direct-child and recursive-directory target rejection;
 - exact XAML handler wiring;
-- multi-select checkbox mode and explicit Open activation;
-- disabled Copy/Move execution controls;
+- explicit `Ask`, `Skip` and `Stop` collision policies with no replacement policy;
 - per-pane generation checks around `_storageGate`;
-- `BrowseDirectoryAsync` usage and absence of legacy Storage-analysis or direct enumeration paths.
+- `BrowseDirectoryAsync` usage and absence of legacy Storage-analysis, direct enumeration or filesystem mutation paths.
 
 `tools/verify_directory_browse.py` separately covers the protocol/service keyset algorithm, read-only SQLite access, lease/checkpoint enforcement and native/fallback source wiring.
 
@@ -113,4 +149,4 @@ Without `-OfflineOnly`, the local Windows gate continues into the .NET builds, r
 
 ## Next file-manager boundary
 
-The next mutation-focused slice should define collision policy and a queued operation model before any filesystem write is enabled. Copy/move/delete should remain disabled until queue ownership, pause/resume/cancellation, failure recovery, action history and safe undo boundaries are designed and covered by tests.
+The next slice should establish the executor contract and operation state machine without jumping straight to broad mutation support. It should define queue ownership, per-item progress, cancellation boundaries, failure/retry semantics and action-history/undo records before enabling Copy or Move against the filesystem.
