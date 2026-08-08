@@ -23,4 +23,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "Windows Copy mutation handle-binding verification failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "`nPASS: Copy executor and Windows mutation handle binding verified without GitHub Actions." -ForegroundColor Green
+python tools/verify_copy_basic_metadata.py --repo-root $repoRoot --cases 50000
+if ($LASTEXITCODE -ne 0) {
+    throw "Copy basic metadata verification failed with exit code $LASTEXITCODE."
+}
+
+Write-Host "`nPASS: Copy executor, Windows mutation handle binding, and basic metadata boundary verified without GitHub Actions." -ForegroundColor Green
