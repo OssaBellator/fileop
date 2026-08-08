@@ -89,7 +89,7 @@ public sealed record StorageHistoryDelta(
                 newerCategories.GetValueOrDefault(category)))
             .Where(static delta =>
                 delta.LogicalBytesDelta != 0 ||
-                delta.AllocatedBytesDelta is not null and not 0 ||
+                (delta.AllocatedBytesDelta is { } allocatedDelta && allocatedDelta != 0) ||
                 delta.FileCountDelta != 0 ||
                 delta.HardLinkAliasCountDelta != 0 ||
                 delta.TypeCountDelta != 0)
