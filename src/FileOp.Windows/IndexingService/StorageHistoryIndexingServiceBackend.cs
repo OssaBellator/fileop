@@ -1,6 +1,7 @@
 using FileOp.Core.Indexing.Service;
 using FileOp.Core.Storage;
 using FileOp.Windows.Ntfs;
+using Microsoft.Data.Sqlite;
 
 namespace FileOp.Windows.IndexingService;
 
@@ -80,13 +81,21 @@ public sealed class StorageHistoryIndexingServiceBackend : IIndexingServiceBacke
             cancellationToken).ConfigureAwait(false);
 
         var capturedAt = StorageHistoryCapturePolicy.GetHourlyBucket(_utcNow());
-        using var history = new SqliteStorageHistoryStore(CreateDatabasePath(
-            request.VolumeIdentity,
-            request.VolumeRootPath));
-        var snapshotId = await history.SaveSnapshotAsync(
-            live.Analysis,
-            capturedAt,
-            cancellationToken).ConfigureAwait(false);
+        long snapshotId;
+        try
+        {
+            using var history = new SqliteStorageHistoryStore(CreateDatabasePath(
+                request.VolumeIdentity,
+                request.VolumeRootPath));
+            snapshotId = await history.SaveSnapshotAsync(
+                live.Analysis,
+                capturedAt,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqliteException exception) when (IsDatabaseBusy(exception))
+        {
+            throw CreateHistoryBusyException(request.DirectoryPath, exception);
+        }
 
         var snapshot = new StorageHistorySnapshot(
             snapshotId,
@@ -117,16 +126,23 @@ public sealed class StorageHistoryIndexingServiceBackend : IIndexingServiceBacke
         ValidateAttachedVolume(request.VolumeIdentity, request.VolumeRootPath);
         ValidateDirectoryWithinVolume(request.DirectoryPath, request.VolumeRootPath);
 
-        // Historical observations are independently persisted and validated. They remain
-        // queryable even when the current namespace later loses its durable checkpoint.
-        using var history = new SqliteStorageHistoryStore(CreateDatabasePath(
-            request.VolumeIdentity,
-            request.VolumeRootPath));
-        var snapshots = await history.GetSnapshotsAsync(
-            request.DirectoryPath,
-            request.Limit,
-            cancellationToken).ConfigureAwait(false);
-        return new IndexingStorageHistoryQueryResponse(snapshots);
+        try
+        {
+            // Historical observations are independently persisted and validated. They remain
+            // queryable even when the current namespace later loses its durable checkpoint.
+            using var history = new SqliteStorageHistoryStore(CreateDatabasePath(
+                request.VolumeIdentity,
+                request.VolumeRootPath));
+            var snapshots = await history.GetSnapshotsAsync(
+                request.DirectoryPath,
+                request.Limit,
+                cancellationToken).ConfigureAwait(false);
+            return new IndexingStorageHistoryQueryResponse(snapshots);
+        }
+        catch (SqliteException exception) when (IsDatabaseBusy(exception))
+        {
+            throw CreateHistoryBusyException(request.DirectoryPath, exception);
+        }
     }
 
     public void Dispose()
@@ -182,6 +198,18 @@ public sealed class StorageHistoryIndexingServiceBackend : IIndexingServiceBacke
         var key = $"ntfs-{volumeIdentity:X16}-{rootToken.ToLowerInvariant()}";
         return Path.Combine(_databaseDirectory, $"{key}.sqlite");
     }
+
+    private static bool IsDatabaseBusy(SqliteException exception) =>
+        exception.SqliteErrorCode is 5 or 6;
+
+    private static IndexingServiceException CreateHistoryBusyException(
+        string directoryPath,
+        SqliteException exception) =>
+        new(
+            IndexingServiceErrorCode.Busy,
+            $"Storage history for {directoryPath} is temporarily busy. Retry after the current database operation completes.",
+            canRetry: true,
+            exception);
 
     private static string NormalizeRoot(string rootPath) =>
         Path.GetFullPath(rootPath)
