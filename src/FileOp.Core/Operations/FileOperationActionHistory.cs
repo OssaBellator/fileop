@@ -70,12 +70,12 @@ public sealed record FileOperationActionHistory
     {
         ArgumentNullException.ThrowIfNull(entries);
         var entrySnapshot = entries.ToArray();
-        if (entrySnapshot.Any(static entry =>
-            entry.Entry.IsDirectory &&
-            entry.State != FileOperationActionEntryState.Skipped))
+        if (entrySnapshot.Any(entry =>
+            entry.State != FileOperationActionEntryState.Skipped &&
+            (kind != FileOperationKind.Copy || entry.Entry.IsDirectory)))
         {
             throw new ArgumentException(
-                "Action-history schema v1 supports mutation state only for files; directory entries may be recorded only as skipped.",
+                "Action-history schema v1 supports mutation state only for Copy files; directory or non-Copy entries may be recorded only as skipped.",
                 nameof(entries));
         }
 
