@@ -18,4 +18,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "File Copy executor verification failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "`nPASS: Copy executor mutation-lease orchestration verified without GitHub Actions." -ForegroundColor Green
+python tools/verify_windows_file_copy_mutation.py --repo-root $repoRoot --cases 2000
+if ($LASTEXITCODE -ne 0) {
+    throw "Windows Copy mutation handle-binding verification failed with exit code $LASTEXITCODE."
+}
+
+Write-Host "`nPASS: Copy executor and Windows mutation handle binding verified without GitHub Actions." -ForegroundColor Green

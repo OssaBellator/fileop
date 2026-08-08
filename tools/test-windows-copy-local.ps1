@@ -1,0 +1,58 @@
+param(
+    [switch]$SkipOfflineModels
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $repoRoot
+
+function Invoke-Step {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][scriptblock]$Command
+    )
+
+    Write-Host "`n==> $Name" -ForegroundColor Cyan
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Name failed with exit code $LASTEXITCODE."
+    }
+}
+
+if (-not $SkipOfflineModels) {
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+        throw "Python 3 is required for the zero-Actions Copy property models."
+    }
+
+    Invoke-Step "Copy executor and mutation property models" {
+        & (Join-Path $PSScriptRoot "test-copy-executor-local.ps1")
+    }
+}
+
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    throw ".NET 10 SDK is required for the focused Windows Copy compiler/native test gate."
+}
+
+Invoke-Step "FileOp.Core Release build" {
+    dotnet build src/FileOp.Core/FileOp.Core.csproj --configuration Release
+}
+
+Invoke-Step "FileOp.Windows Release build" {
+    dotnet build src/FileOp.Windows/FileOp.Windows.csproj --configuration Release
+}
+
+$filter = @(
+    "FullyQualifiedName~FileOperationActionHistoryTests",
+    "FullyQualifiedName~FileCopyOperationExecutorTests",
+    "FullyQualifiedName~WindowsFileCopyMutationPrimitiveTests"
+) -join "|"
+
+Invoke-Step "Focused action-history/Copy native regressions" {
+    dotnet test tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj `
+        --configuration Release `
+        --filter $filter
+}
+
+Write-Host "`nPASS: focused Windows Copy compiler/native gate completed without GitHub Actions." -ForegroundColor Green

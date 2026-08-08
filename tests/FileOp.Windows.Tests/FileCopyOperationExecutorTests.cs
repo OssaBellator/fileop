@@ -31,6 +31,11 @@ public sealed class FileCopyOperationExecutorTests
         Assert.IsTrue(IndexOf(events, "mutation") < IndexOf(events, "history:commit:0"));
         Assert.IsTrue(IndexOf(events, "history:commit:0") < IndexOf(events, "progress:Running:1"));
         Assert.IsTrue(IndexOf(events, "progress:Running:1") < IndexOf(events, "lease:dispose"));
+        Assert.IsNotNull(mutation.LastRequest);
+        Assert.AreEqual(@"C:\Real\Source", mutation.LastRequest.SourceDirectory.CanonicalPath);
+        Assert.AreEqual(@"D:\Real\Destination", mutation.LastRequest.DestinationDirectory.CanonicalPath);
+        Assert.AreEqual(new FileIdentity(1, 10), mutation.LastRequest.SourceDirectory.Identity);
+        Assert.AreEqual(new FileIdentity(2, 20), mutation.LastRequest.DestinationDirectory.Identity);
     }
 
     [TestMethod]
@@ -317,11 +322,13 @@ public sealed class FileCopyOperationExecutorTests
 
         public int CallCount { get; private set; }
 
-        public ValueTask<IFileCopyMutationLease> CopyNewFileAsync(
-            FileOperationExecutionValidationItem validation)
+        public FileCopyMutationRequest? LastRequest { get; private set; }
+
+        public ValueTask<IFileCopyMutationLease> CopyNewFileAsync(FileCopyMutationRequest request)
         {
             CallCount++;
-            return _callback(validation);
+            LastRequest = request;
+            return _callback(request.Item);
         }
     }
 

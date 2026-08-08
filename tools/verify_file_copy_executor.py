@@ -214,6 +214,9 @@ def check_repository(root: Path) -> int:
     source = {name: path.read_text(encoding="utf-8") for name, path in files.items()}
 
     required_executor = [
+        "public sealed record FileCopyMutationRequest(",
+        "FileOperationCanonicalPath SourceDirectory",
+        "FileOperationCanonicalPath DestinationDirectory",
         "public interface IFileCopyMutationLease : IAsyncDisposable",
         "FileCopyMutationReceipt Receipt { get; }",
         "public interface IFileCopyMutationPrimitive",
@@ -222,7 +225,9 @@ def check_repository(root: Path) -> int:
         "ReferenceEquals(validation.Plan, plan)",
         "ReferenceEquals(freshValidation.Plan, freshPlan)",
         "MarkMutationStartedAsync(plan.Id, ordinal, UtcNow())",
-        "CopyNewFileAsync(freshItem)",
+        ".CopyNewFileAsync(new FileCopyMutationRequest(",
+        "freshValidation.SourceDirectory",
+        "freshValidation.DestinationDirectory",
         "CommitCopyAsync(",
         "snapshot = snapshot.ReportProgress(",
         "DisposeMutationLeaseAsync(mutationLease)",
@@ -234,12 +239,11 @@ def check_repository(root: Path) -> int:
     for needle in required_executor:
         assert needle in source["executor"], needle
 
-    # Executor lifetime is process-level; only ActiveExecution and mutation leases dispose.
     assert "public sealed class FileCopyOperationExecutor : IFileOperationExecutor, IDisposable" not in source["executor"]
     assert "_executionGate.Dispose()" not in source["executor"]
 
     start = source["executor"].index("MarkMutationStartedAsync(plan.Id, ordinal, UtcNow())")
-    mutate = source["executor"].index("CopyNewFileAsync(freshItem)", start)
+    mutate = source["executor"].index(".CopyNewFileAsync(new FileCopyMutationRequest(", start)
     commit = source["executor"].index(".CommitCopyAsync(", mutate)
     progress = source["executor"].index("snapshot = snapshot.ReportProgress(", commit)
     dispose = source["executor"].index("DisposeMutationLeaseAsync(mutationLease)", progress)
@@ -277,13 +281,15 @@ def check_repository(root: Path) -> int:
     ]:
         assert test_name in source["tests"], test_name
 
+    assert "LastRequest.SourceDirectory.CanonicalPath" in source["tests"]
+    assert "LastRequest.DestinationDirectory.Identity" in source["tests"]
     assert "FileCopyOperationExecutor" not in source["files_ui"]
     assert ".ExecuteAsync(" not in source["files_ui"]
     assert "mutation lease" in source["docs"].casefold()
-    assert "no concrete mutation primitive" in source["docs"].casefold()
+    assert "windowsfilecopymutationprimitive" in source["docs"].casefold()
     assert "test-local.ps1\") -OfflineOnly" in source["wrapper"]
     assert "verify_file_copy_executor.py --repo-root $repoRoot --cases 20000" in source["wrapper"]
-    return len(required_executor) + 2 + 2 + 7 + 1 + 7 + 6
+    return len(required_executor) + 2 + 2 + 7 + 2 + 2 + 6
 
 
 def main() -> int:
