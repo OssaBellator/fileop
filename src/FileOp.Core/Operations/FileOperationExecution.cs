@@ -136,7 +136,9 @@ public sealed record FileOperationExecutionSnapshot
         EnsureState(FileOperationExecutionState.CancellationRequested);
         return this with
         {
-            State = FileOperationExecutionState.Cancelled,
+            State = CompletedEntryCount == TotalEntryCount
+                ? FileOperationExecutionState.Succeeded
+                : FileOperationExecutionState.Cancelled,
             CurrentPath = null,
         };
     }
