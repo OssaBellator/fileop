@@ -268,6 +268,8 @@ def check_repository(root: Path) -> int:
         "SanitizeAttributes",
         "MergeDestinationAttributes",
         "implementationChecks",
+        "mergeFuzz",
+        "var destination = mergeFuzz",
         "Marshal.SizeOf(basic)",
         "Marshal.OffsetOf(type, field)",
         "DllImportAttribute",
