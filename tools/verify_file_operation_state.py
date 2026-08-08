@@ -48,9 +48,9 @@ class Snapshot:
         return Snapshot(self.state, completed, self.total, self.failed)
 
     def request_cancellation(self) -> 'Snapshot':
-        if self.state is State.PLANNED:
+        if self.state in {State.PLANNED, State.VALIDATING}:
             return Snapshot(State.CANCELLED, self.completed, self.total)
-        if self.state in {State.VALIDATING, State.RUNNING}:
+        if self.state is State.RUNNING:
             return Snapshot(State.CANCELLATION_REQUESTED, self.completed, self.total)
         if self.state is State.CANCELLATION_REQUESTED:
             return self
@@ -83,6 +83,7 @@ def expect_invalid(action) -> None:
 
 def check_properties(cases: int) -> int:
     assert Snapshot.planned(1).request_cancellation().state is State.CANCELLED
+    assert Snapshot.planned(1).begin_validation().request_cancellation().state is State.CANCELLED
     assert (
         Snapshot.planned(1)
         .begin_validation()
@@ -102,7 +103,7 @@ def check_properties(cases: int) -> int:
         .state is State.CANCELLED
     )
     expect_invalid(lambda: Snapshot.planned(2).begin_validation().begin_running().progress(1).complete())
-    checks = 4
+    checks = 5
 
     rng = random.Random(20260808)
     for _ in range(cases):
@@ -123,9 +124,9 @@ def check_properties(cases: int) -> int:
             checks += 1
             continue
         if rng.random() < 0.08:
-            snap = snap.request_cancellation().cancel_at_safe_boundary()
+            snap = snap.request_cancellation()
             assert snap.state is State.CANCELLED
-            checks += 2
+            checks += 1
             continue
 
         snap = snap.begin_running()
@@ -202,12 +203,17 @@ def check_repository(root: Path) -> int:
 
     required_execution = [
         'public static FileOperationExecutionSnapshot CreatePlanned(FileOperationPlan plan)',
+        'ArgumentNullException.ThrowIfNull(plan.Intent);',
+        'ArgumentNullException.ThrowIfNull(plan.Intent.Entries);',
         'plan.Intent.Entries.Count == 0',
         'public FileOperationExecutionSnapshot BeginValidation()',
         'public FileOperationExecutionSnapshot BeginRunning()',
         'public FileOperationExecutionSnapshot ReportProgress(int completedEntryCount, string? currentPath)',
         'completedEntryCount < CompletedEntryCount || completedEntryCount > TotalEntryCount',
         'public FileOperationExecutionSnapshot RequestCancellation()',
+        'FileOperationExecutionState.Planned or FileOperationExecutionState.Validating => this with',
+        'FileOperationExecutionState.Running => this with',
+        'State = FileOperationExecutionState.CancellationRequested',
         'public FileOperationExecutionSnapshot CancelAtSafeBoundary()',
         'CompletedEntryCount == TotalEntryCount',
         '? FileOperationExecutionState.Succeeded',
@@ -255,10 +261,11 @@ def check_repository(root: Path) -> int:
 
     assert '## Execution contract and state machine' in source['docs']
     assert 'late cancellation' in source['docs']
+    assert 'validation can be cancelled immediately' in source['docs']
     assert 'retry creates a new plan' in source['docs']
     assert 'verify_file_operation_state.py' in source['local']
 
-    return len(required_execution) + 5 + 8 + 5 + 8
+    return len(required_execution) + 5 + 8 + 5 + 9
 
 
 def main() -> int:
