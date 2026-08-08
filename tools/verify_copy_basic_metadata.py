@@ -50,13 +50,19 @@ def run_model(cases: int) -> int:
 
 def check_repository(root: Path) -> int:
     helper_path = root / "src/FileOp.Windows/Operations/WindowsFileCopyBasicMetadata.cs"
+    primitive_path = root / "src/FileOp.Windows/Operations/WindowsFileCopyMutationPrimitive.cs"
     tests_path = root / "tests/FileOp.Windows.Tests/WindowsFileCopyMutationPrimitiveMetadataTests.cs"
     wrapper_path = root / "tools/test-copy-executor-local.ps1"
-    missing = [str(path) for path in (helper_path, tests_path, wrapper_path) if not path.is_file()]
+    missing = [
+        str(path)
+        for path in (helper_path, primitive_path, tests_path, wrapper_path)
+        if not path.is_file()
+    ]
     if missing:
         raise FileNotFoundError(", ".join(missing))
 
     helper = helper_path.read_text(encoding="utf-8")
+    primitive = primitive_path.read_text(encoding="utf-8")
     tests = tests_path.read_text(encoding="utf-8")
     wrapper = wrapper_path.read_text(encoding="utf-8")
 
@@ -89,14 +95,23 @@ def check_repository(root: Path) -> int:
     for needle in forbidden_helper:
         assert needle not in helper, needle
 
+    capture = primitive.index("WindowsFileCopyBasicMetadata.Capture(sourceFile)")
+    copy = primitive.index("CopyContents(sourceFile, destinationFile)", capture)
+    data_flush = primitive.index("FlushFileBuffers(destinationFile)", copy)
+    apply = primitive.index("WindowsFileCopyBasicMetadata.Apply(destinationFile, sourceMetadata)", data_flush)
+    metadata_flush = primitive.index("FlushFileBuffers(destinationFile)", apply)
+    validate_destination = primitive.index("ValidateCreatedFileHandle(", metadata_flush)
+    assert capture < copy < data_flush < apply < metadata_flush < validate_destination
+
     for test_name in [
         "BasicMetadataHelperPreservesTimestampsAndSafeAttributes",
         "BasicMetadataCaptureDropsUnsupportedStorageStateAttributes",
+        "CopyPrimitivePreservesSafeBasicMetadata",
     ]:
         assert test_name in tests, test_name
 
     assert "verify_copy_basic_metadata.py" in wrapper
-    return len(required_helper) + len(forbidden_helper) + 3
+    return len(required_helper) + len(forbidden_helper) + 8
 
 
 def main() -> int:
