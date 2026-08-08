@@ -6,7 +6,7 @@ namespace FileOp.Core.Indexing.Service;
 
 public static class IndexingServiceProtocol
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -19,6 +19,7 @@ public enum IndexingServiceOperation
     SyncVolume,
     Search,
     AnalyzeStorage,
+    AnalyzeStorageTypes,
 }
 
 public enum IndexingServiceErrorCode
@@ -101,6 +102,14 @@ public sealed record IndexingStorageAnalysisRequest(
     int MaxEntries = 256);
 
 public sealed record IndexingStorageAnalysisResponse(StorageDirectoryAnalysis Analysis);
+
+public sealed record IndexingStorageFileTypeRequest(
+    ulong VolumeIdentity,
+    string VolumeRootPath,
+    string DirectoryPath,
+    int MaxTypes = 128);
+
+public sealed record IndexingStorageFileTypeResponse(StorageFileTypeAnalysis Analysis);
 
 public sealed record IndexingSearchResult(
     string Path,
