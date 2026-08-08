@@ -33,7 +33,7 @@
                         Content="Storage"
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Left"
-                        Click="StorageNavigationButton_Click" />
+                        Click="StorageNavigationWithTypesButton_Click" />
                 <Button Content="Clean" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False" />
                 <Button Content="Disks" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False" />
             </StackPanel>
@@ -123,7 +123,7 @@
                 </Border>
             </Grid>
 
-            <Grid x:Name="StorageView" Grid.Row="0" Visibility="Collapsed">
+            <Grid x:Name="StorageView" Grid.Row="0" Visibility="Collapsed" Loaded="StorageTypesView_Loaded">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -139,15 +139,28 @@
                         <TextBlock Text="Storage" FontSize="28" FontWeight="SemiBold" />
                         <TextBlock x:Name="StorageScopeText" Opacity="0.7" TextWrapping="Wrap" />
                         <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                            <Button x:Name="StorageFoldersButton" Content="Folders" Click="StorageFoldersButton_Click" IsEnabled="False" />
+                            <Button x:Name="StorageTypesButton" Content="Types" Click="StorageTypesButton_Click" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
                             <Button x:Name="StorageUpButton" Content="Up" Click="StorageUpButton_Click" IsEnabled="False" />
+                            <Button x:Name="StorageTypesUpButton"
+                                    Content="Up"
+                                    Click="StorageTypesUpButton_Click"
+                                    IsEnabled="False"
+                                    Visibility="Collapsed" />
                             <TextBlock x:Name="StoragePathText" VerticalAlignment="Center" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
                         </StackPanel>
                     </StackPanel>
-                    <Button x:Name="StorageRefreshButton"
-                            Grid.Column="1"
-                            Content="Refresh analysis"
-                            VerticalAlignment="Top"
-                            Click="StorageRefreshButton_Click" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Top">
+                        <Button x:Name="StorageRefreshButton"
+                                Content="Refresh analysis"
+                                Click="StorageRefreshButton_Click" />
+                        <Button x:Name="StorageTypesRefreshButton"
+                                Content="Refresh types"
+                                Click="StorageTypesRefreshButton_Click"
+                                Visibility="Collapsed" />
+                    </StackPanel>
                 </Grid>
 
                 <Grid Grid.Row="1" Margin="0,18,0,14" ColumnSpacing="12">
@@ -188,7 +201,7 @@
                     </Border>
                 </Grid>
 
-                <Grid Grid.Row="2" ColumnSpacing="14">
+                <Grid x:Name="StorageFolderPanel" Grid.Row="2" ColumnSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="1.1*" />
                         <ColumnDefinition Width="1*" />
@@ -266,6 +279,103 @@
                         </Grid>
                     </Border>
                 </Grid>
+
+                <Grid x:Name="StorageTypesPanel" Grid.Row="2" Visibility="Collapsed" ColumnSpacing="14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="0.9*" />
+                        <ColumnDefinition Width="1.4*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" Padding="12,10"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="Categories" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="StorageCategoryStatusText"
+                                               Text="Choose Types to analyze extensions and categories from the shared index."
+                                               Opacity="0.6" FontSize="11" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <ListView x:Name="StorageCategoryList" Grid.Row="1" SelectionMode="None">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Padding="9,7">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="1" Text="{Binding SizeText}" Margin="10,0,0,0" Opacity="0.75" />
+                                            </Grid>
+                                            <ProgressBar Grid.Row="1" Value="{Binding Percent}" Maximum="100" Height="6" Margin="0,6,0,5" />
+                                            <TextBlock Grid.Row="2" Text="{Binding DetailText}" FontSize="11" Opacity="0.58" TextWrapping="Wrap" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Column="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Padding="12,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="1.3*" />
+                                    <ColumnDefinition Width="1.1*" />
+                                    <ColumnDefinition Width="95" />
+                                    <ColumnDefinition Width="95" />
+                                    <ColumnDefinition Width="70" />
+                                    <ColumnDefinition Width="65" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Type" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="Category" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="2" Text="Logical" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                                <TextBlock Grid.Column="3" Text="On disk" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                                <TextBlock Grid.Column="4" Text="Files" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                                <TextBlock Grid.Column="5" Text="Aliases" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                            </Grid>
+                            <ListView x:Name="StorageTypesList" Grid.Row="1" SelectionMode="None">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Padding="7,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.3*" />
+                                                <ColumnDefinition Width="1.1*" />
+                                                <ColumnDefinition Width="95" />
+                                                <ColumnDefinition Width="95" />
+                                                <ColumnDefinition Width="70" />
+                                                <ColumnDefinition Width="65" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding ExtensionText}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{Binding CategoryText}" Opacity="0.75" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="2" Text="{Binding LogicalText}" HorizontalAlignment="Right" Opacity="0.7" />
+                                            <TextBlock Grid.Column="3" Text="{Binding AllocatedText}" HorizontalAlignment="Right" Opacity="0.7" />
+                                            <TextBlock Grid.Column="4" Text="{Binding FileCountText}" HorizontalAlignment="Right" Opacity="0.7" />
+                                            <TextBlock Grid.Column="5" Text="{Binding AliasCountText}" HorizontalAlignment="Right" Opacity="0.7" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
+                    </Border>
+                </Grid>
             </Grid>
 
             <Grid Grid.Row="1" Margin="0,12,0,0" ColumnSpacing="12">
@@ -287,7 +397,7 @@
                         Grid.Column="1"
                         Content="Enable fast indexing"
                         Visibility="Collapsed"
-                        Click="EnableFastIndexButton_Click" />
+                        Click="EnableFastIndexWithStorageTypesButton_Click" />
 
                 <TextBlock x:Name="CountText" Grid.Column="2" Opacity="0.7" VerticalAlignment="Center" />
             </Grid>

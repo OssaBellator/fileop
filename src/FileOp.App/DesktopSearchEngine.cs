@@ -23,7 +23,7 @@ internal sealed record DesktopSearchEngineState(
     bool CanElevate,
     bool IsCurrent);
 
-internal sealed class DesktopSearchEngine : IAsyncDisposable
+internal sealed partial class DesktopSearchEngine : IAsyncDisposable
 {
     private const int FallbackBatchSize = 512;
     private const int InitialCatchUpBatchLimit = 64;
