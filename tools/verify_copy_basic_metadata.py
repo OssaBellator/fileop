@@ -61,8 +61,9 @@ def run_model(cases: int) -> int:
         checks += 1
         if value & PRESERVED:
             assert result == value & PRESERVED
+            checks += 1
             assert result & NORMAL == 0
-            checks += 2
+            checks += 1
         else:
             assert result == NORMAL
             checks += 1
@@ -72,10 +73,13 @@ def run_model(cases: int) -> int:
         expected_owned = destination & DESTINATION_SETTABLE
         expected_preserved = value & PRESERVED
         assert merged & DESTINATION_SETTABLE == expected_owned
+        checks += 1
         assert merged & PRESERVED == expected_preserved
+        checks += 1
         assert merged & NON_SETTABLE_STORAGE == 0
+        checks += 1
         assert (merged & NORMAL) == (NORMAL if (expected_owned | expected_preserved) == 0 else 0)
-        checks += 4
+        checks += 1
     return checks
 
 
@@ -86,20 +90,19 @@ def check_repository(root: Path) -> int:
     wrapper_path = root / "tools/test-copy-executor-local.ps1"
     windows_wrapper_path = root / "tools/test-windows-copy-local.ps1"
     windows_cmd_path = root / "tools/test-windows-copy-local.cmd"
-    missing = [
-        str(path)
-        for path in (
-            helper_path,
-            primitive_path,
-            tests_path,
-            wrapper_path,
-            windows_wrapper_path,
-            windows_cmd_path,
-        )
-        if not path.is_file()
-    ]
-    if missing:
-        raise FileNotFoundError(", ".join(missing))
+    paths = (
+        helper_path,
+        primitive_path,
+        tests_path,
+        wrapper_path,
+        windows_wrapper_path,
+        windows_cmd_path,
+    )
+    checks = 0
+    for path in paths:
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        checks += 1
 
     helper = helper_path.read_text(encoding="utf-8")
     primitive = primitive_path.read_text(encoding="utf-8")
@@ -138,6 +141,7 @@ def check_repository(root: Path) -> int:
     ]
     for needle in required_helper:
         assert needle in helper, needle
+        checks += 1
 
     forbidden_helper = [
         "LastAccessTime = -2",
@@ -151,6 +155,7 @@ def check_repository(root: Path) -> int:
     ]
     for needle in forbidden_helper:
         assert needle not in helper, needle
+        checks += 1
 
     capture = primitive.index("WindowsFileCopyBasicMetadata.Capture(sourceFile)")
     destination_read_access = primitive.index(
@@ -167,6 +172,7 @@ def check_repository(root: Path) -> int:
     metadata_flush = primitive.index("FlushFileBuffers(destinationFile)", apply)
     validate_destination = primitive.index("ValidateCreatedFileHandle(", metadata_flush)
     assert capture < destination_read_access < suppress < copy < data_flush < apply < metadata_flush < validate_destination
+    checks += 1
 
     for test_name in [
         "BasicMetadataHelperPreservesTimestampsAndSafeAttributes",
@@ -176,14 +182,19 @@ def check_repository(root: Path) -> int:
         "CopyPrimitivePreservesSafeBasicMetadata",
     ]:
         assert test_name in tests, test_name
+        checks += 1
 
     helper_test_start = tests.index("public void BasicMetadataHelperPreservesTimestampsAndSafeAttributes()")
     helper_test_end = tests.index("public void BasicMetadataCaptureDropsUnsupportedStorageStateAttributes()", helper_test_start)
     helper_test = tests[helper_test_start:helper_test_end]
-    assert "FileAccess.ReadWrite" in helper_test
-    assert "File.SetAttributes(destinationPath, FileAttributes.Temporary)" in helper_test
-    assert "SuppressAutomaticTimestampUpdates(destinationHandle)" in helper_test
-    assert "FileAttributes.Temporary) != 0" in helper_test
+    for needle in (
+        "FileAccess.ReadWrite",
+        "File.SetAttributes(destinationPath, FileAttributes.Temporary)",
+        "SuppressAutomaticTimestampUpdates(destinationHandle)",
+        "FileAttributes.Temporary) != 0",
+    ):
+        assert needle in helper_test, needle
+        checks += 1
 
     zero_test_start = tests.index("public void BasicMetadataApplyLeavesZeroTimestampsDestinationOwned()")
     zero_test_end = tests.index("public void BasicMetadataMergePreservesDestinationOwnedAttributes()", zero_test_start)
@@ -194,12 +205,17 @@ def check_repository(root: Path) -> int:
         "LastWriteTime: 0",
     ]:
         assert sentinel in zero_test, sentinel
-    assert "SuppressAutomaticTimestampUpdates(destinationHandle)" in zero_test
-    assert "AssertTimeClose(expectedCreation" in zero_test
-    assert "AssertTimeClose(expectedAccess" in zero_test
-    assert "AssertTimeClose(expectedWrite" in zero_test
-    assert "FileAttributes.Hidden" in zero_test
-    assert "FileAttributes.Temporary" in zero_test
+        checks += 1
+    for needle in (
+        "SuppressAutomaticTimestampUpdates(destinationHandle)",
+        "AssertTimeClose(expectedCreation",
+        "AssertTimeClose(expectedAccess",
+        "AssertTimeClose(expectedWrite",
+        "FileAttributes.Hidden",
+        "FileAttributes.Temporary",
+    ):
+        assert needle in zero_test, needle
+        checks += 1
 
     merge_test_start = tests.index("public void BasicMetadataMergePreservesDestinationOwnedAttributes()")
     merge_test_end = tests.index("public async Task CopyPrimitivePreservesSafeBasicMetadata()", merge_test_start)
@@ -212,7 +228,9 @@ def check_repository(root: Path) -> int:
         "FileAttributes.Encrypted",
     ]:
         assert attribute in merge_test, attribute
+        checks += 1
     assert "Assert.AreEqual(0u, merged & destinationNonSettableStorage)" in merge_test
+    checks += 1
 
     metadata_setup_start = tests.index("private static void SetExpectedMetadata(")
     metadata_setup_end = tests.index("private static void AssertMetadata(", metadata_setup_start)
@@ -226,6 +244,7 @@ def check_repository(root: Path) -> int:
     ]
     for attribute in preserved_test_attributes:
         assert attribute in metadata_setup, attribute
+        checks += 1
 
     primitive_test_start = tests.index("public async Task CopyPrimitivePreservesSafeBasicMetadata()")
     primitive_test_end = tests.index("private static void SetExpectedMetadata(", primitive_test_start)
@@ -237,18 +256,26 @@ def check_repository(root: Path) -> int:
     )
     mutation = primitive_test.index("CopyNewFileAsync(", establish_metadata)
     assert validation < establish_metadata < mutation
+    checks += 1
 
     metadata_assertion = tests.index("AssertMetadata(", tests.index("CopyPrimitivePreservesSafeBasicMetadata"))
     content_read = tests.index("File.ReadAllTextAsync(destinationPath)", metadata_assertion)
     assert metadata_assertion < content_read
+    checks += 1
 
     assert "verify_copy_basic_metadata.py" in wrapper
+    checks += 1
     assert "WindowsFileCopyMutationPrimitiveMetadataTests" in windows_wrapper
+    checks += 1
     assert "powershell.exe -NoProfile -ExecutionPolicy Bypass -File" in windows_cmd
+    checks += 1
     assert "test-windows-copy-local.ps1" in windows_cmd
+    checks += 1
     assert "gh workflow" not in windows_cmd.lower()
+    checks += 1
     assert "gh run" not in windows_cmd.lower()
-    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 44
+    checks += 1
+    return checks
 
 
 def main() -> int:
