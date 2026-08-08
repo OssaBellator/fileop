@@ -51,7 +51,6 @@ const uint NotContentIndexed = 0x00002000;
 const uint Encrypted = 0x00004000;
 const uint IntegrityStream = 0x00008000;
 const uint Preserved = ReadOnly | Hidden | SystemAttribute | Archive | NotContentIndexed;
-const uint DestinationOwned = Temporary | Offline;
 
 static void Require(bool condition, string message)
 {
@@ -276,6 +275,8 @@ def main() -> int:
         shutil.copy2(helper, project_dir / helper.name)
         (project_dir / "InteropProbe.csproj").write_text(PROJECT, encoding="utf-8")
         (project_dir / "Program.cs").write_text(PROGRAM, encoding="utf-8")
+        empty_feed = project_dir / ".empty-feed"
+        empty_feed.mkdir()
 
         env = os.environ.copy()
         env.update(
@@ -287,7 +288,17 @@ def main() -> int:
                 "NUGET_PACKAGES": str(project_dir / ".nuget-packages"),
             }
         )
-        run([dotnet, "restore", "--ignore-failed-sources"], project_dir, env)
+        run(
+            [
+                dotnet,
+                "restore",
+                "--source",
+                str(empty_feed),
+                "--ignore-failed-sources",
+            ],
+            project_dir,
+            env,
+        )
         run([dotnet, "build", "--configuration", "Release", "--no-restore"], project_dir, env)
         run(
             [dotnet, "run", "--configuration", "Release", "--no-build", "--no-restore"],
