@@ -32,6 +32,7 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
             var expectedAccess = new DateTime(2022, 3, 4, 5, 6, 7, DateTimeKind.Utc);
             var expectedWrite = new DateTime(2023, 4, 5, 6, 7, 8, DateTimeKind.Utc);
             SetExpectedMetadata(sourcePath, expectedCreation, expectedAccess, expectedWrite);
+            File.SetAttributes(destinationPath, FileAttributes.Temporary);
 
             using (var sourceHandle = File.OpenHandle(
                        sourcePath,
@@ -44,6 +45,7 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
                        FileAccess.ReadWrite,
                        FileShare.ReadWrite | FileShare.Delete))
             {
+                WindowsFileCopyBasicMetadata.SuppressAutomaticTimestampUpdates(destinationHandle);
                 var snapshot = WindowsFileCopyBasicMetadata.Capture(sourceHandle);
                 WindowsFileCopyBasicMetadata.Apply(destinationHandle, snapshot);
             }
@@ -54,6 +56,10 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
                 expectedCreation,
                 expectedAccess,
                 expectedWrite);
+            Assert.AreNotEqual(
+                0,
+                File.GetAttributes(destinationPath) & FileAttributes.Temporary,
+                "Applying source basic metadata must not clear destination-owned Temporary state.");
         }
         finally
         {
