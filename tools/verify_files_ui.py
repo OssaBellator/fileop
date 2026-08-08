@@ -216,6 +216,7 @@ def check_repository(root: Path) -> int:
         'public FileBrowserOperationIntent? PreparedIntent => _preparedIntent;',
         'selectedRows',
         '.ToArray();',
+        'Array.AsReadOnly(entries)',
         'public sealed record FileBrowserOperationIntent(',
         'ClearPreparedIntent();',
     ]
