@@ -69,7 +69,7 @@ public sealed partial class FilesView : UserControl
             source.PaneTitle,
             source.ActiveTabId,
             sourcePath,
-            entries,
+            Array.AsReadOnly(entries),
             destination.PaneTitle,
             destination.ActiveTabId,
             destinationPath);
