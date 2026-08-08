@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Zero-Actions checks for FileOp's planned operation execution contract/state machine."""
 from __future__ import annotations
-import argparse, random, sys
+import argparse, random, re, sys
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
@@ -222,12 +222,22 @@ def check_repository(root: Path) -> int:
         'CompletedEntryCount != TotalEntryCount',
         'public FileOperationExecutionSnapshot Fail(FileOperationFailure failure)',
         'public interface IFileOperationExecutor',
-        'CancellationToken shutdownCancellationToken = default',
+        'IProgress<FileOperationExecutionSnapshot>? progress = null);',
         'ValueTask<bool> RequestCancellationAsync(',
     ]
     for needle in required_execution:
         assert needle in execution, needle
 
+    execute_signature = re.search(
+        r'ValueTask<FileOperationExecutionSnapshot> ExecuteAsync\(.*?\);',
+        execution,
+        re.S,
+    )
+    assert execute_signature, 'ExecuteAsync contract not found'
+    assert 'CancellationToken' not in execute_signature.group(0), (
+        'ExecuteAsync must not expose an arbitrary cancellation token; use RequestCancellationAsync'
+    )
+    assert 'shutdownCancellationToken' not in execution
     assert 'Retry(' not in execution
     assert 'RetryAsync(' not in execution
 
@@ -261,11 +271,12 @@ def check_repository(root: Path) -> int:
 
     assert '## Execution contract and state machine' in source['docs']
     assert 'late cancellation' in source['docs']
-    assert 'validation can be cancelled immediately' in source['docs']
+    assert 'Validation can be cancelled immediately' in source['docs']
+    assert 'single cancellation path' in source['docs']
     assert 'retry creates a new plan' in source['docs']
     assert 'verify_file_operation_state.py' in source['local']
 
-    return len(required_execution) + 5 + 8 + 5 + 9
+    return len(required_execution) + 5 + 8 + 5 + 12
 
 
 def main() -> int:
