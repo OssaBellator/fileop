@@ -42,6 +42,7 @@ CREATE TABLE actions(
 CREATE TABLE entries(
     operation_id TEXT NOT NULL,
     ordinal INTEGER NOT NULL,
+    is_directory INTEGER NOT NULL,
     state INTEGER NOT NULL,
     mutation_started INTEGER NULL,
     completed INTEGER NULL,
@@ -60,13 +61,27 @@ def db() -> sqlite3.Connection:
     return connection
 
 
-def begin(connection: sqlite3.Connection, operation_id: str, decisions: list[str]) -> None:
+def begin(
+    connection: sqlite3.Connection,
+    operation_id: str,
+    decisions: list[str],
+    directories: list[bool] | None = None,
+) -> None:
+    directories = directories or [False] * len(decisions)
+    if len(directories) != len(decisions):
+        raise ValueError("directory flags must match decisions")
+    if any(is_directory and decision == "ready"
+           for decision, is_directory in zip(decisions, directories, strict=True)):
+        raise ValueError("action-history schema v1 does not support directory mutation")
+
     with connection:
         connection.execute(
             "INSERT INTO actions(operation_id, kind, terminal_state) VALUES (?, 0, NULL)",
             (operation_id,),
         )
-        for ordinal, decision in enumerate(decisions):
+        for ordinal, (decision, is_directory) in enumerate(
+            zip(decisions, directories, strict=True)
+        ):
             if decision == "ready":
                 state, completed = EntryState.PENDING, None
             elif decision == "skip":
@@ -76,11 +91,11 @@ def begin(connection: sqlite3.Connection, operation_id: str, decisions: list[str
             connection.execute(
                 """
                 INSERT INTO entries(
-                    operation_id, ordinal, state, mutation_started, completed,
+                    operation_id, ordinal, is_directory, state, mutation_started, completed,
                     destination_identity, undo_kind, failure_code)
-                VALUES (?, ?, ?, NULL, ?, NULL, ?, NULL)
+                VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, NULL)
                 """,
-                (operation_id, ordinal, int(state), completed, int(UndoKind.NONE)),
+                (operation_id, ordinal, int(is_directory), int(state), completed, int(UndoKind.NONE)),
             )
 
 
@@ -90,7 +105,7 @@ def start_mutation(connection: sqlite3.Connection, operation_id: str, ordinal: i
             """
             UPDATE entries
             SET state = ?, mutation_started = 1
-            WHERE operation_id = ? AND ordinal = ? AND state = ?
+            WHERE operation_id = ? AND ordinal = ? AND state = ? AND is_directory = 0
               AND EXISTS(
                   SELECT 1 FROM actions
                   WHERE operation_id = ? AND terminal_state IS NULL
@@ -108,7 +123,7 @@ def commit_copy(connection: sqlite3.Connection, operation_id: str, ordinal: int,
             """
             UPDATE entries
             SET state = ?, completed = 1, destination_identity = ?, undo_kind = ?
-            WHERE operation_id = ? AND ordinal = ? AND state = ?
+            WHERE operation_id = ? AND ordinal = ? AND state = ? AND is_directory = 0
               AND EXISTS(
                   SELECT 1 FROM actions
                   WHERE operation_id = ? AND terminal_state IS NULL AND kind = 0
@@ -126,7 +141,7 @@ def fail_before_mutation(connection: sqlite3.Connection, operation_id: str, ordi
             """
             UPDATE entries
             SET state = ?, completed = 1, failure_code = 'BeforeMutation'
-            WHERE operation_id = ? AND ordinal = ? AND state = ?
+            WHERE operation_id = ? AND ordinal = ? AND state = ? AND is_directory = 0
             """,
             (int(EntryState.FAILED), operation_id, ordinal, int(EntryState.PENDING)),
         ).rowcount
@@ -139,7 +154,7 @@ def require_recovery(connection: sqlite3.Connection, operation_id: str, ordinal:
             """
             UPDATE entries
             SET state = ?, completed = 1, failure_code = 'MutationUncertain'
-            WHERE operation_id = ? AND ordinal = ? AND state = ?
+            WHERE operation_id = ? AND ordinal = ? AND state = ? AND is_directory = 0
             """,
             (int(EntryState.RECOVERY_REQUIRED), operation_id, ordinal,
              int(EntryState.MUTATION_STARTED)),
@@ -207,7 +222,7 @@ def undo_candidates(connection: sqlite3.Connection, operation_id: str) -> list[i
             """
             SELECT ordinal
             FROM entries
-            WHERE operation_id = ? AND state = ? AND undo_kind = ?
+            WHERE operation_id = ? AND is_directory = 0 AND state = ? AND undo_kind = ?
               AND destination_identity IS NOT NULL
             ORDER BY ordinal
             """,
@@ -241,12 +256,27 @@ def check_fixed() -> int:
     assert fail_before_mutation(connection, "pre-fail", 0)
     assert not requires_recovery(connection, "pre-fail")
     assert complete(connection, "pre-fail", TerminalState.FAILED)
-    return 18
+
+    try:
+        begin(connection, "directory-ready", ["ready"], [True])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("ready directory mutation must be rejected")
+    assert connection.execute(
+        "SELECT COUNT(*) FROM actions WHERE operation_id = 'directory-ready'"
+    ).fetchone()[0] == 0
+
+    begin(connection, "directory-skip", ["skip"], [True])
+    assert states(connection, "directory-skip") == [EntryState.SKIPPED]
+    assert undo_candidates(connection, "directory-skip") == []
+    return 22
 
 
 @dataclass
 class ModelEntry:
     state: EntryState
+    is_directory: bool = False
     undo: UndoKind = UndoKind.NONE
     identity: str | None = None
 
@@ -256,18 +286,26 @@ def check_randomized(cases: int) -> int:
     checks = 0
     for case in range(cases):
         count = rng.randint(1, 12)
-        decisions = ["skip" if rng.random() < 0.25 else "ready" for _ in range(count)]
+        directories = [rng.random() < 0.2 for _ in range(count)]
+        decisions = [
+            "skip" if is_directory or rng.random() < 0.25 else "ready"
+            for is_directory in directories
+        ]
         model = [
-            ModelEntry(EntryState.SKIPPED if decision == "skip" else EntryState.PENDING)
-            for decision in decisions
+            ModelEntry(
+                EntryState.SKIPPED if decision == "skip" else EntryState.PENDING,
+                is_directory=is_directory,
+            )
+            for decision, is_directory in zip(decisions, directories, strict=True)
         ]
         connection = db()
         operation_id = f"op-{case}"
-        begin(connection, operation_id, decisions)
+        begin(connection, operation_id, decisions, directories)
 
         for ordinal, entry in enumerate(model):
             if entry.state is EntryState.SKIPPED:
                 continue
+            assert not entry.is_directory
             action = rng.choice(["commit", "pre-fail", "recovery", "leave"])
             if action == "pre-fail":
                 assert fail_before_mutation(connection, operation_id, ordinal)
@@ -296,7 +334,8 @@ def check_randomized(cases: int) -> int:
         expected_undo = [
             ordinal
             for ordinal, entry in enumerate(model)
-            if entry.state is EntryState.COMMITTED
+            if not entry.is_directory
+            and entry.state is EntryState.COMMITTED
             and entry.undo is UndoKind.DELETE_CREATED_DESTINATION
             and entry.identity is not None
         ]
@@ -342,7 +381,12 @@ def check_repository(root: Path) -> int:
         "RecoveryRequired",
         "public enum FileOperationUndoKind",
         "DeleteCreatedDestination",
-        "public bool IsUndoEligible",
+        "public bool IsUndoCandidate",
+        "UndoCandidateEntries",
+        "var entrySnapshot = entries.ToArray();",
+        "entry.Entry.IsDirectory &&",
+        "entry.State != FileOperationActionEntryState.Skipped",
+        "schema v1 supports mutation state only for files",
         "public bool RequiresRecovery",
         "public interface IFileOperationActionHistoryStore",
         "MarkMutationStartedAsync",
@@ -369,6 +413,7 @@ def check_repository(root: Path) -> int:
         "transaction.Commit();",
         "unchecked((long)value)",
         "unchecked((ulong)value)",
+        "new FileOperationActionHistory(",
     ]
     for needle in required_store:
         assert needle in source["store"], needle
@@ -384,10 +429,14 @@ def check_repository(root: Path) -> int:
     assert "SqliteFileOperationActionHistoryStore : IFileOperationExecutor" not in source["store"]
     assert "CopyCommitBecomesDurableUndoCandidate" in source["tests"]
     assert "MutationStartedSurvivesAsRecoverySignal" in source["tests"]
+    assert "BeginRejectsReadyDirectoryMutation" in source["tests"]
+    assert "ActionHistoryDefensivelySnapshotsEntries" in source["tests"]
     assert "# Durable file-operation action history" in source["docs"]
     assert "commit barrier" in source["docs"].casefold()
+    assert "undo candidate" in source["docs"].casefold()
+    assert "not sufficient" in source["docs"].casefold()
     assert "verify_file_operation_action_history.py" in source["local"]
-    return len(required_contract) + len(required_store) + 6 + 8
+    return len(required_contract) + len(required_store) + 6 + 11
 
 
 def main() -> int:
