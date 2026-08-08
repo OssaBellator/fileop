@@ -29,32 +29,25 @@
             </StackPanel>
         </Grid>
 
-        <Border Grid.Row="1"
-                Margin="0,18,0,12"
-                Padding="12,10"
+        <Border Grid.Row="1" Margin="0,18,0,12" Padding="12,10"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
+                BorderThickness="1" CornerRadius="8">
             <Grid ColumnSpacing="12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="Path" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBlock x:Name="PathText"
-                           Grid.Column="1"
-                           FontFamily="Consolas"
-                           TextTrimming="CharacterEllipsis"
-                           VerticalAlignment="Center" />
+                <TextBlock x:Name="PathText" Grid.Column="1" FontFamily="Consolas"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
             </Grid>
         </Border>
 
         <Border Grid.Row="2"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
+                BorderThickness="1" CornerRadius="8">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -62,37 +55,38 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <TextBlock x:Name="StatusText"
-                           Grid.Row="0"
-                           Padding="14,10"
-                           Text="Choose Files to browse the shared index."
-                           Opacity="0.65"
-                           TextWrapping="Wrap" />
+                <Grid Grid.Row="0" Padding="14,8" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="StatusText"
+                               Text="Choose Files to browse the shared index."
+                               Opacity="0.65" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <Button x:Name="LoadMoreButton" Grid.Column="1" Content="Load more"
+                            Click="LoadMoreButton_Click" Visibility="Collapsed" IsEnabled="False" />
+                </Grid>
 
-                <Grid Grid.Row="1"
-                      Padding="14,9"
+                <Grid Grid.Row="1" Padding="14,9"
                       BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                      BorderThickness="0,1,0,1"
-                      ColumnSpacing="12">
+                      BorderThickness="0,1,0,1" ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2.4*" />
                         <ColumnDefinition Width="110" />
                         <ColumnDefinition Width="110" />
                         <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="1.3*" />
+                        <ColumnDefinition Width="150" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Name" FontWeight="SemiBold" />
                     <TextBlock Grid.Column="1" Text="Type" FontWeight="SemiBold" />
-                    <TextBlock Grid.Column="2" Text="Logical" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                    <TextBlock Grid.Column="2" Text="Size" FontWeight="SemiBold" HorizontalAlignment="Right" />
                     <TextBlock Grid.Column="3" Text="On disk" FontWeight="SemiBold" HorizontalAlignment="Right" />
-                    <TextBlock Grid.Column="4" Text="Indexed contents" FontWeight="SemiBold" />
+                    <TextBlock Grid.Column="4" Text="Modified" FontWeight="SemiBold" />
                 </Grid>
 
                 <Grid Grid.Row="2">
-                    <ListView x:Name="FilesList"
-                              IsItemClickEnabled="True"
-                              ItemClick="FilesList_ItemClick"
-                              SelectionMode="Single">
+                    <ListView x:Name="FilesList" IsItemClickEnabled="True"
+                              ItemClick="FilesList_ItemClick" SelectionMode="Single">
                         <ListView.ItemTemplate>
                             <DataTemplate>
                                 <Grid Padding="10,7" ColumnSpacing="12">
@@ -101,23 +95,20 @@
                                         <ColumnDefinition Width="110" />
                                         <ColumnDefinition Width="110" />
                                         <ColumnDefinition Width="110" />
-                                        <ColumnDefinition Width="1.3*" />
+                                        <ColumnDefinition Width="150" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="1" Text="{Binding TypeText}" Opacity="0.7" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="2" Text="{Binding LogicalText}" HorizontalAlignment="Right" Opacity="0.7" />
+                                    <TextBlock Grid.Column="2" Text="{Binding SizeText}" HorizontalAlignment="Right" Opacity="0.7" />
                                     <TextBlock Grid.Column="3" Text="{Binding AllocatedText}" HorizontalAlignment="Right" Opacity="0.7" />
-                                    <TextBlock Grid.Column="4" Text="{Binding ContentsText}" Opacity="0.62" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="4" Text="{Binding ModifiedText}" Opacity="0.62" TextTrimming="CharacterEllipsis" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
-                    <TextBlock x:Name="EmptyText"
-                               Text="No indexed entries in this folder."
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center"
-                               Opacity="0.6"
-                               Visibility="Collapsed" />
+                    <TextBlock x:Name="EmptyText" Text="No indexed entries in this folder."
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Opacity="0.6" Visibility="Collapsed" />
                 </Grid>
             </Grid>
         </Border>
