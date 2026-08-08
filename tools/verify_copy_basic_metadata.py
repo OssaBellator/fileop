@@ -11,13 +11,28 @@ HIDDEN = 0x00000002
 SYSTEM = 0x00000004
 ARCHIVE = 0x00000020
 NORMAL = 0x00000080
+TEMPORARY = 0x00000100
+SPARSE = 0x00000200
+COMPRESSED = 0x00000800
+OFFLINE = 0x00001000
 NOT_CONTENT_INDEXED = 0x00002000
+ENCRYPTED = 0x00004000
+INTEGRITY_STREAM = 0x00008000
 PRESERVED = READ_ONLY | HIDDEN | SYSTEM | ARCHIVE | NOT_CONTENT_INDEXED
+DESTINATION_OWNED = TEMPORARY | SPARSE | COMPRESSED | OFFLINE | ENCRYPTED | INTEGRITY_STREAM
+KNOWN_DESTINATION = PRESERVED | NORMAL | DESTINATION_OWNED
 
 
 def sanitize(attributes: int) -> int:
     preserved = attributes & PRESERVED
     return preserved if preserved else NORMAL
+
+
+def merge_destination(destination_attributes: int, source_attributes: int) -> int:
+    destination_owned = destination_attributes & ~(PRESERVED | NORMAL)
+    source_preserved = source_attributes & PRESERVED
+    merged = destination_owned | source_preserved
+    return merged if merged else NORMAL
 
 
 def run_model(cases: int) -> int:
@@ -29,12 +44,13 @@ def run_model(cases: int) -> int:
         READ_ONLY,
         HIDDEN | ARCHIVE,
         PRESERVED,
-        0x00000100,  # Temporary is deliberately not preserved.
-        0x00000800,  # Compressed is deliberately not preserved.
-        0x00004000,  # Encrypted is deliberately not preserved.
-        0x00001000,  # Offline is deliberately not preserved.
+        TEMPORARY,
+        COMPRESSED,
+        ENCRYPTED,
+        OFFLINE,
     ]
-    for value in fixed + [rng.getrandbits(32) for _ in range(cases)]:
+    values = fixed + [rng.getrandbits(32) for _ in range(cases)]
+    for value in values:
         result = sanitize(value)
         assert result & ~(PRESERVED | NORMAL) == 0
         checks += 1
@@ -45,6 +61,15 @@ def run_model(cases: int) -> int:
         else:
             assert result == NORMAL
             checks += 1
+
+        destination = rng.getrandbits(32) & KNOWN_DESTINATION
+        merged = merge_destination(destination, result)
+        expected_owned = destination & DESTINATION_OWNED
+        expected_preserved = value & PRESERVED
+        assert merged & DESTINATION_OWNED == expected_owned
+        assert merged & PRESERVED == expected_preserved
+        assert (merged & NORMAL) == (NORMAL if (expected_owned | expected_preserved) == 0 else 0)
+        checks += 3
     return checks
 
 
@@ -79,6 +104,7 @@ def check_repository(root: Path) -> int:
         "Capture(SafeFileHandle sourceHandle)",
         "SuppressAutomaticTimestampUpdates(SafeFileHandle destinationHandle)",
         "Apply(SafeFileHandle destinationHandle, Snapshot snapshot)",
+        "MergeDestinationAttributes(",
         "GetFileInformationByHandle(",
         "SetFileInformationByHandle(",
         "FileBasicInfo",
@@ -86,6 +112,8 @@ def check_repository(root: Path) -> int:
         "LastWriteTime = -1",
         "ChangeTime = 0",
         "FileAttributes = 0",
+        "destinationInformation.FileAttributes",
+        "destinationAttributes & ~(PreservedAttributeMask | FileAttributeNormal)",
         "StructLayout(LayoutKind.Sequential, Pack = 8)",
         "FileAttributeReadOnly",
         "FileAttributeHidden",
@@ -125,9 +153,20 @@ def check_repository(root: Path) -> int:
     for test_name in [
         "BasicMetadataHelperPreservesTimestampsAndSafeAttributes",
         "BasicMetadataCaptureDropsUnsupportedStorageStateAttributes",
+        "BasicMetadataMergePreservesDestinationOwnedAttributes",
         "CopyPrimitivePreservesSafeBasicMetadata",
     ]:
         assert test_name in tests, test_name
+
+    merge_test_start = tests.index("public void BasicMetadataMergePreservesDestinationOwnedAttributes()")
+    merge_test_end = tests.index("public async Task CopyPrimitivePreservesSafeBasicMetadata()", merge_test_start)
+    merge_test = tests[merge_test_start:merge_test_end]
+    for attribute in [
+        "FileAttributes.Temporary",
+        "FileAttributes.Offline",
+        "FileAttributes.Compressed",
+    ]:
+        assert attribute in merge_test, attribute
 
     metadata_setup_start = tests.index("private static void SetExpectedMetadata(")
     metadata_setup_end = tests.index("private static void AssertMetadata(", metadata_setup_start)
@@ -159,7 +198,7 @@ def check_repository(root: Path) -> int:
 
     assert "verify_copy_basic_metadata.py" in wrapper
     assert "WindowsFileCopyMutationPrimitiveMetadataTests" in windows_wrapper
-    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 12
+    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 16
 
 
 def main() -> int:
@@ -172,7 +211,7 @@ def main() -> int:
         parser.error("--cases must be greater than zero")
 
     checks = run_model(args.cases)
-    print(f"PASS Copy basic metadata mask model: {checks} checks across {args.cases} randomized cases")
+    print(f"PASS Copy basic metadata mask/merge model: {checks} checks across {args.cases} randomized cases")
     if not args.self_test_only:
         print(f"PASS Copy basic metadata source wiring: {check_repository(args.repo_root.resolve())} checks")
     return 0
