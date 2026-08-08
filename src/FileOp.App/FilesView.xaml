@@ -91,17 +91,21 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Planned operation queue" FontWeight="SemiBold" />
                     <TextBlock x:Name="QueueCountText" Grid.Column="1" Opacity="0.65" VerticalAlignment="Center" />
-                    <Button x:Name="RemoveQueuedOperationButton" Grid.Column="2" Content="Remove selected"
+                    <Button x:Name="PreflightQueuedOperationButton" Grid.Column="2" Content="Preflight selected"
+                            Click="PreflightQueuedOperationButton_Click" IsEnabled="False"
+                            ToolTipService.ToolTip="Read current path metadata for the selected plan; this does not execute or authorize file changes" />
+                    <Button x:Name="RemoveQueuedOperationButton" Grid.Column="3" Content="Remove selected"
                             Click="RemoveQueuedOperationButton_Click" IsEnabled="False" />
-                    <Button x:Name="ClearQueueButton" Grid.Column="3" Content="Clear queue"
+                    <Button x:Name="ClearQueueButton" Grid.Column="4" Content="Clear queue"
                             Click="ClearQueueButton_Click" IsEnabled="False" />
                 </Grid>
 
                 <TextBlock x:Name="QueueStatusText" Grid.Row="1"
-                           Text="Plans are session-only and cannot execute filesystem writes."
+                           Text="Plans are session-only. Preflight reads live metadata only; execution remains disabled."
                            Opacity="0.65" TextWrapping="Wrap" />
 
                 <ListView x:Name="OperationQueueList" Grid.Row="2" MaxHeight="128"
@@ -114,12 +118,14 @@
                                     <ColumnDefinition Width="150" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="170" />
                                     <ColumnDefinition Width="120" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="{Binding OperationText}" FontWeight="SemiBold" />
                                 <TextBlock Grid.Column="1" Text="{Binding RouteText}" TextTrimming="CharacterEllipsis" />
                                 <TextBlock Grid.Column="2" Text="{Binding CollisionText}" Opacity="0.7" />
-                                <TextBlock Grid.Column="3" Text="{Binding QueuedText}" Opacity="0.62" />
+                                <TextBlock Grid.Column="3" Text="{Binding PreflightText}" Opacity="0.72" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="4" Text="{Binding QueuedText}" Opacity="0.62" />
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>
