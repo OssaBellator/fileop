@@ -46,13 +46,13 @@ public sealed class StorageFileTypeParityTests
             Assert.AreEqual(sqlite.UniqueFileCount, fallback.UniqueFileCount);
             Assert.AreEqual(sqlite.HardLinkAliasCount, fallback.HardLinkAliasCount);
             Assert.AreEqual(sqlite.TypeCount, fallback.TypeCount);
-            Assert.IsGreaterThan(1, sqlite.TypeCount);
+            Assert.IsTrue(sqlite.TypeCount > 1);
             Assert.AreEqual(1, sqlite.Types.Count);
             Assert.AreEqual(1, fallback.Types.Count);
             Assert.AreEqual(sqlite.Types[0], fallback.Types[0]);
 
             Assert.AreEqual(sqlite.Categories.Count, fallback.Categories.Count);
-            Assert.IsGreaterThan(1, sqlite.Categories.Count);
+            Assert.IsTrue(sqlite.Categories.Count > 1);
             for (var index = 0; index < sqlite.Categories.Count; index++)
             {
                 Assert.AreEqual(sqlite.Categories[index], fallback.Categories[index]);
