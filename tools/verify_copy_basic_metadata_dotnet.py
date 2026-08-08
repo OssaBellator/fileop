@@ -52,6 +52,16 @@ static MethodInfo Method(Type owner, string name) =>
     owner.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)
     ?? throw new InvalidOperationException($"Missing private interop method '{name}'.");
 
+static void SequentialPack8(Type type)
+{
+    var layout = type.StructLayoutAttribute
+        ?? throw new InvalidOperationException($"{type.Name} is missing StructLayoutAttribute.");
+    Require(layout.Value == LayoutKind.Sequential,
+        $"{type.Name} must use sequential layout.");
+    Require(layout.Pack == 8,
+        $"{type.Name} must use 8-byte packing.");
+}
+
 static void Offset(Type type, string field, int expected) =>
     Require(Marshal.OffsetOf(type, field) == new IntPtr(expected),
         $"Unexpected {type.Name}.{field} offset.");
@@ -77,10 +87,7 @@ var infoClass = Nested(helper, "FileInfoByHandleClass");
 var byHandle = Nested(helper, "ByHandleFileInformation");
 var fileTime = Nested(helper, "FileTime");
 
-Require(basic.StructLayoutAttribute?.Value == LayoutKind.Sequential,
-    "FileBasicInformation must use sequential layout.");
-Require(basic.StructLayoutAttribute?.Pack == 8,
-    "FileBasicInformation must use 8-byte packing.");
+SequentialPack8(basic);
 Require(Marshal.SizeOf(basic) == 40, "Unexpected FILE_BASIC_INFO size.");
 Offset(basic, "CreationTime", 0);
 Offset(basic, "LastAccessTime", 8);
@@ -92,9 +99,11 @@ Require(infoClass.IsEnum && Enum.GetUnderlyingType(infoClass) == typeof(int),
 Require(Convert.ToInt32(Enum.Parse(infoClass, "FileBasicInfo")) == 0,
     "FileBasicInfo must remain enum value zero.");
 
+SequentialPack8(fileTime);
 Require(Marshal.SizeOf(fileTime) == 8, "Unexpected FILETIME size.");
 Offset(fileTime, "LowDateTime", 0);
 Offset(fileTime, "HighDateTime", 4);
+SequentialPack8(byHandle);
 Require(Marshal.SizeOf(byHandle) == 52, "Unexpected BY_HANDLE_FILE_INFORMATION size.");
 Offset(byHandle, "FileAttributes", 0);
 Offset(byHandle, "CreationTime", 4);
