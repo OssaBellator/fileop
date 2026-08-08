@@ -1,0 +1,133 @@
+<UserControl
+    x:Class="FileOp.App.FilesPaneView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Padding="12,10" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock x:Name="PaneTitleText" Text="Pane" FontWeight="SemiBold" />
+                    <ProgressRing x:Name="LoadingRing" Width="16" Height="16" IsActive="False" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                    <Button x:Name="UpButton" Content="Up" Click="UpButton_Click" IsEnabled="False" />
+                    <Button x:Name="RefreshButton" Content="Refresh" Click="RefreshButton_Click" IsEnabled="False" />
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="1" Padding="8" ColumnSpacing="8"
+                  BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                  BorderThickness="0,1,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                              HorizontalScrollMode="Enabled"
+                              VerticalScrollBarVisibility="Disabled"
+                              VerticalScrollMode="Disabled">
+                    <StackPanel x:Name="TabsPanel" Orientation="Horizontal" Spacing="6" />
+                </ScrollViewer>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                    <Button x:Name="NewTabButton" Content="+" Click="NewTabButton_Click"
+                            ToolTipService.ToolTip="New tab" />
+                    <Button x:Name="CloseTabButton" Content="Close" Click="CloseTabButton_Click"
+                            ToolTipService.ToolTip="Close active tab" IsEnabled="False" />
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="2" Padding="10,8" ColumnSpacing="8"
+                  BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                  BorderThickness="0,1,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Path" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock x:Name="PathText" Grid.Column="1" FontFamily="Consolas"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+            </Grid>
+
+            <Grid Grid.Row="3" Padding="10,8" ColumnSpacing="8"
+                  BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                  BorderThickness="0,1,0,1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusText"
+                           Text="Indexed pane is not loaded yet."
+                           Opacity="0.65"
+                           TextWrapping="Wrap"
+                           VerticalAlignment="Center" />
+                <Button x:Name="LoadMoreButton" Grid.Column="1" Content="Load more"
+                        Click="LoadMoreButton_Click" Visibility="Collapsed" IsEnabled="False" />
+            </Grid>
+
+            <Grid Grid.Row="4">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Padding="10,8" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2.2*" />
+                            <ColumnDefinition Width="72" />
+                            <ColumnDefinition Width="82" />
+                            <ColumnDefinition Width="82" />
+                            <ColumnDefinition Width="118" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Name" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" Text="Type" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="2" Text="Size" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                        <TextBlock Grid.Column="3" Text="On disk" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                        <TextBlock Grid.Column="4" Text="Modified" FontWeight="SemiBold" />
+                    </Grid>
+                    <Grid Grid.Row="1">
+                        <ListView x:Name="FilesList" IsItemClickEnabled="True"
+                                  ItemClick="FilesList_ItemClick" SelectionMode="Single">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="8,6" ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="2.2*" />
+                                            <ColumnDefinition Width="72" />
+                                            <ColumnDefinition Width="82" />
+                                            <ColumnDefinition Width="82" />
+                                            <ColumnDefinition Width="118" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Text="{Binding TypeText}" Opacity="0.7" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="2" Text="{Binding SizeText}" HorizontalAlignment="Right" Opacity="0.7" />
+                                        <TextBlock Grid.Column="3" Text="{Binding AllocatedText}" HorizontalAlignment="Right" Opacity="0.7" />
+                                        <TextBlock Grid.Column="4" Text="{Binding ModifiedText}" Opacity="0.62" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <TextBlock x:Name="EmptyText" Text="No indexed entries in this folder."
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Opacity="0.6" Visibility="Collapsed" />
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>
