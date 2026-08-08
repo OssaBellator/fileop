@@ -113,29 +113,21 @@ public sealed record StorageHistoryDelta(
         StorageHistoryCategorySnapshot? older,
         StorageHistoryCategorySnapshot? newer)
     {
-        var olderLogical = older?.LogicalBytes ?? 0;
-        var newerLogical = newer?.LogicalBytes ?? 0;
-        long? allocatedDelta;
-        if (older is null && newer is null)
-        {
-            allocatedDelta = 0;
-        }
-        else if ((older?.AllocatedBytes ?? (older is null ? 0 : null)) is { } olderAllocated &&
-                 (newer?.AllocatedBytes ?? (newer is null ? 0 : null)) is { } newerAllocated)
-        {
-            allocatedDelta = newerAllocated - olderAllocated;
-        }
-        else
-        {
-            allocatedDelta = null;
-        }
+        var olderAllocated = GetAllocatedOrZero(older);
+        var newerAllocated = GetAllocatedOrZero(newer);
+        var allocatedDelta = olderAllocated.HasValue && newerAllocated.HasValue
+            ? newerAllocated.Value - olderAllocated.Value
+            : null;
 
         return new StorageHistoryCategoryDelta(
             category,
-            newerLogical - olderLogical,
+            (newer?.LogicalBytes ?? 0) - (older?.LogicalBytes ?? 0),
             allocatedDelta,
             (long)(newer?.FileCount ?? 0) - (older?.FileCount ?? 0),
             (long)(newer?.HardLinkAliasCount ?? 0) - (older?.HardLinkAliasCount ?? 0),
             (long)(newer?.TypeCount ?? 0) - (older?.TypeCount ?? 0));
     }
+
+    private static long? GetAllocatedOrZero(StorageHistoryCategorySnapshot? snapshot) =>
+        snapshot is null ? 0L : snapshot.AllocatedBytes;
 }
