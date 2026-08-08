@@ -284,14 +284,17 @@ def check_path_properties() -> int:
 def check_repository(repo_root: Path) -> tuple[int, int]:
     xaml_path = repo_root / "src" / "FileOp.App" / "MainWindow.xaml"
     code_path = repo_root / "src" / "FileOp.App" / "MainWindow.xaml.cs"
-    if not xaml_path.is_file() or not code_path.is_file():
+    engine_path = repo_root / "src" / "FileOp.App" / "DesktopSearchEngine.cs"
+    missing_files = [path for path in (xaml_path, code_path, engine_path) if not path.is_file()]
+    if missing_files:
         raise FileNotFoundError(
             "Run this script from a FileOp checkout, or pass --repo-root. "
-            f"Missing {xaml_path} or {code_path}."
+            f"Missing {', '.join(str(path) for path in missing_files)}."
         )
 
     xaml_text = xaml_path.read_text(encoding="utf-8")
     code_text = code_path.read_text(encoding="utf-8")
+    engine_text = engine_path.read_text(encoding="utf-8")
     root = ET.fromstring(xaml_text)
 
     names: set[str] = set()
@@ -329,8 +332,8 @@ def check_repository(repo_root: Path) -> tuple[int, int]:
 
     # Storage must be reachable and must retain a non-rescan fallback implementation.
     assert 'x:Name="StorageNavigationButton"' in xaml_text
-    assert "_fallbackIndex.AnalyzeDirectoryAsync(" in code_text
-    assert "session.Client.AnalyzeStorageAsync(" in code_text
+    assert "_fallbackIndex.AnalyzeDirectoryAsync(" in engine_text
+    assert "session.Client.AnalyzeStorageAsync(" in engine_text
 
     return len(names), len(handlers)
 
