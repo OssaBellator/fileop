@@ -23,7 +23,7 @@ A path-only `File.Copy` would reopen the source and destination namespace after 
 5. creates the destination **relative to the destination-directory handle** with `NtCreateFile`, `FILE_CREATE`, `FILE_WRITE_THROUGH` and `FILE_OPEN_REPARSE_POINT`;
 6. disables automatic last-access/last-write timestamp updates for subsequent I/O on that destination handle;
 7. copies bytes through the bound handles and flushes destination data;
-8. applies the supported basic metadata through the already-open destination handle with `SetFileInformationByHandle(FileBasicInfo)`, then requires another `FlushFileBuffers`;
+8. reads the destination's current basic attributes, merges the destination-owned settable subset with the supported source attributes, applies timestamps/attributes through `SetFileInformationByHandle(FileBasicInfo)`, then requires another `FlushFileBuffers`;
 9. captures the destination's stable identity and final path;
 10. returns an `IFileCopyMutationLease` that retains the source directory, destination directory, source file and created destination file handles through durable `CommitCopy` and progress reporting.
 
@@ -54,11 +54,13 @@ Windows can defer automatic access/write timestamp changes until later I/O or ha
 
 That suppression is handle-local. The mutation handle intentionally permits read sharing, so a separate process that reads the destination can legitimately advance its last-access time; the fidelity guarantee covers FileOp's own mutation I/O rather than concurrent external access.
 
-`ChangeTime` is not copied. Source storage-state attributes that need separate filesystem semantics are also not copied: reparse-point, sparse, compressed, encrypted, offline and temporary state. `FileBasicInfo` uses replacement semantics for its settable basic-attribute subset, so FileOp first reads the destination handle's current attributes and overlays only the supported source bits. That keeps destination-owned storage state such as temporary/offline flags from being cleared merely because the source does not carry them. Windows can also apply destination-owned defaults at creation—for example, files created in compressed or encrypted directories can inherit those states from the destination directory—and this slice deliberately does not clear or normalize them. ACLs, alternate data streams and extended attributes remain separate future boundaries rather than being implied by a byte copy.
+`ChangeTime` is not copied. Source storage-state attributes that need separate filesystem semantics are also not copied. Windows' `FileBasicInformation` set operation only changes a documented valid-set mask: read-only, hidden, system, archive, temporary, offline and not-content-indexed. FileOp overlays its supported source fidelity bits while retaining the destination's current `Temporary` and `Offline` values, because those two destination-owned states are part of that settable mask and would otherwise be cleared. Sparse, compressed, encrypted and integrity-stream state are not in that valid-set mask; FileOp deliberately omits those flags from the input and Windows leaves their existing storage semantics untouched. Reparse-point state is excluded by the ordinary-file creation/validation boundary.
+
+Windows can also apply destination-owned defaults at creation—for example, files created in compressed or encrypted directories can inherit those states from the destination directory—and this slice deliberately does not clear or normalize them. ACLs, alternate data streams and extended attributes remain separate future boundaries rather than being implied by a byte copy.
 
 ## Durability and failure semantics
 
-Destination creation requests `FILE_WRITE_THROUGH`. Automatic destination access/write timestamp changes are suppressed before the first data write. After all bytes are written, `FlushFileBuffers` must succeed before metadata is changed. The captured basic metadata is then applied through the destination handle and a second, final `FlushFileBuffers` must succeed before a lease is returned. The destination handle's generic-write access includes the attribute-write permission required by `FileBasicInfo`.
+Destination creation requests `FILE_WRITE_THROUGH`. Automatic destination access/write timestamp changes are suppressed before the first data write. After all bytes are written, `FlushFileBuffers` must succeed before metadata is changed. The captured basic metadata is then applied through the destination handle and a second, final `FlushFileBuffers` must succeed before a lease is returned. The destination handle requests generic write for data/attribute mutation **and** explicit `FILE_READ_ATTRIBUTES` for the pre-apply destination metadata query; generic write alone does not include read-attribute access.
 
 The executor has already persisted `MutationStarted` before invoking the primitive, so any exception after destination creation is conservatively settled as recovery-sensitive. The primitive does not guess whether a partial destination should be deleted.
 
@@ -72,7 +74,7 @@ For the pure standard-library property models, run:
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-That gate needs Python but no .NET SDK. It includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes both the preserved source-attribute mask and destination-owned attribute merge, rejects unsupported source storage-state flags, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, guards the ordering `capture -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`, and requires the concrete regression to exercise every advertised safe attribute with its expected metadata established after validation.
+That gate needs Python but no .NET SDK. It includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes both the preserved source-attribute mask and destination-owned settable-attribute merge, rejects unsupported source storage-state flags, requires non-settable storage flags to stay out of the `FileBasicInfo` input, requires explicit destination read-attribute access, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, guards the ordering `capture -> destination create/read access -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`, and requires the concrete regression to exercise every advertised safe attribute with its expected metadata established after validation.
 
 For the focused real Windows compiler/native gate, run on Windows with .NET 10:
 
@@ -82,7 +84,7 @@ pwsh -File tools/test-windows-copy-local.ps1
 
 That script first runs the zero-Actions property models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs the focused action-history, Copy-executor, mutation-primitive and metadata-regression test classes. Use `-SkipOfflineModels` when the Python gate has already been run. Neither script invokes GitHub Actions.
 
-Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported attribute filtering, destination-owned attribute merging, and metadata preservation through the concrete mutation primitive after the mutation lease is disposed.
+Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported source-attribute filtering, destination-owned settable-attribute merging, omission of non-settable storage flags from `FileBasicInfo`, and metadata preservation through the concrete mutation primitive after the mutation lease is disposed.
 
 ## Next boundary
 
