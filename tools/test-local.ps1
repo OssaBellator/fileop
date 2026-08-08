@@ -62,6 +62,10 @@ Invoke-Step "Offline Storage history UI/scheduler verifier" {
     python tools/verify_storage_history_ui.py --repo-root $repoRoot --cases 10000
 }
 
+Invoke-Step "Offline indexed Files browser verifier" {
+    python tools/verify_files_ui.py --repo-root $repoRoot --cases 10000
+}
+
 Invoke-Step "FileOp.Core Release build" {
     dotnet build src/FileOp.Core/FileOp.Core.csproj --configuration Release
 }
