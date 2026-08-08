@@ -1,3 +1,5 @@
+#pragma warning disable CS0618 // Private runtime-reflected interop types cannot use Marshal's generic overloads directly.
+
 using System;
 using System.Reflection;
 using System.Runtime.InteropServices;
