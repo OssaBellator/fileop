@@ -72,9 +72,11 @@ Destination directory
 
 Any pane/tab/path/selection readiness change clears the prepared intent. A prepared intent can then be converted into a queued Copy or Move plan, but preparing or queueing still performs no filesystem write.
 
+The operation plan/intent records and operation/collision enums now live in `FileOp.Core.Operations`; the WinUI surface consumes that shared domain model instead of owning a second App-only copy.
+
 ## Planned operation queue
 
-Files now owns an in-memory, session-only planned-operation queue. Each queued row captures an immutable operation snapshot:
+Files owns an in-memory, session-only planned-operation queue. Each queued row captures an immutable operation snapshot:
 
 ```text
 Operation id
@@ -104,11 +106,34 @@ The queue currently offers three non-destructive policies:
 
 Destructive replacement is deliberately not a queue policy yet. Safe replacement needs explicit file-vs-directory semantics, recovery behavior and undo/history guarantees before FileOp should encode it as executable intent.
 
-### Execution remains disabled
+## Execution contract and state machine
 
-`Queue Copy` and `Queue Move` create plans only. There is still no `File.Copy`, `File.Move`, `File.Delete`, `Directory.Move` or `Directory.Delete` path in the Files coordinator/view.
+`FileOp.Core.Operations` now defines the execution boundary without providing an implementation that can mutate files.
 
-The queue deliberately has no running/completed state, pause/resume, retry, cancellation or rollback API. Those belong to the executor boundary and should not be inferred from a list of planned operations.
+The immutable `FileOperationExecutionSnapshot` state sequence is:
+
+```text
+Planned
+  -> Validating
+      -> Running
+          -> Succeeded
+          -> Failed
+          -> CancellationRequested -> Cancelled
+      -> Failed
+      -> CancellationRequested -> Cancelled
+```
+
+A plan may also go directly from `Planned` to `Cancelled` because no work has started yet.
+
+Progress is monotonic: `CompletedEntryCount` can never decrease or exceed the plan's entry count. `Succeeded` is allowed only after every entry has completed. Failure is terminal and stores a structured code/message/path plus a `Retryable` hint.
+
+User cancellation is deliberately distinct from arbitrary task cancellation. A running or validating operation first becomes `CancellationRequested`; the executor is expected to stop only at an entry-safe boundary. If a late cancellation request arrives while the final in-flight entry is completing, safe-boundary settlement reports `Succeeded` when every entry is already done rather than falsely labelling a fully completed operation as cancelled.
+
+The `IFileOperationExecutor` contract exposes `RequestCancellationAsync` separately. Its `ExecuteAsync` cancellation token is named `shutdownCancellationToken` to reserve that token for host/application teardown rather than normal user cancellation of an in-flight file mutation.
+
+Failed snapshots do not have an in-place retry transition. A retry creates a new plan after current source/destination state is revalidated. This avoids pretending that replaying a partially completed multi-entry operation is automatically safe or idempotent.
+
+There is still no concrete `IFileOperationExecutor` implementation, no running queue coordinator and no filesystem mutation call in this slice.
 
 ## Native and fallback behavior
 
@@ -131,12 +156,14 @@ Native browsing opens SQLite read-only, takes the existing shared cross-process 
 - per-pane generation checks around `_storageGate`;
 - `BrowseDirectoryAsync` usage and absence of legacy Storage-analysis, direct enumeration or filesystem mutation paths.
 
+`tools/verify_file_operation_state.py` independently models the execution state machine with randomized transitions and source guards. It checks monotonic progress, terminal-state rejection, safe-boundary cancellation including late cancellation, shared Core plan ownership, absence of in-place retry and absence of mutation APIs.
+
 `tools/verify_directory_browse.py` separately covers the protocol/service keyset algorithm, read-only SQLite access, lease/checkpoint enforcement and native/fallback source wiring.
 
-Run the Files verifier directly:
+Run the operation-state verifier directly:
 
 ```powershell
-python tools/verify_files_ui.py --repo-root . --cases 10000
+python tools/verify_file_operation_state.py --repo-root . --cases 20000
 ```
 
 Or run the whole standard-library suite without the .NET SDK:
@@ -149,4 +176,4 @@ Without `-OfflineOnly`, the local Windows gate continues into the .NET builds, r
 
 ## Next file-manager boundary
 
-The next slice should establish the executor contract and operation state machine without jumping straight to broad mutation support. It should define queue ownership, per-item progress, cancellation boundaries, failure/retry semantics and action-history/undo records before enabling Copy or Move against the filesystem.
+The next mutation slice should implement a validation-only/dry-run executor first: resolve every queued source/destination against live filesystem state, classify collisions and produce per-item decisions without writing anything. A later reviewed slice can then add actual Copy semantics, durable action history and undo records on top of that validated boundary before Move is enabled.
