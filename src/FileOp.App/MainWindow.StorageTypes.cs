@@ -448,8 +448,7 @@ public sealed partial class MainWindow
                 rootWeight,
                 category.FileCount,
                 category.HardLinkAliasCount,
-                category.TypeCount,
-                isRemainder: false));
+                category.TypeCount));
         }
     }
 
@@ -558,8 +557,7 @@ public sealed record StorageCategoryRow(
     long Bytes,
     double Percent,
     string SizeText,
-    string DetailText,
-    bool IsRemainder)
+    string DetailText)
 {
     public static StorageCategoryRow Create(
         string name,
@@ -567,22 +565,18 @@ public sealed record StorageCategoryRow(
         long rootBytes,
         int files,
         int aliases,
-        int typeCount,
-        bool isRemainder)
+        int typeCount)
     {
         var percent = rootBytes > 0
             ? Math.Clamp(bytes * 100d / rootBytes, 0d, 100d)
             : 0d;
-        var detail = isRemainder
-            ? $"{typeCount:N0} extension groups omitted by the bounded response"
-            : $"{typeCount:N0} type(s) · {files:N0} file names" +
-              (aliases > 0 ? $" · {aliases:N0} hard-link alias(es)" : string.Empty);
+        var detail = $"{typeCount:N0} type(s) · {files:N0} file names" +
+            (aliases > 0 ? $" · {aliases:N0} hard-link alias(es)" : string.Empty);
         return new StorageCategoryRow(
             name,
             bytes,
             percent,
             ByteFormatter.Format(bytes),
-            detail,
-            isRemainder);
+            detail);
     }
 }
