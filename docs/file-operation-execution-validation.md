@@ -17,7 +17,7 @@ Queued plans and read-only preflight intentionally use captured/lexical paths. T
 
 It then uses `GetFinalPathNameByHandleW` to obtain the final handle-resolved path and `GetFileInformationByHandle` to capture the volume serial + file index as a stable `FileIdentity` for that opened object.
 
-The resolver strips the Win32 `\\?\` / `\\?\UNC\` presentation prefix before normal path comparison. The handle itself follows reparse ancestors, so the returned path represents the actual resolved location rather than only `Path.GetFullPath` lexical normalization.
+The resolver converts `\\?\C:\...` and `\\?\UNC\...` results back to ordinary DOS/UNC presentation for comparison, while preserving volume-GUID/device-style extended paths so an absolute kernel path is never turned into a relative-looking string. The handle itself follows reparse ancestors, so the returned path represents the actual resolved location rather than only `Path.GetFullPath` lexical normalization.
 
 For a destination leaf that does not yet exist, the resolver requires its parent directory to exist, resolves that parent through a handle, and combines the captured leaf name with the parent's canonical path. It does not create the missing leaf.
 
