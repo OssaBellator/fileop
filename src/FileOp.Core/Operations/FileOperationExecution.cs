@@ -196,8 +196,7 @@ public interface IFileOperationExecutor
 {
     ValueTask<FileOperationExecutionSnapshot> ExecuteAsync(
         FileOperationPlan plan,
-        IProgress<FileOperationExecutionSnapshot>? progress = null,
-        CancellationToken shutdownCancellationToken = default);
+        IProgress<FileOperationExecutionSnapshot>? progress = null);
 
     ValueTask<bool> RequestCancellationAsync(
         Guid operationId,
