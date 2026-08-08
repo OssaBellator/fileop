@@ -1,4 +1,5 @@
 using FileOp.Core.Operations;
+using FileOp.Windows.Operations;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -6,8 +7,12 @@ namespace FileOp.App;
 
 public sealed partial class FilesView : UserControl
 {
+    private readonly IFileOperationPreflightValidator _preflightValidator =
+        new WindowsFileOperationPreflightValidator();
+    private readonly Dictionary<Guid, FileBrowserPreflightSnapshot> _preflightSnapshots = [];
     private readonly List<FileOperationPlan> _queuedOperations = [];
     private FileOperationIntent? _preparedIntent;
+    private bool _preflightRunning;
 
     public FilesView()
     {
@@ -75,7 +80,7 @@ public sealed partial class FilesView : UserControl
             source.PaneTitle,
             source.ActiveTabId,
             sourcePath,
-            Array.AsReadOnly(entries),
+            entries,
             destination.PaneTitle,
             destination.ActiveTabId,
             destinationPath);
@@ -137,24 +142,79 @@ public sealed partial class FilesView : UserControl
 
     private void OperationQueueList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        RemoveQueuedOperationButton.IsEnabled = OperationQueueList.SelectedItem is FileBrowserQueuedOperationRow;
+        UpdateQueueActions();
+    }
+
+    private async void PreflightQueuedOperationButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_preflightRunning ||
+            OperationQueueList.SelectedItem is not FileBrowserQueuedOperationRow row)
+        {
+            return;
+        }
+
+        var plan = _queuedOperations.FirstOrDefault(operation => operation.Id == row.Id);
+        if (plan is null)
+        {
+            RefreshQueuePresentation();
+            return;
+        }
+
+        _preflightRunning = true;
+        UpdateQueueActions();
+        QueueStatusText.Text =
+            $"Read-only preflight is checking current source/destination metadata for {plan.Kind.ToString().ToLowerInvariant()} plan {plan.Id}. " +
+            "No filesystem changes can be made by this check.";
+
+        try
+        {
+            var result = await _preflightValidator.ValidateAsync(plan);
+            if (_queuedOperations.All(operation => operation.Id != plan.Id))
+            {
+                return;
+            }
+
+            var snapshot = new FileBrowserPreflightSnapshot(result, DateTimeOffset.UtcNow);
+            _preflightSnapshots[plan.Id] = snapshot;
+            QueueStatusText.Text =
+                $"{result.Summary} Checked {snapshot.CheckedAtUtc.ToLocalTime():g}. " +
+                "This is a point-in-time read-only snapshot and can become stale; execution remains disabled.";
+        }
+        catch (Exception exception)
+        {
+            QueueStatusText.Text =
+                $"Read-only preflight could not complete: {exception.Message} No filesystem changes were attempted.";
+        }
+        finally
+        {
+            _preflightRunning = false;
+            RefreshQueuePresentation();
+        }
     }
 
     private void RemoveQueuedOperationButton_Click(object sender, RoutedEventArgs e)
     {
-        if (OperationQueueList.SelectedItem is not FileBrowserQueuedOperationRow row)
+        if (_preflightRunning ||
+            OperationQueueList.SelectedItem is not FileBrowserQueuedOperationRow row)
         {
             return;
         }
 
         _queuedOperations.RemoveAll(operation => operation.Id == row.Id);
+        _preflightSnapshots.Remove(row.Id);
         QueueStatusText.Text = "Removed the selected queued plan. No filesystem operation was executed.";
         RefreshQueuePresentation();
     }
 
     private void ClearQueueButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_preflightRunning)
+        {
+            return;
+        }
+
         _queuedOperations.Clear();
+        _preflightSnapshots.Clear();
         QueueStatusText.Text = "Cleared the planned operation queue. No filesystem operation was executed.";
         RefreshQueuePresentation();
     }
@@ -162,15 +222,29 @@ public sealed partial class FilesView : UserControl
     private void RefreshQueuePresentation()
     {
         var rows = _queuedOperations
-            .Select(FileBrowserQueuedOperationRow.FromOperation)
+            .Select(CreateQueuedOperationRow)
             .ToArray();
         OperationQueueList.ItemsSource = null;
         OperationQueueList.ItemsSource = rows;
         QueueCountText.Text = rows.Length == 0
             ? "No queued plans."
             : $"{rows.Length:N0} queued plan{(rows.Length == 1 ? string.Empty : "s")}.";
-        ClearQueueButton.IsEnabled = rows.Length > 0;
-        RemoveQueuedOperationButton.IsEnabled = false;
+        UpdateQueueActions();
+    }
+
+    private FileBrowserQueuedOperationRow CreateQueuedOperationRow(FileOperationPlan operation)
+    {
+        _preflightSnapshots.TryGetValue(operation.Id, out var preflight);
+        return FileBrowserQueuedOperationRow.FromOperation(operation, preflight);
+    }
+
+    private void UpdateQueueActions()
+    {
+        var hasSelection = OperationQueueList.SelectedItem is FileBrowserQueuedOperationRow;
+        OperationQueueList.IsEnabled = !_preflightRunning;
+        PreflightQueuedOperationButton.IsEnabled = hasSelection && !_preflightRunning;
+        RemoveQueuedOperationButton.IsEnabled = hasSelection && !_preflightRunning;
+        ClearQueueButton.IsEnabled = _queuedOperations.Count > 0 && !_preflightRunning;
     }
 
     private void ClearPreparedIntent()
@@ -303,16 +377,27 @@ public sealed partial class FilesView : UserControl
         };
 }
 
+public sealed record FileBrowserPreflightSnapshot(
+    FileOperationPreflightResult Result,
+    DateTimeOffset CheckedAtUtc);
+
 public sealed record FileBrowserQueuedOperationRow(
     Guid Id,
     string OperationText,
     string RouteText,
     string CollisionText,
+    string PreflightText,
     string QueuedText)
 {
-    public static FileBrowserQueuedOperationRow FromOperation(FileOperationPlan operation)
+    public static FileBrowserQueuedOperationRow FromOperation(
+        FileOperationPlan operation,
+        FileBrowserPreflightSnapshot? preflight)
     {
         ArgumentNullException.ThrowIfNull(operation);
+        var preflightText = preflight is null
+            ? "Not checked"
+            : FormatPreflight(preflight);
+
         return new FileBrowserQueuedOperationRow(
             operation.Id,
             $"{operation.Kind} · {operation.Intent.Entries.Count:N0} entr{(operation.Intent.Entries.Count == 1 ? "y" : "ies")}",
@@ -324,6 +409,20 @@ public sealed record FileBrowserQueuedOperationRow(
                 FileOperationCollisionPolicy.Stop => "Stop on collision",
                 _ => operation.CollisionPolicy.ToString(),
             },
+            preflightText,
             operation.QueuedAtUtc.ToLocalTime().ToString("g"));
+    }
+
+    private static string FormatPreflight(FileBrowserPreflightSnapshot snapshot)
+    {
+        var result = snapshot.Result;
+        var state = result.Status switch
+        {
+            FileOperationPreflightStatus.Ready => "Ready for later validation",
+            FileOperationPreflightStatus.NeedsDecision => "Needs decision",
+            FileOperationPreflightStatus.Blocked => "Blocked",
+            _ => result.Status.ToString(),
+        };
+        return $"{state} · {snapshot.CheckedAtUtc.ToLocalTime():g}";
     }
 }
