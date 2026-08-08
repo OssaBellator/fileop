@@ -13,6 +13,30 @@ namespace FileOp.Windows.Tests;
 public sealed class FileOperationPreflightTests
 {
     [TestMethod]
+    public void IntentDefensivelySnapshotsEntries()
+    {
+        var sourceDirectory = Path.GetFullPath(@"C:\Source");
+        var destinationDirectory = Path.GetFullPath(@"C:\Destination");
+        var entries = new List<FileOperationEntry>
+        {
+            new(Path.Combine(sourceDirectory, "a.txt"), "a.txt", IsDirectory: false),
+        };
+        var intent = new FileOperationIntent(
+            "Left",
+            Guid.NewGuid(),
+            sourceDirectory,
+            entries,
+            "Right",
+            Guid.NewGuid(),
+            destinationDirectory);
+
+        entries.Clear();
+
+        Assert.AreEqual(1, intent.Entries.Count);
+        Assert.AreEqual("a.txt", intent.Entries[0].Name);
+    }
+
+    [TestMethod]
     public async Task MissingDestinationIsReady()
     {
         var (validator, plan) = CreateSingleFileCase(
@@ -143,7 +167,7 @@ public sealed class FileOperationPreflightTests
                 "Left",
                 Guid.NewGuid(),
                 sourceDirectory,
-                Array.AsReadOnly(new[] { entry }),
+                new[] { entry },
                 "Right",
                 Guid.NewGuid(),
                 destinationDirectory));
