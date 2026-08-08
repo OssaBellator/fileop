@@ -9,6 +9,10 @@ import tempfile
 from pathlib import Path
 
 
+def identity(stat_result: os.stat_result) -> tuple[int, int]:
+    return stat_result.st_dev, stat_result.st_ino
+
+
 def model_once(seed: int) -> int:
     rng = random.Random(seed)
     checks = 0
@@ -22,6 +26,25 @@ def model_once(seed: int) -> int:
         payload = rng.randbytes(rng.randrange(0, 65_536))
         (source / "item.bin").write_bytes(payload)
 
+        # Fresh validation observed this directory identity. If the textual root is
+        # swapped before handle acquisition, the newly opened object must differ.
+        expected_destination_identity = identity(
+            os.stat(destination, follow_symlinks=False)
+        )
+        os.rename(destination, moved_destination)
+        destination.mkdir()
+        replaced_directory = os.open(
+            destination,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            assert identity(os.fstat(replaced_directory)) != expected_destination_identity
+            checks += 1
+        finally:
+            os.close(replaced_directory)
+        os.rmdir(destination)
+        os.rename(moved_destination, destination)
+
         source_directory = os.open(
             source,
             os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
@@ -31,16 +54,19 @@ def model_once(seed: int) -> int:
             os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
         )
         try:
+            assert identity(os.fstat(destination_directory)) == expected_destination_identity
+            checks += 1
+
             source_file = os.open(
                 "item.bin",
                 os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
                 dir_fd=source_directory,
             )
             try:
-                expected_source = os.fstat(source_file)
+                expected_source = identity(os.fstat(source_file))
 
-                # Swap the path after the directory handle is acquired. Relative
-                # creation must stay bound to the already-open directory object.
+                # Once the directory handle is acquired, replacing its textual path
+                # cannot redirect a relative create through that handle.
                 os.rename(destination, moved_destination)
                 destination.mkdir()
                 flags = (
@@ -66,11 +92,7 @@ def model_once(seed: int) -> int:
                             assert written > 0
                             view = view[written:]
                     os.fsync(destination_file)
-                    actual_source = os.fstat(source_file)
-                    assert (actual_source.st_dev, actual_source.st_ino) == (
-                        expected_source.st_dev,
-                        expected_source.st_ino,
-                    )
+                    assert identity(os.fstat(source_file)) == expected_source
                     checks += 2
                 finally:
                     os.close(destination_file)
@@ -102,18 +124,28 @@ def model_once(seed: int) -> int:
 
 
 def check_repository(root: Path) -> int:
-    source_path = (
+    primitive_path = (
         root
         / "src/FileOp.Windows/Operations/WindowsFileCopyMutationPrimitive.cs"
     )
+    validation_path = (
+        root
+        / "src/FileOp.Core/Operations/FileOperationExecutionValidation.cs"
+    )
     wrapper_path = root / "tools/test-copy-executor-local.ps1"
-    missing = [str(path) for path in (source_path, wrapper_path) if not path.is_file()]
+    missing = [
+        str(path)
+        for path in (primitive_path, validation_path, wrapper_path)
+        if not path.is_file()
+    ]
     if missing:
         raise FileNotFoundError(", ".join(missing))
 
-    source = source_path.read_text(encoding="utf-8")
+    source = primitive_path.read_text(encoding="utf-8")
+    validation = validation_path.read_text(encoding="utf-8")
     wrapper = wrapper_path.read_text(encoding="utf-8")
-    required = [
+
+    required_source = [
         "class WindowsFileCopyMutationPrimitive",
         "NtCreateFile(",
         "RootDirectory",
@@ -121,16 +153,30 @@ def check_repository(root: Path) -> int:
         "FileOpenReparsePoint",
         "FileShare.ReadWrite",
         "FileShare.Read",
+        "GenericWrite",
         "FlushFileBuffers(",
         "GetFileInformationByHandle(",
         "GetFinalPathNameByHandleW(",
-        "expectedSourceIdentity",
+        "expectedSourceDirectoryIdentity",
+        "expectedDestinationDirectoryIdentity",
+        "ToIdentity(information) != expectedIdentity",
         "actualIdentity != expectedIdentity",
         "createInformation != FileCreated",
         "MutationLease",
     ]
-    for needle in required:
+    for needle in required_source:
         assert needle in source, needle
+
+    required_validation = [
+        "FileOperationExecutionValidationRootBinding",
+        "ConditionalWeakTable<",
+        "MutationRootBinding",
+        "BindMutationRoots(rootBinding)",
+        "private FileOperationExecutionValidationItem(FileOperationExecutionValidationItem original)",
+        "Items = Array.AsReadOnly(items.ToArray());",
+    ]
+    for needle in required_validation:
+        assert needle in validation, needle
 
     for forbidden in [
         "File.Copy(",
@@ -142,7 +188,7 @@ def check_repository(root: Path) -> int:
         assert forbidden not in source, forbidden
 
     assert "verify_windows_file_copy_mutation.py" in wrapper
-    return len(required) + 6
+    return len(required_source) + len(required_validation) + 6
 
 
 def main() -> int:
@@ -156,7 +202,7 @@ def main() -> int:
 
     checks = sum(model_once(20260808 + case) for case in range(args.cases))
     print(
-        f"PASS Windows Copy handle-binding model: {checks} checks "
+        f"PASS Windows Copy handle/root-binding model: {checks} checks "
         f"across {args.cases} cases"
     )
     if not args.self_test_only:
