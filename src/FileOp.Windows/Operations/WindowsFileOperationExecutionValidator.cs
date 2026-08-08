@@ -186,7 +186,7 @@ public sealed class WindowsFileOperationCanonicalPathResolver : IFileOperationCa
             capacity = checked((int)length + 1);
         }
 
-        error = 0;
+        error = 122; // ERROR_INSUFFICIENT_BUFFER
         return null;
     }
 
@@ -197,11 +197,15 @@ public sealed class WindowsFileOperationCanonicalPathResolver : IFileOperationCa
             return @"\\" + path[8..];
         }
 
-        if (path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+        if (path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) &&
+            path.Length >= 6 &&
+            path[5] == Path.VolumeSeparatorChar)
         {
             return path[4..];
         }
 
+        // Preserve volume-GUID/device-style extended paths. Stripping the prefix from
+        // those forms would turn an absolute kernel path into a relative-looking path.
         return path;
     }
 
