@@ -153,8 +153,7 @@ public sealed partial class FilesPaneView : UserControl
         RefreshButton.IsEnabled = canRefresh;
         LoadMoreButton.Visibility = hasMore ? Visibility.Visible : Visibility.Collapsed;
         LoadMoreButton.IsEnabled = hasMore && canRefresh;
-        FilesList.ItemsSource = null;
-        FilesList.ItemsSource = rows;
+        ReplaceItemsSourceWithoutForgettingSelection(rows);
         EmptyText.Visibility = rows.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -205,6 +204,20 @@ public sealed partial class FilesPaneView : UserControl
         }
 
         UpdateSelectionActions();
+    }
+
+    private void ReplaceItemsSourceWithoutForgettingSelection(IReadOnlyList<FileBrowserRow> rows)
+    {
+        _restoringSelection = true;
+        try
+        {
+            FilesList.ItemsSource = null;
+            FilesList.ItemsSource = rows;
+        }
+        finally
+        {
+            _restoringSelection = false;
+        }
     }
 
     private void RememberSelection()
