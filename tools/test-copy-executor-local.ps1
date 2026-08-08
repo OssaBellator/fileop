@@ -8,6 +8,11 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     throw "Python 3 is required for the FileOp offline verifiers."
 }
 
+python -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)"
+if ($LASTEXITCODE -ne 0) {
+    throw "The 'python' command must run Python 3 for the FileOp offline verifiers."
+}
+
 & (Join-Path $PSScriptRoot "test-local.ps1") -OfflineOnly
 if ($LASTEXITCODE -ne 0) {
     throw "Existing offline FileOp verification failed with exit code $LASTEXITCODE."
