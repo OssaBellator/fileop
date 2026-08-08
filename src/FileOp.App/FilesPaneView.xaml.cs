@@ -6,7 +6,11 @@ namespace FileOp.App;
 
 public sealed partial class FilesPaneView : UserControl
 {
+    private readonly HashSet<string> _selectedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private bool _directoryReady;
+    private bool _restoringSelection;
     private bool _tabActionsEnabled;
+    private Guid _activeTabId;
 
     public FilesPaneView()
     {
@@ -18,6 +22,20 @@ public sealed partial class FilesPaneView : UserControl
         get => PaneTitleText.Text;
         set => PaneTitleText.Text = value;
     }
+
+    public Guid ActiveTabId => _activeTabId;
+
+    public string? CurrentPath =>
+        _directoryReady && !string.IsNullOrWhiteSpace(PathText.Text)
+            ? PathText.Text
+            : null;
+
+    public bool IsDirectoryReady => _directoryReady;
+
+    public int SelectedCount => FilesList.SelectedItems.Count;
+
+    public IReadOnlyList<FileBrowserRow> SelectedRows =>
+        FilesList.SelectedItems.OfType<FileBrowserRow>().ToArray();
 
     public event EventHandler? UpRequested;
 
@@ -33,9 +51,18 @@ public sealed partial class FilesPaneView : UserControl
 
     public event EventHandler<FileBrowserRow>? EntryInvoked;
 
+    public event EventHandler? IntentStateChanged;
+
     public void ApplyTabs(IReadOnlyList<FileBrowserTabHeader> tabs, Guid activeTabId)
     {
         ArgumentNullException.ThrowIfNull(tabs);
+
+        if (_activeTabId != Guid.Empty && _activeTabId != activeTabId)
+        {
+            ClearSelection();
+        }
+
+        _activeTabId = activeTabId;
         TabsPanel.Children.Clear();
         foreach (var tab in tabs)
         {
@@ -58,6 +85,8 @@ public sealed partial class FilesPaneView : UserControl
 
         NewTabButton.IsEnabled = _tabActionsEnabled;
         CloseTabButton.IsEnabled = _tabActionsEnabled && tabs.Count > 1;
+        RestoreSelection();
+        RaiseIntentStateChanged();
     }
 
     public void SetLoading(string path, string message, bool preserveRows = false)
@@ -68,12 +97,18 @@ public sealed partial class FilesPaneView : UserControl
         UpButton.IsEnabled = false;
         RefreshButton.IsEnabled = false;
         LoadMoreButton.IsEnabled = false;
+
         if (!preserveRows)
         {
+            _directoryReady = false;
+            ClearActiveSelection();
             LoadMoreButton.Visibility = Visibility.Collapsed;
             FilesList.ItemsSource = null;
             EmptyText.Visibility = Visibility.Collapsed;
         }
+
+        UpdateSelectionActions();
+        RaiseIntentStateChanged();
     }
 
     public void SetStatus(string message, string? displayPath = null)
@@ -87,6 +122,8 @@ public sealed partial class FilesPaneView : UserControl
 
     public void SetUnavailable(string message)
     {
+        _directoryReady = false;
+        ClearSelection();
         StatusText.Text = message;
         LoadingRing.IsActive = false;
         UpButton.IsEnabled = false;
@@ -96,6 +133,8 @@ public sealed partial class FilesPaneView : UserControl
         FilesList.ItemsSource = null;
         EmptyText.Visibility = Visibility.Visible;
         SetTabActionsEnabled(false);
+        UpdateSelectionActions();
+        RaiseIntentStateChanged();
     }
 
     public void Apply(
@@ -108,6 +147,7 @@ public sealed partial class FilesPaneView : UserControl
     {
         ArgumentNullException.ThrowIfNull(rows);
         PathText.Text = path;
+        _directoryReady = canRefresh;
         LoadingRing.IsActive = false;
         UpButton.IsEnabled = canNavigateUp;
         RefreshButton.IsEnabled = canRefresh;
@@ -119,6 +159,7 @@ public sealed partial class FilesPaneView : UserControl
             ? Visibility.Visible
             : Visibility.Collapsed;
         SetTabActionsEnabled(canRefresh);
+        RestoreSelection();
 
         if (!hasMore && rows.Count == currentTotalCount)
         {
@@ -131,6 +172,8 @@ public sealed partial class FilesPaneView : UserControl
                 ? $"{rows.Count:N0} loaded · current count {currentTotalCount:N0} · more exact pages available."
                 : $"{rows.Count:N0} loaded · current count {currentTotalCount:N0} · directory changed while paging.";
         }
+
+        RaiseIntentStateChanged();
     }
 
     public void SetReady(bool canNavigateUp, bool canRefresh, bool canLoadMore)
@@ -140,12 +183,15 @@ public sealed partial class FilesPaneView : UserControl
             StatusText.Text = "The indexed directory load did not complete. Refresh to try again.";
         }
 
+        _directoryReady &= canRefresh;
         LoadingRing.IsActive = false;
         UpButton.IsEnabled = canNavigateUp;
         RefreshButton.IsEnabled = canRefresh;
         LoadMoreButton.Visibility = canLoadMore ? Visibility.Visible : Visibility.Collapsed;
         LoadMoreButton.IsEnabled = canLoadMore && canRefresh;
         SetTabActionsEnabled(canRefresh);
+        UpdateSelectionActions();
+        RaiseIntentStateChanged();
     }
 
     private void SetTabActionsEnabled(bool enabled)
@@ -156,6 +202,104 @@ public sealed partial class FilesPaneView : UserControl
         foreach (var child in TabsPanel.Children.OfType<Control>())
         {
             child.IsEnabled = enabled;
+        }
+
+        UpdateSelectionActions();
+    }
+
+    private void RememberSelection()
+    {
+        _selectedPaths.Clear();
+        foreach (var row in FilesList.SelectedItems.OfType<FileBrowserRow>())
+        {
+            _selectedPaths.Add(row.Path);
+        }
+    }
+
+    private void RestoreSelection()
+    {
+        _restoringSelection = true;
+        try
+        {
+            FilesList.SelectedItems.Clear();
+            if (_activeTabId == Guid.Empty || _selectedPaths.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var row in FilesList.Items.OfType<FileBrowserRow>())
+            {
+                if (_selectedPaths.Contains(row.Path))
+                {
+                    FilesList.SelectedItems.Add(row);
+                }
+            }
+        }
+        finally
+        {
+            _restoringSelection = false;
+            UpdateSelectionActions();
+        }
+    }
+
+    private void ClearActiveSelection()
+    {
+        ClearSelection();
+    }
+
+    private void ClearSelection()
+    {
+        _selectedPaths.Clear();
+        ClearVisibleSelection();
+    }
+
+    private void ClearVisibleSelection()
+    {
+        _restoringSelection = true;
+        try
+        {
+            FilesList.SelectedItems.Clear();
+        }
+        finally
+        {
+            _restoringSelection = false;
+        }
+    }
+
+    private void UpdateSelectionActions()
+    {
+        OpenButton.IsEnabled =
+            _tabActionsEnabled &&
+            _directoryReady &&
+            FilesList.SelectedItems.Count == 1;
+    }
+
+    private void RaiseIntentStateChanged()
+    {
+        if (!_restoringSelection)
+        {
+            IntentStateChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void FilesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_restoringSelection)
+        {
+            return;
+        }
+
+        RememberSelection();
+        UpdateSelectionActions();
+        RaiseIntentStateChanged();
+    }
+
+    private void OpenButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = SelectedRows;
+        if (selected.Count == 1)
+        {
+            EntryInvoked?.Invoke(this, selected[0]);
         }
     }
 
@@ -190,14 +334,6 @@ public sealed partial class FilesPaneView : UserControl
     private void LoadMoreButton_Click(object sender, RoutedEventArgs e)
     {
         LoadMoreRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    private void FilesList_ItemClick(object sender, ItemClickEventArgs e)
-    {
-        if (e.ClickedItem is FileBrowserRow row)
-        {
-            EntryInvoked?.Invoke(this, row);
-        }
     }
 }
 
