@@ -530,9 +530,12 @@ public sealed partial class MainWindow : Window
         StorageTreemapCanvas.Children.Clear();
         if (_storageAnalysis is null || _storageEntries.Count == 0)
         {
+            StorageTreemapEmptyText.Text = "No indexed entries under this folder.";
             StorageTreemapEmptyText.Visibility = Visibility.Visible;
             return;
         }
+
+        StorageTreemapEmptyText.Visibility = Visibility.Collapsed;
 
         var width = StorageTreemapCanvas.ActualWidth;
         var height = StorageTreemapCanvas.ActualHeight;
@@ -547,28 +550,36 @@ public sealed partial class MainWindow : Window
             .ToArray();
         if (weightedRows.Length == 0)
         {
+            StorageTreemapEmptyText.Text = "Indexed entries have zero treemap weight.";
             StorageTreemapEmptyText.Visibility = Visibility.Visible;
             return;
         }
 
-        StorageTreemapEmptyText.Visibility = Visibility.Collapsed;
-        var items = new List<TreemapItem>(Math.Min(weightedRows.Length, MaximumTreemapTiles));
-        if (weightedRows.Length <= MaximumTreemapTiles)
+        var analysis = _storageAnalysis;
+        var rootWeight = analysis.AllocatedBytes ?? analysis.LogicalBytes;
+        var individualTileCount = Math.Min(weightedRows.Length, MaximumTreemapTiles);
+        if (analysis.DirectEntryCount > individualTileCount)
         {
-            items.AddRange(weightedRows.Select(static row =>
-                new TreemapItem(row, row.Name, row.TreemapBytes, row.TreemapSizeText)));
+            individualTileCount = Math.Min(weightedRows.Length, MaximumTreemapTiles - 1);
         }
-        else
+
+        var items = new List<TreemapItem>(MaximumTreemapTiles);
+        items.AddRange(weightedRows.Take(individualTileCount).Select(static row =>
+            new TreemapItem(row, row.Name, row.TreemapBytes, row.TreemapSizeText)));
+
+        var otherEntryCount = Math.Max(0, analysis.DirectEntryCount - individualTileCount);
+        if (otherEntryCount > 0)
         {
-            var visibleCount = MaximumTreemapTiles - 1;
-            items.AddRange(weightedRows.Take(visibleCount).Select(static row =>
-                new TreemapItem(row, row.Name, row.TreemapBytes, row.TreemapSizeText)));
-            var otherWeight = weightedRows.Skip(visibleCount).Sum(static row => row.TreemapBytes);
-            items.Add(new TreemapItem(
-                null,
-                $"Other {weightedRows.Length - visibleCount:N0} entries",
-                otherWeight,
-                ByteFormatter.Format(otherWeight)));
+            var representedWeight = items.Sum(static item => item.Weight);
+            var otherWeight = Math.Max(0, rootWeight - representedWeight);
+            if (otherWeight > 0)
+            {
+                items.Add(new TreemapItem(
+                    null,
+                    $"Other {otherEntryCount:N0} entries",
+                    otherWeight,
+                    ByteFormatter.Format(otherWeight)));
+            }
         }
 
         var rectangles = new List<TreemapRectangle>(items.Count);
