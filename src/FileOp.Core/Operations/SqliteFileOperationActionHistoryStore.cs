@@ -173,6 +173,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         DateTimeOffset failedAtUtc,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         ValidateFailure(failure);
         return TransitionEntryAsync(
             operationId,
@@ -269,6 +270,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         DateTimeOffset failedAtUtc,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         ValidateFailure(failure);
         return TransitionEntryAsync(
             operationId,
@@ -382,7 +384,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             throw new ArgumentOutOfRangeException(
                 nameof(limit),
                 limit,
-                $"Action-history limits must be between 1 and {MaximumRecentLimit:N0}.");
+                $"Action-history limits must be between 1 and {MaximumRecentLimit:N0}." );
         }
 
         using var connection = OpenConnection();
@@ -535,7 +537,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             if (actual != SchemaVersion)
             {
                 throw new InvalidDataException(
-                    $"Unsupported FileOp action-history schema version {actual}; expected {SchemaVersion}.");
+                    $"Unsupported FileOp action-history schema version {actual}; expected {SchemaVersion}." );
             }
         }
 
@@ -855,6 +857,14 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         }
     }
 
+    private static void ValidatePersistedFailure(FileOperationFailure failure)
+    {
+        if (string.IsNullOrWhiteSpace(failure.Code) || string.IsNullOrWhiteSpace(failure.Message))
+        {
+            throw new InvalidDataException("Persisted action-history failure requires a code and message.");
+        }
+    }
+
     private static void ValidateOrdinal(int ordinal)
     {
         if (ordinal < 0)
@@ -1120,8 +1130,8 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             throw new InvalidDataException("Persisted successful action history contains an incomplete entry.");
         }
 
-        if (history.TerminalState is FileOperationActionTerminalState.Failed or
-            FileOperationActionTerminalState.Cancelled && hasRecovery)
+        if ((history.TerminalState is FileOperationActionTerminalState.Failed or
+                FileOperationActionTerminalState.Cancelled) && hasRecovery)
         {
             throw new InvalidDataException(
                 "Persisted failed/cancelled action history cannot contain an unresolved mutation boundary.");
@@ -1142,15 +1152,15 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
     {
         if (entry.MutationStartedAtUtc.HasValue != mutationStarted ||
             entry.CompletedAtUtc.HasValue != completed ||
-            (failure.HasValue && entry.Failure is not null != failure.Value))
+            (failure.HasValue && (entry.Failure is not null) != failure.Value))
         {
             throw new InvalidDataException(
-                $"Persisted action-history entry {entry.Ordinal} has timestamps/failure data inconsistent with state {entry.State}.");
+                $"Persisted action-history entry {entry.Ordinal} has timestamps/failure data inconsistent with state {entry.State}." );
         }
 
         if (entry.Failure is { } persistedFailure)
         {
-            ValidateFailure(persistedFailure);
+            ValidatePersistedFailure(persistedFailure);
         }
     }
 
@@ -1159,7 +1169,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         if (entry.UndoKind != FileOperationUndoKind.None)
         {
             throw new InvalidDataException(
-                $"Persisted action-history entry {entry.Ordinal} has undo metadata that its state does not permit.");
+                $"Persisted action-history entry {entry.Ordinal} has undo metadata that its state does not permit." );
         }
     }
 
@@ -1188,7 +1198,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             reader.GetString(startOrdinal + 1),
             reader.IsDBNull(startOrdinal + 2) ? null : reader.GetString(startOrdinal + 2),
             retryable);
-        ValidateFailure(failure);
+        ValidatePersistedFailure(failure);
         return failure;
     }
 
@@ -1226,7 +1236,12 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
     private static TEnum ReadEnum<TEnum>(long value, string description)
         where TEnum : struct, Enum
     {
-        var converted = checked((int)value);
+        if (value < int.MinValue || value > int.MaxValue)
+        {
+            throw new InvalidDataException($"Unknown action-history {description} value {value}.");
+        }
+
+        var converted = (int)value;
         if (!Enum.IsDefined(typeof(TEnum), converted))
         {
             throw new InvalidDataException($"Unknown action-history {description} value {converted}.");
@@ -1240,7 +1255,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
     private static Guid ParseOperationId(string value) =>
         Guid.TryParseExact(value, "D", out var parsed)
             ? parsed
-            : throw new InvalidDataException($"Persisted action-history operation id is invalid: {value}.");
+            : throw new InvalidDataException($"Persisted action-history operation id is invalid: {value}." );
 
     private static DateTimeOffset NormalizeUtc(DateTimeOffset value) => value.ToUniversalTime();
 
