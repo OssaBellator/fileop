@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""Zero-Actions checks for FileOp's file-Copy executor orchestration."""
+from __future__ import annotations
+
+import argparse
+import random
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Case:
+    initial: tuple[str, ...]
+    revalidation_change: int | None = None
+    cancel_before: int | None = None
+    cancel_during: int | None = None
+    mutation_failure: int | None = None
+    commit_failure: int | None = None
+
+
+def run_case(case: Case) -> tuple[str, list[str], int]:
+    events = ["validate:full", "history:begin", "state:running"]
+    completed = 0
+
+    for ordinal, decision in enumerate(case.initial):
+        if decision == "skip":
+            completed += 1
+            events.append(f"progress:{completed}")
+            if case.cancel_before == ordinal:
+                terminal = "succeeded" if completed == len(case.initial) else "cancelled"
+                events.extend([f"history:complete:{terminal}", f"state:{terminal}"])
+                return terminal, events, completed
+            continue
+
+        assert decision == "ready"
+        if case.cancel_before == ordinal:
+            terminal = "succeeded" if completed == len(case.initial) else "cancelled"
+            events.extend([f"history:complete:{terminal}", f"state:{terminal}"])
+            return terminal, events, completed
+
+        events.append(f"validate:fresh:{ordinal}")
+        if case.revalidation_change == ordinal:
+            events.extend([
+                f"history:failed-before:{ordinal}",
+                "history:complete:failed",
+                "state:failed",
+            ])
+            return "failed", events, completed
+
+        # Last cancellation check before the durable point of no return.
+        if case.cancel_before == ordinal + len(case.initial):
+            terminal = "succeeded" if completed == len(case.initial) else "cancelled"
+            events.extend([f"history:complete:{terminal}", f"state:{terminal}"])
+            return terminal, events, completed
+
+        events.append(f"history:start:{ordinal}")
+        events.append(f"mutation:{ordinal}")
+
+        if case.mutation_failure == ordinal:
+            events.extend([
+                f"history:recovery:{ordinal}",
+                "history:complete:recovery",
+                "state:failed",
+            ])
+            return "failed", events, completed
+
+        if case.commit_failure == ordinal:
+            events.extend([
+                f"history:commit-attempt:{ordinal}",
+                f"history:recovery:{ordinal}",
+                "history:complete:recovery",
+                "state:failed",
+            ])
+            return "failed", events, completed
+
+        events.append(f"history:commit:{ordinal}")
+        completed += 1
+        events.append(f"progress:{completed}")
+
+        if case.cancel_during == ordinal:
+            terminal = "succeeded" if completed == len(case.initial) else "cancelled"
+            events.extend([f"history:complete:{terminal}", f"state:{terminal}"])
+            return terminal, events, completed
+
+    events.extend(["history:complete:succeeded", "state:succeeded"])
+    return "succeeded", events, completed
+
+
+def check_invariants(case: Case, result: tuple[str, list[str], int]) -> int:
+    terminal, events, completed = result
+    checks = 0
+
+    # Every mutation must have a durable start before it, and a successful
+    # mutation must commit before its progress increment is reported.
+    mutation_ordinals = [
+        int(event.split(":")[1])
+        for event in events
+        if event.startswith("mutation:")
+    ]
+    for ordinal in mutation_ordinals:
+        start_index = events.index(f"history:start:{ordinal}")
+        mutation_index = events.index(f"mutation:{ordinal}")
+        assert start_index < mutation_index
+        checks += 1
+
+        if f"history:commit:{ordinal}" in events:
+            commit_index = events.index(f"history:commit:{ordinal}")
+            progress_count = sum(
+                1
+                for candidate in case.initial[: ordinal + 1]
+                if candidate in {"ready", "skip"}
+            )
+            progress_index = events.index(f"progress:{progress_count}")
+            assert mutation_index < commit_index < progress_index
+            checks += 1
+
+    # Revalidation changes never cross the mutation barrier for that entry.
+    if case.revalidation_change is not None and f"validate:fresh:{case.revalidation_change}" in events:
+        ordinal = case.revalidation_change
+        assert f"history:start:{ordinal}" not in events
+        assert f"mutation:{ordinal}" not in events
+        checks += 2
+
+    # Any failure after the durable barrier routes to recovery and never reports
+    # the failed entry as completed.
+    for ordinal in range(len(case.initial)):
+        if case.mutation_failure == ordinal and f"mutation:{ordinal}" in events:
+            assert f"history:recovery:{ordinal}" in events
+            assert f"history:commit:{ordinal}" not in events
+            checks += 2
+        if case.commit_failure == ordinal and f"history:commit-attempt:{ordinal}" in events:
+            assert f"history:recovery:{ordinal}" in events
+            assert f"history:commit:{ordinal}" not in events
+            checks += 2
+
+    # A cancellation that arrives during a mutation is honored only after the
+    # current file commits; at most that one file may mutate after the request.
+    if case.cancel_during is not None and f"mutation:{case.cancel_during}" in events:
+        ordinal = case.cancel_during
+        assert f"history:commit:{ordinal}" in events
+        later_mutations = [value for value in mutation_ordinals if value > ordinal]
+        assert not later_mutations
+        checks += 2
+
+    # Initial Skip decisions never invoke the mutation primitive.
+    for ordinal, decision in enumerate(case.initial):
+        if decision == "skip" and f"progress:{ordinal + 1}" in events:
+            assert f"mutation:{ordinal}" not in events
+            checks += 1
+
+    assert 0 <= completed <= len(case.initial)
+    if terminal == "succeeded":
+        assert completed == len(case.initial)
+    elif terminal == "cancelled":
+        assert completed < len(case.initial)
+    checks += 2
+    return checks
+
+
+def fixed_cases() -> list[Case]:
+    return [
+        Case(("ready",)),
+        Case(("skip", "skip")),
+        Case(("ready",), revalidation_change=0),
+        Case(("ready",), mutation_failure=0),
+        Case(("ready",), commit_failure=0),
+        Case(("ready", "ready"), cancel_before=0),
+        Case(("ready", "ready"), cancel_before=2),
+        Case(("ready", "ready"), cancel_during=0),
+        Case(("skip", "ready"), cancel_during=1),
+    ]
+
+
+def randomized_cases(count: int) -> list[Case]:
+    rng = random.Random(20260808)
+    cases: list[Case] = []
+    for _ in range(count):
+        length = rng.randint(1, 12)
+        initial = tuple("skip" if rng.random() < 0.25 else "ready" for _ in range(length))
+        ready = [index for index, decision in enumerate(initial) if decision == "ready"]
+        mode = rng.choice([
+            "normal",
+            "revalidate",
+            "cancel-before",
+            "cancel-after-fresh",
+            "cancel-during",
+            "mutation-fail",
+            "commit-fail",
+        ])
+        kwargs: dict[str, int] = {}
+        if ready:
+            target = rng.choice(ready)
+            if mode == "revalidate":
+                kwargs["revalidation_change"] = target
+            elif mode == "cancel-before":
+                kwargs["cancel_before"] = target
+            elif mode == "cancel-after-fresh":
+                kwargs["cancel_before"] = target + length
+            elif mode == "cancel-during":
+                kwargs["cancel_during"] = target
+            elif mode == "mutation-fail":
+                kwargs["mutation_failure"] = target
+            elif mode == "commit-fail":
+                kwargs["commit_failure"] = target
+        cases.append(Case(initial, **kwargs))
+    return cases
+
+
+def check_repository(root: Path) -> int:
+    files = {
+        "executor": root / "src/FileOp.Core/Operations/FileCopyOperationExecutor.cs",
+        "execution": root / "src/FileOp.Core/Operations/FileOperationExecution.cs",
+        "history": root / "src/FileOp.Core/Operations/FileOperationActionHistory.cs",
+        "tests": root / "tests/FileOp.Windows.Tests/FileCopyOperationExecutorTests.cs",
+        "files_ui": root / "src/FileOp.App/FilesView.xaml.cs",
+        "docs": root / "docs/file-copy-executor.md",
+        "local": root / "tools/test-local.ps1",
+    }
+    missing = [str(path) for path in files.values() if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(", ".join(missing))
+    source = {name: path.read_text(encoding="utf-8") for name, path in files.items()}
+
+    required_executor = [
+        "public interface IFileCopyMutationPrimitive",
+        "ValueTask<FileCopyMutationReceipt> CopyNewFileAsync(",
+        "public sealed class FileCopyOperationExecutor : IFileOperationExecutor",
+        "ValidateSupportedPlan(plan)",
+        "plan.Kind != FileOperationKind.Copy",
+        "plan.Intent.Entries.Any(static entry => entry.IsDirectory)",
+        "CreateSingleEntryPlan(plan, initialItem.Entry)",
+        "TryValidateFreshResult(",
+        ".MarkMutationStartedAsync(plan.Id, ordinal, UtcNow())",
+        ".CopyNewFileAsync(freshItem)",
+        ".CommitCopyAsync(",
+        "snapshot.ReportProgress(ordinal + 1, receipt.CanonicalDestinationPath)",
+        "MarkMutationRecoveryRequiredAsync(",
+        "FileOperationActionTerminalState.RecoveryRequired",
+        "Cancellation is intentionally not passed through this boundary",
+        "The source file's canonical path or stable identity changed before mutation.",
+        "The destination leaf's canonical path changed before mutation.",
+        "The mutation primitive did not bind Copy to the validated source identity.",
+    ]
+    for needle in required_executor:
+        assert needle in source["executor"], needle
+
+    start = source["executor"].index(".MarkMutationStartedAsync(plan.Id, ordinal, UtcNow())")
+    mutate = source["executor"].index(".CopyNewFileAsync(freshItem)", start)
+    commit = source["executor"].index(".CommitCopyAsync(", mutate)
+    progress = source["executor"].index(
+        "snapshot.ReportProgress(ordinal + 1, receipt.CanonicalDestinationPath)",
+        commit,
+    )
+    assert start < mutate < commit < progress
+
+    for forbidden in [
+        "File.Copy(", "File.Move(", "File.Delete(",
+        "Directory.Move(", "Directory.Delete(", "File.OpenWrite(",
+        "new FileStream(",
+    ]:
+        assert forbidden not in source["executor"], forbidden
+
+    assert "public interface IFileOperationExecutor" in source["execution"]
+    assert "CommitCopyAsync" in source["history"]
+    assert "SuccessfulCopyCommitsHistoryBeforeReportingProgress" in source["tests"]
+    assert "CancellationDuringMutationStopsAfterCommittedFileBoundary" in source["tests"]
+    assert "CommitFailureAfterMutationForcesRecoveryPath" in source["tests"]
+    assert "FreshIdentityChangeFailsBeforeMutation" in source["tests"]
+    assert "FileCopyOperationExecutor" not in source["files_ui"]
+    assert ".ExecuteAsync(" not in source["files_ui"]
+    assert "# File Copy executor orchestration" in source["docs"]
+    assert "no concrete mutation primitive" in source["docs"].casefold()
+    assert "time-of-check/time-of-use" in source["docs"].casefold()
+    assert "verify_file_copy_executor.py" in source["local"]
+    return len(required_executor) + 1 + 7 + 10
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo-root", type=Path, default=Path.cwd())
+    parser.add_argument("--self-test-only", action="store_true")
+    parser.add_argument("--cases", type=int, default=20000)
+    args = parser.parse_args()
+    if args.cases <= 0:
+        parser.error("--cases must be greater than zero")
+
+    checks = 0
+    all_cases = fixed_cases() + randomized_cases(args.cases)
+    for case in all_cases:
+        checks += check_invariants(case, run_case(case))
+    print(
+        f"PASS file Copy executor orchestration: {checks} checks across "
+        f"{args.cases} randomized cases + {len(fixed_cases())} fixed cases"
+    )
+    if not args.self_test_only:
+        print(
+            "PASS file Copy executor source wiring: "
+            f"{check_repository(args.repo_root.resolve())} checks"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (AssertionError, FileNotFoundError, ValueError) as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        raise SystemExit(1)
