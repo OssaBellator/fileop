@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -42,7 +43,7 @@ public sealed class FileOperationActionHistoryTests
             Assert.AreEqual(FileOperationActionEntryState.Committed, committed.Entries[0].State);
             Assert.AreEqual(FileOperationUndoKind.DeleteCreatedDestination, committed.Entries[0].UndoKind);
             Assert.AreEqual(committedIdentity, committed.Entries[0].DestinationIdentity);
-            Assert.IsTrue(committed.Entries[0].IsUndoEligible);
+            Assert.IsTrue(committed.Entries[0].IsUndoCandidate);
 
             completed = await store.CompleteAsync(
                 validation.Plan.Id,
@@ -54,8 +55,8 @@ public sealed class FileOperationActionHistoryTests
         var persisted = await reopened.GetAsync(validation.Plan.Id);
         Assert.IsNotNull(persisted);
         Assert.AreEqual(FileOperationActionTerminalState.Succeeded, persisted.TerminalState);
-        Assert.AreEqual(1, persisted.UndoEligibleEntries.Count);
-        Assert.AreEqual(committedIdentity, persisted.UndoEligibleEntries[0].DestinationIdentity);
+        Assert.AreEqual(1, persisted.UndoCandidateEntries.Count);
+        Assert.AreEqual(committedIdentity, persisted.UndoCandidateEntries[0].DestinationIdentity);
         Assert.AreEqual(completed.CanonicalDestinationDirectoryPath, persisted.CanonicalDestinationDirectoryPath);
     }
 
@@ -185,6 +186,56 @@ public sealed class FileOperationActionHistoryTests
     }
 
     [TestMethod]
+    public async Task BeginRejectsReadyDirectoryMutation()
+    {
+        using var fixture = new HistoryFixture();
+        var validation = CreateValidation(
+            includeSkippedEntry: false,
+            firstIsDirectory: true);
+
+        using var store = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath);
+        await Assert.ThrowsExactlyAsync<ArgumentException>(async () =>
+            await store.BeginAsync(validation, DateTimeOffset.UtcNow));
+    }
+
+    [TestMethod]
+    public void ActionHistoryDefensivelySnapshotsEntries()
+    {
+        var entry = new FileOperationActionEntry(
+            0,
+            new FileOperationEntry(@"C:\Source\a.txt", "a.txt", IsDirectory: false),
+            @"C:\Real\Source\a.txt",
+            @"D:\Real\Destination\a.txt",
+            FileOperationActionEntryState.Pending,
+            MutationStartedAtUtc: null,
+            CompletedAtUtc: null,
+            SourceIdentity: new FileIdentity(1, 10),
+            DestinationIdentity: null,
+            FileOperationUndoKind.None,
+            Failure: null);
+        var entries = new List<FileOperationActionEntry> { entry };
+        var history = new FileOperationActionHistory(
+            Guid.NewGuid(),
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            completedAtUtc: null,
+            FileOperationKind.Copy,
+            FileOperationCollisionPolicy.Skip,
+            @"C:\Source",
+            @"D:\Destination",
+            @"C:\Real\Source",
+            @"D:\Real\Destination",
+            terminalState: null,
+            entries);
+
+        entries.Clear();
+
+        Assert.AreEqual(1, history.Entries.Count);
+        Assert.AreEqual(entry, history.Entries[0]);
+    }
+
+    [TestMethod]
     public async Task RecentHistoryIsNewestFirstAndBounded()
     {
         using var fixture = new HistoryFixture();
@@ -202,16 +253,18 @@ public sealed class FileOperationActionHistoryTests
 
     private static FileOperationExecutionValidationResult CreateValidation(
         bool includeSkippedEntry,
-        Guid? operationId = null)
+        Guid? operationId = null,
+        bool firstIsDirectory = false)
     {
         var sourceDirectory = Path.GetFullPath(@"C:\Source");
         var destinationDirectory = Path.GetFullPath(@"D:\Destination");
         var canonicalSourceDirectory = Path.GetFullPath(@"C:\Real\Source");
         var canonicalDestinationDirectory = Path.GetFullPath(@"D:\Real\Destination");
+        var firstName = firstIsDirectory ? "Folder" : "a.txt";
         var first = new FileOperationEntry(
-            Path.Combine(sourceDirectory, "a.txt"),
-            "a.txt",
-            IsDirectory: false);
+            Path.Combine(sourceDirectory, firstName),
+            firstName,
+            IsDirectory: firstIsDirectory);
         var entries = includeSkippedEntry
             ? new[]
             {
@@ -245,7 +298,9 @@ public sealed class FileOperationActionHistoryTests
                     new FileOperationCanonicalPath(
                         entry.Path,
                         Path.Combine(canonicalSourceDirectory, entry.Name),
-                        FileOperationCanonicalPathState.File,
+                        entry.IsDirectory
+                            ? FileOperationCanonicalPathState.Directory
+                            : FileOperationCanonicalPathState.File,
                         IsLeafReparsePoint: false,
                         Identity: new FileIdentity(1, (ulong)(100 + ordinal))),
                     ordinal == 0
