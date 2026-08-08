@@ -5,6 +5,16 @@
     Title="FileOp">
 
     <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.Resources>
+            <Style x:Key="StorageTreemapTileStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource AccentFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="Padding" Value="8" />
+            </Style>
+        </Grid.Resources>
+
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="220" />
             <ColumnDefinition Width="*" />
@@ -13,9 +23,17 @@
         <Border Grid.Column="0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,1,0">
             <StackPanel Padding="20,24" Spacing="10">
                 <TextBlock Text="FileOp" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,18" />
-                <Button Content="Search" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" />
+                <Button x:Name="SearchNavigationButton"
+                        Content="Search"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        Click="SearchNavigationButton_Click" />
                 <Button Content="Files" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False" />
-                <Button Content="Storage" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False" />
+                <Button x:Name="StorageNavigationButton"
+                        Content="Storage"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        Click="StorageNavigationButton_Click" />
                 <Button Content="Clean" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False" />
                 <Button Content="Disks" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False" />
             </StackPanel>
@@ -23,83 +41,234 @@
 
         <Grid Grid.Column="1" Padding="28,24">
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <StackPanel Grid.Row="0" Spacing="8">
-                <TextBlock Text="Search your PC" FontSize="28" FontWeight="SemiBold" />
-                <TextBlock Text="FileOp uses its persistent NTFS index when available and falls back safely for unsupported or unavailable locations."
-                           Opacity="0.7" TextWrapping="Wrap" />
-                <TextBox x:Name="SearchBox"
-                         PlaceholderText="Search files — try ext:pdf or size:&gt;100mb"
-                         FontSize="18"
-                         Margin="0,12,0,0"
-                         IsEnabled="False"
-                         TextChanged="SearchBox_TextChanged" />
-            </StackPanel>
+            <Grid x:Name="SearchView" Grid.Row="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
 
-            <ItemsControl x:Name="VolumeCards" Grid.Row="1" Margin="0,20,0,14">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <StackPanel Orientation="Horizontal" Spacing="12" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Border Padding="14" MinWidth="210" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
-                            <StackPanel Spacing="5">
-                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                <TextBlock Text="{Binding Usage}" Opacity="0.75" />
-                                <ProgressBar Value="{Binding UsedPercent}" Maximum="100" Height="5" />
-                            </StackPanel>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+                <StackPanel Grid.Row="0" Spacing="8">
+                    <TextBlock Text="Search your PC" FontSize="28" FontWeight="SemiBold" />
+                    <TextBlock Text="FileOp uses its persistent NTFS index when available and falls back safely for unsupported or unavailable locations."
+                               Opacity="0.7" TextWrapping="Wrap" />
+                    <TextBox x:Name="SearchBox"
+                             PlaceholderText="Search files — try ext:pdf or size:&gt;100mb"
+                             FontSize="18"
+                             Margin="0,12,0,0"
+                             IsEnabled="False"
+                             TextChanged="SearchBox_TextChanged" />
+                </StackPanel>
 
-            <Border Grid.Row="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+                <ItemsControl x:Name="VolumeCards" Grid.Row="1" Margin="0,20,0,14">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="12" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="14" MinWidth="210" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding Usage}" Opacity="0.75" />
+                                    <ProgressBar Value="{Binding UsedPercent}" Maximum="100" Height="5" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
 
-                    <Grid Grid.Row="0" Padding="14,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="2*" />
-                            <ColumnDefinition Width="4*" />
-                            <ColumnDefinition Width="120" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Name" FontWeight="SemiBold" />
-                        <TextBlock Grid.Column="1" Text="Location" FontWeight="SemiBold" />
-                        <TextBlock Grid.Column="2" Text="Size" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                <Border Grid.Row="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Padding="14,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="4*" />
+                                <ColumnDefinition Width="120" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Name" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="1" Text="Location" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="2" Text="Size" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                        </Grid>
+
+                        <ListView x:Name="ResultsList" Grid.Row="1" IsItemClickEnabled="True" ItemClick="ResultsList_ItemClick">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="8,5">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="2*" />
+                                            <ColumnDefinition Width="4*" />
+                                            <ColumnDefinition Width="120" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ParentPath}" TextTrimming="CharacterEllipsis" Opacity="0.7" />
+                                        <TextBlock Grid.Column="2" Text="{Binding SizeText}" HorizontalAlignment="Right" Opacity="0.7" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
                     </Grid>
+                </Border>
+            </Grid>
 
-                    <ListView x:Name="ResultsList" Grid.Row="1" IsItemClickEnabled="True" ItemClick="ResultsList_ItemClick">
-                        <ListView.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Padding="8,5">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="2*" />
-                                        <ColumnDefinition Width="4*" />
-                                        <ColumnDefinition Width="120" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" Text="{Binding ParentPath}" TextTrimming="CharacterEllipsis" Opacity="0.7" />
-                                    <TextBlock Grid.Column="2" Text="{Binding SizeText}" HorizontalAlignment="Right" Opacity="0.7" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
+            <Grid x:Name="StorageView" Grid.Row="0" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Storage" FontSize="28" FontWeight="SemiBold" />
+                        <TextBlock x:Name="StorageScopeText" Opacity="0.7" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                            <Button x:Name="StorageUpButton" Content="Up" Click="StorageUpButton_Click" IsEnabled="False" />
+                            <TextBlock x:Name="StoragePathText" VerticalAlignment="Center" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                    </StackPanel>
+                    <Button x:Name="StorageRefreshButton"
+                            Grid.Column="1"
+                            Content="Refresh analysis"
+                            VerticalAlignment="Top"
+                            Click="StorageRefreshButton_Click" />
                 </Grid>
-            </Border>
 
-            <Grid Grid.Row="3" Margin="0,12,0,0" ColumnSpacing="12">
+                <Grid Grid.Row="1" Margin="0,18,0,14" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Padding="14" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Logical size" Opacity="0.65" />
+                            <TextBlock x:Name="StorageLogicalText" Text="—" FontSize="22" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Padding="14" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="On disk" Opacity="0.65" />
+                            <TextBlock x:Name="StorageAllocatedText" Text="—" FontSize="22" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="2" Padding="14" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Files" Opacity="0.65" />
+                            <TextBlock x:Name="StorageFilesText" Text="—" FontSize="22" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="3" Padding="14" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Hard-link aliases" Opacity="0.65" />
+                            <TextBlock x:Name="StorageAliasesText" Text="—" FontSize="22" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <Grid Grid.Row="2" ColumnSpacing="14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.1*" />
+                        <ColumnDefinition Width="1*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="12">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Margin="2,0,2,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Treemap" FontWeight="SemiBold" />
+                                <TextBlock x:Name="StorageTreemapModeText" Grid.Column="1" Opacity="0.6" FontSize="12" />
+                            </Grid>
+                            <Grid Grid.Row="1">
+                                <Canvas x:Name="StorageTreemapCanvas"
+                                        MinHeight="280"
+                                        SizeChanged="StorageTreemapCanvas_SizeChanged" />
+                                <TextBlock x:Name="StorageTreemapEmptyText"
+                                           Text="No indexed entries under this folder."
+                                           Opacity="0.6"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Visibility="Collapsed" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Column="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Padding="12,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="70" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Entry" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="Logical" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                                <TextBlock Grid.Column="2" Text="On disk" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                                <TextBlock Grid.Column="3" Text="Files" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                            </Grid>
+                            <ListView x:Name="StorageList" Grid.Row="1" IsItemClickEnabled="True" ItemClick="StorageList_ItemClick">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Padding="7,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="2*" />
+                                                <ColumnDefinition Width="100" />
+                                                <ColumnDefinition Width="100" />
+                                                <ColumnDefinition Width="70" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding DetailText}" Opacity="0.55" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{Binding LogicalText}" HorizontalAlignment="Right" VerticalAlignment="Center" Opacity="0.7" />
+                                            <TextBlock Grid.Column="2" Text="{Binding AllocatedText}" HorizontalAlignment="Right" VerticalAlignment="Center" Opacity="0.7" />
+                                            <TextBlock Grid.Column="3" Text="{Binding FileCountText}" HorizontalAlignment="Right" VerticalAlignment="Center" Opacity="0.7" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Grid>
+
+            <Grid Grid.Row="1" Margin="0,12,0,0" ColumnSpacing="12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
