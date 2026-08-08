@@ -186,7 +186,7 @@ public sealed class FileOperationActionHistoryTests
     }
 
     [TestMethod]
-    public async Task BeginRejectsReadyDirectoryMutation()
+    public async Task BeginRejectsReadyDirectoryMutationAndRollsBack()
     {
         using var fixture = new HistoryFixture();
         var validation = CreateValidation(
@@ -196,6 +196,21 @@ public sealed class FileOperationActionHistoryTests
         using var store = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath);
         await Assert.ThrowsExactlyAsync<ArgumentException>(async () =>
             await store.BeginAsync(validation, DateTimeOffset.UtcNow));
+        Assert.IsNull(await store.GetAsync(validation.Plan.Id));
+    }
+
+    [TestMethod]
+    public async Task BeginRejectsReadyMoveMutationAndRollsBack()
+    {
+        using var fixture = new HistoryFixture();
+        var validation = CreateValidation(
+            includeSkippedEntry: false,
+            kind: FileOperationKind.Move);
+
+        using var store = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath);
+        await Assert.ThrowsExactlyAsync<ArgumentException>(async () =>
+            await store.BeginAsync(validation, DateTimeOffset.UtcNow));
+        Assert.IsNull(await store.GetAsync(validation.Plan.Id));
     }
 
     [TestMethod]
@@ -254,7 +269,8 @@ public sealed class FileOperationActionHistoryTests
     private static FileOperationExecutionValidationResult CreateValidation(
         bool includeSkippedEntry,
         Guid? operationId = null,
-        bool firstIsDirectory = false)
+        bool firstIsDirectory = false,
+        FileOperationKind kind = FileOperationKind.Copy)
     {
         var sourceDirectory = Path.GetFullPath(@"C:\Source");
         var destinationDirectory = Path.GetFullPath(@"D:\Destination");
@@ -278,7 +294,7 @@ public sealed class FileOperationActionHistoryTests
         var plan = new FileOperationPlan(
             operationId ?? Guid.NewGuid(),
             new DateTimeOffset(2026, 8, 8, 0, 0, 0, TimeSpan.Zero),
-            FileOperationKind.Copy,
+            kind,
             FileOperationCollisionPolicy.Skip,
             new FileOperationIntent(
                 "Left",
