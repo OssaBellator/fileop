@@ -6,7 +6,7 @@ Canonical execution validation proves that a queued plan is safe enough to appro
 
 `IFileOperationActionHistoryStore` and `SqliteFileOperationActionHistoryStore` provide that persistence boundary. This slice writes only FileOp's own SQLite recovery metadata. It does **not** implement `IFileOperationExecutor`, Copy/Move/Delete, or an Undo command.
 
-Action-history schema v1 is intentionally **file-mutation-only**. A directory may be recorded as `Skipped`, but a ready directory entry is rejected before the history transaction can commit. Recursive directory Copy needs child-level recovery/commit semantics and is not being inferred from one directory-root record.
+Action-history schema v1 is intentionally **Copy-file-only for mutation state**. A directory or Move entry may be recorded as `Skipped`, but a ready directory or ready Move entry is rejected before the history transaction can commit. Recursive directory Copy needs child-level recovery/commit semantics, and Move needs source-removal/cross-volume partial-failure semantics; neither is inferred from the file-Copy protocol.
 
 ## Commit barrier
 
@@ -70,7 +70,7 @@ file_operation_action_entries
 
 The operation row stores queued/validated/started/completed timestamps, operation/collision kind, captured roots, canonical roots and terminal state. Each entry stores its original source metadata, canonical source/destination paths, durable state timestamps, source/destination identities, undo kind and structured failure information.
 
-The public `FileOperationActionHistory` aggregate defensively snapshots its entry sequence. Callers cannot retain a mutable list and rewrite the apparent durable history after construction.
+The public `FileOperationActionHistory` aggregate defensively snapshots its entry sequence. Callers cannot retain a mutable list and rewrite the apparent durable history after construction. The aggregate also enforces the schema-v1 mutation boundary, so invalid ready-directory/non-Copy histories abort `BeginAsync` before its SQLite transaction can commit.
 
 Writes are serialized per store instance and state transitions use conditional SQL predicates against both the expected entry state and a non-terminal operation. This makes duplicate/out-of-order transitions fail rather than silently rewriting history.
 
@@ -100,7 +100,7 @@ Run the standard-library model directly:
 python tools/verify_file_operation_action_history.py --repo-root . --cases 20000
 ```
 
-The verifier exercises successful file-Copy commit barriers, skipped file/directory entries, rejection of ready directory mutation, pre-mutation failures, crash-sensitive mutation starts, recovery-required settlement, undo candidate selection, terminal-state restrictions and schema/source guards.
+The verifier exercises successful file-Copy commit barriers, skipped file/directory entries, rejection/rollback of ready directory and ready Move mutation history, pre-mutation failures, crash-sensitive mutation starts, recovery-required settlement, undo candidate selection, terminal-state restrictions and schema/source guards.
 
 The whole no-Actions gate remains:
 
