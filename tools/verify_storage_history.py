@@ -269,7 +269,10 @@ def check_repository(repo_root: Path) -> int:
     store = repo_root / "src/FileOp.Core/Storage/SqliteStorageHistoryStore.cs"
     index = repo_root / "src/FileOp.Core/Search/SqliteFileIndex.cs"
     tests = repo_root / "tests/FileOp.Windows.Tests/StorageHistoryTests.cs"
-    missing = [str(path) for path in (history, store, index, tests) if not path.is_file()]
+    corruption_tests = repo_root / "tests/FileOp.Windows.Tests/StorageHistoryCorruptionTests.cs"
+    delta_tests = repo_root / "tests/FileOp.Windows.Tests/StorageHistoryDeltaTests.cs"
+    required_files = (history, store, index, tests, corruption_tests, delta_tests)
+    missing = [str(path) for path in required_files if not path.is_file()]
     if missing:
         raise FileNotFoundError("Missing repository files: " + ", ".join(missing))
 
@@ -277,6 +280,8 @@ def check_repository(repo_root: Path) -> int:
     store_text = store.read_text(encoding="utf-8")
     index_text = index.read_text(encoding="utf-8")
     tests_text = tests.read_text(encoding="utf-8")
+    corruption_text = corruption_tests.read_text(encoding="utf-8")
+    delta_text = delta_tests.read_text(encoding="utf-8")
 
     required = [
         (history_text, "IStorageHistoryStore"),
@@ -286,9 +291,14 @@ def check_repository(repo_root: Path) -> int:
         (store_text, "UNIQUE(root_path, captured_utc_ticks)"),
         (store_text, "ON DELETE CASCADE"),
         (store_text, "ValidateAnalysis(analysis)"),
+        (store_text, "ValidateSnapshot(builder.Build())"),
+        (store_text, "ReadUtcTimestamp"),
         (tests_text, "NamespaceClearLeavesHistoricalSnapshotsIntact"),
         (tests_text, "StoreRejectsUnknownHistorySchemaVersion"),
         (tests_text, "DeltaHandlesMissingCategoriesAndUnknownPhysicalAllocation"),
+        (corruption_text, "ReadRejectsPersistedRootTotalsThatDoNotReconcile"),
+        (corruption_text, "ReadRejectsUnknownPersistedCategoryValue"),
+        (delta_text, "UnchangedUnknownPhysicalCategoryIsNotReportedAsGrowth"),
     ]
     for text, needle in required:
         assert needle in text, f"required source invariant missing: {needle}"
