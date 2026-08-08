@@ -46,6 +46,10 @@ Invoke-Step "Offline Storage file-type randomized verifier" {
     python tools/verify_storage_types_fuzz.py --cases 1000
 }
 
+Invoke-Step "Offline Storage history verifier" {
+    python tools/verify_storage_history.py --repo-root $repoRoot --cases 1000
+}
+
 Invoke-Step "FileOp.Core Release build" {
     dotnet build src/FileOp.Core/FileOp.Core.csproj --configuration Release
 }
