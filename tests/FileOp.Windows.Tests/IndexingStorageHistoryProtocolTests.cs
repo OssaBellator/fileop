@@ -47,13 +47,13 @@ public sealed class IndexingStorageHistoryProtocolTests
             @"C:\Data",
             new DateTimeOffset(2026, 8, 8, 6, 0, 0, TimeSpan.Zero),
             300,
-            384,
+            256,
             2,
             1,
             2,
             [
                 new StorageHistoryCategorySnapshot(StorageFileCategory.Data, 200, 256, 1, 0, 1),
-                new StorageHistoryCategorySnapshot(StorageFileCategory.Images, 100, 128, 1, 1, 1),
+                new StorageHistoryCategorySnapshot(StorageFileCategory.Images, 100, 0, 1, 1, 1),
             ]);
         using var backend = new FakeBackend
         {
@@ -81,7 +81,7 @@ public sealed class IndexingStorageHistoryProtocolTests
                 new IndexingStorageHistoryQueryRequest(0x1234, @"C:\", @"C:\Data", 30),
                 cancellation.Token);
             Assert.AreEqual(1, history.Snapshots.Count);
-            Assert.AreEqual(384L, history.Snapshots[0].AllocatedBytes);
+            Assert.AreEqual(256L, history.Snapshots[0].AllocatedBytes);
         }
 
         await serverTask.WaitAsync(cancellation.Token);
