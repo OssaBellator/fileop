@@ -19,11 +19,13 @@ A path-only `File.Copy` would reopen the source and destination namespace after 
 1. opens the canonical source and destination parent directories and keeps both handles alive;
 2. rejects a parent handle if it is a reparse point, its final handle-resolved path changes, or its stable identity differs from the fresh request;
 3. opens the source **relative to the source-directory handle** with `NtCreateFile` and `FILE_OPEN_REPARSE_POINT`;
-4. compares the opened source's volume/file identity and final path with the fresh validation item;
+4. compares the opened source's volume/file identity and final path with the fresh validation item, then captures the supported basic metadata from that same source handle;
 5. creates the destination **relative to the destination-directory handle** with `NtCreateFile`, `FILE_CREATE`, `FILE_WRITE_THROUGH` and `FILE_OPEN_REPARSE_POINT`;
 6. never uses an overwrite/open-if disposition;
-7. copies bytes through the bound handles, requires a final `FlushFileBuffers`, then captures the destination's stable identity and final path;
-8. returns an `IFileCopyMutationLease` that retains the source directory, destination directory, source file and created destination file handles through durable `CommitCopy` and progress reporting.
+7. copies bytes through the bound handles and flushes destination data;
+8. applies the supported basic metadata through the already-open destination handle with `SetFileInformationByHandle(FileBasicInfo)`, then requires another `FlushFileBuffers`;
+9. captures the destination's stable identity and final path;
+10. returns an `IFileCopyMutationLease` that retains the source directory, destination directory, source file and created destination file handles through durable `CommitCopy` and progress reporting.
 
 `FILE_CREATE` is the exclusive-create barrier: if another process creates the leaf after validation, the mutation fails rather than opening or replacing it. Once the directory handle is acquired, later renames/replacement of the textual parent path cannot redirect the relative create. The parent handles also omit delete sharing while the lease is alive.
 
@@ -33,11 +35,26 @@ The destination file handle does not share write or delete access while the leas
 
 The source is reopened relative to its verified canonical parent with the narrow `FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE` access set and no write/delete sharing. A process that already has an incompatible writer prevents the Copy from starting; after the source handle is acquired, new incompatible writers cannot open it through normal Windows sharing semantics. The primitive verifies the source final path and stable identity again after the handle is acquired, so replacing the validated source path with a different file is rejected.
 
-This slice copies file contents only. Metadata/ACL/alternate-stream fidelity is intentionally not claimed yet.
+## Basic metadata fidelity
+
+`WindowsFileCopyBasicMetadata` captures metadata from the same already-validated source file handle and applies it to the same exclusively created destination handle. It does not reopen either textual path.
+
+The supported subset is intentionally narrow:
+
+- creation time;
+- last-access time;
+- last-write time;
+- read-only;
+- hidden;
+- system;
+- archive;
+- not-content-indexed.
+
+`ChangeTime` is not copied. Storage-state attributes that need separate filesystem semantics are also excluded: reparse-point, sparse, compressed, encrypted, offline and temporary state. ACLs, alternate data streams and extended attributes remain separate future boundaries rather than being implied by a byte copy.
 
 ## Durability and failure semantics
 
-Destination creation requests `FILE_WRITE_THROUGH`, and after all bytes are written `FlushFileBuffers` is still required to succeed before a lease is returned. The destination handle includes generic write access for that explicit flush. This intentionally layers per-write write-through behavior with a final flush before the durable action-history commit barrier.
+Destination creation requests `FILE_WRITE_THROUGH`. After all bytes are written, `FlushFileBuffers` must succeed before metadata is changed. The basic metadata is then applied through the destination handle and a second, final `FlushFileBuffers` must succeed before a lease is returned. The destination handle's generic-write access includes the attribute-write permission required by `FileBasicInfo`.
 
 The executor has already persisted `MutationStarted` before invoking the primitive, so any exception after destination creation is conservatively settled as recovery-sensitive. The primitive does not guess whether a partial destination should be deleted.
 
@@ -51,7 +68,7 @@ For the pure standard-library property models, run:
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-That gate needs Python but no .NET SDK. It includes `verify_windows_file_copy_mutation.py`, whose model exercises both sides of the namespace boundary: source/destination root replacement **before** handle acquisition changes the expected object identity, source-leaf replacement changes the stable file identity, while a rename/replacement **after** handle acquisition cannot redirect a directory-relative exclusive create. It also checks collision refusal and destination flushing. Source guards require explicit fresh roots, `NtCreateFile` relative roots, `FILE_CREATE`, `FILE_WRITE_THROUGH`, reparse-point bypass, handle identity/final-path checks, destination flushing and absence of high-level overwrite/move/delete APIs.
+That gate needs Python but no .NET SDK. It includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes the preserved-attribute mask, rejects unsupported storage-state flags, requires handle-only metadata APIs, and guards the ordering `capture -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`.
 
 For the focused real Windows compiler/native gate, run on Windows with .NET 10:
 
@@ -59,10 +76,10 @@ For the focused real Windows compiler/native gate, run on Windows with .NET 10:
 pwsh -File tools/test-windows-copy-local.ps1
 ```
 
-That script first runs the zero-Actions property models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs only `FileOperationActionHistoryTests`, `FileCopyOperationExecutorTests` and `WindowsFileCopyMutationPrimitiveTests`. Use `-SkipOfflineModels` when the Python gate has already been run. Neither script invokes GitHub Actions.
+That script first runs the zero-Actions property models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs only `FileOperationActionHistoryTests`, `FileCopyOperationExecutorTests` and classes whose names contain `WindowsFileCopyMutationPrimitiveTests`. Use `-SkipOfflineModels` when the Python gate has already been run. Neither script invokes GitHub Actions.
 
-Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, and lease-held parent-directory rename blocking. Because this environment cannot execute the Windows kernel/PInvoke path, this branch intentionally does not add Files UI execution wiring.
+Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported attribute filtering, and metadata preservation through the concrete mutation primitive.
 
 ## Next boundary
 
-Before exposing Run/Execute in the Files UI, run the focused Windows regression gate successfully and make explicit metadata-fidelity decisions (timestamps/attributes/ACLs/alternate streams) rather than assuming byte-copy equivalence is a complete Explorer-style Copy contract. Directory Copy, Move and Undo remain separate later slices.
+Run the focused Windows compiler/native gate successfully before exposing Run/Execute in the Files UI. Further fidelity work should treat ACLs, alternate streams, extended attributes and special storage states as explicit separately reviewed semantics rather than assuming Explorer-style equivalence. Directory Copy, Move and Undo remain separate later slices.
