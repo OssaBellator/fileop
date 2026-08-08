@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using System.Linq;
 using FileOp.Core.Operations;
 using FileOp.Windows.Operations;
 using Microsoft.UI.Xaml;
