@@ -50,6 +50,10 @@ Invoke-Step "Offline Storage history verifier" {
     python tools/verify_storage_history.py --repo-root $repoRoot --cases 1000
 }
 
+Invoke-Step "Offline Storage history Unicode-root verifier" {
+    python tools/verify_storage_history_unicode.py --repo-root $repoRoot
+}
+
 Invoke-Step "FileOp.Core Release build" {
     dotnet build src/FileOp.Core/FileOp.Core.csproj --configuration Release
 }
