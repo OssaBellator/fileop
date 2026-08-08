@@ -4,15 +4,15 @@
 
 `FileOp.Indexer` isolates native NTFS indexing from the WinUI desktop process. `FileOp.App` always remains `asInvoker`; only the on-demand indexing helper may be relaunched after explicit user action when raw NTFS access requires elevation.
 
-The indexer is not the future disk-administration helper. It exposes indexing, search, read-only Storage analytics and aggregate Storage-history capture/query. Partition changes, formatting, BitLocker administration and other destructive storage operations require a separate privileged surface.
+The indexer is not the future disk-administration helper. It exposes indexing, search, exact read-only directory browsing, read-only Storage analytics and aggregate Storage-history capture/query. Partition changes, formatting, BitLocker administration and other destructive storage operations require a separate privileged surface.
 
 ## Process model
 
 ```text
 FileOp.App (normal user token + known PID)
         |
-        | native-first Search/Storage coordinator
-        |   \-- bounded user-profile crawler fallback
+        | native-first Search/Files/Storage coordinator
+        |   \-- completed user-profile crawler fallback
         |
         | random named pipe
         | current-user ACL + exact client-PID check
@@ -23,7 +23,8 @@ FileOp.Indexer (normal token first; same-account elevation only)
         +-- metadata hydration / hard-link enumeration
         +-- journal synchronization
         +-- per-volume SQLite ownership
-        +-- Search + directory/type/category analytics
+        +-- Search + paged direct-child browsing
+        +-- directory/type/category analytics
         +-- aggregate Storage history capture/query
 ```
 
@@ -39,7 +40,7 @@ Oversized responses are replaced by retryable `ResponseTooLarge` without killing
 
 Protocol mismatch is rejected before backend work.
 
-## Protocol v5
+## Protocol v6
 
 Current operations are:
 
@@ -49,6 +50,7 @@ Current operations are:
 - `RebuildVolume`;
 - `SyncVolume`;
 - `Search`;
+- `BrowseDirectory`;
 - `AnalyzeStorage`;
 - `AnalyzeStorageTypes`;
 - `CaptureStorageHistory`;
@@ -60,11 +62,63 @@ Version progression is deliberate:
 - v2 added directory Storage;
 - v3 added file-type analysis;
 - v4 enriched `AnalyzeStorageTypes` with exact category rows;
-- v5 adds aggregate history capture/query.
+- v5 added aggregate history capture/query;
+- v6 adds exact paged direct-child browsing.
 
-The v5 bump is required because old desktop/helper binaries do not agree on the operation set. Strict negotiation fails safely instead of allowing an old helper to receive unknown history operations.
+The v6 bump is required because old desktop/helper binaries do not agree on the operation set. Strict negotiation fails safely instead of allowing an old helper to receive an unknown browse operation.
 
 There are no cleanup, file-mutation, partition, format, TRIM, BitLocker or process-management commands in this protocol.
+
+## Exact directory browsing
+
+### `BrowseDirectory`
+
+Request:
+
+```text
+VolumeIdentity
+VolumeRootPath
+DirectoryPath
+PageSize   // default 256, maximum 1024 at the service boundary
+Cursor?    // IsDirectory + Name + absolute Path
+```
+
+Response:
+
+```text
+DirectoryPath
+TotalCount
+Entries[]
+NextCursor?
+```
+
+The result contains direct `FileRecord` metadata represented with the same `IndexingSearchResult` DTO used by Search. It intentionally does **not** calculate recursive directory sizes or category aggregates; those are Storage responsibilities.
+
+Native ordering is:
+
+```text
+directories first
+name_norm ascending
+path_norm ascending
+```
+
+Continuation is a keyset cursor over the last returned row. The SQL predicate advances by directory/file rank and then normalized name/path rather than by numeric offset. This avoids the classic offset-page shift where an insertion before the current page can make an already-consumed row reappear on the next page.
+
+The SQLite browse class opens the index in `ReadOnly` mode and never runs schema creation or mutation. When an indexed directory has a stable `FileIdentity`, direct-child filtering uses the existing parent-identity columns; the path predicate is only a fallback for indexes where that identity is unavailable.
+
+The production `PagedDirectoryIndexingServiceBackend` is a thin wrapper around `StorageHistoryIndexingServiceBackend`. Existing index/search/storage/history behavior is delegated unchanged. Browse requests independently:
+
+1. resolve the attached physical NTFS volume/root;
+2. validate directory containment;
+3. take the existing shared cross-process read lease;
+4. verify the durable NTFS checkpoint using a read-only query;
+5. verify the requested path is an indexed directory;
+6. execute the keyset page query;
+7. translate SQLite contention to retryable `Busy`.
+
+This keeps the reviewed `NtfsIndexingServiceBackend` synchronization lifecycle untouched.
+
+The desktop exposes the same page model in fallback mode by filtering and paging the already-completed in-memory profile snapshot. That compatibility path can scan the in-memory snapshot for each page, but it performs no new filesystem enumeration. Native mode does not materialize the whole persistent index.
 
 ## Live Storage semantics
 
@@ -119,14 +173,14 @@ Each NTFS volume/root pair has its own SQLite database under the current Windows
 
 Live namespace reads have two coordination layers:
 
-- a process-local non-blocking operation gate;
+- a process-local desktop/native operation discipline;
 - a cross-process reader/writer file gate beside the persistent database.
 
-Search and live Storage analytics take shared leases. Rebuild and journal synchronization hold an exclusive maintenance lease across the entire semantic operation, including checkpoint invalidation.
+Search, exact browse and live Storage analytics take shared leases. Rebuild and journal synchronization hold an exclusive maintenance lease across the entire semantic operation, including checkpoint invalidation.
 
 History persistence uses an independently versioned `storage_history_*` sub-schema in the same database. Namespace rebuilds do not erase history. History root identity uses a custom ordinal-ignore-case SQLite collation so Unicode Windows path casing follows the same semantics as the .NET domain model rather than SQLite's ASCII-only `NOCASE`.
 
-The history-aware service wrapper deliberately leaves the reviewed `NtfsIndexingServiceBackend` lifecycle unchanged. Existing operations are delegated directly.
+The service composition deliberately leaves the reviewed `NtfsIndexingServiceBackend` lifecycle unchanged. History and exact-browse wrappers delegate existing operations directly.
 
 ## Privilege policy
 
@@ -138,11 +192,9 @@ The desktop build places `FileOp.Indexer.exe` and its host metadata beside the a
 
 ## WinUI integration
 
-Search, Folders Storage and Types/Categories Storage already share one native/fallback lifecycle and foreground operation discipline.
+Search, indexed Files and Storage share one native/fallback lifecycle and foreground operation discipline. Storage history scheduling is engine-owned and independent of whether its view is open.
 
-Protocol v5 history operations are service-ready but are not yet scheduled or rendered by WinUI. The next UI/lifecycle slice should request low-priority hourly-bucket captures without cancelling in-flight IPC, then query a bounded history series for a read-only growth timeline.
-
-Fallback history policy is intentionally not defined yet. Native history represents durable indexed volume state; a crawler fallback is a static profile snapshot and should not silently be mixed into the same time series without an explicit source model.
+The current Files view still renders the first compatibility slice through bounded `AnalyzeStorage`; protocol v6 and `DesktopSearchEngine.BrowseDirectoryAsync` now establish the exact page boundary required to replace that bridge. The next UI slice should consume pages incrementally and expose an explicit Load more/infinite-scroll policy without reintroducing recursive Storage aggregation into browser rows.
 
 ## Error contract
 
@@ -157,20 +209,21 @@ Expected errors remain structured:
 - `ResponseTooLarge`;
 - `InternalError`.
 
-`CaptureStorageHistory` inherits live-analysis errors such as `SnapshotRequired` and `Busy`. `GetStorageHistory` can return `VolumeNotFound` for a detached/mismatched volume but does not require a current checkpoint.
+`BrowseDirectory` requires an attached volume and current durable checkpoint and can return `Busy`, `SnapshotRequired`, `InvalidRequest` or `ResponseTooLarge`. `CaptureStorageHistory` inherits live-analysis errors such as `SnapshotRequired` and `Busy`. `GetStorageHistory` can return `VolumeNotFound` for a detached/mismatched volume but does not require a current checkpoint.
 
 ## Validation without hosted Actions
 
-The existing Storage SQL/UI/history verifiers remain in the local gate. Protocol v5 adds `tools/verify_storage_history_service.py`, which checks:
+`tools/verify_directory_browse.py` exercises the keyset algorithm against in-memory SQLite over randomized directory fixtures and guards:
 
-- 2,000+ randomized UTC-hour bucket cases;
-- v5 DTO/client/dispatcher wiring;
-- no client-controlled capture timestamp;
-- capture live-analysis-before-persistence ordering;
-- history-query independence from live checkpoint analysis;
-- production host selection;
-- deterministic database-key parity with the native backend.
+- exact multi-page reconstruction without duplicates;
+- directory-first/name/path ordering;
+- cursor behavior when rows are inserted before an already-consumed cursor;
+- protocol-v6 DTO/client/dispatcher wiring;
+- read-only SQLite mode;
+- shared read-lease and checkpoint validation;
+- wrapper isolation from the reviewed native synchronization backend;
+- native/fallback desktop routing and no-rescan behavior.
 
-`IndexingStorageHistoryProtocolTests` adds a typed named-pipe capture/query round trip and dispatcher limit validation for the full Windows/.NET test gate.
+`IndexingDirectoryBrowseProtocolTests` adds dispatcher page-size validation and a typed named-pipe browse/cursor round trip for the full Windows/.NET gate.
 
-`tools/test-local.ps1` runs all offline verifiers before Core/native/indexer/tests/WinUI/bundled-helper compilation and the real process handshake without consuming GitHub Actions usage.
+The existing Storage/history/UI verifiers remain in the local gate. `tools/test-local.ps1 -OfflineOnly` runs all standard-library checks without requiring the .NET SDK; the normal local gate continues through Core/native/indexer/tests/WinUI/bundled-helper compilation and the real process handshake without consuming GitHub Actions usage.
