@@ -210,8 +210,15 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
 
             if (!reader.IsDBNull(8))
             {
+                var categoryValue = checked((int)reader.GetInt64(8));
+                var category = (StorageFileCategory)categoryValue;
+                if (!Enum.IsDefined(category))
+                {
+                    throw new InvalidDataException($"Unknown storage-history category value {categoryValue}.");
+                }
+
                 current.Categories.Add(new StorageHistoryCategorySnapshot(
-                    (StorageFileCategory)reader.GetInt32(8),
+                    category,
                     reader.GetInt64(9),
                     reader.IsDBNull(10) ? null : reader.GetInt64(10),
                     checked((int)reader.GetInt64(11)),
@@ -263,6 +270,8 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
         using (var versionTable = connection.CreateCommand())
         {
             versionTable.CommandText = $$"""
+                PRAGMA journal_mode = WAL;
+
                 CREATE TABLE IF NOT EXISTS storage_history_schema_info(
                     id INTEGER PRIMARY KEY CHECK(id = 1),
                     version INTEGER NOT NULL
@@ -333,9 +342,33 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
 
     private static void ValidateAnalysis(StorageFileTypeAnalysis analysis)
     {
+        if (analysis.LogicalBytes < 0 ||
+            analysis.AllocatedBytes is < 0 ||
+            analysis.FileCount < 0 ||
+            analysis.HardLinkAliasCount < 0 ||
+            analysis.HardLinkAliasCount > analysis.FileCount ||
+            analysis.TypeCount < 0)
+        {
+            throw new ArgumentException("Storage history root totals contain invalid negative or alias counts.", nameof(analysis));
+        }
+
         if (analysis.Categories.Select(static item => item.Category).Distinct().Count() != analysis.Categories.Count)
         {
             throw new ArgumentException("Storage history analysis contains duplicate category rows.", nameof(analysis));
+        }
+
+        foreach (var item in analysis.Categories)
+        {
+            if (!Enum.IsDefined(item.Category) ||
+                item.LogicalBytes < 0 ||
+                item.AllocatedBytes is < 0 ||
+                item.FileCount < 0 ||
+                item.HardLinkAliasCount < 0 ||
+                item.HardLinkAliasCount > item.FileCount ||
+                item.TypeCount <= 0)
+            {
+                throw new ArgumentException("Storage history analysis contains an invalid category row.", nameof(analysis));
+            }
         }
 
         if (analysis.Categories.Sum(static item => item.LogicalBytes) != analysis.LogicalBytes ||
@@ -355,6 +388,13 @@ public sealed class SqliteStorageHistoryStore : IStorageHistoryStore, IDisposabl
                     "Storage history physical category totals do not reconcile with the analysis root.",
                     nameof(analysis));
             }
+        }
+        else if (analysis.FileCount > 0 &&
+                 analysis.Categories.All(static item => item.AllocatedBytes.HasValue))
+        {
+            throw new ArgumentException(
+                "Storage history root allocation cannot be unknown when every category allocation is exact.",
+                nameof(analysis));
         }
     }
 
