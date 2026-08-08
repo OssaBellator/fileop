@@ -10,18 +10,13 @@ public sealed partial class MainWindow
 {
     private const int FilesPageSize = 256;
 
-    private readonly List<FileBrowserRow> _filesRows = [];
+    private readonly FilesPaneState _leftFilesPane = new("Left");
+    private readonly FilesPaneState _rightFilesPane = new("Right");
     private FilesView _filesView = null!;
     private Button _filesNavigationButton = null!;
-    private FileDirectoryBrowseCursor? _filesNextCursor;
-    private string? _filesCurrentPath;
     private string? _filesSourceKey;
     private string _lastFilesStatus = string.Empty;
-    private int _filesCurrentTotalCount;
-    private int _filesGeneration;
-    private int _filesLoadingGeneration;
     private bool _filesInitialized;
-    private bool _filesLoadedForSource;
     private bool _filesVisible;
 
     internal void InitializeFilesFeature()
@@ -53,18 +48,43 @@ public sealed partial class MainWindow
         Grid.SetRow(_filesView, 0);
         contentGrid.Children.Add(_filesView);
 
+        EnsureFilesPaneHasTab(_leftFilesPane, path: null);
+        EnsureFilesPaneHasTab(_rightFilesPane, path: null);
+        ApplyFilesTabs(_leftFilesPane);
+        ApplyFilesTabs(_rightFilesPane);
+
         _filesInitialized = true;
         _filesNavigationButton.Click += FilesNavigationButton_Click;
         SearchNavigationButton.Click += FilesOtherNavigationButton_Click;
         StorageNavigationButton.Click += FilesOtherNavigationButton_Click;
-        _filesView.UpRequested += FilesView_UpRequested;
-        _filesView.RefreshRequested += FilesView_RefreshRequested;
-        _filesView.LoadMoreRequested += FilesView_LoadMoreRequested;
-        _filesView.EntryInvoked += FilesView_EntryInvoked;
+        SubscribeFilesPane(_filesView.LeftPane);
+        SubscribeFilesPane(_filesView.RightPane);
         _searchEngine.StateChanged += FilesEngine_StateChanged;
         Closed += FilesWindow_Closed;
 
         HandleFilesEngineState(_searchEngine.State);
+    }
+
+    private void SubscribeFilesPane(FilesPaneView paneView)
+    {
+        paneView.UpRequested += FilesPane_UpRequested;
+        paneView.RefreshRequested += FilesPane_RefreshRequested;
+        paneView.LoadMoreRequested += FilesPane_LoadMoreRequested;
+        paneView.NewTabRequested += FilesPane_NewTabRequested;
+        paneView.CloseTabRequested += FilesPane_CloseTabRequested;
+        paneView.TabRequested += FilesPane_TabRequested;
+        paneView.EntryInvoked += FilesPane_EntryInvoked;
+    }
+
+    private void UnsubscribeFilesPane(FilesPaneView paneView)
+    {
+        paneView.UpRequested -= FilesPane_UpRequested;
+        paneView.RefreshRequested -= FilesPane_RefreshRequested;
+        paneView.LoadMoreRequested -= FilesPane_LoadMoreRequested;
+        paneView.NewTabRequested -= FilesPane_NewTabRequested;
+        paneView.CloseTabRequested -= FilesPane_CloseTabRequested;
+        paneView.TabRequested -= FilesPane_TabRequested;
+        paneView.EntryInvoked -= FilesPane_EntryInvoked;
     }
 
     private void FilesWindow_Closed(object sender, WindowEventArgs args)
@@ -73,10 +93,8 @@ public sealed partial class MainWindow
         _filesNavigationButton.Click -= FilesNavigationButton_Click;
         SearchNavigationButton.Click -= FilesOtherNavigationButton_Click;
         StorageNavigationButton.Click -= FilesOtherNavigationButton_Click;
-        _filesView.UpRequested -= FilesView_UpRequested;
-        _filesView.RefreshRequested -= FilesView_RefreshRequested;
-        _filesView.LoadMoreRequested -= FilesView_LoadMoreRequested;
-        _filesView.EntryInvoked -= FilesView_EntryInvoked;
+        UnsubscribeFilesPane(_filesView.LeftPane);
+        UnsubscribeFilesPane(_filesView.RightPane);
         Closed -= FilesWindow_Closed;
     }
 
@@ -120,11 +138,12 @@ public sealed partial class MainWindow
         if (root is null)
         {
             _filesSourceKey = null;
-            ResetFilesPaging(clearPath: true);
-            Interlocked.Increment(ref _filesGeneration);
+            ResetAllFilesTabs(clearPath: true);
+            InvalidateFilesPane(_leftFilesPane);
+            InvalidateFilesPane(_rightFilesPane);
             if (_filesVisible)
             {
-                _filesView.SetUnavailable("Indexed Files browsing will be available after the search source is ready.");
+                SetAllFilesPanesUnavailable("Indexed Files browsing will be available after the search source is ready.");
                 SetFilesStatus("Indexed Files browsing is currently unavailable.");
             }
             return;
@@ -135,8 +154,9 @@ public sealed partial class MainWindow
         if (sourceChanged)
         {
             _filesSourceKey = sourceKey;
-            ResetFilesPaging(clearPath: true);
-            Interlocked.Increment(ref _filesGeneration);
+            ResetAllFilesTabs(clearPath: true);
+            InvalidateFilesPane(_leftFilesPane);
+            InvalidateFilesPane(_rightFilesPane);
         }
 
         if (!_filesVisible)
@@ -148,35 +168,18 @@ public sealed partial class MainWindow
         {
             if (state.IsBusy)
             {
-                ResetFilesPaging(clearPath: false);
-                Interlocked.Increment(ref _filesGeneration);
+                ResetAllFilesTabs(clearPath: false);
+                InvalidateFilesPane(_leftFilesPane);
+                InvalidateFilesPane(_rightFilesPane);
             }
 
-            _filesView.SetUnavailable("Indexed Files browsing is temporarily unavailable while the shared index is changing.");
+            SetAllFilesPanesUnavailable("Indexed Files browsing is temporarily unavailable while the shared index is changing.");
             SetFilesStatus("Files will be available when indexing is ready.");
             return;
         }
 
-        if ((sourceChanged || !_filesLoadedForSource || _filesCurrentPath is null) &&
-            _filesLoadingGeneration == 0)
-        {
-            var target = _filesCurrentPath;
-            if (string.IsNullOrWhiteSpace(target) || !IsPathWithinRoot(target, root))
-            {
-                target = root;
-            }
-
-            _ = LoadFilesDirectoryAsync(target, forceRefresh: true);
-            return;
-        }
-
-        if (_filesLoadingGeneration == 0)
-        {
-            _filesView.SetReady(
-                CanNavigateFilesUp(root),
-                canRefresh: true,
-                canLoadMore: _filesNextCursor is not null);
-        }
+        _ = EnsureFilesPaneLoadedAsync(_leftFilesPane, root, sourceChanged);
+        _ = EnsureFilesPaneLoadedAsync(_rightFilesPane, root, sourceChanged);
     }
 
     private async void FilesNavigationButton_Click(object sender, RoutedEventArgs e)
@@ -203,7 +206,7 @@ public sealed partial class MainWindow
         var root = _searchEngine.StorageRootPath;
         if (root is null || _searchEngine.State.IsBusy)
         {
-            _filesView.SetUnavailable("Indexed Files browsing will be available when indexing is ready.");
+            SetAllFilesPanesUnavailable("Indexed Files browsing will be available when indexing is ready.");
             SetFilesStatus("Files will be available when indexing is ready.");
             return;
         }
@@ -212,21 +215,14 @@ public sealed partial class MainWindow
         if (!string.Equals(sourceKey, _filesSourceKey, StringComparison.OrdinalIgnoreCase))
         {
             _filesSourceKey = sourceKey;
-            ResetFilesPaging(clearPath: true);
+            ResetAllFilesTabs(clearPath: true);
+            InvalidateFilesPane(_leftFilesPane);
+            InvalidateFilesPane(_rightFilesPane);
         }
 
-        if (_filesLoadingGeneration != 0)
-        {
-            return;
-        }
-
-        var path = _filesCurrentPath;
-        if (string.IsNullOrWhiteSpace(path) || !IsPathWithinRoot(path, root))
-        {
-            path = root;
-        }
-
-        await LoadFilesDirectoryAsync(path, forceRefresh: false);
+        await Task.WhenAll(
+            EnsureFilesPaneLoadedAsync(_leftFilesPane, root, forceRefresh: false),
+            EnsureFilesPaneLoadedAsync(_rightFilesPane, root, forceRefresh: false));
     }
 
     private void FilesOtherNavigationButton_Click(object sender, RoutedEventArgs e)
@@ -237,15 +233,20 @@ public sealed partial class MainWindow
         }
 
         _filesVisible = false;
-        Interlocked.Increment(ref _filesGeneration);
-        _filesLoadingGeneration = 0;
+        InvalidateFilesPane(_leftFilesPane);
+        InvalidateFilesPane(_rightFilesPane);
         _filesView.Visibility = Visibility.Collapsed;
     }
 
-    private async void FilesView_UpRequested(object? sender, EventArgs e)
+    private async void FilesPane_UpRequested(object? sender, EventArgs e)
     {
+        if (!TryGetFilesPane(sender, out var pane, out _))
+        {
+            return;
+        }
+
         var root = _searchEngine.StorageRootPath;
-        var current = _filesCurrentPath;
+        var current = pane.ActiveTab.CurrentPath;
         if (root is null || current is null || PathsEqual(root, current))
         {
             return;
@@ -257,51 +258,170 @@ public sealed partial class MainWindow
             parent = root;
         }
 
-        await LoadFilesDirectoryAsync(parent, forceRefresh: false);
+        await LoadFilesDirectoryAsync(pane, parent, forceRefresh: false);
     }
 
-    private async void FilesView_RefreshRequested(object? sender, EventArgs e)
+    private async void FilesPane_RefreshRequested(object? sender, EventArgs e)
     {
-        var root = _searchEngine.StorageRootPath;
-        if (root is null)
+        if (!TryGetFilesPane(sender, out var pane, out var paneView))
         {
-            _filesView.SetUnavailable("Indexed Files browsing is not currently available.");
             return;
         }
 
-        var path = _filesCurrentPath;
+        var root = _searchEngine.StorageRootPath;
+        if (root is null)
+        {
+            paneView.SetUnavailable("Indexed Files browsing is not currently available.");
+            return;
+        }
+
+        var path = pane.ActiveTab.CurrentPath;
         if (string.IsNullOrWhiteSpace(path) || !IsPathWithinRoot(path, root))
         {
             path = root;
         }
 
-        await LoadFilesDirectoryAsync(path, forceRefresh: true);
+        await LoadFilesDirectoryAsync(pane, path, forceRefresh: true);
     }
 
-    private async void FilesView_LoadMoreRequested(object? sender, EventArgs e)
+    private async void FilesPane_LoadMoreRequested(object? sender, EventArgs e)
     {
-        var current = _filesCurrentPath;
-        var cursor = _filesNextCursor;
-        if (current is null || cursor is null || _filesLoadingGeneration != 0)
+        if (!TryGetFilesPane(sender, out var pane, out _))
         {
             return;
         }
 
-        await LoadFilesPageAsync(current, cursor, append: true);
+        var tab = pane.ActiveTab;
+        var current = tab.CurrentPath;
+        var cursor = tab.NextCursor;
+        if (current is null || cursor is null || pane.LoadingGeneration != 0)
+        {
+            return;
+        }
+
+        await LoadFilesPageAsync(pane, tab, current, cursor, append: true);
     }
 
-    private async void FilesView_EntryInvoked(object? sender, FileBrowserRow row)
+    private async void FilesPane_NewTabRequested(object? sender, EventArgs e)
     {
+        if (!TryGetFilesPane(sender, out var pane, out _))
+        {
+            return;
+        }
+
+        var root = _searchEngine.StorageRootPath;
+        if (root is null || _searchEngine.State.IsBusy)
+        {
+            return;
+        }
+
+        var current = pane.ActiveTab.CurrentPath;
+        var path = !string.IsNullOrWhiteSpace(current) && IsPathWithinRoot(current, root)
+            ? current
+            : root;
+        var tab = CreateFilesTab(path);
+        pane.Tabs.Add(tab);
+        pane.ActiveTabId = tab.Id;
+        InvalidateFilesPane(pane);
+        ApplyFilesTabs(pane);
+        await LoadFilesDirectoryAsync(pane, path, forceRefresh: true);
+    }
+
+    private async void FilesPane_CloseTabRequested(object? sender, EventArgs e)
+    {
+        if (!TryGetFilesPane(sender, out var pane, out _) || pane.Tabs.Count <= 1)
+        {
+            return;
+        }
+
+        var activeIndex = pane.Tabs.FindIndex(tab => tab.Id == pane.ActiveTabId);
+        if (activeIndex < 0)
+        {
+            activeIndex = 0;
+        }
+
+        pane.Tabs.RemoveAt(activeIndex);
+        pane.ActiveTabId = pane.Tabs[Math.Min(activeIndex, pane.Tabs.Count - 1)].Id;
+        InvalidateFilesPane(pane);
+        ApplyFilesTabs(pane);
+
+        var root = _searchEngine.StorageRootPath;
+        if (root is null || _searchEngine.State.IsBusy)
+        {
+            return;
+        }
+
+        await EnsureFilesPaneLoadedAsync(pane, root, forceRefresh: false);
+    }
+
+    private async void FilesPane_TabRequested(object? sender, FileBrowserTabRequestedEventArgs e)
+    {
+        if (!TryGetFilesPane(sender, out var pane, out _) || pane.ActiveTabId == e.TabId)
+        {
+            return;
+        }
+
+        if (pane.Tabs.All(tab => tab.Id != e.TabId))
+        {
+            return;
+        }
+
+        pane.ActiveTabId = e.TabId;
+        InvalidateFilesPane(pane);
+        ApplyFilesTabs(pane);
+
+        var root = _searchEngine.StorageRootPath;
+        if (root is null || _searchEngine.State.IsBusy)
+        {
+            return;
+        }
+
+        await EnsureFilesPaneLoadedAsync(pane, root, forceRefresh: false);
+    }
+
+    private async void FilesPane_EntryInvoked(object? sender, FileBrowserRow row)
+    {
+        if (!TryGetFilesPane(sender, out var pane, out _))
+        {
+            return;
+        }
+
         if (row.IsDirectory)
         {
-            await LoadFilesDirectoryAsync(row.Path, forceRefresh: false);
+            await LoadFilesDirectoryAsync(pane, row.Path, forceRefresh: false);
             return;
         }
 
         OpenPath(row.Path, SetFilesStatus);
     }
 
-    private async Task LoadFilesDirectoryAsync(string directoryPath, bool forceRefresh)
+    private async Task EnsureFilesPaneLoadedAsync(FilesPaneState pane, string root, bool forceRefresh)
+    {
+        EnsureFilesPaneHasTab(pane, root);
+        ApplyFilesTabs(pane);
+
+        if (pane.LoadingGeneration != 0)
+        {
+            return;
+        }
+
+        var tab = pane.ActiveTab;
+        var path = tab.CurrentPath;
+        if (string.IsNullOrWhiteSpace(path) || !IsPathWithinRoot(path, root))
+        {
+            path = root;
+        }
+
+        if (!forceRefresh && tab.LoadedForSource)
+        {
+            ApplyFilesPageCache(pane, root);
+            return;
+        }
+
+        await LoadFilesDirectoryAsync(pane, path, forceRefresh: true);
+    }
+
+    private async Task LoadFilesDirectoryAsync(FilesPaneState pane, string directoryPath, bool forceRefresh)
     {
         if (_closed || !_filesVisible)
         {
@@ -311,7 +431,7 @@ public sealed partial class MainWindow
         var root = _searchEngine.StorageRootPath;
         if (root is null || _searchEngine.State.IsBusy)
         {
-            _filesView.SetUnavailable("Indexed Files browsing is not currently available.");
+            GetFilesPaneView(pane).SetUnavailable("Indexed Files browsing is not currently available.");
             SetFilesStatus("Files will be available when indexing is ready.");
             return;
         }
@@ -325,34 +445,40 @@ public sealed partial class MainWindow
         if (!string.Equals(sourceKey, _filesSourceKey, StringComparison.OrdinalIgnoreCase))
         {
             _filesSourceKey = sourceKey;
-            ResetFilesPaging(clearPath: true);
+            ResetAllFilesTabs(clearPath: true);
+            InvalidateFilesPane(_leftFilesPane);
+            InvalidateFilesPane(_rightFilesPane);
+            directoryPath = root;
             forceRefresh = true;
         }
 
-        var samePath = _filesCurrentPath is not null && PathsEqual(_filesCurrentPath, directoryPath);
-        if (!forceRefresh && samePath && _filesLoadedForSource)
+        EnsureFilesPaneHasTab(pane, directoryPath);
+        var tab = pane.ActiveTab;
+        var samePath = tab.CurrentPath is not null && PathsEqual(tab.CurrentPath, directoryPath);
+        if (!forceRefresh && samePath && tab.LoadedForSource)
         {
-            ApplyFilesPageCache(root);
+            ApplyFilesPageCache(pane, root);
             return;
         }
 
         if (forceRefresh || !samePath)
         {
-            _filesRows.Clear();
-            _filesNextCursor = null;
-            _filesCurrentTotalCount = 0;
-            _filesLoadedForSource = false;
+            ResetFilesTabPaging(tab, clearPath: false);
+            tab.CurrentPath = directoryPath;
+            ApplyFilesTabs(pane);
         }
 
-        await LoadFilesPageAsync(directoryPath, cursor: null, append: false);
+        await LoadFilesPageAsync(pane, tab, directoryPath, cursor: null, append: false);
     }
 
     private async Task LoadFilesPageAsync(
+        FilesPaneState pane,
+        FilesTabState tab,
         string directoryPath,
         FileDirectoryBrowseCursor? cursor,
         bool append)
     {
-        if (_closed || !_filesVisible)
+        if (_closed || !_filesVisible || pane.ActiveTabId != tab.Id)
         {
             return;
         }
@@ -360,7 +486,7 @@ public sealed partial class MainWindow
         var root = _searchEngine.StorageRootPath;
         if (root is null || _searchEngine.State.IsBusy)
         {
-            _filesView.SetUnavailable("Indexed Files browsing is not currently available.");
+            GetFilesPaneView(pane).SetUnavailable("Indexed Files browsing is not currently available.");
             SetFilesStatus("Files will be available when indexing is ready.");
             return;
         }
@@ -376,24 +502,30 @@ public sealed partial class MainWindow
         if (!string.Equals(sourceKey, _filesSourceKey, StringComparison.OrdinalIgnoreCase))
         {
             _filesSourceKey = sourceKey;
-            ResetFilesPaging(clearPath: true);
+            ResetAllFilesTabs(clearPath: true);
+            InvalidateFilesPane(_leftFilesPane);
+            InvalidateFilesPane(_rightFilesPane);
+            EnsureFilesPaneHasTab(pane, root);
+            tab = pane.ActiveTab;
+            tab.CurrentPath = root;
             directoryPath = root;
             cursor = null;
             append = false;
         }
 
         if (append &&
-            (!_filesLoadedForSource ||
-             _filesCurrentPath is null ||
-             !PathsEqual(_filesCurrentPath, directoryPath) ||
-             _filesNextCursor != cursor))
+            (!tab.LoadedForSource ||
+             tab.CurrentPath is null ||
+             !PathsEqual(tab.CurrentPath, directoryPath) ||
+             tab.NextCursor != cursor))
         {
             return;
         }
 
-        var generation = Interlocked.Increment(ref _filesGeneration);
-        _filesLoadingGeneration = generation;
-        _filesView.SetLoading(
+        var generation = ++pane.Generation;
+        pane.LoadingGeneration = generation;
+        var paneView = GetFilesPaneView(pane);
+        paneView.SetLoading(
             directoryPath,
             append
                 ? "Loading more exact directory entries…"
@@ -401,15 +533,15 @@ public sealed partial class MainWindow
             preserveRows: append);
         SetFilesStatus(
             append
-                ? $"Loading more entries from {directoryPath}…"
-                : $"Loading {directoryPath} from the exact indexed browse API…");
+                ? $"{pane.Name}: loading more entries from {directoryPath}…"
+                : $"{pane.Name}: loading {directoryPath} from the exact indexed browse API…");
 
         try
         {
             await _storageGate.WaitAsync(_lifetimeCancellation.Token);
             try
             {
-                if (_closed || !_filesVisible || generation != Volatile.Read(ref _filesGeneration))
+                if (!IsFilesRequestCurrent(pane, tab, generation))
                 {
                     return;
                 }
@@ -418,13 +550,13 @@ public sealed partial class MainWindow
                     directoryPath,
                     FilesPageSize,
                     cursor);
-                if (_closed || !_filesVisible || generation != Volatile.Read(ref _filesGeneration))
+                if (!IsFilesRequestCurrent(pane, tab, generation))
                 {
                     return;
                 }
 
-                ApplyFilesPage(page, root, append);
-                _filesLoadingGeneration = 0;
+                ApplyFilesPage(pane, tab, page, root, append);
+                pane.LoadingGeneration = 0;
             }
             finally
             {
@@ -437,75 +569,75 @@ public sealed partial class MainWindow
         catch (IndexingServiceRemoteException exception)
             when (exception.Error.Code == IndexingServiceErrorCode.Busy)
         {
-            if (!_closed && _filesVisible && generation == Volatile.Read(ref _filesGeneration))
-            {
-                _filesLoadingGeneration = 0;
-                var message = "The shared index is busy. Refresh Files after the current maintenance operation completes.";
-                _filesView.SetStatus(message);
-                SetFilesStatus(message);
-            }
+            ApplyFilesLoadError(pane, tab, generation,
+                "The shared index is busy. Refresh this pane after the current maintenance operation completes.");
         }
         catch (IndexingServiceRemoteException exception)
             when (exception.Error.Code == IndexingServiceErrorCode.SnapshotRequired)
         {
-            if (!_closed && _filesVisible && generation == Volatile.Read(ref _filesGeneration))
-            {
-                _filesLoadingGeneration = 0;
-                var message = "The indexed namespace is refreshing. Files will be available when the snapshot is current again.";
-                _filesView.SetStatus(message);
-                SetFilesStatus(message);
-            }
+            ApplyFilesLoadError(pane, tab, generation,
+                "The indexed namespace is refreshing. This pane will be available when the snapshot is current again.");
         }
         catch (IndexingServiceRemoteException exception)
             when (exception.Error.Code == IndexingServiceErrorCode.InvalidRequest)
         {
-            if (!_closed && _filesVisible && generation == Volatile.Read(ref _filesGeneration))
-            {
-                _filesLoadingGeneration = 0;
-                var message = "That directory is no longer present in the current index. Refresh or navigate to another folder.";
-                _filesView.SetStatus(message);
-                SetFilesStatus(message);
-            }
+            ApplyFilesLoadError(pane, tab, generation,
+                "That directory is no longer present in the current index. Refresh or navigate to another folder.");
         }
         catch (Exception exception)
         {
-            if (!_closed && _filesVisible && generation == Volatile.Read(ref _filesGeneration))
-            {
-                _filesLoadingGeneration = 0;
-                var message = $"Files could not be loaded: {exception.Message}";
-                _filesView.SetStatus(message);
-                SetFilesStatus(message);
-            }
+            ApplyFilesLoadError(pane, tab, generation, $"Files could not be loaded: {exception.Message}");
         }
         finally
         {
-            if (!_closed &&
-                _filesVisible &&
-                generation == Volatile.Read(ref _filesGeneration) &&
-                _filesLoadingGeneration == generation)
+            if (IsFilesRequestCurrent(pane, tab, generation) && pane.LoadingGeneration == generation)
             {
-                _filesLoadingGeneration = 0;
+                pane.LoadingGeneration = 0;
             }
 
-            if (!_closed && _filesVisible && generation == Volatile.Read(ref _filesGeneration))
+            if (IsFilesRequestCurrent(pane, tab, generation))
             {
-                _filesView.SetReady(
-                    CanNavigateFilesUp(root),
+                paneView.SetReady(
+                    CanNavigateFilesUp(tab, root),
                     !_searchEngine.State.IsBusy,
-                    _filesLoadedForSource && _filesNextCursor is not null);
+                    tab.LoadedForSource && tab.NextCursor is not null);
+                ApplyFilesTabs(pane);
             }
         }
     }
 
-    private void ApplyFilesPage(FileDirectoryBrowsePage page, string root, bool append)
+    private void ApplyFilesLoadError(FilesPaneState pane, FilesTabState tab, int generation, string message)
+    {
+        if (!IsFilesRequestCurrent(pane, tab, generation))
+        {
+            return;
+        }
+
+        pane.LoadingGeneration = 0;
+        GetFilesPaneView(pane).SetStatus(message, tab.CurrentPath);
+        SetFilesStatus($"{pane.Name}: {message}");
+    }
+
+    private bool IsFilesRequestCurrent(FilesPaneState pane, FilesTabState tab, int generation) =>
+        !_closed &&
+        _filesVisible &&
+        pane.ActiveTabId == tab.Id &&
+        pane.Generation == generation;
+
+    private void ApplyFilesPage(
+        FilesPaneState pane,
+        FilesTabState tab,
+        FileDirectoryBrowsePage page,
+        string root,
+        bool append)
     {
         if (!append)
         {
-            _filesRows.Clear();
+            tab.Rows.Clear();
         }
 
         HashSet<string>? existingPaths = append
-            ? new HashSet<string>(_filesRows.Select(static row => row.Path), StringComparer.OrdinalIgnoreCase)
+            ? new HashSet<string>(tab.Rows.Select(static row => row.Path), StringComparer.OrdinalIgnoreCase)
             : null;
         foreach (var record in page.Entries)
         {
@@ -514,52 +646,158 @@ public sealed partial class MainWindow
                 continue;
             }
 
-            _filesRows.Add(FileBrowserRow.FromRecord(record));
+            tab.Rows.Add(FileBrowserRow.FromRecord(record));
         }
 
-        _filesCurrentPath = page.DirectoryPath;
-        _filesCurrentTotalCount = page.TotalCount;
-        _filesNextCursor = page.NextCursor;
-        _filesLoadedForSource = true;
-        ApplyFilesPageCache(root);
+        tab.CurrentPath = page.DirectoryPath;
+        tab.CurrentTotalCount = page.TotalCount;
+        tab.NextCursor = page.NextCursor;
+        tab.LoadedForSource = true;
+        ApplyFilesTabs(pane);
+        ApplyFilesPageCache(pane, root);
     }
 
-    private void ApplyFilesPageCache(string root)
+    private void ApplyFilesPageCache(FilesPaneState pane, string root)
     {
-        if (_filesCurrentPath is null)
+        var tab = pane.ActiveTab;
+        if (tab.CurrentPath is null)
         {
             return;
         }
 
-        _filesView.Apply(
-            _filesRows,
-            _filesCurrentPath,
-            _filesCurrentTotalCount,
-            _filesNextCursor is not null,
-            CanNavigateFilesUp(root),
+        GetFilesPaneView(pane).Apply(
+            tab.Rows,
+            tab.CurrentPath,
+            tab.CurrentTotalCount,
+            tab.NextCursor is not null,
+            CanNavigateFilesUp(tab, root),
             canRefresh: !_searchEngine.State.IsBusy);
 
         var source = _searchEngine.State.Mode == DesktopSearchMode.Native
             ? "whole-volume native index"
             : "profile fallback snapshot";
-        var pageState = _filesNextCursor is null
+        var pageState = tab.NextCursor is null
             ? "exact page sequence complete"
             : "more exact pages available";
         SetFilesStatus(
-            $"{_filesRows.Count:N0} loaded · current direct count {_filesCurrentTotalCount:N0} · {source} · {pageState}");
+            $"{pane.Name}: {tab.Rows.Count:N0} loaded · current direct count {tab.CurrentTotalCount:N0} · {source} · {pageState}");
     }
 
-    private void ResetFilesPaging(bool clearPath)
+    private void SetAllFilesPanesUnavailable(string message)
     {
-        _filesRows.Clear();
-        _filesNextCursor = null;
-        _filesCurrentTotalCount = 0;
-        _filesLoadedForSource = false;
-        _filesLoadingGeneration = 0;
+        _filesView.LeftPane.SetUnavailable(message);
+        _filesView.RightPane.SetUnavailable(message);
+        ApplyFilesTabs(_leftFilesPane);
+        ApplyFilesTabs(_rightFilesPane);
+    }
+
+    private void ResetAllFilesTabs(bool clearPath)
+    {
+        foreach (var pane in EnumerateFilesPanes())
+        {
+            EnsureFilesPaneHasTab(pane, path: null);
+            foreach (var tab in pane.Tabs)
+            {
+                ResetFilesTabPaging(tab, clearPath);
+            }
+            ApplyFilesTabs(pane);
+        }
+    }
+
+    private static void ResetFilesTabPaging(FilesTabState tab, bool clearPath)
+    {
+        tab.Rows.Clear();
+        tab.CurrentTotalCount = 0;
+        tab.NextCursor = null;
+        tab.LoadedForSource = false;
         if (clearPath)
         {
-            _filesCurrentPath = null;
+            tab.CurrentPath = null;
         }
+    }
+
+    private void InvalidateFilesPane(FilesPaneState pane)
+    {
+        pane.Generation++;
+        pane.LoadingGeneration = 0;
+    }
+
+    private void EnsureFilesPaneHasTab(FilesPaneState pane, string? path)
+    {
+        if (pane.Tabs.Count != 0)
+        {
+            if (pane.Tabs.All(tab => tab.Id != pane.ActiveTabId))
+            {
+                pane.ActiveTabId = pane.Tabs[0].Id;
+            }
+            return;
+        }
+
+        var tab = CreateFilesTab(path);
+        pane.Tabs.Add(tab);
+        pane.ActiveTabId = tab.Id;
+    }
+
+    private static FilesTabState CreateFilesTab(string? path) =>
+        new(Guid.NewGuid())
+        {
+            CurrentPath = path,
+        };
+
+    private void ApplyFilesTabs(FilesPaneState pane)
+    {
+        EnsureFilesPaneHasTab(pane, path: null);
+        var headers = pane.Tabs
+            .Select((tab, index) => new FileBrowserTabHeader(
+                tab.Id,
+                CreateFilesTabTitle(tab.CurrentPath, index),
+                tab.CurrentPath ?? string.Empty))
+            .ToArray();
+        GetFilesPaneView(pane).ApplyTabs(headers, pane.ActiveTabId);
+    }
+
+    private static string CreateFilesTabTitle(string? path, int index)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return $"Tab {index + 1}";
+        }
+
+        var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var name = Path.GetFileName(trimmed);
+        return string.IsNullOrWhiteSpace(name) ? path : name;
+    }
+
+    private bool TryGetFilesPane(object? sender, out FilesPaneState pane, out FilesPaneView paneView)
+    {
+        if (ReferenceEquals(sender, _filesView.LeftPane))
+        {
+            pane = _leftFilesPane;
+            paneView = _filesView.LeftPane;
+            return true;
+        }
+
+        if (ReferenceEquals(sender, _filesView.RightPane))
+        {
+            pane = _rightFilesPane;
+            paneView = _filesView.RightPane;
+            return true;
+        }
+
+        pane = null!;
+        paneView = null!;
+        return false;
+    }
+
+    private FilesPaneView GetFilesPaneView(FilesPaneState pane) =>
+        ReferenceEquals(pane, _leftFilesPane)
+            ? _filesView.LeftPane
+            : _filesView.RightPane;
+
+    private IEnumerable<FilesPaneState> EnumerateFilesPanes()
+    {
+        yield return _leftFilesPane;
+        yield return _rightFilesPane;
     }
 
     private void UpdateFilesSourceDescription(DesktopSearchMode mode)
@@ -567,19 +805,19 @@ public sealed partial class MainWindow
         _filesView.SetSourceDescription(mode switch
         {
             DesktopSearchMode.Native =>
-                "Browse exact direct children from the same whole-volume NTFS metadata index used by Search and Storage. Pages are keyset-ordered and no directory rescan is performed.",
+                "Browse two independent tabbed panes from the same whole-volume NTFS metadata index used by Search and Storage. Pages are keyset-ordered and serialized through the shared indexed browse session.",
             DesktopSearchMode.Fallback =>
-                "Browse exact direct children from the completed user-profile fallback snapshot. Paging reads that in-memory snapshot and does not rescan the filesystem.",
+                "Browse two independent tabbed panes from the completed user-profile fallback snapshot. Paging reads that in-memory snapshot and does not rescan the filesystem.",
             _ =>
                 "Indexed directory browsing becomes available when the shared search source is ready.",
         });
     }
 
-    private bool CanNavigateFilesUp(string root) =>
+    private bool CanNavigateFilesUp(FilesTabState tab, string root) =>
         !_closed &&
         !_searchEngine.State.IsBusy &&
-        _filesCurrentPath is not null &&
-        !PathsEqual(root, _filesCurrentPath);
+        tab.CurrentPath is not null &&
+        !PathsEqual(root, tab.CurrentPath);
 
     private void SetFilesStatus(string status)
     {
@@ -588,5 +826,46 @@ public sealed partial class MainWindow
         {
             SearchStatusText.Text = status;
         }
+    }
+
+    private sealed class FilesPaneState
+    {
+        public FilesPaneState(string name)
+        {
+            Name = name;
+        }
+
+        public string Name { get; }
+
+        public List<FilesTabState> Tabs { get; } = [];
+
+        public Guid ActiveTabId { get; set; }
+
+        public int Generation { get; set; }
+
+        public int LoadingGeneration { get; set; }
+
+        public FilesTabState ActiveTab =>
+            Tabs.First(tab => tab.Id == ActiveTabId);
+    }
+
+    private sealed class FilesTabState
+    {
+        public FilesTabState(Guid id)
+        {
+            Id = id;
+        }
+
+        public Guid Id { get; }
+
+        public string? CurrentPath { get; set; }
+
+        public List<FileBrowserRow> Rows { get; } = [];
+
+        public int CurrentTotalCount { get; set; }
+
+        public FileDirectoryBrowseCursor? NextCursor { get; set; }
+
+        public bool LoadedForSource { get; set; }
     }
 }
