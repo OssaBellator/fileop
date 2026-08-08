@@ -19,14 +19,18 @@ public sealed class WindowsFileCopyMutationPrimitiveTests
         new Random(20260808).NextBytes(payload);
         await File.WriteAllBytesAsync(fixture.SourcePath, payload);
         var validation = await fixture.ValidateAsync();
-        Assert.AreEqual(FileOperationExecutionValidationDecision.Ready, validation.Items[0].Decision);
+        var item = validation.Items[0];
+        Assert.AreEqual(FileOperationExecutionValidationDecision.Ready, item.Decision);
+        Assert.IsNotNull(item.MutationRootBinding);
+        Assert.AreEqual(validation.SourceDirectory.Identity, item.MutationRootBinding.SourceDirectoryIdentity);
+        Assert.AreEqual(validation.DestinationDirectory.Identity, item.MutationRootBinding.DestinationDirectoryIdentity);
 
         var primitive = new WindowsFileCopyMutationPrimitive();
-        var lease = await primitive.CopyNewFileAsync(validation.Items[0]);
+        var lease = await primitive.CopyNewFileAsync(item);
         try
         {
             CollectionAssert.AreEqual(payload, await File.ReadAllBytesAsync(fixture.DestinationPath));
-            Assert.AreEqual(validation.Items[0].Source.Identity, lease.Receipt.SourceIdentity);
+            Assert.AreEqual(item.Source.Identity, lease.Receipt.SourceIdentity);
             Assert.IsFalse(lease.Receipt.DestinationIdentity == lease.Receipt.SourceIdentity);
 
             var resolver = new WindowsFileOperationCanonicalPathResolver();
@@ -94,6 +98,39 @@ public sealed class WindowsFileCopyMutationPrimitiveTests
 
         Assert.IsFalse(File.Exists(fixture.DestinationPath));
         Assert.AreEqual("original-content", await File.ReadAllTextAsync(originalPath));
+    }
+
+    [TestMethod]
+    public async Task DestinationRootReplacementAfterValidationFailsBeforeCreation()
+    {
+        using var fixture = new CopyFixture();
+        await File.WriteAllTextAsync(fixture.SourcePath, "source-content");
+        var validation = await fixture.ValidateAsync();
+        Assert.AreEqual(FileOperationExecutionValidationDecision.Ready, validation.Items[0].Decision);
+
+        var originalDestination = fixture.DestinationDirectory + ".original";
+        Directory.Move(fixture.DestinationDirectory, originalDestination);
+        Directory.CreateDirectory(fixture.DestinationDirectory);
+
+        var primitive = new WindowsFileCopyMutationPrimitive();
+        await Assert.ThrowsExactlyAsync<IOException>(async () =>
+            await primitive.CopyNewFileAsync(validation.Items[0]));
+
+        Assert.IsFalse(File.Exists(fixture.DestinationPath));
+        Assert.IsFalse(File.Exists(Path.Combine(originalDestination, "payload.bin")));
+    }
+
+    [TestMethod]
+    public async Task ValidationItemCopyPreservesMutationRootBinding()
+    {
+        using var fixture = new CopyFixture();
+        await File.WriteAllTextAsync(fixture.SourcePath, "source-content");
+        var validation = await fixture.ValidateAsync();
+        var original = validation.Items[0];
+        var copied = original with { Message = original.Message + " copied" };
+
+        Assert.IsNotNull(original.MutationRootBinding);
+        Assert.AreEqual(original.MutationRootBinding, copied.MutationRootBinding);
     }
 
     [TestMethod]
