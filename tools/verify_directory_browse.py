@@ -176,6 +176,7 @@ def check_repository(repo_root: Path) -> int:
     program_path = repo_root / "src/FileOp.Indexer/Program.cs"
     engine_path = repo_root / "src/FileOp.App/DesktopSearchEngine.DirectoryBrowse.cs"
     native_backend_path = repo_root / "src/FileOp.Windows/IndexingService/NtfsIndexingServiceBackend.cs"
+    tests_path = repo_root / "tests/FileOp.Windows.Tests/IndexingDirectoryBrowseProtocolTests.cs"
 
     paths = [
         protocol_path,
@@ -189,6 +190,7 @@ def check_repository(repo_root: Path) -> int:
         program_path,
         engine_path,
         native_backend_path,
+        tests_path,
     ]
     missing = [str(path) for path in paths if not path.is_file()]
     if missing:
@@ -204,6 +206,7 @@ def check_repository(repo_root: Path) -> int:
     program = texts[program_path]
     engine = texts[engine_path]
     native_backend = texts[native_backend_path]
+    tests = texts[tests_path]
 
     required = [
         (protocol, "public const int CurrentVersion = 6;"),
@@ -215,12 +218,14 @@ def check_repository(repo_root: Path) -> int:
         (client, "IndexingServiceOperation.BrowseDirectory"),
         (dispatcher, "DeserializeDirectoryBrowse"),
         (dispatcher, 'throw new JsonException("pageSize must be between 1 and 1024.")'),
+        (dispatcher, "The directory browse cursor does not belong to the requested directory."),
         (backend, "IndexingVolumeFileGate(databasePath)"),
         (backend, "TryAcquireRead()"),
         (backend, "HasCheckpointAsync(sourceKey"),
         (backend, "DirectoryExistsAsync(request.DirectoryPath"),
         (backend, "SqliteFileDirectoryBrowser(databasePath)"),
         (sqlite, "Mode = SqliteOpenMode.ReadOnly"),
+        (sqlite, "OR EXISTS("),
         (sqlite, "parent_volume_serial = @parent_volume_serial"),
         (sqlite, "parent_file_reference = @parent_file_reference"),
         (sqlite, "is_directory < @cursor_is_directory"),
@@ -236,7 +241,10 @@ def check_repository(repo_root: Path) -> int:
         (engine, "ResponseTooLarge"),
         (engine, "_fallbackIndex.SearchAsync("),
         (engine, "FileSearchQuery.Parse(string.Empty, int.MaxValue)"),
+        (engine, "!string.IsNullOrWhiteSpace(record.ParentPath)"),
         (engine, "OrderByDescending(static record => record.IsDirectory)"),
+        (tests, "DispatcherRejectsCursorFromAnotherDirectoryBeforeBackendCall"),
+        (tests, "NamedPipeRoundTripPreservesBrowseCursorAndEntries"),
     ]
     for source, needle in required:
         assert needle in source, f"required directory-browse invariant missing: {needle}"
