@@ -92,7 +92,13 @@ The ABI verifier independently models the unmanaged layout, guards the C# field 
 python tools/verify_copy_basic_metadata_abi.py --repo-root . --clang
 ```
 
-For the focused real Windows compiler/native gate, run on Windows with Python and the .NET 10 SDK. PowerShell 7 remains supported:
+A separate package-free probe closes more of the gap on any Linux, macOS or Windows machine that already has a .NET 10 SDK. It copies the actual `WindowsFileCopyBasicMetadata.cs` into a temporary `net10.0` project with no package references, compiles it, and uses the .NET runtime marshaller/reflection APIs to verify structure sizes/offsets, the `FileBasicInfo` enum value and P/Invoke signatures without invoking `kernel32`:
+
+```text
+python tools/verify_copy_basic_metadata_dotnet.py --repo-root .
+```
+
+The focused Windows gate runs that package-free compiler/interop probe first, then performs the real Windows build and native regressions. Run it on Windows with Python and the .NET 10 SDK. PowerShell 7 remains supported:
 
 ```powershell
 pwsh -File tools/test-windows-copy-local.ps1
@@ -104,7 +110,7 @@ PowerShell 7 is not required. From a stock Windows 10/11 Command Prompt, use the
 tools\test-windows-copy-local.cmd
 ```
 
-The `.cmd` launcher runs `powershell.exe` with a process-local execution-policy override and delegates to the same `.ps1` gate. The gate first runs the zero-Actions property/source models, then builds `FileOp.Core` and `FileOp.Windows` in Release and runs the focused action-history, Copy-executor, mutation-primitive, metadata and interop-reflection test classes. Pass `-SkipOfflineModels` to either launcher when the Python gate has already been run. None of these commands invoke GitHub Actions.
+The `.cmd` launcher runs `powershell.exe` with a process-local execution-policy override and delegates to the same `.ps1` gate. The gate first runs the zero-Actions property/source models unless `-SkipOfflineModels` is supplied, runs the package-free .NET interop probe, builds `FileOp.Core` and `FileOp.Windows` in Release, and runs the focused action-history, Copy-executor, mutation-primitive, metadata and interop-reflection test classes. None of these commands invoke GitHub Actions.
 
 Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported source-attribute filtering, destination-owned settable-attribute merging, destination `Temporary` preservation through the real Win32 helper, omission of non-settable storage flags from `FileBasicInfo`, .NET/native interop layout/signature checks, and metadata preservation through the concrete mutation primitive after the mutation lease is disposed.
 
