@@ -259,7 +259,7 @@ def check_repository(root: Path) -> int:
     assert "public interface IFileOperationExecutor" in source["execution"]
     assert "WindowsFileOperationExecutionValidator : IFileOperationExecutor" not in source["windows"]
     assert "File.GetAttributes(normalized)" in source["preflight"]
-    assert "## Canonical execution validation" in source["docs"]
+    assert "# Canonical file-operation execution validation" in source["docs"]
     assert "handle-resolved" in source["docs"]
     assert "verify_file_operation_execution_validation.py" in source["local"]
 
