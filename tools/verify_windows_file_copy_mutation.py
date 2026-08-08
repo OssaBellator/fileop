@@ -19,29 +19,60 @@ def model_once(seed: int) -> int:
     with tempfile.TemporaryDirectory(prefix="fileop-copy-model-") as temporary:
         root = Path(temporary)
         source = root / "source"
+        moved_source = root / "source-moved"
         destination = root / "destination"
         moved_destination = root / "destination-moved"
         source.mkdir()
         destination.mkdir()
         payload = rng.randbytes(rng.randrange(0, 65_536))
-        (source / "item.bin").write_bytes(payload)
+        source_item = source / "item.bin"
+        source_item.write_bytes(payload)
 
-        # Fresh validation observed this directory identity. If the textual root is
-        # swapped before handle acquisition, the newly opened object must differ.
+        expected_source_directory_identity = identity(
+            os.stat(source, follow_symlinks=False)
+        )
         expected_destination_identity = identity(
             os.stat(destination, follow_symlinks=False)
         )
+        expected_source_identity = identity(
+            os.stat(source_item, follow_symlinks=False)
+        )
+
+        # A source-root object swapped after fresh validation must be rejected by
+        # stable directory identity before the source leaf is opened.
+        os.rename(source, moved_source)
+        source.mkdir()
+        replaced_source_directory = os.open(
+            source,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            assert (
+                identity(os.fstat(replaced_source_directory))
+                != expected_source_directory_identity
+            )
+            checks += 1
+        finally:
+            os.close(replaced_source_directory)
+        os.rmdir(source)
+        os.rename(moved_source, source)
+
+        # A destination-root object swapped after fresh validation must likewise
+        # be rejected before exclusive creation.
         os.rename(destination, moved_destination)
         destination.mkdir()
-        replaced_directory = os.open(
+        replaced_destination_directory = os.open(
             destination,
             os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
         )
         try:
-            assert identity(os.fstat(replaced_directory)) != expected_destination_identity
+            assert (
+                identity(os.fstat(replaced_destination_directory))
+                != expected_destination_identity
+            )
             checks += 1
         finally:
-            os.close(replaced_directory)
+            os.close(replaced_destination_directory)
         os.rmdir(destination)
         os.rename(moved_destination, destination)
 
@@ -54,8 +85,33 @@ def model_once(seed: int) -> int:
             os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
         )
         try:
-            assert identity(os.fstat(destination_directory)) == expected_destination_identity
-            checks += 1
+            assert (
+                identity(os.fstat(source_directory))
+                == expected_source_directory_identity
+            )
+            assert (
+                identity(os.fstat(destination_directory))
+                == expected_destination_identity
+            )
+            checks += 2
+
+            # Replacing the validated source leaf with a different object must be
+            # observable through the relative handle open and stable file identity.
+            moved_source_item = source / "item.original.bin"
+            os.rename(source_item, moved_source_item)
+            source_item.write_bytes(b"replacement")
+            replacement_source_file = os.open(
+                "item.bin",
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=source_directory,
+            )
+            try:
+                assert identity(os.fstat(replacement_source_file)) != expected_source_identity
+                checks += 1
+            finally:
+                os.close(replacement_source_file)
+            source_item.unlink()
+            os.rename(moved_source_item, source_item)
 
             source_file = os.open(
                 "item.bin",
@@ -63,7 +119,8 @@ def model_once(seed: int) -> int:
                 dir_fd=source_directory,
             )
             try:
-                expected_source = identity(os.fstat(source_file))
+                assert identity(os.fstat(source_file)) == expected_source_identity
+                checks += 1
 
                 # Once the directory handle is acquired, replacing its textual path
                 # cannot redirect a relative create through that handle.
@@ -92,7 +149,7 @@ def model_once(seed: int) -> int:
                             assert written > 0
                             view = view[written:]
                     os.fsync(destination_file)
-                    assert identity(os.fstat(source_file)) == expected_source
+                    assert identity(os.fstat(source_file)) == expected_source_identity
                     checks += 2
                 finally:
                     os.close(destination_file)
@@ -183,13 +240,15 @@ def check_repository(root: Path) -> int:
     for needle in required_executor:
         assert needle in executor, needle
 
-    for test_name in [
+    required_tests = [
         "CopyCreatesExclusiveIdentityBoundDestinationAndLeaseBlocksDelete",
         "CollisionAppearingAfterValidationNeverOverwritesExistingFile",
         "SourceIdentityReplacementAfterValidationFailsBeforeDestinationCreation",
+        "SourceRootReplacementAfterValidationFailsBeforeDestinationCreation",
         "DestinationRootReplacementAfterValidationFailsBeforeCreation",
         "PrimitiveRejectsRootWithoutStableIdentity",
-    ]:
+    ]
+    for test_name in required_tests:
         assert test_name in tests, test_name
 
     for forbidden in [
@@ -202,7 +261,7 @@ def check_repository(root: Path) -> int:
         assert forbidden not in source, forbidden
 
     assert "verify_windows_file_copy_mutation.py" in wrapper
-    return len(required_source) + len(required_executor) + 5 + 6
+    return len(required_source) + len(required_executor) + len(required_tests) + 6
 
 
 def main() -> int:
