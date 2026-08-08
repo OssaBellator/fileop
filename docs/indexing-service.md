@@ -2,107 +2,139 @@
 
 ## Purpose
 
-`FileOp.Indexer` isolates native NTFS indexing from the WinUI desktop process. The desktop application remains an ordinary `asInvoker` process. If raw NTFS volume/file-ID access requires elevation, only the indexing helper may be relaunched with UAC after an explicit user action.
+`FileOp.Indexer` isolates native NTFS indexing from the WinUI desktop process. `FileOp.App` always remains an ordinary `asInvoker` process. If raw NTFS access requires elevation, only the on-demand indexing helper may be relaunched after explicit user action.
 
-The indexer is deliberately not the future disk-administration helper. It exposes read/index/search/storage-analysis operations only. Partition changes, formatting, BitLocker administration and other destructive storage operations must use a separate privileged surface with their own pre-flight and confirmation model.
+The indexer is not the future disk-administration helper. It exposes index/search/read-only storage-analysis operations only. Partition changes, formatting, BitLocker administration and other destructive operations require a separate privileged surface with their own pre-flight and confirmation model.
 
 ## Process model
 
 ```text
 FileOp.App (normal user token + known PID)
         |
-        | native-first search/storage coordinator
+        | native-first Search/Storage coordinator
         |   \-- bounded user-profile crawler fallback
         |
-        | random per-session named pipe
-        | current-user-only ACL + exact client-PID check
+        | random named pipe
+        | current-user ACL + exact client-PID check
         v
-FileOp.Indexer (normal token first; same-account elevation only when supported)
+FileOp.Indexer (normal token first; same-account elevation only)
         |
         +-- NTFS discovery / MFT + USN access
         +-- metadata hydration / hard-link enumeration
         +-- journal synchronization
         +-- per-volume SQLite ownership
-        +-- search + directory/file-type storage analytics across valid indexes
+        +-- Search + directory/type/category analytics
 ```
 
-The helper accepts one authenticated client, remains alive for that desktop session, and exits when the pipe disconnects or the launching desktop process exits. It is not installed as an always-running Windows service and it is never permanently elevated.
+The helper accepts one authenticated client and exits when that desktop session disconnects or its launching process exits. It is not an always-running Windows service and is never permanently elevated.
 
-## IPC security
+## IPC security and framing
 
-The client generates a cryptographically random pipe name for every helper launch. The server creates the pipe with `PipeOptions.CurrentUserOnly`, so another Windows user cannot connect.
+Every helper launch uses a cryptographically random pipe name. The pipe uses `PipeOptions.CurrentUserOnly`, and the server additionally verifies `GetNamedPipeClientProcessId` equals the exact desktop PID supplied at launch. An unrelated same-user process therefore cannot claim an elevated helper channel merely by discovering the pipe name.
 
-`CurrentUserOnly` alone is not treated as sufficient for an elevated helper: an unrelated process running under the same user account might otherwise race the desktop for a discovered pipe name. The launcher therefore passes its own process ID to the helper, and after every pipe connection the server calls Windows `GetNamedPipeClientProcessId`. It accepts the channel only when the connected process ID exactly matches the live desktop process that launched it; unrelated same-user clients are disconnected before any protocol request is read.
+Messages use a four-byte little-endian length prefix plus UTF-8 JSON. Frames are capped at 8 MiB before allocation. Requests carry protocol version, non-empty request ID, operation and typed payload. Responses echo protocol version and request ID. Required fields are validated after deserialization.
 
-Protocol messages use a four-byte little-endian length prefix followed by UTF-8 JSON. Frames are capped at 8 MiB before allocation. Every request includes:
+Oversized successful responses are replaced by retryable `ResponseTooLarge` without killing the pipe. Search and bounded Storage requests can reduce result limits and retry on the same healthy connection.
 
-- a protocol version;
-- a non-empty request ID;
-- an operation identifier;
-- a typed JSON payload.
+An interrupted exchange is different. If a request may have been written without its complete response being consumed, the client faults that session rather than risk request/response desynchronization. UI supersession therefore invalidates generations and discards stale work instead of cancelling transmitted IPC. Window/session shutdown may cancel because the whole helper session is being destroyed.
 
-Every response echoes the request ID and protocol version. The client rejects mismatched IDs or protocol changes within a session. Required payload fields are validated explicitly after JSON deserialization; a positional record with missing JSON properties is not accepted merely because the serializer can construct it with default values.
+Protocol mismatch is rejected before backend work.
 
-If any response would exceed the 8 MiB frame cap, the server substitutes a small retryable `ResponseTooLarge` error rather than terminating the session. Search can reduce its result limit and retry on the same connection. Storage requests are explicitly bounded by `MaxEntries` or `MaxTypes`, while their whole-root totals remain complete.
+## Protocol v4
 
-A cancelled or otherwise interrupted client exchange is different: once a request may have been written without its complete matching response being consumed, the client faults and closes that connection instead of risking request/response desynchronization. A subsequent operation must use a fresh indexer session.
-
-The WinUI coordinator therefore does not use query supersession as a cancellation signal. A new keystroke or Storage navigation invalidates the visible generation immediately; queued stale work is discarded before transmission and completed stale work is discarded before rendering. Only session/window shutdown deliberately interrupts the active exchange because the whole helper session is being destroyed.
-
-Protocol version mismatch is rejected before native operations are dispatched.
-
-## Version 3 operations
-
-Protocol v3 keeps the reviewed indexing surface and adds file-type storage analysis:
+Current operations are:
 
 - `Hello` — protocol/service version and elevation state;
-- `GetVolumes` — currently available NTFS volumes plus per-volume index status;
-- `GetStatus` — aggregate and per-volume status;
-- `RebuildVolume` — fresh MFT/metadata namespace snapshot for one volume;
-- `SyncVolume` — apply one durable USN journal batch for one volume;
-- `Search` — query the persistent indexes and merge results across attached NTFS volumes whose snapshots are currently valid;
-- `AnalyzeStorage` — aggregate direct entries under one indexed directory, recursively rolling descendant logical/allocated bytes and counts into each direct child;
-- `AnalyzeStorageTypes` — aggregate files under one indexed directory by normalized extension with the same hard-link-aware logical/physical accounting.
+- `GetVolumes` — NTFS volumes plus per-volume index status;
+- `GetStatus` — aggregate/per-volume status;
+- `RebuildVolume` — fresh MFT/metadata snapshot for one volume;
+- `SyncVolume` — apply one durable USN batch;
+- `Search` — query valid attached-volume indexes;
+- `AnalyzeStorage` — recursive direct-child directory aggregation;
+- `AnalyzeStorageTypes` — bounded extension rows plus exact category rollups for one indexed subtree.
 
-Protocol v1 introduced the service. Protocol v2 added `AnalyzeStorage`. Protocol v3 adds `AnalyzeStorageTypes`; the version advances because adding a wire operation under an unchanged version would let mismatched desktop/helper binaries disagree about the valid operation set. FileOp builds and ships the desktop and helper together, so an older adjacent helper fails normal version negotiation and follows the existing native-unavailable/fallback path.
+Version history is deliberate:
 
-There are no file mutation, cleanup, partition, format, TRIM, BitLocker or process-management commands in this protocol.
+- v1 established indexing/search;
+- v2 added `AnalyzeStorage`;
+- v3 added `AnalyzeStorageTypes` with bounded extension rows and complete root totals;
+- v4 keeps the same `AnalyzeStorageTypes` request/operation but enriches its response with exact category rows calculated before extension truncation.
 
-### Storage-analysis result semantics
+The v4 bump is required because the wire response schema changed. Desktop/helper binaries therefore fail version negotiation instead of silently disagreeing about whether exact categories are present.
 
-Both storage requests identify the physical volume/root pair and a target indexed directory. The target must remain inside the selected volume root.
+There are no cleanup, file-mutation, partition, format, TRIM, BitLocker or process-management commands in this protocol.
 
-`AnalyzeStorage` returns the target directory's direct entries. Each direct directory is recursively aggregated over its indexed subtree and reports:
+## Storage result semantics
 
-- logical bytes for files in that subtree;
-- allocated bytes only when every physical allocation owner in that aggregate has allocated-size metadata;
-- file count;
-- directory count;
-- hard-link alias count and derived unique-file count;
-- a treemap weight defined as `allocated bytes ?? logical bytes`.
+Both Storage operations identify `VolumeIdentity`, the current absolute volume root, and a target directory contained by that root. A durable NTFS checkpoint must be valid before either read is served.
 
-The response also returns whole-root totals and the number of direct entries. Root totals are computed before `MaxEntries` truncates the returned entry list, so a UI can render only the largest entries without changing the reported total.
+### `AnalyzeStorage`
 
-`AnalyzeStorageTypes` walks the same subtree but groups only files by normalized extension. Extensions are lowercase without a leading dot, and no-extension files use the empty string. Each returned type reports:
+Returns bounded direct-entry rows with recursive logical/allocated bytes, file/directory counts, hard-link aliases and derived unique files. Whole-root totals and `DirectEntryCount` are calculated before `MaxEntries` truncation.
 
-- normalized extension;
-- deterministic metadata-only category;
-- logical bytes;
-- nullable physical allocated bytes;
-- namespace file count;
-- hard-link alias count and derived unique-file count.
+### `AnalyzeStorageTypes`
 
-Its root totals and `TypeCount` are computed before `MaxTypes` truncation. When root allocated size is complete, type ranking uses physical allocation; otherwise the entire result is ranked by logical size rather than mixing incompatible units.
+The request still contains:
 
-Hard links preserve namespace meaning without double-counting physical space. Every visible hard-link name contributes its logical length. Physical allocation is attributed once per stable `FileIdentity` to the case-insensitive lexicographically first path inside the analyzed scope. This remains valid even when two hard-link names use different extensions: both extension groups receive logical bytes, while only the canonical path's extension receives physical allocation and the other group records an alias.
+```text
+VolumeIdentity
+VolumeRootPath
+DirectoryPath
+MaxTypes
+```
 
-Allocated bytes are intentionally nullable. If a physical allocation owner lacks allocation metadata, the service does not substitute logical bytes and present that approximation as exact physical usage. This is important while sparse/compressed/reparse metadata semantics continue to mature.
+The response contains complete root totals plus:
 
-Category classification is extension-based only. The indexer does not open file contents or perform MIME sniffing for this operation.
+- `Types` — at most `MaxTypes` extension groups, ordered by physical allocation when root allocation is complete or logical size otherwise;
+- `TypeCount` — complete distinct extension-group count before truncation;
+- `Categories` — exact category aggregates over the complete extension set, independent of `MaxTypes`.
+
+Each category row carries category identity, logical bytes, nullable allocated bytes, file count, hard-link alias count and complete extension-group `TypeCount` for that category.
+
+Hard links preserve namespace meaning without double-counting physical space. Every visible name contributes logical bytes. Physical allocation is attributed once per stable `FileIdentity` to the case-insensitive lexicographically first path in the analysis scope. This remains true when aliases have different extensions/categories.
+
+Allocated bytes are nullable. Unknown physical metadata remains unknown rather than being replaced with logical bytes.
+
+Category classification is deterministic and extension-only; the helper does not inspect file contents.
+
+## Per-volume persistence, validity and concurrency
+
+Each NTFS volume/root pair has its own SQLite database under the current Windows user's `LocalApplicationData\FileOp\Index`. The helper chooses this location itself; an elevated process does not accept an arbitrary database path from the desktop.
+
+Volume discovery uses the stable Windows volume GUID when available and derives the provider volume token from it; the older serial-only identity remains a fallback. Requests also carry the current root path because persisted namespace paths are absolute and a drive-letter change requires a fresh path namespace.
+
+Every volume has two coordination layers:
+
+- a process-local non-blocking operation gate;
+- a cross-process reader/writer file gate beside the persistent database.
+
+Search and Storage reads take shared leases. Rebuild and journal synchronization hold an exclusive maintenance lease across the entire semantic operation, including checkpoint invalidation. This prevents separate FileOp helper processes from interleaving a multi-transaction snapshot.
+
+A volume is eligible for service-backed reads only while it has a durable checkpoint and is not being maintained. Reads acquire their gates/lease before checkpoint validation. If journal synchronization requires a fresh snapshot, the checkpoint is deleted before `SnapshotRequired` is returned so invalidity survives process restarts.
+
+The current rebuild path temporarily removes that volume from reads. A future shadow-database build and atomic swap can eliminate that outage without exposing partial data.
+
+## Privilege policy
+
+The helper starts unelevated. Access denied from native NTFS operations maps to structured `ElevationRequired`.
+
+Current helper-only UAC elevation is allowed only for a limited split administrator token, where elevation retains the same Windows user identity. Credential-over-the-shoulder elevation from a standard user is deliberately unsupported because it can launch under a different administrator SID, conflicting with the current-user pipe and per-user index path. Supporting that case requires a separately reviewed Windows service/ACL model, not weaker pipe security.
+
+The desktop build places `FileOp.Indexer.exe`, its assembly, dependency manifest and runtime configuration beside the application. Runtime resolution accepts only the exact adjacent, non-reparse helper executable. This is a narrow path rule, not an Authenticode trust claim; signed production packaging still needs publisher/signature verification before elevation is offered.
+
+## WinUI integration
+
+The desktop orchestrates the NTFS volume containing the user profile first. It builds/resumes a snapshot, repeatedly calls `SyncVolume` until its durable USN cursor converges or the bounded startup budget is exhausted, then continues low-priority catch-up when foreground work is idle.
+
+If a valid native snapshot exists but live journal access needs elevation, the snapshot remains usable and is explicitly marked non-current. If native indexing is unavailable or an invalid snapshot cannot be rebuilt, FileOp builds the bounded user-profile crawler fallback.
+
+Search, Folders Storage and Types/Categories Storage share the same native/fallback lifecycle and foreground gates. The Storage page never opens the SQLite database directly and never launches a second crawler.
+
+In Types mode, protocol v4 exact category rows are rendered independently of the bounded extension table. `ResponseTooLarge` retries may reduce `MaxTypes`; category semantics remain exact because the category collection is derived from the complete extension aggregate set rather than from returned top-N rows.
 
 ## Error contract
 
-Expected failures cross the process boundary as structured errors rather than raw exceptions:
+Expected errors are structured:
 
 - `InvalidRequest`;
 - `ProtocolMismatch`;
@@ -113,82 +145,14 @@ Expected failures cross the process boundary as structured errors rather than ra
 - `ResponseTooLarge`;
 - `InternalError`.
 
-`ElevationRequired` is specifically produced when NTFS access fails with access denied. Cancelling UAC leaves the desktop process unaffected. `ResponseTooLarge` is retryable with a smaller request when applicable and does not close an otherwise healthy pipe.
-
-### Same-account elevation rule
-
-The current named-pipe model intentionally permits `runas` relaunch only when Windows reports that the current process has a **limited split administrator token**. That is the UAC case where elevation produces a full token for the same Windows user SID, so `PipeOptions.CurrentUserOnly` continues to identify the same account.
-
-Credential-over-the-shoulder elevation from a standard account is deliberately unsupported in this version. In that case `runas` can launch the helper as a different administrator account, which would both break the current-user-only pipe and resolve a different account's LocalAppData. Supporting that scenario requires a separately reviewed service/ACL design rather than silently weakening the pipe ACL.
-
-## Helper location and packaging trust
-
-The desktop build treats `FileOp.Indexer` as a build dependency and copies these host artifacts beside `FileOp.App`:
-
-- `FileOp.Indexer.exe`;
-- `FileOp.Indexer.dll`;
-- `FileOp.Indexer.deps.json`;
-- `FileOp.Indexer.runtimeconfig.json`.
-
-At runtime, the current resolver accepts only the exact `FileOp.Indexer.exe` adjacent to the application and rejects the helper file itself if it is a filesystem reparse point. The normal build gate verifies the four bundled artifacts and launches the copy beside the built WinUI application through the real process/pipe handshake.
-
-This location rule is intentionally narrow but is **not** a cryptographic trust claim. Production signed packaging still needs to verify the installed helper/publisher before elevation is offered. The current resolver must not be described as equivalent to Authenticode verification.
-
-## Per-volume persistence and identity
-
-The helper chooses its own storage root under the current Windows user's `LocalApplicationData\FileOp\Index`. An elevated helper does not accept an arbitrary database path from command-line arguments, removing a caller-controlled privileged file-write destination from this protocol. Production hardening should continue to treat the writable per-user storage tree as untrusted input when the helper is elevated.
-
-Each discovered NTFS volume/root pair gets its own SQLite database. This is intentional because the current snapshot indexer clears its target index during a rebuild. A shared multi-volume database would therefore allow rebuilding one drive to erase records for another drive.
-
-Raw NTFS serial numbers are only 32-bit and can collide. Discovery therefore also asks Windows for the stable `\\?\Volume{GUID}\` mount identity. When present, that 128-bit GUID is deterministically hashed into the 64-bit provider volume token used by `FileIdentity`; serial-only identity is retained as a fallback when no volume GUID is available. This makes ordinary cross-volume file identities independent of 32-bit serial collisions without changing the persistent 64-bit schema.
-
-The per-volume database key includes the provider volume identity and current root path. The root remains significant even for a stable physical identity because indexed namespace paths are absolute: if the same disk moves from `D:\` to `E:\`, FileOp takes a fresh path snapshot instead of serving stale paths under the old letter.
-
-## Snapshot validity and concurrency
-
-Rebuild and journal synchronization are serialized per volume with a non-blocking process-local operation gate. A second maintenance command for the same volume receives `Busy` rather than queueing invisibly.
-
-Because each FileOp desktop instance can own a separate helper process, every persistent volume database also has a companion cross-process reader/writer file gate. Search and both storage-analysis operations take shared read leases. Rebuild and `SyncVolume` take an exclusive maintenance lease for the entire semantic operation, including durable checkpoint invalidation after a consistency failure. SQLite still provides transaction-level locking, but the file gate prevents two helpers from interleaving the many transactions that can comprise one logical snapshot rebuild.
-
-A volume is eligible for service-backed search or storage analysis only while it has a durable NTFS checkpoint and is not being maintained. Reads acquire the process-local gate, then a shared cross-process lease, then inspect the durable checkpoint before reading the index. A rebuild therefore cannot clear and partially repopulate that database underneath a search, directory analysis or file-type analysis. Other valid volumes remain independently available.
-
-Each volume search is ranked by the same filename/path relevance rules as the SQLite index. The merged cross-volume result set reapplies that relevance score before final name/path tie-breaking so service-backed search does not degrade into alphabetical ordering when multiple indexes participate.
-
-If incremental synchronization determines that a fresh snapshot is required, the service deletes that volume's durable checkpoint before returning `SnapshotRequired`. The invalid state therefore survives helper restarts instead of allowing stale rows to look valid again merely because in-memory state was lost.
-
-The current rebuild implementation temporarily omits the affected volume from reads. A future shadow-database rebuild followed by an atomic swap can remove that outage without ever exposing a partial snapshot.
-
-## WinUI integration policy
-
-The desktop uses the service boundary as its primary search and directory-storage path for the NTFS volume containing the user profile. The integration remains deliberately conservative:
-
-1. Resolve the bundled adjacent helper and start it unelevated.
-2. Negotiate the reviewed protocol and discover NTFS volumes.
-3. Select the volume containing the user profile as the first-run orchestration target.
-4. If no checkpoint exists, build a fresh snapshot; otherwise resume the durable snapshot.
-5. Repeatedly call `SyncVolume` until its durable USN cursor stops advancing or the bounded startup catch-up budget is reached. One successful `SyncVolume` call is not considered equivalent to being caught up because each call intentionally processes only one bounded journal batch.
-6. Use the native index when its snapshot is searchable. If startup catch-up does not converge within the budget, expose it as active-but-catching-up and continue in the background.
-7. Run bounded background catch-up only when the foreground native-operation gate is free, so active Search/Storage reads take priority over maintenance.
-8. If a valid existing snapshot can still be searched but journal access returns `ElevationRequired`, retain that snapshot, mark it non-current, stop repeated permission probes and offer explicit helper-only elevation.
-9. If the native provider/helper is unavailable, or an invalid snapshot cannot be rebuilt with the current token, build the bounded user-profile crawler fallback.
-10. If a native session later disconnects or requires a rebuild that cannot proceed, transition back to the fallback rather than leaving the app unavailable.
-
-Engine state controls foreground availability. Input is disabled during initial snapshot construction, fallback crawling, rebuilds and elevation transitions, and is enabled only when a native searchable snapshot or completed fallback snapshot exists.
-
-The fallback is a static crawl snapshot rather than a live watcher, so the coordinator records it as non-current even after the initial crawl finishes.
-
-The first cutover does not automatically create snapshots for every attached NTFS disk. Existing attached-volume databases with valid checkpoints can still participate in service search; automatic first-run orchestration for additional volumes remains a separate lifecycle slice.
-
-The WinUI Storage page already consumes `AnalyzeStorage` through the shared native/fallback coordinator; it does not open SQLite directly or perform another crawl. `AnalyzeStorageTypes` is implemented at the engine/service boundary in protocol v3 but is intentionally not presented in WinUI in this slice. A later Types/Categories view should use the same foreground/session lifecycle rather than create another helper or rescan the filesystem.
-
-### Elevation flow
-
-When the primary volume needs more privilege, the UI exposes an explicit `Enable fast indexing` action while using the crawler fallback, or `Enable live updates` when an older valid native snapshot is usable but cannot synchronize. The desktop itself remains non-elevated. A successful same-account helper relaunch replaces the existing/fallback source only after the elevated session has produced a valid native state.
-
-Cancelling UAC preserves the existing mode.
+`Busy`, `SnapshotRequired`, `ElevationRequired` and `ResponseTooLarge` are surfaced as capability/lifecycle states rather than raw implementation exceptions.
 
 ## Validation without hosted Actions
 
-`tools/verify_storage_types.py` uses only the Python standard library and executes the file-type recursive SQLite query against synthetic fixtures. It checks normalized extensions, nested recursion, cross-extension hard-link physical deduplication, unknown allocation with result truncation, sibling-root exclusion and empty roots. Repository mode additionally guards protocol-v3/client/dispatcher/backend wiring and verifies that the SQL in the script has not drifted from `SqliteStorageAnalytics.FileTypeAnalysisSql`.
+`tools/verify_storage_types.py` executes the exact protocol-v4 SQLite query with Python's standard library and verifies bounded extension rows plus exact categories, including hard links, unknown allocation and `LIMIT 1`. Repository mode checks protocol/client/dispatcher/backend/test wiring and guards SQL-source drift.
 
-`tools/test-local.ps1` reproduces the normal Core/native/indexer/tests/WinUI/bundled-helper gate on a Windows development machine without consuming GitHub Actions usage.
+`tools/verify_storage_types_fuzz.py` compares the SQL against an independent reference model over 1,000 randomized nested-directory/hard-link/nullable-allocation fixtures.
+
+`tools/verify_storage_ui.py` and `tools/verify_storage_ui_edgecases.py` validate the exact-category presentation and existing treemap/path invariants.
+
+`tools/test-local.ps1` runs those offline gates before the full Core/native/indexer/tests/WinUI/bundled-helper build and real process handshake on a Windows development machine without consuming GitHub Actions usage.
