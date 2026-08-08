@@ -206,7 +206,7 @@ def check_repository(root: Path) -> int:
         "windows": root / "src/FileOp.Windows/Operations/WindowsFileOperationExecutionValidator.cs",
         "execution": root / "src/FileOp.Core/Operations/FileOperationExecution.cs",
         "preflight": root / "src/FileOp.Windows/Operations/WindowsFileOperationPreflightValidator.cs",
-        "docs": root / "docs/files-browser.md",
+        "docs": root / "docs/file-operation-execution-validation.md",
         "local": root / "tools/test-local.ps1",
     }
     missing = [str(path) for path in paths.values() if not path.is_file()]
