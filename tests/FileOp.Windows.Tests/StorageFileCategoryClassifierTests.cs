@@ -5,7 +5,7 @@ namespace FileOp.Windows.Tests;
 [TestClass]
 public sealed class StorageFileCategoryClassifierTests
 {
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(null, StorageFileCategory.NoExtension)]
     [DataRow("", StorageFileCategory.NoExtension)]
     [DataRow(".PDF", StorageFileCategory.Documents)]
