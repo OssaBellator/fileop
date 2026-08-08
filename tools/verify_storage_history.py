@@ -204,12 +204,22 @@ def _delta(
             (new[3] if new else 0) - (old[3] if old else 0),
             (new[4] if new else 0) - (old[4] if old else 0),
         )
-        if row != (0, 0, 0, 0, 0):
+        changed = (
+            row[0] != 0
+            or (row[1] is not None and row[1] != 0)
+            or row[2] != 0
+            or row[3] != 0
+            or row[4] != 0
+        )
+        if changed:
             result[category] = row
     return result
 
 
 def check_delta_properties(cases: int = 1000) -> int:
+    unchanged_unknown = {2: (100, None, 1, 0, 1)}
+    assert _delta(unchanged_unknown, unchanged_unknown) == {}
+
     rng = random.Random(20260808)
     for _ in range(cases):
         snapshots = []
@@ -251,7 +261,7 @@ def check_delta_properties(cases: int = 1000) -> int:
             assert sum(row[1] for row in deltas.values()) == (
                 sum(row[1] for row in newer.values()) - sum(row[1] for row in older.values())
             )
-    return cases
+    return cases + 1
 
 
 def check_repository(repo_root: Path) -> int:
@@ -271,6 +281,7 @@ def check_repository(repo_root: Path) -> int:
     required = [
         (history_text, "IStorageHistoryStore"),
         (history_text, "StorageHistoryDelta Between"),
+        (history_text, "AllocatedBytesDelta is not null and not 0"),
         (store_text, "storage_history_schema_info"),
         (store_text, "UNIQUE(root_path, captured_utc_ticks)"),
         (store_text, "ON DELETE CASCADE"),
@@ -304,7 +315,7 @@ def main() -> int:
     sqlite_checks = check_sqlite_history()
     delta_cases = check_delta_properties(args.cases)
     print(f"PASS storage history SQLite semantics: {sqlite_checks} checks")
-    print(f"PASS storage history delta properties: {delta_cases} randomized cases")
+    print(f"PASS storage history delta properties: {delta_cases} cases")
 
     if not args.self_test_only:
         source_checks = check_repository(args.repo_root.resolve())
