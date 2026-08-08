@@ -53,12 +53,15 @@ public sealed record FileOperationActionEntry(
 public sealed record FileOperationActionHistory(
     Guid OperationId,
     DateTimeOffset QueuedAtUtc,
+    DateTimeOffset ValidatedAtUtc,
     DateTimeOffset StartedAtUtc,
     DateTimeOffset? CompletedAtUtc,
     FileOperationKind Kind,
     FileOperationCollisionPolicy CollisionPolicy,
     string SourceDirectoryPath,
     string DestinationDirectoryPath,
+    string CanonicalSourceDirectoryPath,
+    string CanonicalDestinationDirectoryPath,
     FileOperationActionTerminalState? TerminalState,
     IReadOnlyList<FileOperationActionEntry> Entries)
 {
