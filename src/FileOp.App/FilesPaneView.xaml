@@ -26,6 +26,8 @@
                     <ProgressRing x:Name="LoadingRing" Width="16" Height="16" IsActive="False" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                    <Button x:Name="OpenButton" Content="Open" Click="OpenButton_Click"
+                            ToolTipService.ToolTip="Open the single selected entry" IsEnabled="False" />
                     <Button x:Name="UpButton" Content="Up" Click="UpButton_Click" IsEnabled="False" />
                     <Button x:Name="RefreshButton" Content="Refresh" Click="RefreshButton_Click" IsEnabled="False" />
                 </StackPanel>
@@ -101,8 +103,10 @@
                         <TextBlock Grid.Column="4" Text="Modified" FontWeight="SemiBold" />
                     </Grid>
                     <Grid Grid.Row="1">
-                        <ListView x:Name="FilesList" IsItemClickEnabled="True"
-                                  ItemClick="FilesList_ItemClick" SelectionMode="Single">
+                        <ListView x:Name="FilesList"
+                                  SelectionMode="Multiple"
+                                  IsMultiSelectCheckBoxEnabled="True"
+                                  SelectionChanged="FilesList_SelectionChanged">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Padding="8,6" ColumnSpacing="8">
