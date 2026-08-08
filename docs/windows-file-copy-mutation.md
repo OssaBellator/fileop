@@ -54,7 +54,7 @@ Windows can defer automatic access/write timestamp changes until later I/O or ha
 
 That suppression is handle-local. The mutation handle intentionally permits read sharing, so a separate process that reads the destination can legitimately advance its last-access time; the fidelity guarantee covers FileOp's own mutation I/O rather than concurrent external access.
 
-`ChangeTime` is not copied. Storage-state attributes that need separate filesystem semantics are also excluded: reparse-point, sparse, compressed, encrypted, offline and temporary state. ACLs, alternate data streams and extended attributes remain separate future boundaries rather than being implied by a byte copy.
+`ChangeTime` is not copied. Source storage-state attributes that need separate filesystem semantics are also not copied: reparse-point, sparse, compressed, encrypted, offline and temporary state. This is not a guarantee that every such state is absent on the destination. Windows can apply destination-owned defaults at creation—for example, files created in compressed or encrypted directories can inherit those states from the destination directory—and this slice deliberately does not clear or normalize them. ACLs, alternate data streams and extended attributes remain separate future boundaries rather than being implied by a byte copy.
 
 ## Durability and failure semantics
 
@@ -72,7 +72,7 @@ For the pure standard-library property models, run:
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-That gate needs Python but no .NET SDK. It includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes the preserved-attribute mask, rejects unsupported storage-state flags, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, and guards the ordering `capture -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`.
+That gate needs Python but no .NET SDK. It includes the executor state/lease model, the Windows namespace/identity model and `verify_copy_basic_metadata.py`. The metadata verifier fuzzes the preserved-attribute mask, rejects unsupported source storage-state flags, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, guards the ordering `capture -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`, and requires the concrete regression to exercise every advertised safe attribute with its expected metadata established after validation.
 
 For the focused real Windows compiler/native gate, run on Windows with .NET 10:
 
