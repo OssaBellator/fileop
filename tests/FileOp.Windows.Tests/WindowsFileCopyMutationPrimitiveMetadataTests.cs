@@ -168,6 +168,7 @@ public sealed class WindowsFileCopyMutationPrimitiveMetadataTests
             path,
             FileAttributes.ReadOnly |
             FileAttributes.Hidden |
+            FileAttributes.System |
             FileAttributes.Archive |
             FileAttributes.NotContentIndexed);
     }
