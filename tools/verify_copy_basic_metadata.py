@@ -13,6 +13,7 @@ ARCHIVE = 0x00000020
 NORMAL = 0x00000080
 TEMPORARY = 0x00000100
 SPARSE = 0x00000200
+REPARSE_POINT = 0x00000400
 COMPRESSED = 0x00000800
 OFFLINE = 0x00001000
 NOT_CONTENT_INDEXED = 0x00002000
@@ -20,7 +21,7 @@ ENCRYPTED = 0x00004000
 INTEGRITY_STREAM = 0x00008000
 PRESERVED = READ_ONLY | HIDDEN | SYSTEM | ARCHIVE | NOT_CONTENT_INDEXED
 DESTINATION_SETTABLE = TEMPORARY | OFFLINE
-NON_SETTABLE_STORAGE = SPARSE | COMPRESSED | ENCRYPTED | INTEGRITY_STREAM
+NON_SETTABLE_STORAGE = SPARSE | REPARSE_POINT | COMPRESSED | ENCRYPTED | INTEGRITY_STREAM
 KNOWN_DESTINATION = PRESERVED | NORMAL | DESTINATION_SETTABLE | NON_SETTABLE_STORAGE
 
 
@@ -46,9 +47,12 @@ def run_model(cases: int) -> int:
         HIDDEN | ARCHIVE,
         PRESERVED,
         TEMPORARY,
+        SPARSE,
+        REPARSE_POINT,
         COMPRESSED,
-        ENCRYPTED,
         OFFLINE,
+        ENCRYPTED,
+        INTEGRITY_STREAM,
     ]
     values = fixed + [rng.getrandbits(32) for _ in range(cases)]
     for value in values:
@@ -126,6 +130,8 @@ def check_repository(root: Path) -> int:
         "FileAttributeOffline",
         "FileAttributeNotContentIndexed",
         "sourceAttributes & PreservedAttributeMask",
+        "(uint)FileAttributes.Directory",
+        "(uint)FileAttributes.ReparsePoint",
     ]
     for needle in required_helper:
         assert needle in helper, needle
@@ -171,6 +177,9 @@ def check_repository(root: Path) -> int:
     helper_test_end = tests.index("public void BasicMetadataCaptureDropsUnsupportedStorageStateAttributes()", helper_test_start)
     helper_test = tests[helper_test_start:helper_test_end]
     assert "FileAccess.ReadWrite" in helper_test
+    assert "File.SetAttributes(destinationPath, FileAttributes.Temporary)" in helper_test
+    assert "SuppressAutomaticTimestampUpdates(destinationHandle)" in helper_test
+    assert "FileAttributes.Temporary) != 0" in helper_test
 
     merge_test_start = tests.index("public void BasicMetadataMergePreservesDestinationOwnedAttributes()")
     merge_test_end = tests.index("public async Task CopyPrimitivePreservesSafeBasicMetadata()", merge_test_start)
@@ -215,7 +224,7 @@ def check_repository(root: Path) -> int:
 
     assert "verify_copy_basic_metadata.py" in wrapper
     assert "WindowsFileCopyMutationPrimitiveMetadataTests" in windows_wrapper
-    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 25
+    return len(required_helper) + len(forbidden_helper) + len(preserved_test_attributes) + 31
 
 
 def main() -> int:
