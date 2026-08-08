@@ -168,7 +168,7 @@ internal static class WindowsFileCopyBasicMetadata
         long LastWriteTime,
         uint FileAttributes);
 
-    private enum FileInfoByHandleClass
+    private enum FileInfoByHandleClass : int
     {
         FileBasicInfo = 0,
     }
@@ -183,7 +183,7 @@ internal static class WindowsFileCopyBasicMetadata
         public uint FileAttributes;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
     private struct ByHandleFileInformation
     {
         public uint FileAttributes;
@@ -198,20 +198,26 @@ internal static class WindowsFileCopyBasicMetadata
         public uint FileIndexLow;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
     private struct FileTime
     {
         public uint LowDateTime;
         public uint HighDateTime;
     }
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport(
+        "kernel32.dll",
+        SetLastError = true,
+        CallingConvention = CallingConvention.Winapi)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(
         SafeFileHandle hFile,
         out ByHandleFileInformation lpFileInformation);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport(
+        "kernel32.dll",
+        SetLastError = true,
+        CallingConvention = CallingConvention.Winapi)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetFileInformationByHandle(
         SafeFileHandle hFile,
