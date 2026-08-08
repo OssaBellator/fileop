@@ -46,7 +46,8 @@ Invoke-Step "FileOp.Windows Release build" {
 $filter = @(
     "FullyQualifiedName~FileOperationActionHistoryTests",
     "FullyQualifiedName~FileCopyOperationExecutorTests",
-    "FullyQualifiedName~WindowsFileCopyMutationPrimitiveTests"
+    "FullyQualifiedName~WindowsFileCopyMutationPrimitiveTests",
+    "FullyQualifiedName~WindowsFileCopyMutationPrimitiveMetadataTests"
 ) -join "|"
 
 Invoke-Step "Focused action-history/Copy native regressions" {
