@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zero-Actions checks for FileOp's dual-pane selection, intent and planned-operation queue."""
+"""Zero-Actions checks for FileOp's dual-pane selection, queue and read-only preflight UI."""
 from __future__ import annotations
 import argparse, copy, ntpath, random, re, sys
 import xml.etree.ElementTree as ET
@@ -53,6 +53,16 @@ def validate_queue_intent(source_path: str, entries: list[tuple[str, bool]], des
     return bool(entries)
 
 
+def apply_preflight_snapshot(queue: list[dict], snapshots: dict[str, tuple], operation_id: str, snapshot: tuple) -> None:
+    if any(item['id'] == operation_id for item in queue):
+        snapshots[operation_id] = snapshot
+
+
+def remove_queue_item(queue: list[dict], snapshots: dict[str, tuple], operation_id: str) -> None:
+    queue[:] = [item for item in queue if item['id'] != operation_id]
+    snapshots.pop(operation_id, None)
+
+
 def invalidate(panes: list[dict], clear_path: bool) -> None:
     for pane in panes:
         pane['generation'] += 1
@@ -76,8 +86,22 @@ def check_properties(cases: int) -> int:
     assert not validate_queue_intent(r'C:\A', [(r'C:\A\x.txt', False)], r'C:\A')
     assert not validate_queue_intent(r'C:\A', [(r'C:\A\Dir', True)], r'C:\A\Dir\Child')
     assert not validate_queue_intent(r'C:\A', [(r'C:\Other\x.txt', False)], r'C:\B')
+
+    queue = [{'id': 'op-1'}, {'id': 'op-2'}]
+    snapshots: dict[str, tuple] = {}
+    apply_preflight_snapshot(queue, snapshots, 'op-1', ('Ready', 1234))
+    assert snapshots['op-1'] == ('Ready', 1234)
+    apply_preflight_snapshot(queue, snapshots, 'gone', ('Blocked', 9999))
+    assert 'gone' not in snapshots
+    remove_queue_item(queue, snapshots, 'op-1')
+    assert 'op-1' not in snapshots and [item['id'] for item in queue] == ['op-2']
+    snapshots['op-2'] = ('NeedsDecision', 2345)
+    queue.clear()
+    snapshots.clear()
+    assert not queue and not snapshots
+
     rng = random.Random(20260808)
-    checks = 8
+    checks = 12
 
     for case in range(cases):
         panes = []
@@ -154,6 +178,19 @@ def check_properties(cases: int) -> int:
             directory_entry + r'\Child')
         checks += 1
 
+        operation_id = f'op-{case}'
+        queue_model = [{'id': operation_id}]
+        preflight_snapshots: dict[str, tuple] = {}
+        snapshot = (rng.choice(['Ready', 'NeedsDecision', 'Blocked']), case)
+        apply_preflight_snapshot(queue_model, preflight_snapshots, operation_id, snapshot)
+        assert preflight_snapshots[operation_id] == snapshot
+        pane_copy = copy.deepcopy(panes)
+        pane_copy[0]['tabs'][pane_copy[0]['active']]['path'] = r'C:\LaterNavigation'
+        assert preflight_snapshots[operation_id] == snapshot
+        remove_queue_item(queue_model, preflight_snapshots, operation_id)
+        assert operation_id not in preflight_snapshots and not queue_model
+        checks += 3
+
         paths = [[t['path'] for t in p['tabs']] for p in panes]
         maintenance = copy.deepcopy(panes)
         invalidate(maintenance, False)
@@ -189,6 +226,9 @@ def check_repository(root: Path) -> int:
         'mainx': 'src/FileOp.App/MainWindow.xaml',
         'engine': 'src/FileOp.App/DesktopSearchEngine.DirectoryBrowse.cs',
         'docs': 'docs/files-browser.md',
+        'plan': 'src/FileOp.Core/Operations/FileOperationPlan.cs',
+        'preflight': 'src/FileOp.Core/Operations/FileOperationPreflight.cs',
+        'windows_preflight': 'src/FileOp.Windows/Operations/WindowsFileOperationPreflightValidator.cs',
     }.items()}
     missing = [str(p) for p in paths.values() if not p.is_file()]
     if missing:
@@ -258,12 +298,10 @@ def check_repository(root: Path) -> int:
     required_intent = [
         'Content="Prepare Left → Right"',
         'Content="Prepare Right → Left"',
-        'private FileBrowserOperationIntent? _preparedIntent;',
-        'public FileBrowserOperationIntent? PreparedIntent => _preparedIntent;',
-        'selectedRows',
-        '.ToArray();',
-        'Array.AsReadOnly(entries)',
-        'public sealed record FileBrowserOperationIntent(',
+        'private FileOperationIntent? _preparedIntent;',
+        'public FileOperationIntent? PreparedIntent => _preparedIntent;',
+        'new FileOperationEntry(',
+        'new FileOperationIntent(',
         'ClearPreparedIntent();',
     ]
     for needle in required_intent:
@@ -279,27 +317,71 @@ def check_repository(root: Path) -> int:
         'x:Name="OperationQueueList"',
         'x:Name="RemoveQueuedOperationButton"',
         'x:Name="ClearQueueButton"',
-        'private readonly List<FileBrowserQueuedOperation> _queuedOperations = [];',
-        'public IReadOnlyList<FileBrowserQueuedOperation> QueuedOperations',
-        'QueuePreparedIntent(FileBrowserOperationKind.Copy);',
-        'QueuePreparedIntent(FileBrowserOperationKind.Move);',
+        'private readonly List<FileOperationPlan> _queuedOperations = [];',
+        'public IReadOnlyList<FileOperationPlan> QueuedOperations',
+        'QueuePreparedIntent(FileOperationKind.Copy);',
+        'QueuePreparedIntent(FileOperationKind.Move);',
         'TryValidateIntentForQueue(intent, out var validationMessage)',
         'PathsEqual(intent.SourceDirectoryPath, intent.DestinationDirectoryPath)',
         'IsSameOrDescendantPath(intent.DestinationDirectoryPath, entry.Path)',
-        'public enum FileBrowserCollisionPolicy',
-        'public sealed record FileBrowserQueuedOperation(',
+        'FileOperationCollisionPolicy.Ask',
+        'FileOperationCollisionPolicy.Skip',
+        'FileOperationCollisionPolicy.Stop',
+        'new FileOperationPlan(',
     ]
     for needle in required_queue:
         assert needle in s['viewx'] + s['viewc'], needle
 
+    required_preflight_ui = [
+        'using FileOp.Windows.Operations;',
+        'IFileOperationPreflightValidator _preflightValidator',
+        'new WindowsFileOperationPreflightValidator();',
+        'Dictionary<Guid, FileBrowserPreflightSnapshot> _preflightSnapshots',
+        'private bool _preflightRunning;',
+        'x:Name="PreflightQueuedOperationButton"',
+        'Content="Preflight selected"',
+        'Click="PreflightQueuedOperationButton_Click"',
+        'await _preflightValidator.ValidateAsync(plan)',
+        'new FileBrowserPreflightSnapshot(result, DateTimeOffset.UtcNow)',
+        '_preflightSnapshots[plan.Id] = snapshot;',
+        'point-in-time read-only snapshot and can become stale',
+        'execution remains disabled',
+        '_preflightSnapshots.Remove(row.Id);',
+        '_preflightSnapshots.Clear();',
+        'OperationQueueList.IsEnabled = !_preflightRunning;',
+        'PreflightQueuedOperationButton.IsEnabled = hasSelection && !_preflightRunning;',
+        'string PreflightText',
+        'FileOperationPreflightStatus.Ready',
+        'FileOperationPreflightStatus.NeedsDecision',
+        'FileOperationPreflightStatus.Blocked',
+        'Text="{Binding PreflightText}"',
+    ]
+    for needle in required_preflight_ui:
+        assert needle in s['viewx'] + s['viewc'], needle
+
+    for obsolete in [
+        'FileBrowserOperationKind',
+        'FileBrowserCollisionPolicy',
+        'FileBrowserOperationEntry',
+        'FileBrowserOperationIntent',
+        'FileBrowserQueuedOperation(',
+    ]:
+        assert obsolete not in s['viewc'], obsolete
+
     assert 'Tag="Replace"' not in s['viewx']
     assert 'Replace existing' not in s['viewx']
+    assert 'Content="Execute"' not in s['viewx']
+    assert 'Content="Run"' not in s['viewx']
+    assert 'ExecuteAsync(' not in s['viewc']
     assert 'ItemClick="FilesList_ItemClick"' not in s['panex']
     assert 'FilesList_ItemClick' not in s['panec']
     assert s['viewx'].count('<local:FilesPaneView') == 2
     assert 'GroupName = $"FileOpFilesTabs-{PaneTitle}"' in s['panec']
     assert 'Content="Files"' in s['mainx'] and 'IsEnabled="False"' in s['mainx'] and 'FilesView' not in s['mainx']
     assert 'public async ValueTask<FileDirectoryBrowsePage> BrowseDirectoryAsync(' in s['engine']
+    assert 'public sealed record FileOperationIntent' in s['plan']
+    assert 'public interface IFileOperationPreflightValidator' in s['preflight']
+    assert 'public sealed class WindowsFileOperationPreflightValidator : IFileOperationPreflightValidator' in s['windows_preflight']
 
     combined = s['main'] + s['viewc'] + s['panec']
     for forbidden in [
@@ -318,12 +400,13 @@ def check_repository(root: Path) -> int:
     assert '## Selection semantics' in s['docs']
     assert '## Prepared operation intent' in s['docs']
     assert '## Planned operation queue' in s['docs']
+    assert '## Read-only live preflight' in s['docs']
     assert 'Ask later' in s['docs'] and 'Skip existing' in s['docs'] and 'Stop on collision' in s['docs']
-    assert 'replacement is deliberately not a queue policy' in s['docs']
+    assert 'Destructive replacement is deliberately not a queue policy' in s['docs']
 
     return (
         len(required_main) + len(required_selection) + len(required_intent) + len(required_queue) +
-        len(pane_handlers) + len(view_handlers) + 20
+        len(required_preflight_ui) + len(pane_handlers) + len(view_handlers) + 30
     )
 
 
@@ -336,9 +419,9 @@ def main() -> int:
     if args.cases <= 0:
         p.error('--cases must be greater than zero')
 
-    print(f'PASS Files selection/intent/queue properties: {check_properties(args.cases)} checks')
+    print(f'PASS Files selection/intent/queue/preflight properties: {check_properties(args.cases)} checks')
     if not args.self_test_only:
-        print(f'PASS Files selection/intent/queue source wiring: {check_repository(args.repo_root.resolve())} checks')
+        print(f'PASS Files selection/intent/queue/preflight source wiring: {check_repository(args.repo_root.resolve())} checks')
     return 0
 
 

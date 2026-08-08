@@ -170,6 +170,25 @@ A `Ready` preflight result means only that the plan can proceed to a later execu
 
 The preflight probe is cancellable because it performs read-only inspection. That cancellation mechanism is separate from the safe-boundary mutation cancellation contract because no mutation has begun.
 
+### Queue preflight UI
+
+The Files queue exposes **Preflight selected** for one selected planned operation. The action runs `IFileOperationPreflightValidator` against the immutable queued plan and stores a timestamped result keyed by that plan ID.
+
+The queue row displays one of:
+
+```text
+Not checked
+Ready for later validation · <time>
+Needs decision · <time>
+Blocked · <time>
+```
+
+The timestamp matters: this is a point-in-time observation of live metadata, not a durable guarantee. Later pane navigation does not rewrite the result because the check belongs to the captured plan rather than the current pane state. Removing a plan removes its preflight snapshot, and clearing the queue clears every snapshot.
+
+While one read-only preflight is active, queue selection/removal/clear/preflight controls are disabled to avoid presenting competing queue mutations under the in-flight result. Preparing or adding another immutable plan remains independent of that selected-plan check.
+
+The UI still exposes no **Run** or **Execute** operation action and does not call `IFileOperationExecutor.ExecuteAsync`. A displayed `Ready for later validation` status is deliberately worded so it cannot be mistaken for execution authorization.
+
 ## Native and fallback behavior
 
 Native browsing opens SQLite read-only, takes the existing shared cross-process lease and requires a valid durable checkpoint. When the requested directory has a stable identity, direct children are filtered by the existing parent-identity columns/index rather than by a whole-index path scan.
@@ -178,7 +197,7 @@ Native browsing opens SQLite read-only, takes the existing shared cross-process 
 
 ## Validation without hosted Actions
 
-`tools/verify_files_ui.py` guards the dual-pane browse, selection, prepared-intent and queue boundaries. It checks exact paging, pane/tab isolation, selection lifecycle, immutable plans, collision policy UI and absence of filesystem mutation APIs.
+`tools/verify_files_ui.py` guards the dual-pane browse, selection, prepared-intent, queue and preflight-UI boundaries. It checks exact paging, pane/tab isolation, selection lifecycle, immutable plans, collision policy UI, timestamped preflight snapshots, snapshot removal/clear behavior, handler wiring, the absence of Run/Execute controls and the absence of filesystem mutation APIs.
 
 `tools/verify_file_operation_state.py` independently models the execution state machine with randomized transitions and source guards. It checks monotonic progress, terminal-state rejection, immediate pre-mutation cancellation, safe-boundary running cancellation including late cancellation, the single cancellation path, shared Core plan ownership and absence of mutation APIs.
 
@@ -186,10 +205,10 @@ Native browsing opens SQLite read-only, takes the existing shared cross-process 
 
 `tools/verify_directory_browse.py` separately covers the protocol/service keyset algorithm, read-only SQLite access, lease/checkpoint enforcement and native/fallback source wiring.
 
-Run the operation preflight verifier directly:
+Run the Files UI verifier directly:
 
 ```powershell
-python tools/verify_file_operation_preflight.py --repo-root . --cases 50000
+python tools/verify_files_ui.py --repo-root . --cases 10000
 ```
 
 Or run the whole standard-library suite without the .NET SDK:
@@ -202,4 +221,4 @@ Without `-OfflineOnly`, the local Windows gate continues into the .NET builds, r
 
 ## Next file-manager boundary
 
-The next slice should surface preflight results in the Files queue UI and add an execution-grade canonical-path validation contract. Actual Copy should remain disabled until that final validation can produce durable action-history/undo records; Move should remain later still because partial cross-volume moves combine copy and deletion failure modes.
+The next slice should define execution-grade canonical-path validation and durable action-history/undo records before actual Copy is enabled. Preflight results must be revalidated immediately before any later mutation. Move should remain later still because partial cross-volume moves combine copy and deletion failure modes.
