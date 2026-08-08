@@ -49,12 +49,19 @@ public sealed class SqliteFileDirectoryBrowser : IFileDirectoryBrowser
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT EXISTS(
-                SELECT 1
-                FROM files
-                WHERE path = @directory COLLATE NOCASE
-                  AND is_directory = 1
-            );
+            SELECT
+                EXISTS(
+                    SELECT 1
+                    FROM files
+                    WHERE path = @directory COLLATE NOCASE
+                      AND is_directory = 1
+                )
+                OR EXISTS(
+                    SELECT 1
+                    FROM files
+                    WHERE parent_path = @directory COLLATE NOCASE
+                    LIMIT 1
+                );
             """;
         command.Parameters.AddWithValue("@directory", normalizedDirectory);
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
