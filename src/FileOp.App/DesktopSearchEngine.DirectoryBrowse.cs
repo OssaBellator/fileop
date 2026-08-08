@@ -114,10 +114,12 @@ internal sealed partial class DesktopSearchEngine
             FileSearchQuery.Parse(string.Empty, int.MaxValue),
             _lifetimeCancellation.Token).ConfigureAwait(false);
         var directChildren = snapshot
-            .Where(record => string.Equals(
-                NormalizeBrowsePath(record.ParentPath),
-                directoryPath,
-                StringComparison.OrdinalIgnoreCase))
+            .Where(record =>
+                !string.IsNullOrWhiteSpace(record.ParentPath) &&
+                string.Equals(
+                    NormalizeBrowsePath(record.ParentPath),
+                    directoryPath,
+                    StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(static record => record.IsDirectory)
             .ThenBy(static record => record.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static record => record.Path, StringComparer.OrdinalIgnoreCase)
