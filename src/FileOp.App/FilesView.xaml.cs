@@ -31,11 +31,6 @@ public sealed partial class FilesView : UserControl
         RefreshButton.IsEnabled = false;
     }
 
-    public void SetStatus(string message)
-    {
-        StatusText.Text = message;
-    }
-
     public void SetUnavailable(string message)
     {
         StatusText.Text = message;
@@ -70,6 +65,11 @@ public sealed partial class FilesView : UserControl
 
     public void SetReady(bool canNavigateUp, bool canRefresh)
     {
+        if (LoadingRing.IsActive && StatusText.Text.StartsWith("Loading ", StringComparison.Ordinal))
+        {
+            StatusText.Text = "The indexed directory load did not complete. Refresh to try again.";
+        }
+
         LoadingRing.IsActive = false;
         UpButton.IsEnabled = canNavigateUp;
         RefreshButton.IsEnabled = canRefresh;
