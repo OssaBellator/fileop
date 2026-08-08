@@ -66,18 +66,23 @@ def begin(
     operation_id: str,
     decisions: list[str],
     directories: list[bool] | None = None,
+    kind: str = "copy",
 ) -> None:
     directories = directories or [False] * len(decisions)
     if len(directories) != len(decisions):
         raise ValueError("directory flags must match decisions")
-    if any(is_directory and decision == "ready"
-           for decision, is_directory in zip(decisions, directories, strict=True)):
-        raise ValueError("action-history schema v1 does not support directory mutation")
+    if kind not in {"copy", "move"}:
+        raise ValueError("unknown operation kind")
+    if any(
+        decision != "skip" and (kind != "copy" or is_directory)
+        for decision, is_directory in zip(decisions, directories, strict=True)
+    ):
+        raise ValueError("action-history schema v1 mutation state is Copy-file-only")
 
     with connection:
         connection.execute(
-            "INSERT INTO actions(operation_id, kind, terminal_state) VALUES (?, 0, NULL)",
-            (operation_id,),
+            "INSERT INTO actions(operation_id, kind, terminal_state) VALUES (?, ?, NULL)",
+            (operation_id, 0 if kind == "copy" else 1),
         )
         for ordinal, (decision, is_directory) in enumerate(
             zip(decisions, directories, strict=True)
@@ -108,7 +113,7 @@ def start_mutation(connection: sqlite3.Connection, operation_id: str, ordinal: i
             WHERE operation_id = ? AND ordinal = ? AND state = ? AND is_directory = 0
               AND EXISTS(
                   SELECT 1 FROM actions
-                  WHERE operation_id = ? AND terminal_state IS NULL
+                  WHERE operation_id = ? AND terminal_state IS NULL AND kind = 0
               )
             """,
             (int(EntryState.MUTATION_STARTED), operation_id, ordinal,
@@ -257,20 +262,27 @@ def check_fixed() -> int:
     assert not requires_recovery(connection, "pre-fail")
     assert complete(connection, "pre-fail", TerminalState.FAILED)
 
-    try:
-        begin(connection, "directory-ready", ["ready"], [True])
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("ready directory mutation must be rejected")
-    assert connection.execute(
-        "SELECT COUNT(*) FROM actions WHERE operation_id = 'directory-ready'"
-    ).fetchone()[0] == 0
+    for operation_id, directories, kind in [
+        ("directory-ready", [True], "copy"),
+        ("move-ready", [False], "move"),
+    ]:
+        try:
+            begin(connection, operation_id, ["ready"], directories, kind)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{operation_id} mutation must be rejected")
+        assert connection.execute(
+            "SELECT COUNT(*) FROM actions WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()[0] == 0
 
     begin(connection, "directory-skip", ["skip"], [True])
     assert states(connection, "directory-skip") == [EntryState.SKIPPED]
     assert undo_candidates(connection, "directory-skip") == []
-    return 22
+    begin(connection, "move-skip", ["skip"], [False], "move")
+    assert states(connection, "move-skip") == [EntryState.SKIPPED]
+    return 25
 
 
 @dataclass
@@ -384,9 +396,9 @@ def check_repository(root: Path) -> int:
         "public bool IsUndoCandidate",
         "UndoCandidateEntries",
         "var entrySnapshot = entries.ToArray();",
-        "entry.Entry.IsDirectory &&",
         "entry.State != FileOperationActionEntryState.Skipped",
-        "schema v1 supports mutation state only for files",
+        "kind != FileOperationKind.Copy || entry.Entry.IsDirectory",
+        "schema v1 supports mutation state only for Copy files",
         "public bool RequiresRecovery",
         "public interface IFileOperationActionHistoryStore",
         "MarkMutationStartedAsync",
@@ -429,14 +441,16 @@ def check_repository(root: Path) -> int:
     assert "SqliteFileOperationActionHistoryStore : IFileOperationExecutor" not in source["store"]
     assert "CopyCommitBecomesDurableUndoCandidate" in source["tests"]
     assert "MutationStartedSurvivesAsRecoverySignal" in source["tests"]
-    assert "BeginRejectsReadyDirectoryMutation" in source["tests"]
+    assert "BeginRejectsReadyDirectoryMutationAndRollsBack" in source["tests"]
+    assert "BeginRejectsReadyMoveMutationAndRollsBack" in source["tests"]
     assert "ActionHistoryDefensivelySnapshotsEntries" in source["tests"]
     assert "# Durable file-operation action history" in source["docs"]
     assert "commit barrier" in source["docs"].casefold()
     assert "undo candidate" in source["docs"].casefold()
     assert "not sufficient" in source["docs"].casefold()
+    assert "file copy-only executor" in source["docs"].casefold()
     assert "verify_file_operation_action_history.py" in source["local"]
-    return len(required_contract) + len(required_store) + 6 + 11
+    return len(required_contract) + len(required_store) + 6 + 12
 
 
 def main() -> int:
