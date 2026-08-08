@@ -8,7 +8,7 @@ namespace FileOp.Windows.Tests;
 public sealed class StorageFileTypeParityTests
 {
     [TestMethod]
-    public async Task SqliteAndInMemoryFileTypeAnalysisMatch()
+    public async Task SqliteAndInMemoryFileTypeAnalysisMatchWithExactCategoriesWhenTypesAreTruncated()
     {
         var databasePath = Path.Combine(
             Path.GetTempPath(),
@@ -36,8 +36,8 @@ public sealed class StorageFileTypeParityTests
             using var memory = new InMemoryFileIndex();
             await memory.AddBatchAsync(fixture);
 
-            var sqlite = await sqliteAnalytics.AnalyzeFileTypesAsync(@"C:\Data", maxTypes: 128);
-            var fallback = await memory.AnalyzeFileTypesAsync(@"C:\Data", maxTypes: 128);
+            var sqlite = await sqliteAnalytics.AnalyzeFileTypesAsync(@"C:\Data", maxTypes: 1);
+            var fallback = await memory.AnalyzeFileTypesAsync(@"C:\Data", maxTypes: 1);
 
             Assert.AreEqual(sqlite.RootPath, fallback.RootPath);
             Assert.AreEqual(sqlite.LogicalBytes, fallback.LogicalBytes);
@@ -46,12 +46,32 @@ public sealed class StorageFileTypeParityTests
             Assert.AreEqual(sqlite.UniqueFileCount, fallback.UniqueFileCount);
             Assert.AreEqual(sqlite.HardLinkAliasCount, fallback.HardLinkAliasCount);
             Assert.AreEqual(sqlite.TypeCount, fallback.TypeCount);
-            Assert.AreEqual(sqlite.Types.Count, fallback.Types.Count);
+            Assert.IsGreaterThan(1, sqlite.TypeCount);
+            Assert.AreEqual(1, sqlite.Types.Count);
+            Assert.AreEqual(1, fallback.Types.Count);
+            Assert.AreEqual(sqlite.Types[0], fallback.Types[0]);
 
-            for (var index = 0; index < sqlite.Types.Count; index++)
+            Assert.AreEqual(sqlite.Categories.Count, fallback.Categories.Count);
+            Assert.IsGreaterThan(1, sqlite.Categories.Count);
+            for (var index = 0; index < sqlite.Categories.Count; index++)
             {
-                Assert.AreEqual(sqlite.Types[index], fallback.Types[index]);
+                Assert.AreEqual(sqlite.Categories[index], fallback.Categories[index]);
             }
+
+            Assert.AreEqual(
+                sqlite.LogicalBytes,
+                sqlite.Categories.Sum(static category => category.LogicalBytes));
+            Assert.AreEqual(
+                sqlite.FileCount,
+                sqlite.Categories.Sum(static category => category.FileCount));
+            Assert.AreEqual(
+                sqlite.HardLinkAliasCount,
+                sqlite.Categories.Sum(static category => category.HardLinkAliasCount));
+            Assert.AreEqual(
+                sqlite.TypeCount,
+                sqlite.Categories.Sum(static category => category.TypeCount));
+            Assert.IsNull(sqlite.AllocatedBytes);
+            Assert.IsTrue(sqlite.Categories.Any(static category => !category.AllocatedBytes.HasValue));
         }
         finally
         {
