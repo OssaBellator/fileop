@@ -29,12 +29,7 @@ internal static class WindowsFileCopyBasicMetadata
 
     internal static Snapshot Capture(SafeFileHandle sourceHandle)
     {
-        ArgumentNullException.ThrowIfNull(sourceHandle);
-        if (sourceHandle.IsInvalid || sourceHandle.IsClosed)
-        {
-            throw new ArgumentException("The source metadata handle must be open and valid.", nameof(sourceHandle));
-        }
-
+        ValidateHandle(sourceHandle, "source", nameof(sourceHandle));
         if (!GetFileInformationByHandle(sourceHandle, out var information))
         {
             throw Win32IOException("Reading source Copy metadata");
@@ -53,33 +48,72 @@ internal static class WindowsFileCopyBasicMetadata
             SanitizeAttributes(information.FileAttributes));
     }
 
+    /// <summary>
+    /// Prevents later I/O through the destination handle from scheduling automatic
+    /// last-access/last-write timestamp updates. The explicit source timestamps are
+    /// applied after the byte copy without re-enabling those automatic updates.
+    /// </summary>
+    internal static void SuppressAutomaticTimestampUpdates(SafeFileHandle destinationHandle)
+    {
+        ValidateHandle(destinationHandle, "destination", nameof(destinationHandle));
+        var information = new FileBasicInformation
+        {
+            CreationTime = 0,
+            LastAccessTime = -1,
+            LastWriteTime = -1,
+            ChangeTime = 0,
+            FileAttributes = 0,
+        };
+        SetBasicInformation(
+            destinationHandle,
+            ref information,
+            "Suppressing automatic destination Copy timestamp updates");
+    }
+
     internal static void Apply(SafeFileHandle destinationHandle, Snapshot snapshot)
     {
-        ArgumentNullException.ThrowIfNull(destinationHandle);
-        if (destinationHandle.IsInvalid || destinationHandle.IsClosed)
-        {
-            throw new ArgumentException(
-                "The destination metadata handle must be open and valid.",
-                nameof(destinationHandle));
-        }
-
+        ValidateHandle(destinationHandle, "destination", nameof(destinationHandle));
         var information = new FileBasicInformation
         {
             CreationTime = snapshot.CreationTime,
             LastAccessTime = snapshot.LastAccessTime,
             LastWriteTime = snapshot.LastWriteTime,
-            // Zero asks Windows to leave the destination change-time field alone.
+            // Zero leaves destination change-time ownership with the filesystem.
             ChangeTime = 0,
             FileAttributes = snapshot.FileAttributes,
         };
+        SetBasicInformation(
+            destinationHandle,
+            ref information,
+            "Applying destination Copy metadata");
+    }
 
+    private static void SetBasicInformation(
+        SafeFileHandle handle,
+        ref FileBasicInformation information,
+        string action)
+    {
         if (!SetFileInformationByHandle(
-                destinationHandle,
+                handle,
                 FileInfoByHandleClass.FileBasicInfo,
                 ref information,
                 (uint)Marshal.SizeOf<FileBasicInformation>()))
         {
-            throw Win32IOException("Applying destination Copy metadata");
+            throw Win32IOException(action);
+        }
+    }
+
+    private static void ValidateHandle(
+        SafeFileHandle handle,
+        string description,
+        string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        if (handle.IsInvalid || handle.IsClosed)
+        {
+            throw new ArgumentException(
+                $"The {description} metadata handle must be open and valid.",
+                parameterName);
         }
     }
 
@@ -110,7 +144,7 @@ internal static class WindowsFileCopyBasicMetadata
         FileBasicInfo = 0,
     }
 
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
     private struct FileBasicInformation
     {
         public long CreationTime;
