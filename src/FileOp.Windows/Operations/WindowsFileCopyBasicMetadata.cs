@@ -73,6 +73,11 @@ internal static class WindowsFileCopyBasicMetadata
     internal static void Apply(SafeFileHandle destinationHandle, Snapshot snapshot)
     {
         ValidateHandle(destinationHandle, "destination", nameof(destinationHandle));
+        if (!GetFileInformationByHandle(destinationHandle, out var destinationInformation))
+        {
+            throw Win32IOException("Reading destination Copy metadata before apply");
+        }
+
         var information = new FileBasicInformation
         {
             CreationTime = snapshot.CreationTime,
@@ -80,12 +85,27 @@ internal static class WindowsFileCopyBasicMetadata
             LastWriteTime = snapshot.LastWriteTime,
             // Zero leaves destination change-time ownership with the filesystem.
             ChangeTime = 0,
-            FileAttributes = snapshot.FileAttributes,
+            // FileBasicInfo replaces the settable basic-attribute subset. Merge the
+            // copied safe bits over the destination's current attributes so storage
+            // state that belongs to the destination is not accidentally normalized.
+            FileAttributes = MergeDestinationAttributes(
+                destinationInformation.FileAttributes,
+                snapshot.FileAttributes),
         };
         SetBasicInformation(
             destinationHandle,
             ref information,
             "Applying destination Copy metadata");
+    }
+
+    internal static uint MergeDestinationAttributes(
+        uint destinationAttributes,
+        uint sourceAttributes)
+    {
+        var destinationOwned = destinationAttributes & ~(PreservedAttributeMask | FileAttributeNormal);
+        var sourcePreserved = sourceAttributes & PreservedAttributeMask;
+        var merged = destinationOwned | sourcePreserved;
+        return merged == 0 ? FileAttributeNormal : merged;
     }
 
     private static void SetBasicInformation(
