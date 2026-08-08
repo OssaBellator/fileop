@@ -6,7 +6,7 @@ namespace FileOp.Core.Indexing.Service;
 
 public static class IndexingServiceProtocol
 {
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
