@@ -17,8 +17,8 @@ namespace FileOp.Windows.Operations;
 /// </summary>
 public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitive
 {
-    private const uint FileReadData = 0x0001;
-    private const uint FileWriteData = 0x0002;
+    private const uint GenericRead = 0x80000000;
+    private const uint GenericWrite = 0x40000000;
     private const uint FileTraverse = 0x0020;
     private const uint FileReadAttributes = 0x0080;
     private const uint Synchronize = 0x00100000;
@@ -52,12 +52,27 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
     private static IFileCopyMutationLease CopyNewFile(
         FileOperationExecutionValidationItem validation)
     {
+        var rootBinding = validation.MutationRootBinding
+            ?? throw new InvalidOperationException(
+                "The validation item is not bound to canonical source/destination roots.");
+        var expectedSourceDirectoryIdentity = rootBinding.SourceDirectoryIdentity
+            ?? throw new InvalidOperationException("The validated source directory has no stable identity.");
+        var expectedDestinationDirectoryIdentity = rootBinding.DestinationDirectoryIdentity
+            ?? throw new InvalidOperationException("The validated destination directory has no stable identity.");
+
         var sourceCanonicalPath = NormalizeForComparison(validation.Source.CanonicalPath);
         var destinationCanonicalPath = NormalizeForComparison(validation.Destination.CanonicalPath);
         var sourceParentPath = Path.GetDirectoryName(sourceCanonicalPath)
             ?? throw new InvalidOperationException("The validated source has no canonical parent directory.");
         var destinationParentPath = Path.GetDirectoryName(destinationCanonicalPath)
             ?? throw new InvalidOperationException("The validated destination has no canonical parent directory.");
+        if (!PathsEqual(sourceParentPath, rootBinding.CanonicalSourceDirectoryPath) ||
+            !PathsEqual(destinationParentPath, rootBinding.CanonicalDestinationDirectoryPath))
+        {
+            throw new InvalidOperationException(
+                "The validation item's canonical leaf parents do not match its bound canonical roots.");
+        }
+
         var sourceLeafName = Path.GetFileName(sourceCanonicalPath);
         var destinationLeafName = Path.GetFileName(destinationCanonicalPath);
         var expectedSourceIdentity = validation.Source.Identity
@@ -70,15 +85,23 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
         try
         {
             sourceDirectory = OpenDirectoryHandle(sourceParentPath);
-            ValidateDirectoryHandle(sourceDirectory, sourceParentPath, "source");
+            ValidateDirectoryHandle(
+                sourceDirectory,
+                sourceParentPath,
+                expectedSourceDirectoryIdentity,
+                "source");
 
             destinationDirectory = OpenDirectoryHandle(destinationParentPath);
-            ValidateDirectoryHandle(destinationDirectory, destinationParentPath, "destination");
+            ValidateDirectoryHandle(
+                destinationDirectory,
+                destinationParentPath,
+                expectedDestinationDirectoryIdentity,
+                "destination");
 
             sourceFile = OpenRelativeFile(
                 sourceDirectory,
                 sourceLeafName,
-                FileReadData | FileReadAttributes | Synchronize,
+                GenericRead | FileReadAttributes | Synchronize,
                 FileShare.Read,
                 FileOpen,
                 FileSequentialOnly | FileSynchronousIoNonAlert | FileNonDirectoryFile | FileOpenReparsePoint,
@@ -92,7 +115,7 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
             destinationFile = OpenRelativeFile(
                 destinationDirectory,
                 destinationLeafName,
-                FileWriteData | FileReadAttributes | Synchronize,
+                GenericWrite | FileReadAttributes | Synchronize,
                 FileShare.Read,
                 FileCreate,
                 FileSequentialOnly | FileSynchronousIoNonAlert | FileNonDirectoryFile | FileOpenReparsePoint,
@@ -150,10 +173,15 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
             validation.Destination.State != FileOperationCanonicalPathState.Missing ||
             validation.Destination.Identity.HasValue ||
             string.IsNullOrWhiteSpace(validation.Source.CanonicalPath) ||
-            string.IsNullOrWhiteSpace(validation.Destination.CanonicalPath))
+            string.IsNullOrWhiteSpace(validation.Destination.CanonicalPath) ||
+            validation.MutationRootBinding is not
+            {
+                SourceDirectoryIdentity: not null,
+                DestinationDirectoryIdentity: not null,
+            })
         {
             throw new ArgumentException(
-                "Windows Copy mutation requires one freshly validated ready file with a stable source identity and missing destination.",
+                "Windows Copy mutation requires one freshly validated ready file bound to stable canonical source/destination roots.",
                 nameof(validation));
         }
 
@@ -195,6 +223,7 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
     private static void ValidateDirectoryHandle(
         SafeFileHandle handle,
         string expectedCanonicalPath,
+        FileIdentity expectedIdentity,
         string description)
     {
         var information = GetInformation(handle, description + " directory");
@@ -210,6 +239,12 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
         {
             throw new IOException(
                 $"The {description} canonical parent changed before Copy. Expected '{expectedCanonicalPath}', got '{actualPath}'.");
+        }
+
+        if (ToIdentity(information) != expectedIdentity)
+        {
+            throw new IOException(
+                $"The {description} canonical parent identity changed before Copy.");
         }
     }
 
@@ -335,6 +370,11 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
 
                 throw new IOException(
                     $"NtCreateFile for relative leaf '{leafName}' failed with NTSTATUS 0x{unchecked((uint)status):X8}.");
+            }
+
+            if (rawHandle == IntPtr.Zero || rawHandle == new IntPtr(-1))
+            {
+                throw new IOException("NtCreateFile returned success without a valid file handle.");
             }
 
             createInformation = ioStatus.Information.ToUInt64();
