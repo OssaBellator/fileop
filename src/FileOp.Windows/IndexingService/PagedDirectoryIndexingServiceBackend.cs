@@ -69,10 +69,9 @@ public sealed class PagedDirectoryIndexingServiceBackend : IIndexingServiceBacke
 
         try
         {
-            using var index = new SqliteFileIndex(databasePath);
+            var browser = new SqliteFileDirectoryBrowser(databasePath);
             var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(volume);
-            var checkpoint = await index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
-            if (checkpoint is null)
+            if (!await browser.HasCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false))
             {
                 throw new IndexingServiceException(
                     IndexingServiceErrorCode.SnapshotRequired,
@@ -80,7 +79,13 @@ public sealed class PagedDirectoryIndexingServiceBackend : IIndexingServiceBacke
                     canRetry: true);
             }
 
-            var browser = new SqliteFileDirectoryBrowser(databasePath);
+            if (!await browser.DirectoryExistsAsync(request.DirectoryPath, cancellationToken).ConfigureAwait(false))
+            {
+                throw new IndexingServiceException(
+                    IndexingServiceErrorCode.InvalidRequest,
+                    $"{request.DirectoryPath} is not an indexed directory on {volume.RootPath}.");
+            }
+
             var page = await browser.BrowseDirectoryAsync(
                 request.DirectoryPath,
                 request.PageSize,
