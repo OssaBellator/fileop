@@ -247,6 +247,9 @@ def check_repository(root: Path) -> int:
         "<EnableNETAnalyzers>false</EnableNETAnalyzers>",
         "<NuGetAudit>false</NuGetAudit>",
         "shutil.copy2(helper",
+        "SanitizeAttributes",
+        "MergeDestinationAttributes",
+        "implementationChecks",
         "Marshal.SizeOf(basic)",
         "Marshal.OffsetOf(type, field)",
         "DllImportAttribute",
@@ -263,7 +266,7 @@ def check_repository(root: Path) -> int:
 
     assert "verify_copy_basic_metadata_dotnet.py" in windows_wrapper
     assert "WindowsFileCopyBasicMetadataInteropTests" in windows_wrapper
-    return 65
+    return 68
 
 
 C_PROBE = r"""
@@ -301,7 +304,11 @@ def run_clang_probe() -> int:
     clang = shutil.which("clang")
     if clang is None:
         raise RuntimeError("--clang requested but clang was not found")
-    targets = ("x86_64-pc-windows-msvc", "i686-pc-windows-msvc")
+    targets = (
+        "x86_64-pc-windows-msvc",
+        "i686-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+    )
     with tempfile.TemporaryDirectory(prefix="fileop-copy-metadata-abi-") as temp_dir:
         source = Path(temp_dir) / "probe.c"
         source.write_text(C_PROBE, encoding="utf-8")
@@ -321,7 +328,11 @@ def run_clang_probe() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--clang", action="store_true", help="also cross-compile x64/x86 Windows COFF ABI probes")
+    parser.add_argument(
+        "--clang",
+        action="store_true",
+        help="also cross-compile x64/x86/ARM64 Windows COFF ABI probes",
+    )
     parser.add_argument("--self-test-only", action="store_true")
     args = parser.parse_args()
 
@@ -332,7 +343,7 @@ def main() -> int:
         print(f"PASS Copy basic metadata C#/PInvoke source contract: {source_checks} checks")
     if args.clang:
         clang_checks = run_clang_probe()
-        print(f"PASS Copy basic metadata x64/x86 Windows COFF ABI probe: {clang_checks} checks")
+        print(f"PASS Copy basic metadata x64/x86/ARM64 Windows COFF ABI probe: {clang_checks} checks")
     return 0
 
 
