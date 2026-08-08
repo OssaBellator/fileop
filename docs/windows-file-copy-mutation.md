@@ -86,21 +86,23 @@ The existing PowerShell wrapper remains available and runs the same Copy-focused
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-The offline gate includes the executor state/lease model, the Windows namespace/identity model, `verify_copy_basic_metadata.py` and `verify_copy_basic_metadata_abi.py`. The metadata verifier fuzzes both the preserved source-attribute mask and destination-owned settable-attribute merge, rejects unsupported source storage-state flags, requires non-settable storage flags to stay out of the `FileBasicInfo` input, requires explicit destination read-attribute access, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, guards the ordering `capture -> destination create/read access -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`, and requires the concrete regression to exercise every advertised safe attribute with its expected metadata established after validation.
+Both PowerShell entry points fail early unless the `python` command actually runs Python 3, avoiding a long false start through a Windows Store alias or an incompatible interpreter.
 
-The ABI verifier independently models the unmanaged layout, guards the exact C# struct packing/field order, explicit enum/calling-convention choices, `FileBasicInfo = 0`, `DllImport`/`BOOL` marshalling signatures, timestamp sentinel buffers, exact `FileBasicInfo` buffer-size invocation and inclusion of the .NET probes in the Windows gate. If Clang is available, the same verifier additionally compiles static ABI assertions for x86, x64 and ARM64 Windows COFF targets:
+The offline gate includes the executor state/lease model, the Windows namespace/identity model, `verify_copy_basic_metadata.py` and `verify_copy_basic_metadata_abi.py`. The metadata verifier fuzzes raw 32-bit source **and destination** attribute masks, proves that only destination-owned `Temporary`/`Offline` plus the supported source fidelity bits can reach the basic-information result, rejects unsupported source/destination storage-state and unknown bits, requires explicit destination read-attribute access, requires handle-only metadata APIs, requires `-1` timestamp suppression without `-2` re-enable, guards the ordering `capture -> destination create/read access -> suppress automatic timestamps -> copy -> data flush -> metadata apply -> metadata flush -> destination identity validation`, and requires the concrete regressions to exercise every advertised safe attribute, the zero-timestamp sentinel and `FILE_ATTRIBUTE_NORMAL` clear-all behavior.
+
+The ABI verifier independently models the unmanaged layout, guards the exact C# struct packing/field order, explicit enum/calling-convention choices, `FileBasicInfo = 0`, `DllImport`/`BOOL` marshalling signatures, timestamp sentinel buffers, exact `FileBasicInfo` buffer-size invocation and inclusion of the .NET probes in the Windows gate. Its Windows COFF probe models `LARGE_INTEGER` as the native union shape, derives its assertion count from the probe source and compiles with warnings-as-errors for x86, x64 and ARM64:
 
 ```text
 python tools/verify_copy_basic_metadata_abi.py --repo-root . --clang
 ```
 
-A separate package-free probe closes more of the gap on any Linux, macOS or Windows machine that already has a .NET 10 SDK. It copies the actual `WindowsFileCopyBasicMetadata.cs` into a temporary `net10.0` project with no package references, compiles it, directly executes the real C# sanitization/merge logic for **148,304 deterministic cases**, then uses the .NET runtime marshaller/reflection APIs to verify structure sizes/offsets, the `FileBasicInfo` enum value and P/Invoke signatures without invoking `kernel32`:
+A separate package-free probe closes more of the gap on any Linux, macOS or Windows machine that already has a .NET 10 SDK. It copies the actual `WindowsFileCopyBasicMetadata.cs` into a temporary `net10.0` project with no package references, restores from an intentionally empty local package source, compiles it, directly executes the real C# sanitization/merge logic across the full 16-bit source-mask space plus deterministic raw 32-bit source and destination fuzzing and exhaustive known-bit combinations, then uses the .NET runtime marshaller/reflection APIs to verify structure sizes/offsets, the `FileBasicInfo` enum value and P/Invoke signatures without invoking `kernel32`:
 
 ```text
 python tools/verify_copy_basic_metadata_dotnet.py --repo-root .
 ```
 
-The focused Windows gate runs that package-free compiler/interop probe first, then performs the real Windows build and native regressions. Run it on Windows with Python and the .NET 10 SDK. PowerShell 7 remains supported:
+The focused Windows gate runs that package-free compiler/implementation/interop probe first, then performs the real Windows build and native regressions. Run it on Windows with Python and the .NET 10 SDK. PowerShell 7 remains supported:
 
 ```powershell
 pwsh -File tools/test-windows-copy-local.ps1
@@ -114,7 +116,7 @@ tools\test-windows-copy-local.cmd
 
 The `.cmd` launcher runs `powershell.exe` with a process-local execution-policy override and delegates to the same `.ps1` gate. The gate first runs the zero-Actions property/source models unless `-SkipOfflineModels` is supplied, runs the package-free .NET implementation/interop probe, builds `FileOp.Core` and `FileOp.Windows` in Release, and runs the focused action-history, Copy-executor, mutation-primitive, metadata and interop-reflection test classes. None of these commands invoke GitHub Actions.
 
-Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported source-attribute filtering, destination-owned settable-attribute merging, destination `Temporary` preservation through the real Win32 helper, omission of non-settable storage flags from `FileBasicInfo`, .NET/native interop layout/signature checks, and metadata preservation through the concrete mutation primitive after the mutation lease is disposed.
+Real Windows regression tests cover content copying, exclusive collision refusal, source-file replacement, source-root replacement, destination-root replacement, invalid root identity, lease-held destination deletion, lease-held parent-directory rename blocking, basic timestamp/attribute round-tripping, unsupported source-attribute filtering, destination-owned settable-attribute merging, destination `Temporary` preservation through the real Win32 helper, the distinction between `FileAttributes = 0` and `FILE_ATTRIBUTE_NORMAL` clear-all behavior, omission of non-settable storage flags from `FileBasicInfo`, .NET/native interop layout/signature checks, and metadata preservation through the concrete mutation primitive after the mutation lease is disposed.
 
 ## Next boundary
 
