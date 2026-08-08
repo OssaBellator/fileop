@@ -51,6 +51,7 @@ const uint NotContentIndexed = 0x00002000;
 const uint Encrypted = 0x00004000;
 const uint IntegrityStream = 0x00008000;
 const uint Preserved = ReadOnly | Hidden | SystemAttribute | Archive | NotContentIndexed;
+const uint DestinationOwned = Temporary | Offline;
 
 static void Require(bool condition, string message)
 {
@@ -178,6 +179,25 @@ for (var safeSelection = 0; safeSelection < (1 << safeBits.Length); safeSelectio
             implementationChecks++;
         }
     }
+}
+
+uint mergeFuzz = 0x51A7E123;
+for (var index = 0; index < 50_000; index++)
+{
+    mergeFuzz = unchecked((mergeFuzz * 1664525u) + 1013904223u);
+    var source = mergeFuzz;
+    mergeFuzz = unchecked((mergeFuzz * 1664525u) + 1013904223u);
+    var destination = mergeFuzz;
+    var actual = WindowsFileCopyBasicMetadata.MergeDestinationAttributes(destination, source);
+    var expected = (destination & DestinationOwned) | (source & Preserved);
+    if (expected == 0)
+    {
+        expected = Normal;
+    }
+    Require(
+        actual == expected,
+        $"MergeDestinationAttributes fuzz mismatch: source=0x{source:X8}, destination=0x{destination:X8}.");
+    implementationChecks++;
 }
 Console.WriteLine($"PASS: actual C# metadata mask/merge implementation: {implementationChecks:N0} deterministic checks.");
 
