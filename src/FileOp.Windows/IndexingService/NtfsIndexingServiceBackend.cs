@@ -235,12 +235,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         var context = ResolveContext(new IndexingVolumeRequest(
             request.VolumeIdentity,
             request.VolumeRootPath));
-        if (!IsPathWithinRoot(request.DirectoryPath, context.Volume.RootPath))
-        {
-            throw new IndexingServiceException(
-                IndexingServiceErrorCode.InvalidRequest,
-                $"{request.DirectoryPath} is outside the requested volume root {context.Volume.RootPath}.");
-        }
+        ValidateStoragePath(request.DirectoryPath, context);
 
         if (!await context.OperationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
@@ -255,23 +250,50 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
                 throw CreateBusyException(context, "another FileOp indexing process is maintaining it");
             }
 
-            var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
-            var checkpoint = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
-            if (checkpoint is null)
-            {
-                context.RequiresSnapshot = true;
-                throw new IndexingServiceException(
-                    IndexingServiceErrorCode.SnapshotRequired,
-                    $"{context.Volume.RootPath} has no valid durable NTFS checkpoint for storage analysis.",
-                    canRetry: true);
-            }
-
-            context.RequiresSnapshot = false;
+            await EnsureStorageCheckpointAsync(context, cancellationToken).ConfigureAwait(false);
             var analysis = await context.Analytics.AnalyzeDirectoryAsync(
                 request.DirectoryPath,
                 request.MaxEntries,
                 cancellationToken).ConfigureAwait(false);
             return new IndexingStorageAnalysisResponse(analysis);
+        }
+        finally
+        {
+            context.OperationGate.Release();
+        }
+    }
+
+    public async ValueTask<IndexingStorageFileTypeResponse> AnalyzeStorageTypesAsync(
+        IndexingStorageFileTypeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ThrowIfDisposed();
+
+        var context = ResolveContext(new IndexingVolumeRequest(
+            request.VolumeIdentity,
+            request.VolumeRootPath));
+        ValidateStoragePath(request.DirectoryPath, context);
+
+        if (!await context.OperationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            throw CreateBusyException(context);
+        }
+
+        try
+        {
+            using var processLease = context.ProcessGate.TryAcquireRead();
+            if (processLease is null)
+            {
+                throw CreateBusyException(context, "another FileOp indexing process is maintaining it");
+            }
+
+            await EnsureStorageCheckpointAsync(context, cancellationToken).ConfigureAwait(false);
+            var analysis = await context.Analytics.AnalyzeFileTypesAsync(
+                request.DirectoryPath,
+                request.MaxTypes,
+                cancellationToken).ConfigureAwait(false);
+            return new IndexingStorageFileTypeResponse(analysis);
         }
         finally
         {
@@ -412,6 +434,34 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
         finally
         {
             context.OperationGate.Release();
+        }
+    }
+
+    private static async ValueTask EnsureStorageCheckpointAsync(
+        VolumeContext context,
+        CancellationToken cancellationToken)
+    {
+        var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(context.Volume);
+        var checkpoint = await context.Index.GetCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false);
+        if (checkpoint is null)
+        {
+            context.RequiresSnapshot = true;
+            throw new IndexingServiceException(
+                IndexingServiceErrorCode.SnapshotRequired,
+                $"{context.Volume.RootPath} has no valid durable NTFS checkpoint for storage analysis.",
+                canRetry: true);
+        }
+
+        context.RequiresSnapshot = false;
+    }
+
+    private static void ValidateStoragePath(string directoryPath, VolumeContext context)
+    {
+        if (!IsPathWithinRoot(directoryPath, context.Volume.RootPath))
+        {
+            throw new IndexingServiceException(
+                IndexingServiceErrorCode.InvalidRequest,
+                $"{directoryPath} is outside the requested volume root {context.Volume.RootPath}.");
         }
     }
 

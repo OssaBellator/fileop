@@ -10,6 +10,10 @@ public sealed class StorageAnalyticsBenchmarks : IDisposable
 {
     private const int ProjectCount = 1_000;
     private const int BucketsPerProject = 16;
+    private static readonly string[] Extensions = [
+        ".bin", ".jpg", ".mp4", ".zip", ".pdf", ".dll", ".cs", ".db",
+    ];
+
     private SqliteFileIndex? _index;
     private SqliteStorageAnalytics? _analytics;
     private string? _databasePath;
@@ -51,11 +55,13 @@ public sealed class StorageAnalyticsBenchmarks : IDisposable
                 var bucket = (ordinal / ProjectCount) % BucketsPerProject;
                 var parentPath = $@"C:\synthetic\project-{project:D4}\bucket-{bucket:D2}";
                 var length = 1_024L + ((ordinal * 7_919L) % (64L * 1024 * 1024));
+                var extension = Extensions[ordinal % Extensions.Length];
+                var name = $"file-{ordinal:D7}{extension}";
                 records[item] = new FileRecord(
-                    $@"{parentPath}\file-{ordinal:D7}.bin",
-                    $"file-{ordinal:D7}.bin",
+                    $@"{parentPath}\{name}",
+                    name,
                     parentPath,
-                    ".bin",
+                    extension,
                     length,
                     false,
                     DateTimeOffset.UnixEpoch,
@@ -80,6 +86,20 @@ public sealed class StorageAnalyticsBenchmarks : IDisposable
     public async Task<long> AnalyzeProjectAsync()
     {
         var analysis = await Analytics.AnalyzeDirectoryAsync(@"C:\synthetic\project-0042", maxEntries: 64);
+        return analysis.LogicalBytes;
+    }
+
+    [Benchmark]
+    public async Task<long> AnalyzeRootFileTypesAsync()
+    {
+        var analysis = await Analytics.AnalyzeFileTypesAsync(@"C:\synthetic", maxTypes: 128);
+        return analysis.LogicalBytes;
+    }
+
+    [Benchmark]
+    public async Task<long> AnalyzeProjectFileTypesAsync()
+    {
+        var analysis = await Analytics.AnalyzeFileTypesAsync(@"C:\synthetic\project-0042", maxTypes: 128);
         return analysis.LogicalBytes;
     }
 

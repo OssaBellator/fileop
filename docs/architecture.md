@@ -9,7 +9,7 @@ FileOp is a storage operating layer for Windows, not a generic "PC cleaner". The
 ```text
 WinUI application (asInvoker)
       |
-      | native-first search coordinator
+      | native-first search/storage coordinator
       |   \-- bounded crawler fallback
       |
       | bounded, versioned named-pipe protocol
@@ -26,7 +26,7 @@ FileOp.Core                   FileOp.Windows
   |-- index change batches      |-- file-ID metadata hydration
   |-- SQLite persistence        |-- hard-link namespace expansion
   |-- service protocol DTOs     |-- namespace synchronization
-  |-- storage snapshots         |-- snapshot seeding
+  |-- storage analytics         |-- snapshot seeding
   |-- fallback crawler          |-- service backend / pipe transport
       |                             |
       +--------------+--------------+
@@ -37,12 +37,12 @@ FileOp.Core                   FileOp.Windows
 
 FileOp.Benchmarks
       |
-      +---- synthetic persistent-index search baselines
+      +---- synthetic persistent-index search/storage baselines
 ```
 
 `FileOp.Core` stays independent of how records are discovered. Windows-specific filesystem control codes, P/Invoke and named-pipe process-boundary implementation live in `FileOp.Windows`. `FileOp.Indexer` is a thin host around that Windows backend. Network, removable and non-NTFS providers can therefore use different implementations without contaminating the search/domain layer.
 
-`FileOp.App` now consumes the reviewed indexer boundary for its primary search path. The first desktop cutover intentionally orchestrates the NTFS volume containing the user's profile and retains the bounded crawler as an explicit fallback. This makes the native path useful without making unsupported filesystems, missing helper binaries or privilege limitations fatal to search.
+`FileOp.App` consumes the reviewed indexer boundary for its primary Search and directory-Storage paths. First-run orchestration intentionally targets the NTFS volume containing the user's profile and retains the bounded crawler as an explicit fallback. This makes the native path useful without making unsupported filesystems, missing helper binaries or privilege limitations fatal to the desktop experience.
 
 ## NTFS ingestion strategy
 
@@ -119,43 +119,80 @@ Raw NTFS volume serial numbers are only 32-bit and can collide across disks. Whe
 
 Protocol requests also carry the current root path because persisted namespace paths are absolute. A drive-letter change therefore uses a fresh per-root database even though the underlying volume identity stays stable, rather than serving paths under the previous mount letter.
 
-## Search performance strategy
+## Shared storage analytics
 
-SQLite is currently both the durable metadata store and the reference implementation of filename/path query semantics. It is intentionally not assumed to be the final Everything-class substring-search structure.
+Storage analytics reads the same metadata rows as Search; it never launches an independent recursive scan merely to calculate sizes or breakdowns.
+
+`IStorageAnalytics` currently exposes:
+
+- `AnalyzeDirectoryAsync` — direct-child rows with recursive subtree totals for treemap/drill-down use;
+- `AnalyzeFileTypesAsync` — normalized extension groups over the same subtree.
+
+Both SQLite and crawler-backed in-memory indexes implement the same contracts. The crawler fallback therefore reuses its completed Search snapshot rather than crawling again when Storage is opened.
+
+### Logical versus physical accounting
+
+Namespace and physical storage are deliberately separate concepts:
+
+- every visible file name contributes logical bytes;
+- stable hard-linked names share one physical allocation;
+- within an analysis root, physical allocation is attributed once to the case-insensitive lexicographically first path for that `FileIdentity`;
+- non-canonical hard-link rows increment `HardLinkAliasCount` instead of adding allocated bytes;
+- if a physical allocation owner has unknown allocated size, the relevant aggregate remains physically unknown instead of substituting logical size as exact disk usage.
+
+The same rule applies across extension groups. A physical file named both `shared.jpg` and `shared.png` contributes logical bytes to both namespace groups, but its allocation is counted once under the canonical path's extension. This keeps type totals additive to the root while preserving what names the user can actually see.
+
+### File types and categories
+
+The type engine groups by the persisted normalized extension. It does not open content or perform MIME sniffing. Each returned extension receives a deterministic metadata-only category such as Documents, Images, Video, Audio, Archives, Applications, Code, Data, DiskImages, Fonts, NoExtension or Other.
+
+Ambiguous extensions use one stable policy rather than pretending certainty; `.ts`, for example, is classified as TypeScript/Code while `.mts` and `.m2ts` remain video transport-stream extensions.
+
+Whole-root logical/physical/file/alias totals and the complete distinct `TypeCount` are calculated before `MaxTypes` truncates the returned list. A category rollup is not inferred from a truncated top-N list; a future exact category-summary API should aggregate categories before applying a result limit.
+
+## Search and analytics performance strategy
+
+SQLite is currently both the durable metadata store and the reference implementation of filename/path query and recursive storage semantics. It is intentionally not assumed to be the final Everything/WizTree-class specialized structure.
 
 `FileOp.Benchmarks` creates deterministic 100,000- and 1,000,000-record synthetic indexes and measures:
 
 - rare filename substring search;
 - common path substring search;
-- extension + size filtering.
+- extension + size filtering;
+- root/project directory aggregation;
+- root/project file-type aggregation.
 
-The benchmark project is compiled in CI but long benchmark runs remain manual so normal validation stays fast. The results will provide a baseline for a specialized filename/path structure that can sit in front of or beside the durable SQLite metadata store without changing `IFileIndex` query semantics.
+Long benchmark runs remain manual. Their results provide baselines for specialized search structures and, if needed, incrementally maintained directory/type aggregates without changing public index/analytics semantics.
 
 ## Indexing service boundary
 
 `FileOp.Indexer` owns native NTFS indexing and persistent index writes for a desktop session. It accepts exactly one authenticated client and exits after that client disconnects or its launching desktop process exits. It is not an always-running Windows service.
 
-Version 1 exposes only:
+Protocol v3 exposes only:
 
 - protocol/elevation handshake;
 - NTFS volume and status discovery;
 - fresh snapshot rebuild for one volume;
 - one incremental USN synchronization batch for one volume;
-- search across valid attached-volume indexes.
+- search across valid attached-volume indexes;
+- read-only directory storage aggregation;
+- read-only file-type storage aggregation.
+
+The protocol progressed deliberately: v1 established indexing/search, v2 added `AnalyzeStorage`, and v3 adds `AnalyzeStorageTypes`. New wire operations advance the version so desktop/helper binaries cannot silently disagree about the valid operation set.
 
 The pipe protocol uses a random per-session name, `PipeOptions.CurrentUserOnly`, exact connected-client PID verification, non-empty request IDs, strict protocol-version validation and an 8 MiB frame cap. Required DTO fields are validated after deserialization rather than trusting serializer defaults. If any response would exceed the frame cap, the server substitutes a retryable `ResponseTooLarge` error and keeps the session alive.
 
-An interrupted exchange is different. If a request may have been written without the matching response being fully consumed, the client faults that connection rather than risking response/request desynchronization. The desktop therefore does not cancel active service searches merely because the user typed a newer query.
+An interrupted exchange is different. If a request may have been written without the matching response being fully consumed, the client faults that connection rather than risking response/request desynchronization. The desktop therefore does not cancel active service reads merely because newer UI work superseded them.
 
 ### Per-volume persistence and validity
 
 Each NTFS volume/root pair has a separate SQLite database. This avoids the current snapshot indexer's `ClearAsync` behavior allowing a rebuild of one drive to erase another drive's data.
 
-A volume is searchable only when it has a durable checkpoint and is not undergoing a rebuild. Search takes the volume operation gate briefly so a rebuild cannot begin between checkpoint validation and the read. Other volumes remain searchable while one volume is busy.
+A volume is eligible for service-backed Search or Storage only when it has a durable checkpoint and is not undergoing maintenance. Reads acquire the process-local operation gate and a shared cross-process file lease before validating the durable checkpoint. Rebuild and journal synchronization hold the exclusive maintenance lease across the entire semantic operation. A partial rebuild therefore cannot be observed by Search, directory analytics or file-type analytics.
 
-If journal synchronization detects that a fresh snapshot is required, the service deletes that volume's durable checkpoint before returning `SnapshotRequired`. That makes invalidation persistent across helper restarts; stale data cannot become searchable merely because the process restarted.
+If journal synchronization detects that a fresh snapshot is required, the service deletes that volume's durable checkpoint before returning `SnapshotRequired`. That makes invalidation persistent across helper restarts; stale data cannot become eligible merely because the process restarted.
 
-The current rebuild path does not yet use a shadow database. The affected volume is therefore temporarily omitted from search during a rebuild. A future shadow-build + atomic-swap design can remove that per-volume outage without exposing partial snapshots.
+The current rebuild path does not yet use a shadow database. The affected volume is therefore temporarily omitted from reads during a rebuild. A future shadow-build + atomic-swap design can remove that per-volume outage without exposing partial snapshots.
 
 ### Privilege policy
 
@@ -173,27 +210,31 @@ See `docs/indexing-service.md` for the detailed trust-boundary and desktop integ
 
 ## Desktop native/fallback integration
 
-The WinUI search coordinator follows a deliberately conservative state machine:
+The WinUI coordinator follows a deliberately conservative state machine:
 
 1. Resolve the adjacent indexer host and start it unelevated.
 2. Discover the NTFS volume containing the user profile.
 3. If no valid checkpoint exists, build a fresh MFT-backed snapshot.
 4. Replay `SyncVolume` repeatedly until two consecutive durable cursors stop advancing or a bounded startup catch-up budget is exhausted.
-5. Use service-backed search as soon as the primary snapshot is valid; if the startup budget is exhausted, mark the index as catching up and continue in the low-priority background loop.
+5. Use the native index as soon as the primary snapshot is valid; if the startup budget is exhausted, mark the index as catching up and continue in the low-priority background loop.
 6. Every few seconds, attempt a bounded number of journal batches only when no foreground native operation owns the gate.
-7. If a valid existing snapshot can be searched but live synchronization returns `ElevationRequired`, keep that snapshot available, mark it non-current, stop repeated permission probes and offer helper-only elevation explicitly.
+7. If a valid existing snapshot can still be read but live synchronization returns `ElevationRequired`, keep that snapshot available, mark it non-current, stop repeated permission probes and offer helper-only elevation explicitly.
 8. If the native helper/provider is unavailable, or an invalid snapshot cannot be rebuilt without elevation, build the bounded user-profile crawler fallback.
-9. If a live native session later becomes unusable or its snapshot requires an unavailable rebuild, transition back to the fallback rather than leaving the desktop search path dead.
+9. If a live native session later becomes unusable or its snapshot requires an unavailable rebuild, transition back to the fallback rather than leaving the desktop path dead.
 
 The first cutover only orchestrates creation/maintenance of the user-profile NTFS volume. Other attached NTFS volume indexes that already have valid checkpoints can still participate in cross-volume service search. Automatic first-run orchestration for every attached disk is intentionally a later slice so the primary lifecycle can be validated before adding multi-volume startup work.
 
-### Query supersession
+The WinUI Storage page consumes directory analysis through the same native/fallback foreground gate as Search and presents summary cards, drill-down and a proportional treemap. It derives a synthetic `Other entries` tile from complete root totals when the returned direct-entry list is truncated, so omitted children do not vanish from visual accounting.
 
-A new keystroke invalidates the visible search generation immediately, but it does not cancel a service call that may already have crossed the pipe. UI searches are serialized; stale queued generations are discarded before they touch the service, and stale completed generations are discarded before rendering. Only session/window shutdown is allowed to interrupt the active exchange because that path is destroying the helper session anyway.
+The file-type engine and protocol are intentionally separated from their future WinUI presentation. The next Types/Categories UI can consume `AnalyzeStorageTypes` through this existing coordinator rather than introducing a second helper or a second filesystem scan.
+
+### Query/navigation supersession
+
+A newer UI interaction invalidates the visible generation immediately, but it does not cancel a service call that may already have crossed the pipe. Foreground reads are serialized; stale queued generations are discarded before they touch the service, and stale completed generations are discarded before rendering. Only session/window shutdown is allowed to interrupt the active exchange because that path is destroying the helper session anyway.
 
 ### UI availability
 
-Engine state is the single source of truth for whether the search box is enabled. Search input is disabled during snapshot rebuilds, fallback crawling and elevation transitions, then re-enabled only when either a native searchable snapshot or completed fallback snapshot is available. This prevents an apparently enabled search box from blocking silently behind a maintenance operation.
+Engine state is the single source of truth for foreground availability. Search/Storage controls are disabled during snapshot rebuilds, fallback crawling and elevation transitions, then re-enabled only when either a native readable snapshot or completed fallback snapshot is available. This prevents apparently enabled controls from blocking silently behind maintenance.
 
 The fallback crawler is a snapshot, not a live watcher, and is therefore represented as non-current even after its initial crawl completes.
 
@@ -208,9 +249,9 @@ NTFS volume
                                                |          v
 Other filesystem provider --------------------+    per-volume metadata
                                                       |
-                                               fast search structure
+                                               specialized indexes
                                                       |
-                                           search / analytics / cleanup
+                                    search / analytics / cleanup
 ```
 
 ### Constraints
@@ -226,9 +267,21 @@ Other filesystem provider --------------------+    per-volume metadata
 - Journal discontinuity must fail safe into a fresh snapshot, never silently skip changes.
 - Journal mutations and checkpoint advancement must be atomic.
 - Parent identity resolution failures are consistency failures, not an invitation to guess an absolute path.
-- A missing/invalid durable checkpoint means that volume is not eligible for service-backed search.
+- A missing/invalid durable checkpoint means that volume is not eligible for service-backed reads.
 - The desktop process must never become elevated merely to index storage.
-- Superseding a UI query must not cancel an already transmitted service request and desynchronize the IPC session.
+- Superseding UI work must not cancel an already transmitted service request and desynchronize the IPC session.
+- Analytics must consume the shared index rather than trigger hidden filesystem rescans.
+- Physical storage accounting must deduplicate stable hard-linked identities.
+
+## Validation strategy
+
+Hosted CI remains useful but is not the only correctness gate. FileOp also carries local/offline validation so development can continue when hosted Actions usage is unavailable:
+
+- `tools/verify_storage_ui.py` — Python-standard-library XAML/source/treemap/path checks;
+- `tools/verify_storage_types.py` — Python-standard-library SQLite semantics and protocol/source wiring checks;
+- `tools/test-local.ps1` — full Windows Core/native/indexer/tests/WinUI/bundled-helper build and real process handshake without GitHub Actions.
+
+The offline SQL verifier is deliberately tied to the exact raw SQL constant in `SqliteStorageAnalytics`: repository mode extracts the committed query and fails if it differs from the executable SQLite fixture. This prevents the no-Actions test from silently validating a stale reimplementation.
 
 ## Roadmap
 
@@ -264,7 +317,7 @@ Implemented:
 - native snapshot seeder
 - Windows-native regression/integration tests
 - synthetic 100k/1M persistent-index benchmark harness
-- versioned indexing service protocol
+- versioned indexing service protocol through v3
 - on-demand `FileOp.Indexer` process boundary
 - current-user + exact-client-PID named-pipe authentication
 - bounded responses with retryable oversized-result handling
@@ -276,7 +329,7 @@ Implemented:
 - low-priority incremental desktop synchronization
 - explicit stale-native/elevation UX
 - crawler fallback and native-to-fallback recovery path
-- bundled helper host validation in Windows CI
+- local/offline validation independent of hosted Actions
 
 Next:
 
@@ -284,7 +337,7 @@ Next:
 - benchmark the current search implementation and establish latency/memory budgets
 - specialized filename/path search structure beyond SQLite substring scans
 - explicit support policy for per-directory case-sensitive NTFS namespaces
-- optional shadow-index rebuild + atomic swap for uninterrupted per-volume search
+- optional shadow-index rebuild + atomic swap for uninterrupted per-volume reads
 - automatic first-run orchestration for additional attached NTFS volumes
 - signed-package/Authenticode verification policy for the elevated helper
 
@@ -296,11 +349,24 @@ Next:
 - collision policies, pause/resume and verification
 - action history and undo where safely possible
 
-### Milestone 4 — storage intelligence
+### Milestone 4 — storage intelligence — in progress
 
-- folder-size aggregation
-- treemap dataset
-- growth history
+Implemented:
+
+- shared-index recursive folder-size aggregation
+- hard-link-aware physical allocation accounting
+- WinUI Storage summary/drill-down/proportional treemap
+- exact omitted-entry treemap remainder
+- normalized file-type aggregation with deterministic metadata categories
+- SQLite/in-memory parity semantics
+- protocol v3 read-only file-type endpoint
+- storage analytics benchmarks and zero-Actions semantic verifiers
+
+Next:
+
+- WinUI Types/Categories presentation
+- exact category rollups aggregated before truncation
+- growth history and change attribution
 - duplicates pipeline
 - explainable cleanup recommendations
 

@@ -27,11 +27,19 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 }
 
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    throw "Python 3 is required for tools/verify_storage_ui.py."
+    throw "Python 3 is required for the offline FileOp verifiers."
 }
 
 Invoke-Step "Offline Storage UI/property verifier" {
     python tools/verify_storage_ui.py --repo-root $repoRoot
+}
+
+Invoke-Step "Offline Storage file-type verifier" {
+    python tools/verify_storage_types.py --repo-root $repoRoot
+}
+
+Invoke-Step "Offline Storage file-type randomized verifier" {
+    python tools/verify_storage_types_fuzz.py --cases 1000
 }
 
 Invoke-Step "FileOp.Core Release build" {

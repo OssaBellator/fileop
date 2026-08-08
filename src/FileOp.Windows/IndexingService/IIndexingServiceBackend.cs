@@ -33,4 +33,12 @@ public interface IIndexingServiceBackend : IDisposable
             new IndexingServiceException(
                 IndexingServiceErrorCode.InvalidRequest,
                 "This indexing backend does not support storage analytics."));
+
+    ValueTask<IndexingStorageFileTypeResponse> AnalyzeStorageTypesAsync(
+        IndexingStorageFileTypeRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromException<IndexingStorageFileTypeResponse>(
+            new IndexingServiceException(
+                IndexingServiceErrorCode.InvalidRequest,
+                "This indexing backend does not support storage file-type analytics."));
 }
