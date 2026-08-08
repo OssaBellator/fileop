@@ -215,6 +215,11 @@ public sealed partial class MainWindow
             ResetFilesPaging(clearPath: true);
         }
 
+        if (_filesLoadingGeneration != 0)
+        {
+            return;
+        }
+
         var path = _filesCurrentPath;
         if (string.IsNullOrWhiteSpace(path) || !IsPathWithinRoot(path, root))
         {
