@@ -218,10 +218,11 @@ def check_repository(root: Path) -> int:
     content_needles = (
         "DestinationRootNotVerified",
         "inspection.DestinationDirectory.IsSameRecordedRoot",
-        "inspection.DestinationDirectory.RecordedCanonicalPath",
-        "string.IsNullOrWhiteSpace(inspection.DestinationDirectory.RecordedCanonicalPath)",
-        "PathsEqual(",
+        "var recordedDirectoryPath = inspection.DestinationDirectory.RecordedCanonicalPath",
+        "string.IsNullOrWhiteSpace(recordedDirectoryPath)",
+        "PathsEqual(recordedDirectoryPath, currentDirectory.CanonicalPath)",
         "new FileContentFingerprintReadRequest(",
+        "recordedDirectoryPath",
         "Main-stream verification is skipped because the destination root is not verified",
     )
     for needle in content_needles:
@@ -241,6 +242,7 @@ def check_repository(root: Path) -> int:
         "RootUnsafeStatesAreClassifiedConservatively",
     ):
         assert test_name in source["inspection_tests"], test_name
+    assert "RecordedCanonicalPath" in source["inspection_tests"]
 
     assert "InconsistentRecordedRootPathSkipsRootBoundReader" in source["content_tests"]
 
@@ -294,7 +296,7 @@ def check_repository(root: Path) -> int:
         + len(inspection_needles)
         + len(content_needles)
         + 4
-        + 3
+        + 4
         + 1
         + 3
         + 9
