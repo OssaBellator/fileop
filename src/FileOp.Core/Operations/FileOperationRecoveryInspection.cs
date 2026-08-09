@@ -122,9 +122,11 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
             return FileOperationRecoveryDestinationStatus.ReparsePoint;
         }
 
-        if (current.State is FileOperationCanonicalPathState.Missing or
-                FileOperationCanonicalPathState.File or
-                FileOperationCanonicalPathState.Directory &&
+        var hasCanonicalLocation = current.State is
+            FileOperationCanonicalPathState.Missing or
+            FileOperationCanonicalPathState.File or
+            FileOperationCanonicalPathState.Directory;
+        if (hasCanonicalLocation &&
             !PathsEqual(entry.CanonicalDestinationPath, current.CanonicalPath))
         {
             return FileOperationRecoveryDestinationStatus.Redirected;
