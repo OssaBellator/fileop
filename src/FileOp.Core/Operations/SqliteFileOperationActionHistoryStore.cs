@@ -263,23 +263,89 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         }
     }
 
-    public ValueTask<FileOperationActionHistory> MarkMutationRecoveryRequiredAsync(
+    public async ValueTask<FileOperationActionHistory> MarkMutationRecoveryRequiredAsync(
         Guid operationId,
         int ordinal,
         FileOperationFailure failure,
         DateTimeOffset failedAtUtc,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FileIdentity? destinationIdentity = null)
     {
         ThrowIfDisposed();
         ValidateFailure(failure);
-        return TransitionEntryAsync(
-            operationId,
-            ordinal,
-            FileOperationActionEntryState.MutationStarted,
-            FileOperationActionEntryState.RecoveryRequired,
-            NormalizeUtc(failedAtUtc),
-            failure,
-            cancellationToken);
+        ValidateOrdinal(ordinal);
+        var operationKey = FormatOperationId(operationId);
+        var failedAt = NormalizeUtc(failedAtUtc);
+
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE file_operation_action_entries
+                SET state = @recovery_required,
+                    completed_utc_ticks = @completed_utc_ticks,
+                    destination_volume_serial = @destination_volume_serial,
+                    destination_file_reference = @destination_file_reference,
+                    undo_kind = @undo_kind,
+                    failure_code = @failure_code,
+                    failure_message = @failure_message,
+                    failure_path = @failure_path,
+                    failure_retryable = @failure_retryable
+                WHERE operation_id = @operation_id
+                  AND ordinal = @ordinal
+                  AND state = @mutation_started
+                  AND EXISTS(
+                      SELECT 1
+                      FROM file_operation_actions AS action
+                      WHERE action.operation_id = @operation_id
+                        AND action.terminal_state IS NULL
+                        AND action.kind = @copy_kind
+                  );
+                """;
+            command.Parameters.AddWithValue(
+                "@recovery_required",
+                (int)FileOperationActionEntryState.RecoveryRequired);
+            command.Parameters.AddWithValue("@completed_utc_ticks", ToUtcTicks(failedAt));
+            command.Parameters.Add("@destination_volume_serial", SqliteType.Integer).Value =
+                destinationIdentity is { } identity
+                    ? ToSqliteInteger(identity.VolumeSerialNumber)
+                    : DBNull.Value;
+            command.Parameters.Add("@destination_file_reference", SqliteType.Integer).Value =
+                destinationIdentity is { } reference
+                    ? ToSqliteInteger(reference.FileReferenceNumber)
+                    : DBNull.Value;
+            command.Parameters.AddWithValue("@undo_kind", (int)FileOperationUndoKind.None);
+            SetFailureParameters(command, failure);
+            command.Parameters.AddWithValue("@operation_id", operationKey);
+            command.Parameters.AddWithValue("@ordinal", ordinal);
+            command.Parameters.AddWithValue(
+                "@mutation_started",
+                (int)FileOperationActionEntryState.MutationStarted);
+            command.Parameters.AddWithValue("@copy_kind", (int)FileOperationKind.Copy);
+
+            var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            if (changed != 1)
+            {
+                throw new InvalidOperationException(
+                    "A Copy entry can require recovery only after MutationStarted while its operation remains active.");
+            }
+
+            var history = await LoadRequiredAsync(
+                connection,
+                operationId,
+                cancellationToken,
+                transaction).ConfigureAwait(false);
+            transaction.Commit();
+            return history;
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
     }
 
     public async ValueTask<FileOperationActionHistory> CompleteAsync(

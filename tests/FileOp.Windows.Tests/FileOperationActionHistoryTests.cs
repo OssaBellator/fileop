@@ -54,6 +54,76 @@ public sealed class FileOperationActionHistoryTests
     }
 
     [TestMethod]
+    public async Task RecoveryRequiredPersistsVerifiedDestinationIdentityWithoutUndoCandidate()
+    {
+        using var fixture = new HistoryFixture();
+        var validation = CreateValidation(includeSkippedEntry: false);
+        var destinationIdentity = new FileIdentity(ulong.MaxValue - 41, ulong.MaxValue - 59);
+        var failure = new FileOperationFailure(
+            "CopyCommitBarrierFailed",
+            "Copy completed but durable commit persistence failed.",
+            validation.Items[0].Destination.CanonicalPath,
+            Retryable: false);
+
+        using (var store = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath))
+        {
+            await store.BeginAsync(validation, DateTimeOffset.UtcNow);
+            await store.MarkMutationStartedAsync(validation.Plan.Id, 0, DateTimeOffset.UtcNow);
+            var recovered = await store.MarkMutationRecoveryRequiredAsync(
+                validation.Plan.Id,
+                0,
+                failure,
+                DateTimeOffset.UtcNow,
+                destinationIdentity: destinationIdentity);
+
+            Assert.AreEqual(FileOperationActionEntryState.RecoveryRequired, recovered.Entries[0].State);
+            Assert.AreEqual(destinationIdentity, recovered.Entries[0].DestinationIdentity);
+            Assert.AreEqual(FileOperationUndoKind.None, recovered.Entries[0].UndoKind);
+            Assert.IsFalse(recovered.Entries[0].IsUndoCandidate);
+            Assert.AreEqual(failure, recovered.Entries[0].Failure);
+
+            await store.CompleteAsync(
+                validation.Plan.Id,
+                FileOperationActionTerminalState.RecoveryRequired,
+                DateTimeOffset.UtcNow);
+        }
+
+        using var reopened = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath);
+        var persisted = await reopened.GetAsync(validation.Plan.Id);
+        Assert.IsNotNull(persisted);
+        Assert.AreEqual(FileOperationActionTerminalState.RecoveryRequired, persisted.TerminalState);
+        Assert.AreEqual(destinationIdentity, persisted.Entries[0].DestinationIdentity);
+        Assert.AreEqual(FileOperationUndoKind.None, persisted.Entries[0].UndoKind);
+        Assert.AreEqual(0, persisted.UndoCandidateEntries.Count);
+    }
+
+    [TestMethod]
+    public async Task RecoveryRequiredWithoutVerifiedIdentityRemainsIdentityless()
+    {
+        using var fixture = new HistoryFixture();
+        var validation = CreateValidation(includeSkippedEntry: false);
+        var failure = new FileOperationFailure(
+            "CopyMutationFailed",
+            "Copy failed after crossing the mutation barrier.",
+            validation.Items[0].Destination.CanonicalPath,
+            Retryable: false);
+
+        using var store = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath);
+        await store.BeginAsync(validation, DateTimeOffset.UtcNow);
+        await store.MarkMutationStartedAsync(validation.Plan.Id, 0, DateTimeOffset.UtcNow);
+        var recovered = await store.MarkMutationRecoveryRequiredAsync(
+            validation.Plan.Id,
+            0,
+            failure,
+            DateTimeOffset.UtcNow);
+
+        Assert.AreEqual(FileOperationActionEntryState.RecoveryRequired, recovered.Entries[0].State);
+        Assert.IsNull(recovered.Entries[0].DestinationIdentity);
+        Assert.AreEqual(FileOperationUndoKind.None, recovered.Entries[0].UndoKind);
+        Assert.IsFalse(recovered.Entries[0].IsUndoCandidate);
+    }
+
+    [TestMethod]
     public async Task MutationStartedSurvivesAsRecoverySignal()
     {
         using var fixture = new HistoryFixture();

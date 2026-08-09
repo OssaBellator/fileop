@@ -50,7 +50,7 @@ def run_case(case: Case) -> tuple[str, list[str], int]:
         if case.mutation_failure == ordinal:
             events.extend([
                 f"mutation-failed:{ordinal}",
-                f"history:recovery:{ordinal}",
+                f"history:recovery:{ordinal}:none",
                 "history:complete:recovery",
                 "state:failed",
             ])
@@ -59,7 +59,7 @@ def run_case(case: Case) -> tuple[str, list[str], int]:
         events.extend([f"mutation:{ordinal}", f"lease:acquire:{ordinal}"])
         if case.receipt_failure == ordinal:
             events.extend([
-                f"history:recovery:{ordinal}",
+                f"history:recovery:{ordinal}:none",
                 "history:complete:recovery",
                 f"lease:dispose:{ordinal}",
                 "state:failed",
@@ -69,7 +69,7 @@ def run_case(case: Case) -> tuple[str, list[str], int]:
         if case.commit_failure == ordinal:
             events.extend([
                 f"history:commit-attempt:{ordinal}",
-                f"history:recovery:{ordinal}",
+                f"history:recovery:{ordinal}:identity",
                 "history:complete:recovery",
                 f"lease:dispose:{ordinal}",
                 "state:failed",
@@ -112,10 +112,15 @@ def check_case(case: Case, result: tuple[str, list[str], int]) -> int:
             assert acquire < commit < progress < dispose
             checks += 1
         else:
-            recovery = events.index(f"history:recovery:{ordinal}")
+            recovery_suffix = "identity" if case.commit_failure == ordinal else "none"
+            recovery = events.index(f"history:recovery:{ordinal}:{recovery_suffix}")
             recovery_terminal = events.index("history:complete:recovery")
             assert acquire < recovery <= recovery_terminal < dispose
-            checks += 1
+            checks += 2
+
+    if case.mutation_failure is not None and f"mutation-failed:{case.mutation_failure}" in events:
+        assert f"history:recovery:{case.mutation_failure}:none" in events
+        checks += 1
 
     if case.revalidation_change is not None and f"validate:fresh:{case.revalidation_change}" in events:
         ordinal = case.revalidation_change
@@ -232,6 +237,9 @@ def check_repository(root: Path) -> int:
         "snapshot = snapshot.ReportProgress(",
         "DisposeMutationLeaseAsync(mutationLease)",
         "MarkMutationRecoveryRequiredAsync(",
+        "verifiedDestinationIdentity: receipt.DestinationIdentity",
+        "FileIdentity? verifiedDestinationIdentity = null",
+        "destinationIdentity: verifiedDestinationIdentity",
         "Progress is advisory and must never compromise durable execution state.",
         "plan.Kind != FileOperationKind.Copy",
         "plan.Intent.Entries.Any(static entry => entry.IsDirectory)",
@@ -239,6 +247,7 @@ def check_repository(root: Path) -> int:
     for needle in required_executor:
         assert needle in source["executor"], needle
 
+    assert source["executor"].count("verifiedDestinationIdentity: receipt.DestinationIdentity") == 1
     assert "public sealed class FileCopyOperationExecutor : IFileOperationExecutor, IDisposable" not in source["executor"]
     assert "_executionGate.Dispose()" not in source["executor"]
 
@@ -255,6 +264,7 @@ def check_repository(root: Path) -> int:
     helper_end = source["executor"].index("private static async ValueTask DisposeMutationLeaseAsync(", helper_start)
     helper = source["executor"][helper_start:helper_end]
     assert "MarkMutationRecoveryRequiredAsync(" in helper
+    assert "destinationIdentity: verifiedDestinationIdentity" in helper
 
     for forbidden in [
         "File.Copy(", "File.Move(", "File.Delete(",
@@ -279,12 +289,14 @@ def check_repository(root: Path) -> int:
         "CancellationDuringMutationWaitsForCommitAndLeaseRelease",
         "CommitFailureMarksRecoveryBeforeLeaseRelease",
         "InvalidReceiptMarksRecoveryBeforeLeaseRelease",
+        "MutationFailureMarksRecoveryWithoutDestinationIdentity",
         "ProgressExceptionCannotBreakDurableSuccess",
         "FreshIdentityChangeFailsBeforeMutation",
         "ValidatorReturningDifferentPlanInstanceIsRejected",
     ]:
         assert test_name in source["tests"], test_name
 
+    assert "LastRecoveryDestinationIdentity" in source["tests"]
     assert "LastRequest.SourceDirectory.CanonicalPath" in source["tests"]
     assert "LastRequest.DestinationDirectory.Identity" in source["tests"]
     assert "FileCopyOperationExecutor" not in source["files_ui"]
@@ -293,7 +305,7 @@ def check_repository(root: Path) -> int:
     assert "windowsfilecopymutationprimitive" in source["docs"].casefold()
     assert "test-local.ps1\") -OfflineOnly" in source["wrapper"]
     assert "verify_file_copy_executor.py --repo-root $repoRoot --cases 20000" in source["wrapper"]
-    return len(required_executor) + 2 + 2 + 7 + 2 + 2 + 6
+    return len(required_executor) + 3 + 4 + 7 + 2 + 8 + 7
 
 
 def main() -> int:

@@ -417,7 +417,8 @@ public sealed class FileCopyOperationExecutor : IFileOperationExecutor
                             "The file was mutated but its durable Copy commit record could not be finalized.",
                             receipt.CanonicalDestinationPath,
                             exception,
-                            retryable: false)).ConfigureAwait(false);
+                            retryable: false),
+                        verifiedDestinationIdentity: receipt.DestinationIdentity).ConfigureAwait(false);
                 }
 
                 snapshot = snapshot.ReportProgress(
@@ -542,7 +543,8 @@ public sealed class FileCopyOperationExecutor : IFileOperationExecutor
         int ordinal,
         IProgress<FileOperationExecutionSnapshot>? progress,
         FileOperationExecutionSnapshot snapshot,
-        FileOperationFailure failure)
+        FileOperationFailure failure,
+        FileIdentity? verifiedDestinationIdentity = null)
     {
         var recoveryFinalized = false;
         try
@@ -552,7 +554,8 @@ public sealed class FileCopyOperationExecutor : IFileOperationExecutor
                     operationId,
                     ordinal,
                     failure,
-                    UtcNow())
+                    UtcNow(),
+                    destinationIdentity: verifiedDestinationIdentity)
                 .ConfigureAwait(false);
         }
         catch
