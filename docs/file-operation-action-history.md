@@ -21,13 +21,15 @@ Pending
         ↓ durable MarkMutationStarted
 MutationStarted
         ↓ identity-bound Copy mutation lease
-        ↓ capture resulting destination identity
+        ↓ capture destination identity + SHA-256 content fingerprint
         ↓ durable CommitCopy
 Committed
         ↓ report entry progress
 ```
 
-The important barrier is after the filesystem mutation and before progress is reported. If `CommitCopyAsync` cannot durably record the resulting destination identity, the executor must not pretend the entry completed cleanly. After the mutation receipt has passed executor validation, that exact destination identity is retained as recovery evidence while the entry settles as `RecoveryRequired`.
+The important barrier is after the filesystem mutation and before progress is reported. A valid mutation receipt now carries both the newly created destination `FileIdentity` and a SHA-256 fingerprint of the logical bytes written through the bound Copy stream. `CommitCopyAsync` persists those two proofs atomically with the `Committed` transition.
+
+If `CommitCopyAsync` cannot durably finalize that record after the receipt passed executor validation, the executor retains the exact destination identity **and** fingerprint together while the entry settles as `RecoveryRequired`. If the mutation primitive fails, the lease is missing, or the receipt is invalid, neither proof is trusted or persisted.
 
 A process crash while an entry remains `MutationStarted` is intentionally ambiguous. The record says mutation was allowed to begin but there is no durable proof of its final effect. On restart, `RequiresRecovery` is therefore true and automatic replay/undo must not guess what happened.
 
@@ -36,11 +38,11 @@ A process crash while an entry remains `MutationStarted` is intentionally ambigu
 Action entries use these durable states:
 
 - `Pending` — execution validation said a file destination was missing and mutation has not been declared started;
-- `MutationStarted` — the durable pre-mutation barrier was crossed; a crash from here is recovery-sensitive;
-- `Committed` — file Copy completed and the created destination's stable identity was durably captured;
+- `MutationStarted` — the durable pre-mutation barrier was crossed; a crash from here is recovery-sensitive and no verified destination evidence is available;
+- `Committed` — file Copy completed and the created destination identity was durably captured; new commits also carry SHA-256 content evidence;
 - `Skipped` — execution validation selected non-destructive Skip; no mutation is expected;
 - `Failed` — failure occurred before mutation began, so no recovery ambiguity is introduced;
-- `RecoveryRequired` — mutation began but the effect cannot be represented as a clean committed Copy. It may carry a verified destination identity when the mutation receipt was valid and only the durable Copy commit failed.
+- `RecoveryRequired` — mutation began but the effect cannot be represented as a clean committed Copy. The validated-receipt/failed-commit path may carry the paired destination identity + fingerprint evidence.
 
 An operation can end `Succeeded` only when every entry is `Committed` or `Skipped`. If any entry is `MutationStarted` or `RecoveryRequired`, the operation may terminate only as `RecoveryRequired`.
 
@@ -54,11 +56,11 @@ DeleteCreatedDestination
 
 It is attached only by `CommitCopyAsync`, and only after a file entry crosses `Pending → MutationStarted`. A `Pending` entry exists only when canonical execution validation saw the destination leaf as missing. The history therefore records a destination FileOp intended to create rather than an existing object it replaced.
 
-A committed file with the exact destination `FileIdentity` becomes an **undo candidate**, not deletion authorization. Identity equality is necessary to prove the path still names the same filesystem object, but it is **not sufficient** to prove the user or another program has not modified that object's contents or metadata since Copy. A future Undo implementation must add an explicit no-user-change guard before deleting anything.
+A committed file with the exact destination `FileIdentity` becomes an **undo candidate**, not deletion authorization. Identity equality is necessary to prove the path still names the same filesystem object, but it is **not sufficient** to prove the user or another program has not modified that object's contents or metadata since Copy. The new SHA-256 value records FileOp's post-Copy main-stream content, but this slice does not yet perform a race-safe current-file comparison and does not define policy for non-content changes.
 
-A `RecoveryRequired` entry is different. Even when it carries a verified destination identity, its `UndoKind` remains `None`: the identity is recovery evidence only and does not authorize deletion or make the entry an undo candidate. Primitive failures, missing leases and invalid receipts do not have a verified destination identity and therefore continue to persist recovery without one.
+A `RecoveryRequired` entry is different. Even when it carries verified destination identity + fingerprint evidence, its `UndoKind` remains `None`: recovery evidence only does not authorize deletion or make the entry an undo candidate. Primitive failures, missing leases and invalid receipts continue to persist recovery without verified destination evidence.
 
-`FileOperationRecoveryInspector` can now consume recovery-sensitive Copy history through the metadata-only canonical resolver. It classifies the current destination as missing, same identity/location, different identity, redirected, reparse, unexpected type, inaccessible or error. This inspection is read-only; even `SameObject` remains evidence only and does not alter `UndoKind` or authorize deletion.
+`FileOperationRecoveryInspector` consumes recovery-sensitive Copy history through the metadata-only canonical resolver. It classifies the current destination as missing, same identity/location, different identity, redirected, reparse, unexpected type, inaccessible or error. This inspection is read-only; even `SameObject` remains evidence only and does not alter `UndoKind` or authorize deletion.
 
 Directory entries are never undo candidates in schema v1. Existing destinations handled by `Skip` never receive undo metadata. Replace/overwrite remains unsupported. Move does not receive Copy-style undo candidates because Move has additional source-removal and cross-volume partial-failure semantics that are not designed yet.
 
@@ -70,15 +72,16 @@ The SQLite store uses independently versioned additive tables:
 file_operation_action_schema_info
 file_operation_actions
 file_operation_action_entries
+file_operation_action_entry_content_fingerprints
 ```
 
-The operation row stores queued/validated/started/completed timestamps, operation/collision kind, captured roots, canonical roots and terminal state. Each entry stores its original source metadata, canonical source/destination paths, durable state timestamps, source/destination identities, undo kind and structured failure information.
+The operation row stores queued/validated/started/completed timestamps, operation/collision kind, captured roots, canonical roots and terminal state. Each entry stores its original source metadata, canonical source/destination paths, durable state timestamps, source/destination identities, undo kind and structured failure information. The additive fingerprint side table stores algorithm + digest keyed by `(operation_id, ordinal)`.
 
-Recovery destination identity uses the existing nullable `destination_volume_serial` and `destination_file_reference` columns. This is an additive schema-v1 behavior change and requires no migration or schema-version increment.
+Recovery destination identity continues to use the nullable `destination_volume_serial` and `destination_file_reference` columns. Content evidence uses the new side table rather than changing the main entry layout. This remains additive schema-v1 behavior and requires **no migration** or schema-version increment; opening an older v1 database creates the side table idempotently.
 
-The public `FileOperationActionHistory` aggregate defensively snapshots its entry sequence. Callers cannot retain a mutable list and rewrite the apparent durable history after construction. The aggregate also enforces the schema-v1 mutation boundary, so invalid ready-directory/non-Copy histories abort `BeginAsync` before its SQLite transaction can commit.
+Older valid committed/recovery entries may have no fingerprint row and remain readable with `DestinationContentFingerprint == null`. New production Copy commits are stricter: a receipt without SHA-256 content evidence is rejected before durable commit.
 
-Writes are serialized per store instance and state transitions use conditional SQL predicates against both the expected entry state and a non-terminal operation. Duplicate or out-of-order transitions fail rather than silently rewriting history.
+Writes are serialized per store instance and state transitions use conditional SQL predicates against both the expected entry state and a non-terminal operation. Destination identity and fingerprint evidence are written in the same transaction as the associated commit/recovery transition. Recovery evidence is paired: identity without fingerprint or fingerprint without identity is rejected.
 
 SQLite uses WAL plus `synchronous = FULL` for this recovery log. The stronger synchronous setting is intentional: this metadata is recovery evidence, not an analytics cache.
 
@@ -88,13 +91,13 @@ Stable 64-bit identity values preserve their raw bit pattern through SQLite's si
 
 `MarkEntryFailedBeforeMutationAsync` transitions `Pending → Failed` for errors that occur before the mutation boundary. Such an entry does not by itself require recovery.
 
-After `MutationStarted`, a failure must use `MarkMutationRecoveryRequiredAsync`. It is intentionally not a normal Failed entry because the filesystem may already have changed partially. The method accepts an optional verified destination identity. `FileCopyOperationExecutor` supplies that identity only when a validated mutation receipt exists and `CommitCopyAsync` fails; earlier native/lease/receipt failures pass no identity. If the process crashes before the explicit recovery transition can be persisted, the durable `MutationStarted` state itself remains the restart-time recovery signal.
+After `MutationStarted`, a failure must use `MarkMutationRecoveryRequiredAsync`. It is intentionally not a normal Failed entry because the filesystem may already have changed partially. The method accepts optional verified destination identity + content fingerprint evidence, but requires them as a pair. `FileCopyOperationExecutor` supplies the pair only when a validated mutation receipt exists and `CommitCopyAsync` fails; earlier native/lease/receipt failures pass neither. If the process crashes before the explicit recovery transition can be persisted, the durable `MutationStarted` state itself remains the restart-time recovery signal.
 
 ## Safety boundary
 
 The action-history contract and SQLite store contain no `File.Copy`, `File.Move`, `File.Delete`, `Directory.Move`, `Directory.Delete`, or target-file write path. SQLite persistence necessarily writes FileOp's own action-history database; that application metadata write is separate from mutating the user's queued source/destination namespace.
 
-The production Windows mutation primitive is handle-bound and remains outside the history store. The Files UI does not expose Run/Execute/Undo, and recovery identity alone must never be interpreted as deletion authorization.
+The production Windows mutation primitive is handle-bound and remains outside the history store. Neither destination identity nor SHA-256 evidence is deletion authorization. The Files UI still does not expose Run/Execute/Undo.
 
 ## Validation without hosted Actions
 
@@ -102,6 +105,12 @@ Run the standard-library action-history model and source guard directly:
 
 ```powershell
 python tools/verify_file_operation_action_history.py --repo-root . --cases 20000
+```
+
+Run the Copy fingerprint model/source guard:
+
+```powershell
+python tools/verify_copy_content_fingerprint.py --repo-root . --cases 20000
 ```
 
 Run the read-only recovery inspection model/source guard:
@@ -116,7 +125,7 @@ Run the complete offline gate without consuming GitHub Actions quota:
 pwsh -File tools/test-local.ps1 -OfflineOnly
 ```
 
-For the Copy executor orchestration layer, run:
+For the Copy orchestration layer, run:
 
 ```powershell
 pwsh -File tools/test-copy-executor-local.ps1
@@ -126,4 +135,4 @@ On Windows with .NET 10, `tools\test-windows-copy-local.cmd` remains the compile
 
 ## Next boundary
 
-Read-only recovery inspection can now prove whether a recovery-sensitive path still resolves to the recorded stable object without mutating it. A future destructive recovery/Undo slice still needs an explicit no-user-change proof, recovery policy and user-facing authorization before deleting or modifying anything. Directory Copy, Move and actual Undo remain separate later slices.
+FileOp now has durable post-Copy content evidence but not a complete no-user-change proof. The next safe slice should reopen a recovery-inspected destination under a race-resistant identity-bound **read** handle and compare its current main-stream SHA-256 with the stored value, while still granting no destructive authority. Metadata/ACL/ADS/EA policy and explicit user authorization remain necessary before actual recovery/Undo. Directory Copy and Move remain separate later slices.
