@@ -23,6 +23,7 @@ internal static class WindowsFileNamedDataStreamTopologyDigest
     private const int MaximumBufferBytes = 1024 * 1024;
     private const int MaximumNamedStreams = 4096;
     private static readonly byte[] CanonicalPrefix = Encoding.ASCII.GetBytes("FileOp.NamedDataStreams.v1\0");
+    private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
     internal static FileNamedDataStreamTopologyEvidence Read(SafeFileHandle handle)
     {
@@ -190,7 +191,8 @@ internal static class WindowsFileNamedDataStreamTopologyDigest
         }
 
         var streamNameLength = name.Length - 1 - ":$DATA".Length;
-        return streamNameLength > 0;
+        return streamNameLength > 0 &&
+            name.AsSpan(1, streamNameLength).IndexOf(':') < 0;
     }
 
     private static FileNamedDataStreamTopologyEvidence CreateEvidence(
@@ -204,7 +206,18 @@ internal static class WindowsFileNamedDataStreamTopologyDigest
 
         foreach (var entry in entries)
         {
-            var nameBytes = Encoding.UTF8.GetBytes(entry.Name);
+            byte[] nameBytes;
+            try
+            {
+                nameBytes = StrictUtf8.GetBytes(entry.Name);
+            }
+            catch (EncoderFallbackException exception)
+            {
+                throw new InvalidDataException(
+                    "FILE_STREAM_INFO returned a stream name containing invalid UTF-16; topology evidence is not trusted.",
+                    exception);
+            }
+
             BinaryPrimitives.WriteInt32LittleEndian(scalar[..4], nameBytes.Length);
             hash.AppendData(scalar[..4]);
             hash.AppendData(nameBytes);
