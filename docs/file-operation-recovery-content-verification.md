@@ -32,11 +32,11 @@ FileOperationRecoveryContentVerifier
 MatchesRecordedMainStream or a fail-closed status
 ```
 
-The second stage re-proves namespace and identity under the actual content-read handle. The earlier metadata inspection therefore cannot become a TOCTOU authorization shortcut.
+The second stage re-proves namespace and identity under the actual content-read handle. The earlier metadata inspection therefore cannot become a TOCTOU authorization shortcut. Core also revalidates the shape of a reader-reported `Success` result instead of treating a pluggable reader's status as authority by itself.
 
 ## Windows stable-read boundary
 
-`WindowsFileContentFingerprintReader` requests only file read-data, read-attributes and synchronize access. It opens with `FileShare.Read` and intentionally omits write and delete sharing for the lifetime of validation and hashing.
+`WindowsFileContentFingerprintReader` requests only file read-data, read-attributes and synchronize access. It opens with `FileShare.Read` and intentionally omits write and delete sharing for the lifetime of validation and hashing. FileOp does not request target-file write/delete access and calls no target-file write, delete, move or replacement API in this verifier.
 
 That means normal conflicting writer/delete handles cause the read open to fail with a sharing violation. FileOp reports this as `Busy` rather than weakening the proof or hashing through a concurrently writable handle.
 
@@ -48,6 +48,8 @@ The final component is opened with `FILE_FLAG_OPEN_REPARSE_POINT`. Before hashin
 - the handle's `FileIdentity` exactly equals durable recovery history.
 
 The SHA-256 is then computed from the primary file data stream through that same handle. After the read completes, FileOp checks the same handle again and rejects the proof if identity, size, last-write timestamp or final path changed during the read.
+
+This is a **read-access** boundary, not a promise that the underlying filesystem will leave every metadata field untouched. Depending on filesystem, mount and provider behavior, reading may itself cause filesystem-managed effects such as a last-access update, cache/recall activity or cloud-file hydration. A later no-user-change policy therefore must not naively treat a post-verification last-access difference as proof of an external user change.
 
 ## Result states
 
@@ -77,9 +79,13 @@ This slice proves only the **main data stream** under the stable read-handle pro
 - alternate data streams;
 - extended attributes;
 - compression, encryption, sparse or integrity state;
+- hard-link count or the absence/presence of other names for the same file object;
+- the identity of the destination's parent directory at verification time;
 - other filesystem state not represented by the primary data stream SHA-256.
 
-It also does not attempt to turn a matching stream into destructive recovery policy. A later slice must explicitly define which non-main-stream changes matter, how a final race-safe authorization boundary works, and how the user approves any destructive action.
+A matching stream also does not prove that no temporary modification occurred and was later restored to the same bytes. SHA-256 establishes equality of the observed primary-stream content with the recorded post-Copy content at verification time; it is not a historical audit log.
+
+It also does not attempt to turn a matching stream into destructive recovery policy. A later slice must explicitly define which non-main-stream changes matter, how parent/namespace evidence participates, how a final race-safe authorization boundary works, and how the user approves any destructive action.
 
 ## Validation without hosted Actions
 
@@ -106,4 +112,4 @@ No hosted GitHub Actions run is required.
 
 ## Safety boundary
 
-This implementation contains no target-file write, delete, move, replacement or recovery mutation path. `MatchesRecordedMainStream` is read-only recovery evidence only. Directory Copy, Move, actual Undo, destructive recovery and Files UI execution/Undo wiring remain out of scope.
+This implementation contains no explicit target-file write/delete access and no target-file write, delete, move, replacement or recovery mutation API. The content read itself may still have filesystem-managed read side effects as described above. `MatchesRecordedMainStream` is recovery evidence only. Directory Copy, Move, actual Undo, destructive recovery and Files UI execution/Undo wiring remain out of scope.
