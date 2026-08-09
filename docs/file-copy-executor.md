@@ -101,7 +101,11 @@ Destination-owned `Temporary` and `Offline` values are retained when safe source
 
 After `MutationStarted`, native mutation failure, a missing/invalid mutation lease or receipt, or durable Copy-commit failure is recovery-sensitive. The executor attempts to persist entry and operation `RecoveryRequired`. If those follow-up writes also fail, the earlier durable `MutationStarted` record remains the restart-time signal that filesystem effects are uncertain.
 
-A validated mutation receipt is a stronger boundary. If `CommitCopyAsync` fails after that receipt has passed path/source/destination identity validation, the executor persists its destination `FileIdentity` with the recovery entry. That identity is **recovery evidence only**. The entry remains `RecoveryRequired`, keeps `UndoKind.None`, and is never an `IsUndoCandidate`. Recovery code may use the identity later to prove which object was created, but it must not treat identity equality as permission to delete it.
+A validated mutation receipt is a stronger boundary. If `CommitCopyAsync` fails after that receipt has passed path/source/destination identity validation, the executor persists its destination `FileIdentity` with the recovery entry. That identity is **recovery evidence only**. The entry remains `RecoveryRequired`, keeps `UndoKind.None`, and is never an `IsUndoCandidate`.
+
+`FileOperationRecoveryInspector` now consumes this history through the existing metadata-only canonical resolver. It can report whether a recovery-sensitive destination is missing, still resolves to the recorded identity/location, names a different object, has been redirected, is a reparse leaf, changed type, or cannot be inspected. It performs no mutation and exposes no delete/Undo authorization.
+
+A `SameObject` observation still does not prove that the file was left unchanged after Copy. Identity/location is only one prerequisite for a future destructive recovery path; a no-user-change proof and explicit user-facing authorization are still required.
 
 Primitive failure, a missing lease, receipt access failure, or an invalid receipt never supplies destination identity to recovery. Those paths have not established trusted destination identity provenance.
 
@@ -121,7 +125,7 @@ Run the focused zero-Actions gate:
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-The wrapper runs the existing offline suite, the executor lease-orchestration model, action-history persistence model, Windows mutation handle/root-binding model, metadata semantics and ABI guards without requiring hosted GitHub Actions.
+The wrapper runs the existing offline suite, read-only recovery inspection model, executor lease-orchestration model, action-history persistence model, Windows mutation handle/root-binding model, metadata semantics and ABI guards without requiring hosted GitHub Actions.
 
 On Windows with Python and .NET 10, run the focused compiler/native gate:
 
@@ -129,8 +133,8 @@ On Windows with Python and .NET 10, run the focused compiler/native gate:
 tools\test-windows-copy-local.cmd
 ```
 
-That gate compiles Core/Windows and runs the focused action-history, Copy executor and native Windows regressions.
+That gate compiles Core/Windows and runs the focused action-history, recovery-inspection, Copy executor and native Windows regressions.
 
 ## Next boundary
 
-The next recovery/Undo slice may consume the verified destination identity as one proof that a recovery path still points at the object created by FileOp. It still needs a no-user-change guard, explicit recovery policy and user-facing authorization before any deletion or replacement can occur. Identity evidence alone must never become destructive authority.
+Recovery inspection now establishes whether durable identity/location evidence still matches without mutating anything. The next destructive recovery/Undo boundary must add a no-user-change proof, explicit recovery policy and user-facing authorization before deletion or replacement can occur. Identity evidence alone must never become destructive authority.
