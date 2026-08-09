@@ -238,7 +238,7 @@ def check_repository(root: Path) -> int:
         "root.State == FileOperationCanonicalPathState.Directory",
         "actualDirectoryIdentity == request.DestinationDirectoryIdentity",
         "actualIdentity == request.DestinationIdentity",
-        "evidence only",
+        "not mutation authorization",
     )
     for needle in core_needles:
         assert needle.casefold() in source["core"].casefold(), needle
