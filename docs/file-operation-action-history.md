@@ -4,7 +4,7 @@
 
 Canonical execution validation proves that a queued plan is safe enough to approach a mutation boundary, but it does not make a filesystem change recoverable. FileOp therefore records durable per-entry action history before and after each supported mutation boundary so a process restart can distinguish a completed effect from an uncertain one.
 
-`IFileOperationActionHistoryStore` defines that persistence boundary and `SqliteFileOperationActionHistoryStore` implements it with SQLite. `FileCopyOperationExecutor` consumes the store for Copy-file orchestration, and `WindowsFileCopyMutationPrimitive` provides the production Windows handle-bound mutation path behind that executor. The Files UI still does not expose Run/Execute/Undo.
+`IFileOperationActionHistoryStore` defines that persistence boundary and `SqliteFileOperationActionHistoryStore` implements it with SQLite. `FileCopyOperationExecutor` consumes the store and delegates filesystem mutation through `IFileCopyMutationPrimitive`; `WindowsFileCopyMutationPrimitive` provides the production Windows handle-bound implementation behind that executor. The Files UI still does not expose Run/Execute/Undo.
 
 Action-history schema v1 is intentionally **Copy-file-only for mutation state**. A directory or Move entry may be recorded as `Skipped`, but a ready directory or ready Move entry is rejected before the history transaction can commit. Recursive directory Copy needs child-level recovery/commit semantics, and Move needs source-removal/cross-volume partial-failure semantics; neither is inferred from the file-Copy protocol.
 
