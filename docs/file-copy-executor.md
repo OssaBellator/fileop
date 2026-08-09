@@ -2,140 +2,96 @@
 
 ## Purpose
 
-`FileCopyOperationExecutor` defines the durable execution ordering for **file Copy only** on top of canonical validation and action history. `WindowsFileCopyMutationPrimitive` implements the production Windows mutation behind that orchestration, while the Files UI still does not instantiate or execute the Copy pipeline.
+`FileCopyOperationExecutor` defines durable execution ordering for **file Copy only**. `WindowsFileCopyMutationPrimitive` provides the production identity-bound mutation, while the Files UI still does not instantiate or execute the pipeline.
 
-The mutation path does not use path-only `File.Copy`. The executor passes a `FileCopyMutationRequest` containing the freshly validated file item plus the exact freshly validated source/destination root objects. The Windows primitive uses those root identities to bind its native directory/file handles before creating anything.
+The executor never substitutes path-only `File.Copy`. Fresh validation supplies canonical source/destination roots with stable identities, and the mutation request carries those exact validated root objects into the Windows primitive.
 
-## Mutation request and lease
+## Durable root boundary
 
-A mutation request carries the freshly validated file item plus the fresh canonical source/destination directory objects and stable identities.
+Before mutation, `SqliteFileOperationActionHistoryStore.BeginAsync` now durably records the validated source and destination root `FileIdentity` values alongside the operation and initial entries. The root pair is written in the same transaction as the begin barrier.
 
-The primitive returns `IFileCopyMutationLease`, not a bare receipt. The lease exposes the immutable `FileCopyMutationReceipt` while retaining source/destination directory and file handles until the executor has:
+The executor already revalidates each ready entry immediately before mutation and requires the fresh source/destination root objects to match the initial validation. The Windows mutation primitive then reopens and validates those roots under handles before relative source open and exclusive destination creation. Thus a successful/receipt-producing mutation is tied back to the root identity durably captured at `BeginAsync`.
 
-```text
-validated receipt identity/path + SHA-256 evidence
-        ↓
-durably CommitCopy(destination identity + fingerprint)
-        ↓
-reported progress
-        ↓
-released the mutation lease
-```
+Legacy histories without root evidence remain readable but are not promoted into the stronger recovery proof.
 
-A production receipt is valid only when it contains the freshly validated source/path provenance, a distinct created destination identity, and a valid SHA-256 `DestinationContentFingerprint`.
+## Mutation lease and receipt
 
-If receipt validation or durable Copy commit fails, the executor records `RecoveryRequired` while the lease is still held, then releases it. Lease disposal is cleanup rather than a durable state transition.
+The primitive returns an `IFileCopyMutationLease`, retaining source/destination directory and file handles through receipt validation, durable commit/recovery and progress.
 
-If the receipt has already passed executor validation and only `CommitCopyAsync` fails, the executor persists that receipt's exact destination `FileIdentity` and content fingerprint together on the recovery entry. Earlier mutation, missing-lease and invalid-receipt failures persist neither proof.
-
-## Ordering
-
-For one supported Copy-file plan:
+A production receipt contains validated path/source provenance, a distinct created destination identity, and SHA-256 `DestinationContentFingerprint` evidence. The ordering remains:
 
 ```text
-full canonical validation
+fresh validation
   ↓
-durable Begin action history
+durable MarkMutationStarted
   ↓
-Running
+identity-bound Windows mutation lease
   ↓
-for each entry
-  ├─ initial Skip → progress only
-  └─ initial Ready
-       ↓ fresh one-entry canonical validation
-       ↓ compare canonical root identities and paths
-       ↓ compare source identity/path and destination canonical path
-       ↓ cancellation safe-boundary check
-       ↓ durable MarkMutationStarted
-       ↓ acquire identity-bound Windows Copy mutation lease
-       ↓ suppress automatic destination access/write timestamp updates
-       ↓ copy bytes through bound handles
-          └─ after each read chunk is fully written, append it to SHA-256
-       ↓ flush copied data
-       ↓ apply supported basic metadata through destination handle + flush metadata
-       ↓ validate created destination identity
-       ↓ return receipt with destination identity + SHA-256 fingerprint
-       ↓ executor validates receipt
-       ↓ durable CommitCopy(identity + fingerprint)
-          └─ on commit failure, persist RecoveryRequired + same verified evidence pair
-       ↓ report progress
-       ↓ release mutation lease
-       ↓ cancellation safe-boundary check
+copy bytes + inline SHA-256
   ↓
-durable terminal history
+data flush
+  ↓
+apply supported basic metadata + metadata flush
+  ↓
+validate created destination identity
+  ↓
+validate receipt
+  ↓
+durable CommitCopy(destination identity + fingerprint)
+  ↓
+progress
+  ↓
+release mutation lease
 ```
 
-Progress for a mutated file is never reported before `CommitCopyAsync` succeeds. Progress callbacks are advisory and cannot rewrite durable state.
+If only `CommitCopyAsync` fails after a valid receipt, recovery receives the same verified destination identity+fingerprint pair. Earlier mutation/missing-lease/invalid-receipt failures receive neither. Root identities are already present from `BeginAsync`.
 
-## Cancellation
+Progress remains advisory and is never reported for a mutated entry before durable commit succeeds.
 
-Cancellation uses `RequestCancellationAsync`, not an arbitrary `ExecuteAsync` token. Initial and fresh read-only validation receive an internal cancellation token.
+## Cancellation and revalidation
 
-Before `MutationStarted`, cancellation can stop immediately. Once `MutationStarted` is durable, cancellation is intentionally not passed into the mutation primitive. One file must settle to durable Commit or recovery before the request can take effect. If cancellation arrives during mutation, the current lease remains held through commit/recovery and progress, then is released before cancellation settles.
+Cancellation is honored only at safe boundaries. Once `MutationStarted` is durable, the current file settles to committed/recovery state and releases its mutation lease before cancellation can stop later work.
 
-A request arriving after the final file has durably committed settles as success rather than retroactively relabelling completed work as cancelled.
+Fresh validation must preserve root canonical paths/identities, source canonical path/identity and missing destination canonical path. A root swap or source/destination change fails conservatively before mutation or inside the Windows handle-binding primitive.
 
-## Revalidation and native binding
+## Copy content and metadata
 
-The validator must return the exact plan instance requested. Fresh one-file validation must remain `Ready` with a missing destination and preserve canonical roots, source path/identity and destination canonical path.
+The mutation computes SHA-256 from exactly the logical bytes successfully written through its bound stream; it does not reopen the destination by path for hashing. The supported basic metadata subset remains creation/access/write times plus read-only, hidden, system, archive and not-content-indexed, with destination-owned Temporary/Offline retention. ACLs, alternate data streams, EAs, compression/encryption/sparse/integrity and directory Copy remain outside this layer.
 
-The executor passes those fresh roots directly to the mutation primitive. The Windows primitive reopens each canonical parent, verifies final path and `FileIdentity`, opens the source relative to the verified source-directory handle, and exclusively creates the destination relative to the verified destination-directory handle. A root swap, source replacement or destination collision after validation therefore fails conservatively rather than silently redirecting or overwriting the Copy.
+## Recovery evidence
 
-Destination creation requests `FILE_WRITE_THROUGH`. FileOp suppresses automatic last-access/last-write updates before byte I/O. The content fingerprint is computed from exactly the logical bytes successfully written through that same bound stream; there is no second path-based destination read. FileOp then flushes data, applies the supported source basic metadata through the same destination handle, flushes again, validates destination identity, and returns the receipt while all binding handles remain leased.
+Recovery inspection is now layered:
 
-## Basic metadata scope
+1. `FileOperationRecoveryInspector` compares durable destination-root identity with the current canonical directory object, and separately inspects the recovery leaf.
+2. `FileOperationRecoveryContentVerifier` requires durable SHA-256 **plus** root `SameObject` **plus** leaf `SameObject` before invoking the stable content reader.
+3. `WindowsFileContentFingerprintReader` re-proves the leaf under its actual read handle and compares current main-stream SHA-256.
 
-The Windows primitive preserves the deliberately narrow basic-metadata subset established by the merged metadata slice:
+This catches a namespace case that leaf identity/content alone misses: the original destination directory can be replaced while the same file object is moved back into the replacement directory. The leaf may remain `SameObject`, but the root is `DifferentObject`, so content verification returns `DestinationRootNotVerified` without reading bytes.
 
-- creation time;
-- last-access time;
-- last-write time;
-- read-only;
-- hidden;
-- system;
-- archive;
-- not-content-indexed.
+The root observation is still point-in-time. Its handle is not retained through the later read, so this stack is **not a final race-safe authorization boundary**.
 
-Destination-owned `Temporary` and `Offline` values are retained when safe source attributes are overlaid. Compression, sparse, encryption, integrity, reparse semantics, ACLs, alternate data streams and extended attributes are not copied by this basic-metadata layer. Directory Copy remains unsupported.
-
-## Recovery and content evidence
-
-After `MutationStarted`, native mutation failure, a missing/invalid mutation lease or receipt, or durable Copy-commit failure is recovery-sensitive. The executor attempts to persist entry and operation `RecoveryRequired`. If those follow-up writes also fail, the earlier durable `MutationStarted` record remains the restart-time signal that filesystem effects are uncertain.
-
-A validated mutation receipt is a stronger boundary. If `CommitCopyAsync` fails after path/source/destination identity and SHA-256 evidence validation, the executor persists destination identity + fingerprint together. That pair is **recovery evidence only**. The entry remains `RecoveryRequired`, keeps `UndoKind.None`, and is never an `IsUndoCandidate`.
-
-`FileOperationRecoveryInspector` first reports whether a recovery-sensitive destination still resolves to the recorded object/location. `FileOperationRecoveryContentVerifier` then performs a separate read-only main-stream comparison only for `SameObject` entries that have durable SHA-256 evidence. On Windows, `WindowsFileContentFingerprintReader` re-proves final canonical path, ordinary-file type, non-reparse status and exact `FileIdentity` under the actual read handle, denies write/delete sharing while hashing, and compares the current primary-stream SHA-256 with the durable post-Copy value.
-
-A `MatchesRecordedMainStream` result is stronger evidence than identity/location alone, but it is still **not a complete no-user-change proof**. Metadata, ACLs, alternate data streams, extended attributes and other non-main-stream state remain outside this comparison.
-
-Primitive failure, missing lease, receipt access failure or invalid receipt never supplies verified identity/fingerprint evidence to recovery.
-
-A pre-mutation revalidation failure instead records ordinary `Failed`, because the mutation barrier was never crossed.
+A `MatchesRecordedMainStream` result plus matching root/leaf identity is stronger recovery evidence, but still **not a complete no-user-change proof**. Metadata, ACLs, alternate data streams, EAs, hard-link topology and other filesystem state remain outside the evidence policy.
 
 ## Supported scope and safety
 
-The executor rejects Move, directories, empty plans, unresolved/blocked validation and mismatched validator results. Initial Skip files never invoke the mutation primitive. Replace/overwrite remains absent.
+The executor rejects Move, directories, empty plans, blocked validation and mismatched validator results. Initial Skip entries do not invoke mutation.
 
-Neither a destination identity, a content fingerprint, nor a later `MatchesRecordedMainStream` result is delete/Undo authorization. The Files UI still does not instantiate or call `FileCopyOperationExecutor`, so the production Copy pipeline remains unreachable from normal application interaction. Directory Copy, Move and actual Undo remain out of scope.
+Neither root identity, destination identity, content fingerprint nor a later content match grants delete/Undo authority. RecoveryRequired remains non-destructive. Replace/overwrite, actual Undo and Files UI execution wiring remain absent.
 
 ## Validation without hosted Actions
-
-Run the focused zero-Actions gate:
 
 ```powershell
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-The wrapper runs action-history, recovery inspection, SHA-256 content evidence, stable recovery main-stream verification, executor orchestration, Windows handle-binding, metadata semantics and ABI guards without hosted GitHub Actions.
+The zero-Actions wrapper now covers action history, recovery inspection, fingerprint evidence, stable main-stream verification, destination-root identity evidence, executor orchestration, Windows handle-binding, metadata semantics and ABI guards.
 
-On Windows with Python and .NET 10, run the batch gate when convenient:
+Windows compiler/native validation remains batched for the stacked work:
 
 ```bat
 tools\test-windows-copy-local.cmd
 ```
 
-That gate compiles Core/Windows and runs the focused action-history, recovery-inspection/content-verification, Copy executor and native Windows regressions.
-
 ## Next boundary
 
-The remaining destructive-recovery prerequisite is no longer the primary data stream itself. A later design must decide which non-main-stream state changes matter (metadata, ACLs, ADS, EAs and filesystem-specific semantics), define the final race-safe authorization boundary, and require explicit user authorization before deletion or replacement. The current verifier remains read-only evidence only.
+The remaining destructive-recovery work is the final handle-bound authorization protocol plus non-main-stream policy. A future action must reopen/revalidate the destination root and exact leaf, retain those namespace-binding handles through an authorized relative operation, define invalidating metadata/ACL/ADS/EA/filesystem-specific changes, and require explicit user authorization.
