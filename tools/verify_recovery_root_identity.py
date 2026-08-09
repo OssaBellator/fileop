@@ -144,6 +144,7 @@ def check_repository(root: Path) -> int:
         "inspection": root / "src/FileOp.Core/Operations/FileOperationRecoveryInspection.cs",
         "content": root / "src/FileOp.Core/Operations/FileOperationRecoveryContentVerification.cs",
         "store_tests": root / "tests/FileOp.Windows.Tests/FileOperationActionHistoryTestsRootIdentity.cs",
+        "inspection_tests": root / "tests/FileOp.Windows.Tests/FileOperationRecoveryInspectionTestsRootIdentity.cs",
         "integration_tests": root / "tests/FileOp.Windows.Tests/WindowsFileOperationRecoveryContentVerificationTests.cs",
         "docs": root / "docs/file-operation-recovery-root-identity.md",
         "py_wrapper": root / "tools/test-copy-executor-local.py",
@@ -216,6 +217,13 @@ def check_repository(root: Path) -> int:
         assert test_name in source["store_tests"], test_name
 
     for test_name in (
+        "LegacyHistoryDoesNotResolveRootWithoutDurableIdentity",
+        "SameAndDifferentRootIdentityAreDistinguished",
+        "RootUnsafeStatesAreClassifiedConservatively",
+    ):
+        assert test_name in source["inspection_tests"], test_name
+
+    for test_name in (
         "StableSameObjectAndDigestProducesMainStreamMatchEvidence",
         "ReplacedRootWithSameFileMovedBackIsEvidenceInsufficient",
     ):
@@ -255,6 +263,7 @@ def check_repository(root: Path) -> int:
         + len(inspection_needles)
         + len(content_needles)
         + 4
+        + 3
         + 2
         + 7
         + 2
