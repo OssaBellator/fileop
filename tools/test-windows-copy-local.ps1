@@ -41,7 +41,7 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 }
 
 Invoke-Step "Package-free .NET Copy metadata interop probe" {
-    python tools/verify_copy_basic_metadata_dotnet.py --repo-root $repoRoot
+    python tools/verify_copy_basic_metadata_dotnet_sdk.py --repo-root $repoRoot
 }
 
 Invoke-Step "FileOp.Core Release build" {
