@@ -33,6 +33,7 @@ class Status(IntEnum):
 def classify(
     state: CurrentState,
     *,
+    identity_verified: bool,
     expected_identity: Optional[int],
     actual_identity: Optional[int],
     redirected: bool,
@@ -50,7 +51,7 @@ def classify(
         return Status.ERROR
     if state == CurrentState.DIRECTORY:
         return Status.UNEXPECTED_TYPE
-    if expected_identity is None or actual_identity is None:
+    if not identity_verified or expected_identity is None or actual_identity is None:
         return Status.NO_VERIFIED_IDENTITY
     return (
         Status.SAME_OBJECT
@@ -64,6 +65,7 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
         (
             dict(
                 state=CurrentState.FILE,
+                identity_verified=True,
                 expected_identity=10,
                 actual_identity=10,
                 redirected=False,
@@ -74,6 +76,18 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
         (
             dict(
                 state=CurrentState.FILE,
+                identity_verified=False,
+                expected_identity=10,
+                actual_identity=10,
+                redirected=False,
+                reparse=False,
+            ),
+            Status.NO_VERIFIED_IDENTITY,
+        ),
+        (
+            dict(
+                state=CurrentState.FILE,
+                identity_verified=True,
                 expected_identity=None,
                 actual_identity=10,
                 redirected=False,
@@ -84,6 +98,7 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
         (
             dict(
                 state=CurrentState.FILE,
+                identity_verified=True,
                 expected_identity=10,
                 actual_identity=11,
                 redirected=False,
@@ -94,6 +109,7 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
         (
             dict(
                 state=CurrentState.FILE,
+                identity_verified=True,
                 expected_identity=10,
                 actual_identity=10,
                 redirected=True,
@@ -104,6 +120,7 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
         (
             dict(
                 state=CurrentState.FILE,
+                identity_verified=True,
                 expected_identity=10,
                 actual_identity=10,
                 redirected=True,
@@ -114,6 +131,7 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
         (
             dict(
                 state=CurrentState.MISSING,
+                identity_verified=True,
                 expected_identity=10,
                 actual_identity=None,
                 redirected=False,
@@ -124,6 +142,7 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
         (
             dict(
                 state=CurrentState.MISSING,
+                identity_verified=True,
                 expected_identity=10,
                 actual_identity=None,
                 redirected=True,
@@ -134,6 +153,7 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
         (
             dict(
                 state=CurrentState.DIRECTORY,
+                identity_verified=True,
                 expected_identity=10,
                 actual_identity=10,
                 redirected=False,
@@ -144,6 +164,7 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
         (
             dict(
                 state=CurrentState.INACCESSIBLE,
+                identity_verified=True,
                 expected_identity=10,
                 actual_identity=None,
                 redirected=False,
@@ -154,6 +175,7 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
         (
             dict(
                 state=CurrentState.ERROR,
+                identity_verified=True,
                 expected_identity=10,
                 actual_identity=None,
                 redirected=False,
@@ -174,6 +196,7 @@ def run_model(cases: int) -> int:
     states = tuple(CurrentState)
     for _ in range(cases):
         state = rng.choice(states)
+        identity_verified = rng.random() < 0.6
         expected_identity = None if rng.random() < 0.35 else rng.randrange(1, 1 << 20)
         identity_mode = rng.randrange(3)
         if identity_mode == 0:
@@ -189,6 +212,7 @@ def run_model(cases: int) -> int:
 
         status = classify(
             state,
+            identity_verified=identity_verified,
             expected_identity=expected_identity,
             actual_identity=actual_identity,
             redirected=redirected,
@@ -197,12 +221,18 @@ def run_model(cases: int) -> int:
 
         if status == Status.SAME_OBJECT:
             assert state == CurrentState.FILE
+            assert identity_verified
             assert not redirected
             assert not reparse
             assert expected_identity is not None
             assert actual_identity == expected_identity
-            checks += 5
-        if expected_identity is None and state == CurrentState.FILE and not redirected and not reparse:
+            checks += 6
+        if (
+            state == CurrentState.FILE
+            and not redirected
+            and not reparse
+            and (not identity_verified or expected_identity is None or actual_identity is None)
+        ):
             assert status == Status.NO_VERIFIED_IDENTITY
             checks += 1
 
@@ -254,6 +284,8 @@ def check_repository(root: Path) -> int:
         "public sealed class FileOperationRecoveryInspector",
         "IFileOperationCanonicalPathResolver",
         "allowMissingLeaf: true",
+        "Entry.State == FileOperationActionEntryState.RecoveryRequired",
+        "entry.State != FileOperationActionEntryState.RecoveryRequired",
         "entry.DestinationIdentity is not FileIdentity expected",
         "current.Identity is not FileIdentity actual",
         "var hasCanonicalLocation = current.State is",
@@ -292,7 +324,7 @@ def check_repository(root: Path) -> int:
     for test_name in (
         "SameIdentityAtCanonicalPathIsEvidenceButNotUndoAuthority",
         "RecoveryInspectionClassifiesUnsafeAndChangedDestinationsConservatively",
-        "ExistingDestinationWithoutDurableIdentityCannotBeReportedAsSameObject",
+        "MutationStartedIdentityFieldIsNeverTrusted",
         "InspectorSkipsSettledEntriesAndRejectsMoveHistory",
         "InspectionDefensivelySnapshotsItems",
     ):
