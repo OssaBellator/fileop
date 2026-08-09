@@ -46,7 +46,7 @@ def _make_db(entries: list[Entry]) -> sqlite3.Connection:
     )
     connection.execute(
         "INSERT INTO files VALUES (?, ?, ?, ?, ?, 1, NULL, NULL)",
-        (r"C:\Root", r"c:\root", "Root", "root", r"C:\"),
+        (r"C:\Root", r"c:\root", "Root", "root", "C:\\"),
     )
     connection.executemany(
         "INSERT INTO files VALUES (?, ?, ?, ?, ?, ?, 1, 100)",

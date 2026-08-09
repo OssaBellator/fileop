@@ -279,9 +279,9 @@ def check_repository(root: Path) -> int:
         "GetFileInformationByHandle",
         ".empty-feed",
         '"--source"',
-        "dotnet, \"restore\"",
-        "dotnet, \"build\"",
-        "dotnet, \"run\"",
+        "\"restore\",",
+        "\"build\",",
+        "\"run\",",
     ):
         assert needle in dotnet_probe, needle
         checks += 1

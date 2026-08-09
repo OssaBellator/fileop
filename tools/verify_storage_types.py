@@ -366,7 +366,7 @@ def check_repository(repo_root: Path) -> int:
         ("sqlite", "category_aggregates AS"),
         ("sqlite", "Categories = orderedCategories"),
         ("memory", "Categories = categories"),
-        ("protocol", "public const int CurrentVersion = 4;"),
+        ("protocol", "public const int CurrentVersion = 6;"),
         ("protocol", "AnalyzeStorageTypes"),
         ("client", "AnalyzeStorageTypesAsync"),
         ("dispatcher", "IndexingServiceOperation.AnalyzeStorageTypes"),

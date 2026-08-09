@@ -117,7 +117,7 @@ public sealed record StorageHistoryDelta(
     {
         var olderAllocated = GetAllocatedOrZero(older);
         var newerAllocated = GetAllocatedOrZero(newer);
-        var allocatedDelta = olderAllocated.HasValue && newerAllocated.HasValue
+        long? allocatedDelta = olderAllocated.HasValue && newerAllocated.HasValue
             ? newerAllocated.Value - olderAllocated.Value
             : null;
 
