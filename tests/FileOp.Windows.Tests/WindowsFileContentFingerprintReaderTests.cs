@@ -26,7 +26,10 @@ public sealed class WindowsFileContentFingerprintReaderTests
 
         Assert.AreEqual(FileContentFingerprintReadStatus.Success, result.Status);
         Assert.AreEqual(expected.Identity, result.CurrentDestination.Identity);
-        Assert.AreEqual(expected.CanonicalPath, result.CurrentDestination.CanonicalPath, ignoreCase: true);
+        Assert.IsTrue(string.Equals(
+            expected.CanonicalPath,
+            result.CurrentDestination.CanonicalPath,
+            StringComparison.OrdinalIgnoreCase));
         Assert.IsNotNull(result.ContentFingerprint);
         Assert.AreEqual(FileContentFingerprintAlgorithm.Sha256, result.ContentFingerprint.Algorithm);
         Assert.AreEqual(
