@@ -79,6 +79,7 @@ def main() -> int:
         ("Recovery basic-metadata persistence verification", ["tools/verify_recovery_basic_metadata_persistence.py", "--repo-root", str(repo_root), "--sqlite-cases", "5000"]),
         ("Recovery owner/group/DACL security evidence verification", ["tools/verify_recovery_security_descriptor_evidence.py", "--repo-root", str(repo_root), "--cases", "50000", "--sqlite-cases", "5000"]),
         ("Recovery named-data-stream topology verification", ["tools/verify_recovery_named_data_stream_topology.py", "--repo-root", str(repo_root), "--cases", "50000", "--sqlite-cases", "5000"]),
+        ("Named-stream default-alias compatibility", ["tools/verify_named_stream_default_alias.py", "--repo-root", str(repo_root), "--cases", "100000"]),
         ("Aggregate recovery evidence assessment verification", ["tools/verify_recovery_evidence_assessment.py", "--repo-root", str(repo_root), "--cases", "50000"]),
         ("Offline paged directory browse verifier", ["tools/verify_directory_browse.py", "--repo-root", str(repo_root), "--cases", "10000"]),
         ("File Copy executor verification", ["tools/verify_file_copy_executor.py", "--repo-root", str(repo_root), "--cases", "20000"]),
@@ -107,7 +108,7 @@ def main() -> int:
     for name, arguments in steps:
         run_step(name, repo_root, arguments)
 
-    print("\nPASS: Copy executor, recovery inspection, content fingerprint evidence, root-bound recovery main-stream verification, root-bound reader ABI, destination-root identity evidence, hard-link evidence, recovery basic-metadata evidence, owner/group/DACL security evidence, named-data-stream topology evidence, aggregate recovery evidence assessment, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions or PowerShell; optional local Clang/.NET 10 checks were used when available.")
+    print("\nPASS: Copy executor, recovery inspection, content fingerprint evidence, root-bound recovery main-stream verification, root-bound reader ABI, destination-root identity evidence, hard-link evidence, recovery basic-metadata evidence, owner/group/DACL security evidence, named-data-stream topology evidence, named-stream default-alias compatibility, aggregate recovery evidence assessment, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions or PowerShell; optional local Clang/.NET 10 checks were used when available.")
     return 0
 
 
