@@ -63,8 +63,6 @@ def run_sqlite_model(cases: int = 5000) -> int:
         times = tuple(rng.getrandbits(64) for _ in range(3))
         attrs = rng.getrandbits(32)
         count = rng.randint(1, 2**32 - 1)
-
-        # MutationStarted is already durable before the stronger commit barrier.
         connection.execute("INSERT INTO entries VALUES (?, 0, 1, NULL)", (op,))
         connection.commit()
         try:
@@ -211,12 +209,19 @@ def check_repository(root: Path) -> int:
         checks += 6
 
     checks += require(source["verifier"], (
+        "_evidenceStore.GetAsync(inspection.OperationId",
+        "MatchesDurableHistory(",
+        "UnavailableWithoutRecordedEvidence(",
         "GetDestinationBasicMetadataEvidenceAsync(",
         "TryCreateRequest(",
         "IsConsistentSuccess(",
         "FileOperationRecoveryBasicMetadataComparer.Compare(recorded, read.BasicMetadata)",
         "Last-access equality is diagnostic only",
+        "durable action-history entry/root",
     ), folded=True)
+    verify_body = method_body(source["verifier"], "public async ValueTask<FileOperationRecoveryBasicMetadataVerification> VerifyAsync(")
+    assert verify_body.index("MatchesDurableHistory(") < verify_body.index("GetDestinationBasicMetadataEvidenceAsync(")
+    checks += 1
 
     for name in ("commit_reader", "current_reader"):
         checks += require(source[name], (
@@ -266,6 +271,7 @@ def check_repository(root: Path) -> int:
             "LastWriteDifferenceIsReportedWithoutMutationAuthority",
             "MissingRecordedMetadataSkipsReader",
             "UnverifiedRootSkipsReaderAndReturnsUnavailable",
+            "MismatchedDurableHistorySkipsMetadataAndReader",
             "UnsafeReaderStatusReturnsUnavailable",
             "InconsistentSuccessEvidenceFailsClosedAsUnavailable",
         ),
@@ -296,7 +302,6 @@ def check_repository(root: Path) -> int:
         "explicit user authorization",
     ), folded=True)
 
-    # The standard wrappers must run both this slice and the inherited hard-link slice.
     for wrapper in ("py_wrapper", "ps_wrapper"):
         assert "verify_recovery_hard_link_evidence.py" in source[wrapper]
         assert "verify_recovery_basic_metadata_evidence.py" in source[wrapper]
