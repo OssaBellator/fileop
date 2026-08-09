@@ -150,16 +150,15 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 continue;
             }
 
+            var recordedDirectoryPath = inspection.DestinationDirectory.RecordedCanonicalPath;
             if (!inspection.DestinationDirectory.IsSameRecordedRoot ||
                 inspection.DestinationDirectory.RecordedIdentity is not FileIdentity expectedDirectoryIdentity ||
-                string.IsNullOrWhiteSpace(inspection.DestinationDirectory.RecordedCanonicalPath) ||
+                string.IsNullOrWhiteSpace(recordedDirectoryPath) ||
                 inspection.DestinationDirectory.CurrentDirectory is not { } currentDirectory ||
                 currentDirectory.State != FileOperationCanonicalPathState.Directory ||
                 currentDirectory.IsLeafReparsePoint ||
                 currentDirectory.Identity != expectedDirectoryIdentity ||
-                !PathsEqual(
-                    inspection.DestinationDirectory.RecordedCanonicalPath,
-                    currentDirectory.CanonicalPath))
+                !PathsEqual(recordedDirectoryPath, currentDirectory.CanonicalPath))
             {
                 results.Add(Create(
                     item,
@@ -181,7 +180,7 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
             }
 
             var request = new FileContentFingerprintReadRequest(
-                inspection.DestinationDirectory.RecordedCanonicalPath,
+                recordedDirectoryPath,
                 expectedDirectoryIdentity,
                 entry.CanonicalDestinationPath,
                 expectedIdentity);
