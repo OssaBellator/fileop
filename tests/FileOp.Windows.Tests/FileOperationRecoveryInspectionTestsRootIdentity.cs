@@ -15,8 +15,20 @@ public sealed class FileOperationRecoveryInspectionTestsRootIdentity
     public async Task LegacyHistoryDoesNotResolveRootWithoutDurableIdentity()
     {
         var history = CreateHistory(destinationRootIdentity: null);
-        var resolver = new RecordingResolver(_ =>
-            throw new InvalidOperationException("Root resolver should not run for legacy root evidence."));
+        var resolver = new RecordingResolver(path =>
+        {
+            if (string.Equals(
+                Trim(path),
+                Trim(history.CanonicalDestinationDirectoryPath),
+                StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Root resolver should not run for legacy root evidence.");
+            }
+
+            return File(
+                history.Entries[0].CanonicalDestinationPath,
+                history.Entries[0].DestinationIdentity!.Value);
+        });
         var inspector = new FileOperationRecoveryInspector(resolver);
 
         var result = await inspector.InspectAsync(history);
