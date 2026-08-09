@@ -27,7 +27,10 @@ public sealed record FileOperationRecoveryInspectionItem(
     FileOperationCanonicalPath CurrentDestination,
     string Message)
 {
-    public FileIdentity? RecordedDestinationIdentity => Entry.DestinationIdentity;
+    public FileIdentity? RecordedDestinationIdentity =>
+        Entry.State == FileOperationActionEntryState.RecoveryRequired
+            ? Entry.DestinationIdentity
+            : null;
 
     public bool IsSameRecordedObject =>
         Status == FileOperationRecoveryDestinationStatus.SameObject;
@@ -151,7 +154,8 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
         FileOperationActionEntry entry,
         FileOperationCanonicalPath current)
     {
-        if (entry.DestinationIdentity is not FileIdentity expected ||
+        if (entry.State != FileOperationActionEntryState.RecoveryRequired ||
+            entry.DestinationIdentity is not FileIdentity expected ||
             current.Identity is not FileIdentity actual)
         {
             return FileOperationRecoveryDestinationStatus.NoVerifiedIdentity;
@@ -165,7 +169,7 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
     private static string Describe(FileOperationRecoveryDestinationStatus status) => status switch
     {
         FileOperationRecoveryDestinationStatus.NoVerifiedIdentity =>
-            "A destination exists, but durable history does not contain enough stable identity evidence to correlate it.",
+            "A destination exists, but durable history does not contain enough verified stable identity evidence to correlate it.",
         FileOperationRecoveryDestinationStatus.Missing =>
             "The recorded destination path is currently missing and still resolves through the recorded canonical namespace.",
         FileOperationRecoveryDestinationStatus.SameObject =>
