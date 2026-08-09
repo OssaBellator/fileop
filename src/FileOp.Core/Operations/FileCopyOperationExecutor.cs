@@ -11,7 +11,8 @@ public sealed record FileCopyMutationReceipt(
     string CanonicalSourcePath,
     string CanonicalDestinationPath,
     FileIdentity SourceIdentity,
-    FileIdentity DestinationIdentity);
+    FileIdentity DestinationIdentity,
+    FileContentFingerprint? DestinationContentFingerprint = null);
 
 public sealed record FileCopyMutationRequest(
     FileOperationExecutionValidationItem Item,
@@ -402,6 +403,7 @@ public sealed class FileCopyOperationExecutor : IFileOperationExecutor
                             plan.Id,
                             ordinal,
                             receipt.DestinationIdentity,
+                            receipt.DestinationContentFingerprint!,
                             UtcNow())
                         .ConfigureAwait(false);
                 }
@@ -418,7 +420,8 @@ public sealed class FileCopyOperationExecutor : IFileOperationExecutor
                             receipt.CanonicalDestinationPath,
                             exception,
                             retryable: false),
-                        verifiedDestinationIdentity: receipt.DestinationIdentity).ConfigureAwait(false);
+                        verifiedDestinationIdentity: receipt.DestinationIdentity,
+                        verifiedDestinationContentFingerprint: receipt.DestinationContentFingerprint).ConfigureAwait(false);
                 }
 
                 snapshot = snapshot.ReportProgress(
@@ -544,7 +547,8 @@ public sealed class FileCopyOperationExecutor : IFileOperationExecutor
         IProgress<FileOperationExecutionSnapshot>? progress,
         FileOperationExecutionSnapshot snapshot,
         FileOperationFailure failure,
-        FileIdentity? verifiedDestinationIdentity = null)
+        FileIdentity? verifiedDestinationIdentity = null,
+        FileContentFingerprint? verifiedDestinationContentFingerprint = null)
     {
         var recoveryFinalized = false;
         try
@@ -555,7 +559,8 @@ public sealed class FileCopyOperationExecutor : IFileOperationExecutor
                     ordinal,
                     failure,
                     UtcNow(),
-                    destinationIdentity: verifiedDestinationIdentity)
+                    destinationIdentity: verifiedDestinationIdentity,
+                    destinationContentFingerprint: verifiedDestinationContentFingerprint)
                 .ConfigureAwait(false);
         }
         catch
@@ -756,6 +761,13 @@ public sealed class FileCopyOperationExecutor : IFileOperationExecutor
         if (receipt.DestinationIdentity == receipt.SourceIdentity)
         {
             problem = "The destination was reported as the same filesystem object as the source.";
+            return false;
+        }
+
+        if (receipt.DestinationContentFingerprint is not
+            { Algorithm: FileContentFingerprintAlgorithm.Sha256 })
+        {
+            problem = "The mutation primitive did not provide the required SHA-256 destination content fingerprint.";
             return false;
         }
 
