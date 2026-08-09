@@ -74,7 +74,7 @@ public sealed class WindowsFileContentFingerprintReaderTests
     [TestMethod]
     public async Task MissingDestinationFailsClosedWithoutFingerprint()
     {
-        using var fixture = new ReaderFixture();
+        using var fixture = new ReaderFixture(createFile: false);
         var result = await new WindowsFileContentFingerprintReader()
             .ReadAsync(fixture.Path, new FileIdentity(1, 1));
 
@@ -153,7 +153,7 @@ public sealed class WindowsFileContentFingerprintReaderTests
 
         public ReaderFixture(bool createFile = true)
         {
-            Directory.CreateDirectory(_root);
+            System.IO.Directory.CreateDirectory(_root);
             Directory = _root;
             Path = System.IO.Path.Combine(_root, "payload.bin");
             if (createFile)

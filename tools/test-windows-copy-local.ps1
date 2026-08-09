@@ -27,7 +27,7 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
 
 python -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)"
 if ($LASTEXITCODE -ne 0) {
-    throw "The 'python' command must run Python 3 for the zero-Actions Copy validation gates."
+    throw "The 'python' command must run Python 3 for the FileOp offline verifiers."
 }
 
 if (-not $SkipOfflineModels) {
@@ -61,6 +61,7 @@ $filter = @(
     "FullyQualifiedName~FileOperationRecoveryContentVerificationTests",
     "FullyQualifiedName~FileCopyOperationExecutorTests",
     "FullyQualifiedName~WindowsFileContentFingerprintReaderTests",
+    "FullyQualifiedName~WindowsRootBoundFileContentFingerprintReaderTests",
     "FullyQualifiedName~WindowsFileOperationRecoveryContentVerificationTests",
     "FullyQualifiedName~WindowsFileCopyMutationPrimitiveTests",
     "FullyQualifiedName~WindowsFileCopyMutationPrimitiveMetadataTests",

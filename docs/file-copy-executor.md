@@ -8,7 +8,7 @@ The executor never substitutes path-only `File.Copy`. Fresh validation supplies 
 
 ## Durable root boundary
 
-Before mutation, `SqliteFileOperationActionHistoryStore.BeginAsync` now durably records the validated source and destination root `FileIdentity` values alongside the operation and initial entries. The root pair is written in the same transaction as the begin barrier.
+Before mutation, `SqliteFileOperationActionHistoryStore.BeginAsync` durably records the validated source and destination root `FileIdentity` values alongside the operation and initial entries. The root pair is written in the same transaction as the begin barrier.
 
 The executor already revalidates each ready entry immediately before mutation and requires the fresh source/destination root objects to match the initial validation. The Windows mutation primitive then reopens and validates those roots under handles before relative source open and exclusive destination creation. Thus a successful/receipt-producing mutation is tied back to the root identity durably captured at `BeginAsync`.
 
@@ -60,15 +60,16 @@ The mutation computes SHA-256 from exactly the logical bytes successfully writte
 
 ## Recovery evidence
 
-Recovery inspection is now layered:
+Recovery inspection is layered:
 
 1. `FileOperationRecoveryInspector` compares durable destination-root identity with the current canonical directory object, and separately inspects the recovery leaf.
-2. `FileOperationRecoveryContentVerifier` requires durable SHA-256 **plus** root `SameObject` **plus** leaf `SameObject` before invoking the stable content reader.
-3. `WindowsFileContentFingerprintReader` re-proves the leaf under its actual read handle and compares current main-stream SHA-256.
+2. `FileOperationRecoveryContentVerifier` requires durable SHA-256 **plus** root `SameObject` **plus** leaf `SameObject` before constructing a root+leaf `FileContentFingerprintReadRequest`.
+3. `WindowsRootBoundFileContentFingerprintReader` independently reopens the recorded root, verifies its canonical path/type/non-reparse state/identity, opens the leaf relative to that root via `NtCreateFile(RootDirectory=...)`, and keeps both handles alive while hashing and revalidating.
+4. Core independently checks a reader-reported success against both requested root and leaf evidence before accepting a content match.
 
-This catches a namespace case that leaf identity/content alone misses: the original destination directory can be replaced while the same file object is moved back into the replacement directory. The leaf may remain `SameObject`, but the root is `DifferentObject`, so content verification returns `DestinationRootNotVerified` without reading bytes.
+This catches both timings of the replaced-root/same-file case. If the directory was already replaced before metadata inspection, the root observation is `DifferentObject` and content is not read. If the root is replaced **after** a `SameObject` inspection but before the byte-read boundary, the root-bound reader returns `DestinationRootChanged` before accepting leaf content.
 
-The root observation is still point-in-time. Its handle is not retained through the later read, so this stack is **not a final race-safe authorization boundary**.
+The earlier inspector observation remains point-in-time, but it is no longer used as a lock for the hash. The root-bound reader re-establishes and holds the namespace binding during content verification. Once those read handles are released, however, a later destructive action still needs its own final handle-bound authorization/revalidation boundary.
 
 A `MatchesRecordedMainStream` result plus matching root/leaf identity is stronger recovery evidence, but still **not a complete no-user-change proof**. Metadata, ACLs, alternate data streams, EAs, hard-link topology and other filesystem state remain outside the evidence policy.
 
@@ -84,7 +85,7 @@ Neither root identity, destination identity, content fingerprint nor a later con
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-The zero-Actions wrapper now covers action history, recovery inspection, fingerprint evidence, stable main-stream verification, destination-root identity evidence, executor orchestration, Windows handle-binding, metadata semantics and ABI guards.
+The zero-Actions wrapper covers action history, recovery inspection, fingerprint evidence, root-bound stable main-stream verification, destination-root identity evidence, executor orchestration, Windows handle-binding, metadata semantics and ABI guards.
 
 Windows compiler/native validation remains batched for the stacked work:
 
