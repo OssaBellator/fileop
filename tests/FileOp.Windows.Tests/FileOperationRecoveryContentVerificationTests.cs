@@ -254,6 +254,32 @@ public sealed class FileOperationRecoveryContentVerificationTests
     }
 
     [TestMethod]
+    public void LegacyReadResultFourFieldConstructionAndDeconstructionRemainAvailable()
+    {
+        var destination = ExistingFile(@"D:\Legacy\payload.bin", new FileIdentity(17, 170));
+        var fingerprint = new FileContentFingerprint(
+            FileContentFingerprintAlgorithm.Sha256,
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+        var result = new FileContentFingerprintReadResult(
+            FileContentFingerprintReadStatus.Success,
+            destination,
+            fingerprint,
+            "legacy");
+
+        var (status, current, currentFingerprint, message) = result;
+
+        Assert.AreEqual(FileContentFingerprintReadStatus.Success, status);
+        Assert.AreSame(destination, current);
+        Assert.AreEqual(fingerprint, currentFingerprint);
+        Assert.AreEqual("legacy", message);
+        Assert.IsNull(result.CurrentDestinationDirectory);
+        Assert.AreEqual(8, (int)FileContentFingerprintReadStatus.Error);
+        Assert.AreEqual(9, (int)FileContentFingerprintReadStatus.DestinationRootChanged);
+        Assert.AreEqual(12, (int)FileOperationRecoveryContentStatus.Error);
+        Assert.AreEqual(13, (int)FileOperationRecoveryContentStatus.DestinationRootChanged);
+    }
+
+    [TestMethod]
     public void VerificationDefensivelySnapshotsItems()
     {
         var identity = new FileIdentity(16, 160);
