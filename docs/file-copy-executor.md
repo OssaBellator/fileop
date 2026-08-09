@@ -104,7 +104,9 @@ After `MutationStarted`, native mutation failure, a missing/invalid mutation lea
 
 A validated mutation receipt is a stronger boundary. If `CommitCopyAsync` fails after path/source/destination identity and SHA-256 evidence validation, the executor persists destination identity + fingerprint together. That pair is **recovery evidence only**. The entry remains `RecoveryRequired`, keeps `UndoKind.None`, and is never an `IsUndoCandidate`.
 
-`FileOperationRecoveryInspector` can report whether a recovery-sensitive destination still resolves to the recorded object/location. It does not yet hash the current destination. A `SameObject` observation plus stored post-Copy SHA-256 still is **not a complete no-user-change proof** until FileOp performs a race-resistant current-file comparison and deliberately handles non-content changes.
+`FileOperationRecoveryInspector` first reports whether a recovery-sensitive destination still resolves to the recorded object/location. `FileOperationRecoveryContentVerifier` then performs a separate read-only main-stream comparison only for `SameObject` entries that have durable SHA-256 evidence. On Windows, `WindowsFileContentFingerprintReader` re-proves final canonical path, ordinary-file type, non-reparse status and exact `FileIdentity` under the actual read handle, denies write/delete sharing while hashing, and compares the current primary-stream SHA-256 with the durable post-Copy value.
+
+A `MatchesRecordedMainStream` result is stronger evidence than identity/location alone, but it is still **not a complete no-user-change proof**. Metadata, ACLs, alternate data streams, extended attributes and other non-main-stream state remain outside this comparison.
 
 Primitive failure, missing lease, receipt access failure or invalid receipt never supplies verified identity/fingerprint evidence to recovery.
 
@@ -114,7 +116,7 @@ A pre-mutation revalidation failure instead records ordinary `Failed`, because t
 
 The executor rejects Move, directories, empty plans, unresolved/blocked validation and mismatched validator results. Initial Skip files never invoke the mutation primitive. Replace/overwrite remains absent.
 
-Neither a destination identity nor a content fingerprint is delete/Undo authorization. The Files UI still does not instantiate or call `FileCopyOperationExecutor`, so the production Copy pipeline remains unreachable from normal application interaction. Directory Copy, Move and actual Undo remain out of scope.
+Neither a destination identity, a content fingerprint, nor a later `MatchesRecordedMainStream` result is delete/Undo authorization. The Files UI still does not instantiate or call `FileCopyOperationExecutor`, so the production Copy pipeline remains unreachable from normal application interaction. Directory Copy, Move and actual Undo remain out of scope.
 
 ## Validation without hosted Actions
 
@@ -124,16 +126,16 @@ Run the focused zero-Actions gate:
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-The wrapper runs action-history, recovery inspection, SHA-256 content evidence, executor orchestration, Windows handle-binding, metadata semantics and ABI guards without hosted GitHub Actions.
+The wrapper runs action-history, recovery inspection, SHA-256 content evidence, stable recovery main-stream verification, executor orchestration, Windows handle-binding, metadata semantics and ABI guards without hosted GitHub Actions.
 
-On Windows with Python and .NET 10, run:
+On Windows with Python and .NET 10, run the batch gate when convenient:
 
 ```bat
 tools\test-windows-copy-local.cmd
 ```
 
-That gate compiles Core/Windows and runs the focused action-history, recovery-inspection, Copy executor and native Windows regressions, including multi-chunk and zero-byte fingerprint checks.
+That gate compiles Core/Windows and runs the focused action-history, recovery-inspection/content-verification, Copy executor and native Windows regressions.
 
 ## Next boundary
 
-The next safe recovery slice should combine `SameObject` identity/location inspection with an identity-bound **read** handle and compare the current main-stream SHA-256 against durable post-Copy evidence. That verifier must remain read-only. Metadata/ACL/ADS/EA policy and explicit user authorization are still required before any destructive recovery or Undo operation.
+The remaining destructive-recovery prerequisite is no longer the primary data stream itself. A later design must decide which non-main-stream state changes matter (metadata, ACLs, ADS, EAs and filesystem-specific semantics), define the final race-safe authorization boundary, and require explicit user authorization before deletion or replacement. The current verifier remains read-only evidence only.
