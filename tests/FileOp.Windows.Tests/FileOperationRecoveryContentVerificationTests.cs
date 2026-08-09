@@ -83,9 +83,28 @@ public sealed class FileOperationRecoveryContentVerificationTests
     }
 
     [TestMethod]
-    public async Task NonSameObjectInspectionSkipsStableReader()
+    public async Task UnverifiedDestinationRootSkipsStableReader()
     {
         var identity = new FileIdentity(10, 100);
+        var inspectionItem = CreateInspectionItem(
+            FileOperationRecoveryDestinationStatus.SameObject,
+            identity,
+            RecordedFingerprint);
+        var reader = new FakeReader(_ => throw new InvalidOperationException("reader should not run"));
+
+        var result = await new FileOperationRecoveryContentVerifier(reader)
+            .VerifyAsync(CreateInspection(inspectionItem, rootVerified: false));
+
+        Assert.AreEqual(
+            FileOperationRecoveryContentStatus.DestinationRootNotVerified,
+            result.Items[0].Status);
+        Assert.AreEqual(0, reader.Calls.Count);
+    }
+
+    [TestMethod]
+    public async Task NonSameObjectInspectionSkipsStableReader()
+    {
+        var identity = new FileIdentity(11, 110);
         var inspectionItem = CreateInspectionItem(
             FileOperationRecoveryDestinationStatus.DifferentObject,
             identity,
@@ -116,7 +135,7 @@ public sealed class FileOperationRecoveryContentVerificationTests
 
         foreach (var pair in statuses)
         {
-            var identity = new FileIdentity(11, (ulong)(110 + (int)pair.Item1));
+            var identity = new FileIdentity(12, (ulong)(120 + (int)pair.Item1));
             var inspectionItem = CreateInspectionItem(
                 FileOperationRecoveryDestinationStatus.SameObject,
                 identity,
@@ -139,12 +158,12 @@ public sealed class FileOperationRecoveryContentVerificationTests
     [TestMethod]
     public async Task InconsistentSuccessEvidenceFailsClosedAsError()
     {
-        var identity = new FileIdentity(12, 120);
+        var identity = new FileIdentity(13, 130);
         var inspectionItem = CreateInspectionItem(
             FileOperationRecoveryDestinationStatus.SameObject,
             identity,
             RecordedFingerprint);
-        var wrongIdentity = new FileIdentity(12, 121);
+        var wrongIdentity = new FileIdentity(13, 131);
         var reader = new FakeReader(_ => new FileContentFingerprintReadResult(
             FileContentFingerprintReadStatus.Success,
             ExistingFile(inspectionItem.Entry.CanonicalDestinationPath, wrongIdentity),
@@ -162,7 +181,7 @@ public sealed class FileOperationRecoveryContentVerificationTests
     [TestMethod]
     public async Task ReaderExceptionFailsClosedAsError()
     {
-        var identity = new FileIdentity(13, 130);
+        var identity = new FileIdentity(14, 140);
         var inspectionItem = CreateInspectionItem(
             FileOperationRecoveryDestinationStatus.SameObject,
             identity,
@@ -179,7 +198,7 @@ public sealed class FileOperationRecoveryContentVerificationTests
     [TestMethod]
     public void VerificationDefensivelySnapshotsItems()
     {
-        var identity = new FileIdentity(14, 140);
+        var identity = new FileIdentity(15, 150);
         var inspectionItem = CreateInspectionItem(
             FileOperationRecoveryDestinationStatus.SameObject,
             identity,
@@ -200,8 +219,22 @@ public sealed class FileOperationRecoveryContentVerificationTests
     }
 
     private static FileOperationRecoveryInspection CreateInspection(
-        FileOperationRecoveryInspectionItem item) =>
-        new(Guid.NewGuid(), new[] { item });
+        FileOperationRecoveryInspectionItem item,
+        bool rootVerified = true)
+    {
+        if (!rootVerified)
+        {
+            return new FileOperationRecoveryInspection(Guid.NewGuid(), new[] { item });
+        }
+
+        var rootIdentity = new FileIdentity(99, 999);
+        var root = new FileOperationRecoveryRootInspection(
+            rootIdentity,
+            FileOperationRecoveryRootStatus.SameObject,
+            ExistingDirectory(@"D:\Real\Destination", rootIdentity),
+            "same root");
+        return new FileOperationRecoveryInspection(Guid.NewGuid(), new[] { item }, root);
+    }
 
     private static FileOperationRecoveryInspectionItem CreateInspectionItem(
         FileOperationRecoveryDestinationStatus status,
@@ -247,6 +280,14 @@ public sealed class FileOperationRecoveryContentVerificationTests
             path,
             path,
             FileOperationCanonicalPathState.File,
+            IsLeafReparsePoint: false,
+            Identity: identity);
+
+    private static FileOperationCanonicalPath ExistingDirectory(string path, FileIdentity identity) =>
+        new(
+            path,
+            path,
+            FileOperationCanonicalPathState.Directory,
             IsLeafReparsePoint: false,
             Identity: identity);
 

@@ -41,6 +41,7 @@ public interface IFileContentFingerprintReader
 public enum FileOperationRecoveryContentStatus
 {
     NoRecordedFingerprint,
+    DestinationRootNotVerified,
     NotSameRecordedObject,
     MatchesRecordedMainStream,
     DifferentMainStream,
@@ -96,7 +97,8 @@ public interface IFileOperationRecoveryContentVerifier
 
 /// <summary>
 /// Compares durable post-Copy SHA-256 evidence with the current primary data
-/// stream only after read-only recovery inspection has established SameObject.
+/// stream only after read-only recovery inspection has established both the
+/// recorded destination root and destination file as the same stable objects.
 /// A match is evidence only and grants no mutation, delete, recovery, or Undo authority.
 /// </summary>
 public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecoveryContentVerifier
@@ -127,6 +129,16 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 continue;
             }
 
+            if (!inspection.DestinationDirectory.IsSameRecordedRoot)
+            {
+                results.Add(Create(
+                    item,
+                    FileOperationRecoveryContentStatus.DestinationRootNotVerified,
+                    currentFingerprint: null,
+                    $"Main-stream verification is skipped because the destination root is not verified as the recorded stable directory ({inspection.DestinationDirectory.Status})."));
+                continue;
+            }
+
             if (item.Status != FileOperationRecoveryDestinationStatus.SameObject ||
                 item.RecordedDestinationIdentity is not FileIdentity expectedIdentity)
             {
@@ -134,7 +146,7 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                     item,
                     FileOperationRecoveryContentStatus.NotSameRecordedObject,
                     currentFingerprint: null,
-                    "Main-stream verification is skipped unless metadata-only recovery inspection first proves the recorded canonical location and FileIdentity."));
+                    "Main-stream verification is skipped unless recovery inspection proves the recorded destination canonical location and FileIdentity."));
                 continue;
             }
 
@@ -257,7 +269,7 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
         FileOperationRecoveryContentStatus.UnexpectedType =>
             "The recorded file destination now resolves to a non-file object.",
         FileOperationRecoveryContentStatus.Busy =>
-            "The destination could not be opened with write/delete sharing denied; concurrent or pre-existing access prevents a stable content proof.",
+            "The destination could not be opened with write/delete sharing denied; current sharing constraints prevent a stable content proof.",
         FileOperationRecoveryContentStatus.Inaccessible =>
             "The destination could not be opened for stable read access.",
         FileOperationRecoveryContentStatus.Error =>

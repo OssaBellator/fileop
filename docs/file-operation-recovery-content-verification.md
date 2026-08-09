@@ -2,114 +2,89 @@
 
 ## Purpose
 
-Durable Copy history can carry the SHA-256 of the primary file data stream that FileOp successfully wrote. Metadata-only recovery inspection can separately establish that a recovery-sensitive destination still resolves to the recorded canonical location and stable `FileIdentity`.
-
-`FileOperationRecoveryContentVerifier` combines those two pieces conservatively. It never reads file content unless the earlier `FileOperationRecoveryInspector` result is already `SameObject` and the history entry contains both recorded destination identity and post-Copy SHA-256 evidence.
+Durable Copy history can carry the SHA-256 of the primary file data stream FileOp successfully wrote, the created destination `FileIdentity`, and—on new histories—the validated destination-root `FileIdentity`. `FileOperationRecoveryInspector` observes root and leaf namespace evidence before `FileOperationRecoveryContentVerifier` considers reading bytes.
 
 A successful result is named **`MatchesRecordedMainStream`**, not "unchanged file". It is evidence only and is **not deletion authorization**.
 
-## Two-stage proof
+## Evidence gate
 
-The verification sequence is deliberately split:
+The content reader runs only when all three prerequisites are true:
 
 ```text
-durable RecoveryRequired entry
-  + recorded destination FileIdentity
-  + recorded post-Copy SHA-256
+durable post-Copy SHA-256 exists
+        AND
+destination root inspection == SameObject
+        AND
+destination file inspection == SameObject
         ↓
-metadata-only FileOperationRecoveryInspector
-        ↓ must be SameObject
 WindowsFileContentFingerprintReader
         ↓ stable read handle, FileShare.Read only
         ↓ FILE_FLAG_OPEN_REPARSE_POINT
-        ↓ final canonical path check
-        ↓ ordinary-file / non-reparse check
-        ↓ exact FileIdentity check
-        ↓ SHA-256 primary stream through same handle
-        ↓ post-read identity / size / last-write / path check
-FileOperationRecoveryContentVerifier
+        ↓ final canonical path / ordinary-file / non-reparse / FileIdentity checks
+        ↓ SHA-256 main data stream through that same handle
+        ↓ post-read identity / size / last-write / path checks
         ↓
 MatchesRecordedMainStream or a fail-closed status
 ```
 
-The second stage re-proves namespace and identity under the actual content-read handle. The earlier metadata inspection therefore cannot become a TOCTOU authorization shortcut. Core also revalidates the shape of a reader-reported `Success` result instead of treating a pluggable reader's status as authority by itself.
+Legacy histories without durable destination-root identity are readable but return `DestinationRootNotVerified`; they are not silently upgraded from current observations and the content reader is not invoked. The root observation is point-in-time evidence, not a held parent-directory lock, so it still cannot serve as a final destructive authorization boundary.
+
+Core also revalidates a reader-reported `Success` result: the returned object must still be an ordinary non-reparse file at the recorded canonical path, with the expected identity and a SHA-256 fingerprint. A pluggable reader's status is not authority by itself.
 
 ## Windows stable-read boundary
 
-`WindowsFileContentFingerprintReader` requests only file read-data, read-attributes and synchronize access. It opens with `FileShare.Read` and intentionally omits write and delete sharing for the lifetime of validation and hashing. FileOp does not request target-file write/delete access and calls no target-file write, delete, move or replacement API in this verifier.
+`WindowsFileContentFingerprintReader` requests only read-data, read-attributes and synchronize access. It opens with `FileShare.Read` and omits write and delete sharing for the lifetime of validation and hashing. FileOp makes **no explicit target-file write/delete access** request and calls no target-file write, delete, move or replacement API in this verifier.
 
-A sharing violation is reported as `Busy` rather than weakened into a proof. This can be caused by an existing writer/delete handle **or** by an otherwise read-only handle whose sharing mode does not permit the verifier's read access. `Busy` therefore means only that existing sharing constraints are incompatible with the stable read proof; it is not evidence that another process is writing.
+A sharing violation becomes `Busy`. It can be caused by an existing writer/delete handle or by an otherwise read-only handle whose sharing mode rejects the verifier's read. `Busy` therefore means only that existing sharing constraints are incompatible with the stable proof; it is not evidence that another process is writing.
 
-The final component is opened with `FILE_FLAG_OPEN_REPARSE_POINT`. Before hashing, FileOp verifies:
+The final component is opened with `FILE_FLAG_OPEN_REPARSE_POINT`. Before hashing, the reader verifies final path, ordinary-file type, non-reparse state and exact `FileIdentity`. It hashes the **main data stream** through that handle, then rechecks identity, size, last-write timestamp and final path.
 
-- final canonical path still equals the recorded canonical destination;
-- the handle is an ordinary file, not a directory;
-- the leaf is not a reparse point;
-- the handle's `FileIdentity` exactly equals durable recovery history.
-
-The SHA-256 is then computed from the primary file data stream through that same handle. After the read completes, FileOp checks the same handle again and rejects the proof if identity, size, last-write timestamp or final path changed during the read.
-
-This is a **read-access** boundary, not a promise that the underlying filesystem will leave every metadata field untouched. Depending on filesystem, mount and provider behavior, reading may itself cause filesystem-managed effects such as a last-access update, cache/recall activity or cloud-file hydration. A later no-user-change policy therefore must not naively treat a post-verification last-access difference as proof of an external user change.
+This is a read-access boundary, not a promise that every metadata field remains untouched. Filesystem-managed behavior may include a **last-access** update, cache/recall work or cloud hydration. A later no-user-change policy must not naively interpret those read effects as an external user modification.
 
 ## Result states
 
-The Core verifier exposes conservative states:
+The Core verifier exposes conservative states including:
 
-- `NoRecordedFingerprint` — legacy or weaker durable history has no post-Copy SHA-256;
-- `NotSameRecordedObject` — metadata-only recovery inspection did not first prove `SameObject`;
-- `MatchesRecordedMainStream` — stable-handle SHA-256 equals the durable post-Copy primary-stream SHA-256;
-- `DifferentMainStream` — the same identity-bound object produced a different primary-stream SHA-256;
-- `Missing` — the destination disappeared before stable content verification;
-- `DifferentObject` — the stable read handle has a different `FileIdentity`;
-- `Redirected` — the read handle resolves to a different canonical location;
-- `ReparsePoint` — the final component is now a reparse point;
-- `UnexpectedType` — the recorded file destination is now a directory/non-file object;
-- `Busy` — existing sharing constraints prevent a stable read proof;
-- `Inaccessible` — read access is denied;
-- `Error` — content verification could not complete reliably.
+- `NoRecordedFingerprint` — no durable post-Copy SHA-256;
+- `DestinationRootNotVerified` — durable/current parent namespace evidence is insufficient or mismatched;
+- `NotSameRecordedObject` — the leaf inspection did not prove the recorded file object;
+- `MatchesRecordedMainStream` — current primary-stream SHA-256 matches the durable post-Copy value;
+- `DifferentMainStream` — the same identity-bound object has different primary-stream bytes;
+- `Missing`, `DifferentObject`, `Redirected`, `ReparsePoint`, `UnexpectedType`, `Busy`, `Inaccessible`, `Error` — fail-closed reader outcomes.
 
-Only `MatchesRecordedMainStream` means the current primary stream matched the durable post-Copy bytes at verification time. No status exposes `CanDelete`, `CanUndo` or mutation authority.
+No status exposes `CanDelete`, `CanUndo` or mutation authority.
 
 ## What this does not prove
 
-This slice proves only the **main data stream** under the stable read-handle protocol above. It does not prove equality of:
+Even with destination-root identity, leaf identity and matching SHA-256, this is not a complete no-user-change proof. It does not prove equality of:
 
-- timestamps or other basic metadata;
+- timestamps or other basic **metadata**;
 - ACL/security descriptors;
-- alternate data streams;
+- **alternate data streams**;
 - extended attributes;
 - compression, encryption, sparse or integrity state;
-- hard-link count or the absence/presence of other names for the same file object;
-- the identity of the destination's parent directory at verification time;
-- other filesystem state not represented by the primary data stream SHA-256.
+- **hard-link count** or the absence/presence of other names for the same file object;
+- continuous identity of the **parent directory** between the point-in-time root inspection and a future action;
+- other filesystem state not represented by primary-stream SHA-256.
 
-A matching stream also does not prove that no temporary modification occurred and was later restored to the same bytes. SHA-256 establishes equality of the observed primary-stream content with the recorded post-Copy content at verification time; it is not a historical audit log.
+A matching digest also cannot show whether bytes were temporarily changed and later restored. It is **not a historical audit log**; it establishes equality of the observed main stream with the recorded post-Copy bytes at verification time.
 
-It also does not attempt to turn a matching stream into destructive recovery policy. A later slice must explicitly define which non-main-stream changes matter, how parent/namespace evidence participates, how a final race-safe authorization boundary works, and how the user approves any destructive action.
+The future destructive boundary must reopen/revalidate the destination parent and leaf under handles that remain alive through the actual relative operation, define which non-main-stream changes invalidate recovery, and require explicit user authorization.
 
 ## Validation without hosted Actions
 
-Run the dedicated standard-library model/source guard:
-
 ```powershell
 python tools/verify_recovery_main_stream.py --repo-root . --cases 50000
-```
-
-The normal Copy wrappers run it automatically:
-
-```powershell
+python tools/verify_recovery_root_identity.py --repo-root . --cases 50000
 python tools/test-copy-executor-local.py --repo-root .
-pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-The Windows/.NET compiler/native tests are included in the existing batch gate and can be run later together with the stacked fingerprint work:
+Windows/.NET compiler/native tests remain in the shared deferred batch:
 
 ```bat
 tools\test-windows-copy-local.cmd
 ```
 
-No hosted GitHub Actions run is required.
-
 ## Safety boundary
 
-This implementation contains no explicit target-file write/delete access and no target-file write, delete, move, replacement or recovery mutation API. The content read itself may still have filesystem-managed read side effects as described above. `MatchesRecordedMainStream` is recovery evidence only. Directory Copy, Move, actual Undo, destructive recovery and Files UI execution/Undo wiring remain out of scope.
+This implementation has no explicit target-file write/delete access and no target-file write, delete, move, replacement or recovery mutation API. Reads can still have filesystem-managed side effects as described above. Root/leaf identity and `MatchesRecordedMainStream` remain recovery evidence only. Directory Copy, Move, actual Undo, destructive recovery and Files UI execution/Undo wiring remain out of scope.

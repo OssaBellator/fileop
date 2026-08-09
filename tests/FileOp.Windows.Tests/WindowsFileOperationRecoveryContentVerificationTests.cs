@@ -23,6 +23,7 @@ public sealed class WindowsFileOperationRecoveryContentVerificationTests
         var inspection = await new FileOperationRecoveryInspector(
                 new WindowsFileOperationCanonicalPathResolver())
             .InspectAsync(history);
+        Assert.AreEqual(FileOperationRecoveryRootStatus.SameObject, inspection.DestinationDirectory.Status);
         Assert.AreEqual(FileOperationRecoveryDestinationStatus.SameObject, inspection.Items[0].Status);
 
         var result = await new FileOperationRecoveryContentVerifier(
@@ -48,6 +49,7 @@ public sealed class WindowsFileOperationRecoveryContentVerificationTests
         var inspection = await new FileOperationRecoveryInspector(
                 new WindowsFileOperationCanonicalPathResolver())
             .InspectAsync(history);
+        Assert.AreEqual(FileOperationRecoveryRootStatus.SameObject, inspection.DestinationDirectory.Status);
         Assert.AreEqual(FileOperationRecoveryDestinationStatus.SameObject, inspection.Items[0].Status);
 
         var changed = (byte[])original.Clone();
@@ -73,6 +75,7 @@ public sealed class WindowsFileOperationRecoveryContentVerificationTests
         var inspection = await new FileOperationRecoveryInspector(
                 new WindowsFileOperationCanonicalPathResolver())
             .InspectAsync(history);
+        Assert.AreEqual(FileOperationRecoveryRootStatus.SameObject, inspection.DestinationDirectory.Status);
         Assert.AreEqual(FileOperationRecoveryDestinationStatus.SameObject, inspection.Items[0].Status);
 
         var originalPath = fixture.Path + ".original";
@@ -87,26 +90,74 @@ public sealed class WindowsFileOperationRecoveryContentVerificationTests
         Assert.IsNull(result.Items[0].CurrentContentFingerprint);
     }
 
+    [TestMethod]
+    public async Task ReplacedRootWithSameFileMovedBackIsEvidenceInsufficient()
+    {
+        using var fixture = new VerificationFixture();
+        var original = new byte[3072];
+        new Random(43).NextBytes(original);
+        await File.WriteAllBytesAsync(fixture.Path, original);
+        var history = await fixture.CreateHistoryAsync(original);
+        var recordedFileIdentity = history.Entries[0].DestinationIdentity;
+
+        var originalRoot = fixture.Root + ".original";
+        Directory.Move(fixture.Root, originalRoot);
+        Directory.CreateDirectory(fixture.Root);
+        File.Move(
+            System.IO.Path.Combine(originalRoot, "payload.bin"),
+            fixture.Path);
+        fixture.AddCleanupRoot(originalRoot);
+
+        var inspection = await new FileOperationRecoveryInspector(
+                new WindowsFileOperationCanonicalPathResolver())
+            .InspectAsync(history);
+
+        Assert.AreEqual(
+            FileOperationRecoveryRootStatus.DifferentObject,
+            inspection.DestinationDirectory.Status);
+        Assert.AreEqual(FileOperationRecoveryDestinationStatus.SameObject, inspection.Items[0].Status);
+        Assert.AreEqual(recordedFileIdentity, inspection.Items[0].CurrentDestination.Identity);
+
+        var result = await new FileOperationRecoveryContentVerifier(
+                new WindowsFileContentFingerprintReader())
+            .VerifyAsync(inspection);
+
+        Assert.AreEqual(
+            FileOperationRecoveryContentStatus.DestinationRootNotVerified,
+            result.Items[0].Status);
+        Assert.IsNull(result.Items[0].CurrentContentFingerprint);
+    }
+
     private sealed class VerificationFixture : IDisposable
     {
-        private readonly string _root = System.IO.Path.Combine(
+        private readonly string _initialRoot = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(),
             "FileOp.RecoveryContent.Integration",
             Guid.NewGuid().ToString("N"));
+        private string? _additionalCleanupRoot;
 
         public VerificationFixture()
         {
-            Directory.CreateDirectory(_root);
-            Path = System.IO.Path.Combine(_root, "payload.bin");
+            Directory.CreateDirectory(_initialRoot);
+            Root = _initialRoot;
+            Path = System.IO.Path.Combine(Root, "payload.bin");
         }
+
+        public string Root { get; }
 
         public string Path { get; }
 
+        public void AddCleanupRoot(string path) => _additionalCleanupRoot = path;
+
         public async Task<FileOperationActionHistory> CreateHistoryAsync(byte[] copiedPayload)
         {
-            var current = await new WindowsFileOperationCanonicalPathResolver().ResolveAsync(Path);
+            var resolver = new WindowsFileOperationCanonicalPathResolver();
+            var current = await resolver.ResolveAsync(Path);
+            var destinationRoot = await resolver.ResolveAsync(Root);
             Assert.AreEqual(FileOperationCanonicalPathState.File, current.State);
+            Assert.AreEqual(FileOperationCanonicalPathState.Directory, destinationRoot.State);
             Assert.IsNotNull(current.Identity);
+            Assert.IsNotNull(destinationRoot.Identity);
             var fingerprint = new FileContentFingerprint(
                 FileContentFingerprintAlgorithm.Sha256,
                 Convert.ToHexString(SHA256.HashData(copiedPayload)));
@@ -137,24 +188,34 @@ public sealed class WindowsFileOperationRecoveryContentVerificationTests
                 FileOperationKind.Copy,
                 FileOperationCollisionPolicy.Stop,
                 @"C:\Source",
-                _root,
+                Root,
                 @"C:\Real\Source",
-                _root,
+                destinationRoot.CanonicalPath,
                 FileOperationActionTerminalState.RecoveryRequired,
-                new[] { entry });
+                new[] { entry },
+                SourceDirectoryIdentity: new FileIdentity(1, 1),
+                DestinationDirectoryIdentity: destinationRoot.Identity);
         }
 
         public void Dispose()
         {
-            try
+            foreach (var root in new[] { Root, _additionalCleanupRoot })
             {
-                Directory.Delete(_root, recursive: true);
-            }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
-            {
+                if (string.IsNullOrEmpty(root))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    Directory.Delete(root, recursive: true);
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
             }
         }
     }

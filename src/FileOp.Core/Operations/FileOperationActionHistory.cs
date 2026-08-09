@@ -67,9 +67,17 @@ public sealed record FileOperationActionHistory
         string CanonicalSourceDirectoryPath,
         string CanonicalDestinationDirectoryPath,
         FileOperationActionTerminalState? TerminalState,
-        IEnumerable<FileOperationActionEntry> Entries)
+        IEnumerable<FileOperationActionEntry> Entries,
+        FileIdentity? SourceDirectoryIdentity = null,
+        FileIdentity? DestinationDirectoryIdentity = null)
     {
         ArgumentNullException.ThrowIfNull(Entries);
+        if (SourceDirectoryIdentity.HasValue != DestinationDirectoryIdentity.HasValue)
+        {
+            throw new ArgumentException(
+                "Action-history root identity evidence must contain both source and destination identities, or neither.");
+        }
+
         var entrySnapshot = Entries.ToArray();
         if (entrySnapshot.Any(entry =>
             entry.State != FileOperationActionEntryState.Skipped &&
@@ -93,6 +101,8 @@ public sealed record FileOperationActionHistory
         this.CanonicalDestinationDirectoryPath = CanonicalDestinationDirectoryPath;
         this.TerminalState = TerminalState;
         this.Entries = Array.AsReadOnly(entrySnapshot);
+        this.SourceDirectoryIdentity = SourceDirectoryIdentity;
+        this.DestinationDirectoryIdentity = DestinationDirectoryIdentity;
     }
 
     public Guid OperationId { get; }
@@ -120,6 +130,13 @@ public sealed record FileOperationActionHistory
     public FileOperationActionTerminalState? TerminalState { get; }
 
     public IReadOnlyList<FileOperationActionEntry> Entries { get; }
+
+    public FileIdentity? SourceDirectoryIdentity { get; }
+
+    public FileIdentity? DestinationDirectoryIdentity { get; }
+
+    public bool HasVerifiedRootIdentities =>
+        SourceDirectoryIdentity.HasValue && DestinationDirectoryIdentity.HasValue;
 
     public bool RequiresRecovery =>
         TerminalState == FileOperationActionTerminalState.RecoveryRequired ||
