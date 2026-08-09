@@ -54,6 +54,7 @@ public sealed class FileOperationRecoveryInspectionTests
             CreateEntry(4, FileOperationActionEntryState.RecoveryRequired, @"D:\Dest\directory.txt", new FileIdentity(1, 14)),
             CreateEntry(5, FileOperationActionEntryState.RecoveryRequired, @"D:\Dest\inaccessible.txt", new FileIdentity(1, 15)),
             CreateEntry(6, FileOperationActionEntryState.RecoveryRequired, @"D:\Dest\error.txt", new FileIdentity(1, 16)),
+            CreateEntry(7, FileOperationActionEntryState.RecoveryRequired, @"D:\Dest\missing-redirected.txt", new FileIdentity(1, 17)),
         };
         var resolver = new FakeResolver(new Dictionary<string, FileOperationCanonicalPath>
         {
@@ -64,6 +65,10 @@ public sealed class FileOperationRecoveryInspectionTests
             [entries[4].CanonicalDestinationPath] = Canonical(entries[4].CanonicalDestinationPath, FileOperationCanonicalPathState.Directory, entries[4].DestinationIdentity),
             [entries[5].CanonicalDestinationPath] = Canonical(entries[5].CanonicalDestinationPath, FileOperationCanonicalPathState.Inaccessible, errorCode: "AccessDenied"),
             [entries[6].CanonicalDestinationPath] = Canonical(entries[6].CanonicalDestinationPath, FileOperationCanonicalPathState.Error, errorCode: "IoError"),
+            [entries[7].CanonicalDestinationPath] = Canonical(
+                entries[7].CanonicalDestinationPath,
+                FileOperationCanonicalPathState.Missing,
+                canonicalPath: @"E:\Redirected\missing-redirected.txt"),
         });
         var inspector = new FileOperationRecoveryInspector(resolver);
 
@@ -79,6 +84,7 @@ public sealed class FileOperationRecoveryInspectionTests
                 FileOperationRecoveryDestinationStatus.UnexpectedType,
                 FileOperationRecoveryDestinationStatus.Inaccessible,
                 FileOperationRecoveryDestinationStatus.Error,
+                FileOperationRecoveryDestinationStatus.Redirected,
             },
             result.Items.Select(item => item.Status).ToArray());
         Assert.AreEqual(0, result.SameObjectCount);
@@ -109,7 +115,7 @@ public sealed class FileOperationRecoveryInspectionTests
     }
 
     [TestMethod]
-    public async Task InspectorSkipsSettledEntriesAndSnapshotsResults()
+    public async Task InspectorSkipsSettledEntriesAndRejectsMoveHistory()
     {
         var committed = CreateEntry(
             0,
@@ -147,6 +153,30 @@ public sealed class FileOperationRecoveryInspectionTests
                 .AsTask()
                 .GetAwaiter()
                 .GetResult());
+    }
+
+    [TestMethod]
+    public void InspectionDefensivelySnapshotsItems()
+    {
+        var entry = CreateEntry(
+            0,
+            FileOperationActionEntryState.RecoveryRequired,
+            @"D:\Dest\snapshot.txt",
+            new FileIdentity(8, 80));
+        var current = ExistingFile(entry.CanonicalDestinationPath, entry.DestinationIdentity!.Value);
+        var item = new FileOperationRecoveryInspectionItem(
+            entry.Ordinal,
+            entry,
+            FileOperationRecoveryDestinationStatus.SameObject,
+            current,
+            "same");
+        var mutable = new List<FileOperationRecoveryInspectionItem> { item };
+        var inspection = new FileOperationRecoveryInspection(Guid.NewGuid(), mutable);
+
+        mutable.Clear();
+
+        Assert.AreEqual(1, inspection.Items.Count);
+        Assert.AreSame(item, inspection.Items[0]);
     }
 
     private static FileOperationActionHistory CreateHistory(params FileOperationActionEntry[] entries)
