@@ -135,7 +135,7 @@ internal static class WindowsFileNamedDataStreamTopologyDigest
                 if (!IsNamedDataStream(name))
                 {
                     throw new InvalidDataException(
-                        $"FILE_STREAM_INFO returned an unexpected non-$DATA stream entry '{name}'.");
+                        "FILE_STREAM_INFO returned an unexpected non-$DATA stream entry; raw stream names are not included in diagnostics.");
                 }
 
                 if (!seen.Add(name))
@@ -189,8 +189,6 @@ internal static class WindowsFileNamedDataStreamTopologyDigest
             return false;
         }
 
-        // A named stream must contain at least one UTF-16 code unit between the
-        // leading ':' and the final ':$DATA' type suffix.
         var streamNameLength = name.Length - 1 - ":$DATA".Length;
         return streamNameLength > 0;
     }
