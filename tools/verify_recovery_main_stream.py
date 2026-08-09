@@ -29,6 +29,7 @@ class Read(Enum):
 
 class Result(Enum):
     NO_FINGERPRINT = auto()
+    ROOT_NOT_VERIFIED = auto()
     NOT_SAME_OBJECT = auto()
     MATCH = auto()
     DIFFERENT_CONTENT = auto()
@@ -50,12 +51,15 @@ ACCESS_DELETE = 0x4
 def classify(
     inspection: Inspection,
     has_fingerprint: bool,
+    root_same: bool,
     read: Read,
     recorded: bytes,
     current: bytes,
 ) -> tuple[Result, bool]:
     if not has_fingerprint:
         return Result.NO_FINGERPRINT, False
+    if not root_same:
+        return Result.ROOT_NOT_VERIFIED, False
     if inspection is not Inspection.SAME:
         return Result.NOT_SAME_OBJECT, False
 
@@ -93,6 +97,7 @@ def run_model(cases: int) -> int:
     for _ in range(cases):
         inspection = Inspection.SAME if rng.random() < 0.55 else Inspection.UNSAFE
         has_fingerprint = rng.random() < 0.75
+        root_same = rng.random() < 0.65
         read = rng.choice(reads)
         payload = rng.randbytes(rng.randrange(0, 4096))
         recorded = hashlib.sha256(payload).digest()
@@ -102,15 +107,22 @@ def run_model(cases: int) -> int:
         result, reader_called = classify(
             inspection,
             has_fingerprint,
+            root_same,
             read,
             recorded,
             current,
         )
-        assert reader_called == (has_fingerprint and inspection is Inspection.SAME)
+        assert reader_called == (
+            has_fingerprint and root_same and inspection is Inspection.SAME
+        )
         checks += 1
 
         if not has_fingerprint:
             assert result is Result.NO_FINGERPRINT
+            checks += 1
+            continue
+        if not root_same:
+            assert result is Result.ROOT_NOT_VERIFIED
             checks += 1
             continue
         if inspection is not Inspection.SAME:
@@ -189,6 +201,8 @@ def check_repository(root: Path) -> int:
         "public interface IFileContentFingerprintReader",
         "FileOperationRecoveryDestinationStatus.SameObject",
         "DestinationContentFingerprint is not FileContentFingerprint recorded",
+        "DestinationRootNotVerified",
+        "inspection.DestinationDirectory.IsSameRecordedRoot",
         "MatchesRecordedMainStream",
         "DifferentMainStream",
         "FileContentFingerprintReadStatus.Busy",
@@ -235,6 +249,7 @@ def check_repository(root: Path) -> int:
         "MatchingMainStreamRequiresSameObjectAndRemainsEvidenceOnly",
         "DifferentDigestIsDifferentMainStream",
         "MissingFingerprintSkipsStableReader",
+        "UnverifiedDestinationRootSkipsStableReader",
         "NonSameObjectInspectionSkipsStableReader",
         "StableReaderUnsafeStatusesPropagateConservatively",
         "InconsistentSuccessEvidenceFailsClosedAsError",
@@ -249,6 +264,7 @@ def check_repository(root: Path) -> int:
         "MissingDestinationFailsClosedWithoutFingerprint",
         "DirectoryDestinationFailsClosedWithoutFingerprint",
         "ExistingWriterCausesBusyInsteadOfWeakReadProof",
+        "RestrictiveExistingReaderAlsoCausesBusy",
     ):
         assert test_name in source["windows_tests"], test_name
 
@@ -256,6 +272,7 @@ def check_repository(root: Path) -> int:
         "StableSameObjectAndDigestProducesMainStreamMatchEvidence",
         "ContentEditAfterSameObjectInspectionIsDetectedBySecondStage",
         "ReplacementAfterSameObjectInspectionIsDetectedBeforeHashEvidence",
+        "ReplacedRootWithSameFileMovedBackIsEvidenceInsufficient",
     ):
         assert test_name in source["integration_tests"], test_name
 
@@ -290,9 +307,9 @@ def check_repository(root: Path) -> int:
         len(core_needles)
         + len(windows_needles)
         + len(forbidden_windows)
+        + 8
         + 7
-        + 6
-        + 3
+        + 4
         + 12
         + 5
         + len(forbidden_core)
