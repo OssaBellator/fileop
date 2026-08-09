@@ -71,11 +71,24 @@ public sealed class FileOperationRecoveryBasicMetadataVerifier
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(inspection);
+        var durableHistory = await _evidenceStore
+            .GetAsync(inspection.OperationId, cancellationToken)
+            .ConfigureAwait(false);
         var results = new List<FileOperationRecoveryBasicMetadataVerificationItem>(inspection.Items.Count);
 
         foreach (var item in inspection.Items)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!MatchesDurableHistory(durableHistory, inspection, item))
+            {
+                results.Add(Create(
+                    item,
+                    ReaderStatus: null,
+                    UnavailableWithoutRecordedEvidence(),
+                    "Recovery inspection provenance no longer matches the durable action-history entry/root; metadata evidence is not trusted."));
+                continue;
+            }
+
             var recorded = await _evidenceStore
                 .GetDestinationBasicMetadataEvidenceAsync(
                     inspection.OperationId,
@@ -143,6 +156,50 @@ public sealed class FileOperationRecoveryBasicMetadataVerifier
 
         return new FileOperationRecoveryBasicMetadataVerification(inspection.OperationId, results);
     }
+
+    private static bool MatchesDurableHistory(
+        FileOperationActionHistory? history,
+        FileOperationRecoveryInspection inspection,
+        FileOperationRecoveryInspectionItem item)
+    {
+        var recordedRootPath = inspection.DestinationDirectory.RecordedCanonicalPath;
+        if (history is null ||
+            history.OperationId != inspection.OperationId ||
+            history.Kind != FileOperationKind.Copy ||
+            history.DestinationDirectoryIdentity is not FileIdentity durableRootIdentity ||
+            inspection.DestinationDirectory.RecordedIdentity != durableRootIdentity ||
+            string.IsNullOrWhiteSpace(recordedRootPath) ||
+            !PathsEqual(history.CanonicalDestinationDirectoryPath, recordedRootPath) ||
+            item.Ordinal < 0 ||
+            item.Ordinal >= history.Entries.Count)
+        {
+            return false;
+        }
+
+        var durable = history.Entries[item.Ordinal];
+        var observed = item.Entry;
+        return durable.Ordinal == item.Ordinal &&
+            durable.State == observed.State &&
+            durable.SourceIdentity == observed.SourceIdentity &&
+            durable.DestinationIdentity == observed.DestinationIdentity &&
+            durable.DestinationContentFingerprint == observed.DestinationContentFingerprint &&
+            durable.DestinationHardLinkCount == observed.DestinationHardLinkCount &&
+            durable.Entry.IsDirectory == observed.Entry.IsDirectory &&
+            string.Equals(durable.Entry.Name, observed.Entry.Name, StringComparison.Ordinal) &&
+            PathsEqual(durable.Entry.Path, observed.Entry.Path) &&
+            PathsEqual(durable.CanonicalSourcePath, observed.CanonicalSourcePath) &&
+            PathsEqual(durable.CanonicalDestinationPath, observed.CanonicalDestinationPath);
+    }
+
+    private static FileOperationRecoveryBasicMetadataComparison UnavailableWithoutRecordedEvidence() =>
+        new(
+            FileOperationRecoveryBasicMetadataStatus.Unavailable,
+            Recorded: null,
+            Current: null,
+            CreationTimeMatches: null,
+            LastWriteTimeMatches: null,
+            StableCopiedAttributesMatch: null,
+            LastAccessTimeMatchesDiagnostic: null);
 
     private static bool TryCreateRequest(
         FileOperationRecoveryInspection inspection,
