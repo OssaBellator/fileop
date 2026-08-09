@@ -79,6 +79,7 @@ public sealed class FileCopyOperationExecutorTests
         Assert.AreEqual(FileOperationExecutionState.Failed, result.State);
         Assert.AreEqual("CopyCommitBarrierFailed", result.Failure?.Code);
         Assert.AreEqual(0, result.CompletedEntryCount);
+        Assert.AreEqual(new FileIdentity(3, 500), history.LastRecoveryDestinationIdentity);
         Assert.IsTrue(IndexOf(events, "history:recovery:0") < IndexOf(events, "lease:dispose"));
         Assert.IsTrue(IndexOf(events, "history:complete:RecoveryRequired") < IndexOf(events, "lease:dispose"));
     }
@@ -98,7 +99,26 @@ public sealed class FileCopyOperationExecutorTests
 
         Assert.AreEqual(FileOperationExecutionState.Failed, result.State);
         Assert.AreEqual("CopyMutationReceiptInvalid", result.Failure?.Code);
+        Assert.IsNull(history.LastRecoveryDestinationIdentity);
         Assert.IsTrue(IndexOf(events, "history:recovery:0") < IndexOf(events, "lease:dispose"));
+    }
+
+    [TestMethod]
+    public async Task MutationFailureMarksRecoveryWithoutDestinationIdentity()
+    {
+        var events = new List<string>();
+        var plan = CreatePlan(1);
+        var validator = new FakeValidator((candidate, _) => ValueTask.FromResult(CreateValidation(candidate)));
+        var history = new RecordingHistoryStore(events);
+        var mutation = new FakeMutation(_ => throw new IOException("mutation failed"));
+        var executor = new FileCopyOperationExecutor(validator, history, mutation);
+
+        var result = await executor.ExecuteAsync(plan, new RecordingProgress(events));
+
+        Assert.AreEqual(FileOperationExecutionState.Failed, result.State);
+        Assert.AreEqual("CopyMutationFailed", result.Failure?.Code);
+        Assert.IsNull(history.LastRecoveryDestinationIdentity);
+        Assert.IsTrue(events.Contains("history:recovery:0"));
     }
 
     [TestMethod]
@@ -361,6 +381,8 @@ public sealed class FileCopyOperationExecutorTests
 
         public bool ThrowOnCommit { get; set; }
 
+        public FileIdentity? LastRecoveryDestinationIdentity { get; private set; }
+
         public ValueTask<FileOperationActionHistory> BeginAsync(
             FileOperationExecutionValidationResult validation,
             DateTimeOffset startedAtUtc,
@@ -440,9 +462,11 @@ public sealed class FileCopyOperationExecutorTests
             int ordinal,
             FileOperationFailure failure,
             DateTimeOffset failedAtUtc,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            FileIdentity? destinationIdentity = null)
         {
             _events.Add($"history:recovery:{ordinal}");
+            LastRecoveryDestinationIdentity = destinationIdentity;
             return Current();
         }
 
