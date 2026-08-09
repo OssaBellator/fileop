@@ -7,6 +7,29 @@ using FileOp.Core.Models;
 
 namespace FileOp.Core.Operations;
 
+public enum FileOperationRecoveryRootStatus
+{
+    NoVerifiedIdentity,
+    Missing,
+    SameObject,
+    DifferentObject,
+    Redirected,
+    ReparsePoint,
+    UnexpectedType,
+    Inaccessible,
+    Error,
+}
+
+public sealed record FileOperationRecoveryRootInspection(
+    FileIdentity? RecordedIdentity,
+    FileOperationRecoveryRootStatus Status,
+    FileOperationCanonicalPath? CurrentDirectory,
+    string Message)
+{
+    public bool IsSameRecordedRoot =>
+        Status == FileOperationRecoveryRootStatus.SameObject;
+}
+
 public enum FileOperationRecoveryDestinationStatus
 {
     NoVerifiedIdentity,
@@ -40,16 +63,24 @@ public sealed record FileOperationRecoveryInspection
 {
     public FileOperationRecoveryInspection(
         Guid operationId,
-        IEnumerable<FileOperationRecoveryInspectionItem> items)
+        IEnumerable<FileOperationRecoveryInspectionItem> items,
+        FileOperationRecoveryRootInspection? destinationDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(items);
         OperationId = operationId;
         Items = Array.AsReadOnly(items.ToArray());
+        DestinationDirectory = destinationDirectory ?? new FileOperationRecoveryRootInspection(
+            RecordedIdentity: null,
+            FileOperationRecoveryRootStatus.NoVerifiedIdentity,
+            CurrentDirectory: null,
+            "Durable history does not contain verified destination-root identity evidence.");
     }
 
     public Guid OperationId { get; }
 
     public IReadOnlyList<FileOperationRecoveryInspectionItem> Items { get; }
+
+    public FileOperationRecoveryRootInspection DestinationDirectory { get; }
 
     public int SameObjectCount => Items.Count(static item => item.IsSameRecordedObject);
 }
@@ -62,8 +93,9 @@ public interface IFileOperationRecoveryInspector
 }
 
 /// <summary>
-/// Performs read-only inspection of recovery-sensitive Copy destinations.
-/// Identity equality is evidence only; this type grants no mutation or Undo authority.
+/// Performs read-only inspection of recovery-sensitive Copy destinations and the
+/// durable destination-root identity. Identity equality is evidence only; this
+/// type grants no mutation or Undo authority.
 /// </summary>
 public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspector
 {
@@ -82,6 +114,9 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
             throw new NotSupportedException("Recovery destination inspection currently supports Copy history only.");
         }
 
+        var destinationDirectory = await InspectDestinationDirectoryAsync(
+            history,
+            cancellationToken).ConfigureAwait(false);
         var results = new List<FileOperationRecoveryInspectionItem>();
         foreach (var entry in history.Entries)
         {
@@ -113,7 +148,75 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
                 Describe(status)));
         }
 
-        return new FileOperationRecoveryInspection(history.OperationId, results);
+        return new FileOperationRecoveryInspection(
+            history.OperationId,
+            results,
+            destinationDirectory);
+    }
+
+    private async ValueTask<FileOperationRecoveryRootInspection> InspectDestinationDirectoryAsync(
+        FileOperationActionHistory history,
+        CancellationToken cancellationToken)
+    {
+        if (history.DestinationDirectoryIdentity is not FileIdentity expected)
+        {
+            return new FileOperationRecoveryRootInspection(
+                RecordedIdentity: null,
+                FileOperationRecoveryRootStatus.NoVerifiedIdentity,
+                CurrentDirectory: null,
+                "Legacy durable history does not contain a verified destination-root identity.");
+        }
+
+        var current = await _resolver
+            .ResolveAsync(
+                history.CanonicalDestinationDirectoryPath,
+                allowMissingLeaf: true,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var status = ClassifyRoot(
+            history.CanonicalDestinationDirectoryPath,
+            expected,
+            current);
+        return new FileOperationRecoveryRootInspection(
+            expected,
+            status,
+            current,
+            DescribeRoot(status));
+    }
+
+    private static FileOperationRecoveryRootStatus ClassifyRoot(
+        string recordedCanonicalPath,
+        FileIdentity expectedIdentity,
+        FileOperationCanonicalPath current)
+    {
+        if (current.Exists && current.IsLeafReparsePoint)
+        {
+            return FileOperationRecoveryRootStatus.ReparsePoint;
+        }
+
+        var hasCanonicalLocation = current.State is
+            FileOperationCanonicalPathState.Missing or
+            FileOperationCanonicalPathState.File or
+            FileOperationCanonicalPathState.Directory;
+        if (hasCanonicalLocation &&
+            !PathsEqual(recordedCanonicalPath, current.CanonicalPath))
+        {
+            return FileOperationRecoveryRootStatus.Redirected;
+        }
+
+        return current.State switch
+        {
+            FileOperationCanonicalPathState.Missing => FileOperationRecoveryRootStatus.Missing,
+            FileOperationCanonicalPathState.Inaccessible => FileOperationRecoveryRootStatus.Inaccessible,
+            FileOperationCanonicalPathState.Error => FileOperationRecoveryRootStatus.Error,
+            FileOperationCanonicalPathState.File => FileOperationRecoveryRootStatus.UnexpectedType,
+            FileOperationCanonicalPathState.Directory when current.Identity is FileIdentity actual =>
+                actual == expectedIdentity
+                    ? FileOperationRecoveryRootStatus.SameObject
+                    : FileOperationRecoveryRootStatus.DifferentObject,
+            FileOperationCanonicalPathState.Directory => FileOperationRecoveryRootStatus.Error,
+            _ => FileOperationRecoveryRootStatus.Error,
+        };
     }
 
     private static FileOperationRecoveryDestinationStatus Classify(
@@ -165,6 +268,29 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
             ? FileOperationRecoveryDestinationStatus.SameObject
             : FileOperationRecoveryDestinationStatus.DifferentObject;
     }
+
+    private static string DescribeRoot(FileOperationRecoveryRootStatus status) => status switch
+    {
+        FileOperationRecoveryRootStatus.NoVerifiedIdentity =>
+            "Durable history does not contain verified destination-root identity evidence.",
+        FileOperationRecoveryRootStatus.Missing =>
+            "The recorded destination root is currently missing.",
+        FileOperationRecoveryRootStatus.SameObject =>
+            "The current destination root resolves to the recorded canonical location and stable FileIdentity. This is namespace evidence only.",
+        FileOperationRecoveryRootStatus.DifferentObject =>
+            "The destination-root path now names a different stable FileIdentity than durable history recorded.",
+        FileOperationRecoveryRootStatus.Redirected =>
+            "The destination root now resolves to a different canonical location than durable history recorded.",
+        FileOperationRecoveryRootStatus.ReparsePoint =>
+            "The destination root is currently a reparse point and is not treated as the recorded namespace object.",
+        FileOperationRecoveryRootStatus.UnexpectedType =>
+            "The recorded destination root currently resolves to a file rather than a directory.",
+        FileOperationRecoveryRootStatus.Inaccessible =>
+            "The destination root could not be inspected because access was denied.",
+        FileOperationRecoveryRootStatus.Error =>
+            "The destination root could not be inspected reliably.",
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
 
     private static string Describe(FileOperationRecoveryDestinationStatus status) => status switch
     {
