@@ -7,7 +7,7 @@ import itertools
 import random
 from enum import Enum, auto
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable
 
 
 class Dimension(Enum):
@@ -41,6 +41,13 @@ def assess(states: Dict[Dimension, State]) -> Aggregate:
     if any(state is State.INCOMPLETE for state in states.values()):
         return Aggregate.EVIDENCE_INCOMPLETE
     return Aggregate.OBSERVED_SUBSET_MATCHES
+
+
+def classify_blocked_verification(prerequisite: State) -> State:
+    # A verifier blocked solely because durable identity evidence never existed is
+    # incomplete. Every other blocked prerequisite remains unavailable: a changed
+    # prerequisite is already represented by its own changed dimension.
+    return State.INCOMPLETE if prerequisite is State.INCOMPLETE else State.UNAVAILABLE
 
 
 def verify_case(states: Dict[Dimension, State]) -> int:
@@ -87,6 +94,12 @@ def run_model(cases: int) -> int:
         case = {dimension: rng.choice(states) for dimension in dimensions}
         checks += verify_case(case)
 
+    assert classify_blocked_verification(State.INCOMPLETE) is State.INCOMPLETE
+    assert classify_blocked_verification(State.MATCHES) is State.UNAVAILABLE
+    assert classify_blocked_verification(State.CHANGED) is State.UNAVAILABLE
+    assert classify_blocked_verification(State.UNAVAILABLE) is State.UNAVAILABLE
+    checks += 4
+
     return checks
 
 
@@ -104,6 +117,7 @@ def check_repository(root: Path) -> int:
     paths = {
         "core": root / "src/FileOp.Core/Operations/FileOperationRecoveryEvidenceAssessment.cs",
         "tests": root / "tests/FileOp.Windows.Tests/FileOperationRecoveryEvidenceAssessmentTests.cs",
+        "legacy_tests": root / "tests/FileOp.Windows.Tests/FileOperationRecoveryEvidenceAssessmentLegacyTests.cs",
         "docs": root / "docs/file-operation-recovery-evidence-assessment.md",
         "py_wrapper": root / "tools/test-copy-executor-local.py",
         "ps_wrapper": root / "tools/test-copy-executor-local.ps1",
@@ -136,6 +150,9 @@ def check_repository(root: Path) -> int:
         "RequireSameInspection(",
         "Array.AsReadOnly(snapshot)",
         "items.OrderBy(static item => item.Ordinal)",
+        "Assessment status {status} does not match its dimension masks",
+        "rootStatus == FileOperationRecoveryRootStatus.NoVerifiedIdentity",
+        "destinationStatus == FileOperationRecoveryDestinationStatus.NoVerifiedIdentity",
         "changed != FileOperationRecoveryEvidenceDimension.None",
         "unavailable != FileOperationRecoveryEvidenceDimension.None",
         "incomplete != FileOperationRecoveryEvidenceDimension.None",
@@ -168,6 +185,13 @@ def check_repository(root: Path) -> int:
         assert test_name in source["tests"], test_name
         checks += 1
 
+    for test_name in (
+        "LegacyMissingRootIdentityMakesBlockedMainStreamIncomplete",
+        "AssessmentItemRejectsStatusThatContradictsDimensionMasks",
+    ):
+        assert test_name in source["legacy_tests"], test_name
+        checks += 1
+
     checks += require(source["docs"], (
         "ObservedSubsetMatches",
         "not an “unchanged file” result",
@@ -184,7 +208,8 @@ def check_repository(root: Path) -> int:
     assert verifier_name in source["py_wrapper"]
     assert verifier_name in source["ps_wrapper"]
     assert "FullyQualifiedName~FileOperationRecoveryEvidenceAssessmentTests" in source["windows_gate"]
-    checks += 3
+    assert "FullyQualifiedName~FileOperationRecoveryEvidenceAssessmentLegacyTests" in source["windows_gate"]
+    checks += 4
 
     return checks
 
