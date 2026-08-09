@@ -7,7 +7,9 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
+
+from verify_copy_basic_metadata_dotnet_sdk import list_dotnet_10_sdks
 
 
 def run_step(name: str, repo_root: Path, arguments: list[str]) -> None:
@@ -19,22 +21,14 @@ def run_step(name: str, repo_root: Path, arguments: list[str]) -> None:
     )
 
 
-def find_dotnet_10(repo_root: Path) -> Optional[str]:
+def find_dotnet_10(repo_root: Path) -> Optional[Tuple[str, str]]:
     dotnet = shutil.which("dotnet")
     if dotnet is None:
         return None
-
-    version = subprocess.run(
-        [dotnet, "--version"],
-        cwd=repo_root,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if version.returncode != 0 or not version.stdout.strip().startswith("10."):
+    versions = list_dotnet_10_sdks(dotnet, repo_root)
+    if not versions:
         return None
-    return dotnet
+    return dotnet, versions[-1]
 
 
 def main() -> int:
@@ -53,7 +47,11 @@ def main() -> int:
 
     dotnet_10 = find_dotnet_10(repo_root)
     if dotnet_10 is not None:
-        print(f"INFO: .NET 10 detected at {dotnet_10}; enabling the package-free C# implementation/interop probe.")
+        dotnet_host, sdk_version = dotnet_10
+        print(
+            f"INFO: .NET 10 SDK {sdk_version} detected via {dotnet_host}; "
+            "enabling the package-free C# implementation/interop probe."
+        )
     else:
         print("INFO: .NET 10 SDK not found; skipping the optional package-free C# implementation/interop probe.")
 
@@ -79,15 +77,18 @@ def main() -> int:
         ("Copy basic metadata ABI verification", abi_arguments),
     ]
     if dotnet_10 is not None:
+        dotnet_host, sdk_version = dotnet_10
         steps.append(
             (
                 "Package-free .NET Copy metadata implementation/interop probe",
                 [
-                    "tools/verify_copy_basic_metadata_dotnet.py",
+                    "tools/verify_copy_basic_metadata_dotnet_sdk.py",
                     "--repo-root",
                     str(repo_root),
                     "--dotnet",
-                    dotnet_10,
+                    dotnet_host,
+                    "--sdk-version",
+                    sdk_version,
                 ],
             )
         )
