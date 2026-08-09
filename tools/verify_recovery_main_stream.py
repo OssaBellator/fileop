@@ -266,6 +266,12 @@ def check_repository(root: Path) -> int:
         "sharing",
         "metadata",
         "alternate data streams",
+        "no explicit target-file write/delete access",
+        "filesystem-managed",
+        "last-access",
+        "hard-link count",
+        "parent directory",
+        "not a historical audit log",
     ):
         assert needle.casefold() in source["docs"].casefold(), needle
 
@@ -287,7 +293,7 @@ def check_repository(root: Path) -> int:
         + 7
         + 6
         + 3
-        + 6
+        + 12
         + 5
         + len(forbidden_core)
     )
