@@ -58,6 +58,8 @@ A committed file with the exact destination `FileIdentity` becomes an **undo can
 
 A `RecoveryRequired` entry is different. Even when it carries a verified destination identity, its `UndoKind` remains `None`: the identity is recovery evidence only and does not authorize deletion or make the entry an undo candidate. Primitive failures, missing leases and invalid receipts do not have a verified destination identity and therefore continue to persist recovery without one.
 
+`FileOperationRecoveryInspector` can now consume recovery-sensitive Copy history through the metadata-only canonical resolver. It classifies the current destination as missing, same identity/location, different identity, redirected, reparse, unexpected type, inaccessible or error. This inspection is read-only; even `SameObject` remains evidence only and does not alter `UndoKind` or authorize deletion.
+
 Directory entries are never undo candidates in schema v1. Existing destinations handled by `Skip` never receive undo metadata. Replace/overwrite remains unsupported. Move does not receive Copy-style undo candidates because Move has additional source-removal and cross-volume partial-failure semantics that are not designed yet.
 
 ## Persistence model
@@ -102,6 +104,12 @@ Run the standard-library action-history model and source guard directly:
 python tools/verify_file_operation_action_history.py --repo-root . --cases 20000
 ```
 
+Run the read-only recovery inspection model/source guard:
+
+```powershell
+python tools/verify_file_operation_recovery_inspection.py --repo-root . --cases 50000
+```
+
 Run the complete offline gate without consuming GitHub Actions quota:
 
 ```powershell
@@ -118,4 +126,4 @@ On Windows with .NET 10, `tools\test-windows-copy-local.cmd` remains the compile
 
 ## Next boundary
 
-Recovery now retains the exact destination identity when a validated Copy mutation completed but durable commit persistence failed. A future recovery/Undo slice can use that evidence to identify the object conservatively, but it still needs an explicit no-user-change guard and user-facing authorization before deleting or modifying anything. Directory Copy, Move and actual Undo remain separate later slices.
+Read-only recovery inspection can now prove whether a recovery-sensitive path still resolves to the recorded stable object without mutating it. A future destructive recovery/Undo slice still needs an explicit no-user-change proof, recovery policy and user-facing authorization before deleting or modifying anything. Directory Copy, Move and actual Undo remain separate later slices.
