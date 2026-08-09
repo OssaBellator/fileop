@@ -40,6 +40,8 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw ".NET 10 SDK is required for the focused Windows Copy compiler/native test gate."
 }
 
+# The SDK selector pins an installed .NET 10 SDK, then compiles/runs the project and
+# C# program defined by verify_copy_basic_metadata_dotnet.py from an empty local feed.
 Invoke-Step "Package-free .NET Copy metadata interop probe" {
     python tools/verify_copy_basic_metadata_dotnet_sdk.py --repo-root $repoRoot
 }
