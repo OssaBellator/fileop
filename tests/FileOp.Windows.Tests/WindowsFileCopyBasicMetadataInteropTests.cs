@@ -110,6 +110,7 @@ public sealed class WindowsFileCopyBasicMetadataInteropTests
             string.Equals(attribute.Value, "kernel32.dll", StringComparison.OrdinalIgnoreCase),
             $"{method.Name} must import kernel32.dll.");
         Assert.IsTrue(attribute.SetLastError, $"{method.Name} must preserve the Win32 last-error value.");
+        Assert.IsTrue(attribute.ExactSpelling, $"{method.Name} must use its exact unsuffixed kernel32 entry-point name.");
         Assert.AreEqual(CallingConvention.Winapi, attribute.CallingConvention);
     }
 
