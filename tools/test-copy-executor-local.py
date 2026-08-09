@@ -75,6 +75,7 @@ def main() -> int:
         ("File Copy executor verification", ["tools/verify_file_copy_executor.py", "--repo-root", str(repo_root), "--cases", "20000"]),
         ("Windows Copy mutation handle-binding verification", ["tools/verify_windows_file_copy_mutation.py", "--repo-root", str(repo_root), "--cases", "2000"]),
         ("Copy basic metadata verification", ["tools/verify_copy_basic_metadata.py", "--repo-root", str(repo_root), "--cases", "50000"]),
+        ("Windows FileBasicInformation semantics model", ["tools/verify_copy_basic_metadata_windows_semantics.py", "--cases", "100000"]),
         ("Copy basic metadata ABI verification", abi_arguments),
     ]
     if dotnet_10 is not None:
@@ -94,7 +95,7 @@ def main() -> int:
     for name, arguments in steps:
         run_step(name, repo_root, arguments)
 
-    print("\nPASS: Copy executor, Windows mutation handle binding, basic metadata, and interop ABI boundaries verified without GitHub Actions or PowerShell; optional local Clang/.NET 10 checks were used when available.")
+    print("\nPASS: Copy executor, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions or PowerShell; optional local Clang/.NET 10 checks were used when available.")
     return 0
 
 
