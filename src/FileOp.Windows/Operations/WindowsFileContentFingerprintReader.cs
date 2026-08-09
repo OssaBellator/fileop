@@ -250,7 +250,7 @@ public sealed class WindowsFileContentFingerprintReader : IFileContentFingerprin
                 FileContentFingerprintReadStatus.Busy,
                 current ?? ErrorPath(path, "SharingViolation", error),
                 ContentFingerprint: null,
-                "The destination has conflicting write/delete access, so a stable read proof cannot be obtained.");
+                "Existing sharing constraints are incompatible with the stable read proof.");
         }
 
         if (error == ErrorAccessDenied)
