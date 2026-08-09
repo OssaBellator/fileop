@@ -37,15 +37,17 @@ Each inspected entry receives one read-only observation:
 
 `SameObject` is **identity evidence only**: it proves canonical location + stable object identity at inspection time. The durable `DestinationContentFingerprint` records FileOp's post-Copy main-stream SHA-256, but this inspector deliberately does **not** compare that value with current file bytes.
 
-The next read-only boundary should open the already-inspected object through a race-resistant identity-bound read handle, hash the current main data stream, and compare it with durable fingerprint evidence. Until that exists, FileOp cannot claim a complete **no-user-change** proof.
+`FileOperationRecoveryContentVerifier` is the separate second read-only stage. It consumes this inspector's result and proceeds only for `SameObject` entries that also have durable SHA-256 evidence. On Windows, `WindowsFileContentFingerprintReader` then re-proves canonical path, ordinary-file type, non-reparse state and exact `FileIdentity` under a stable read handle before hashing the current main data stream.
 
-Even a future content match will not automatically settle metadata, ACL, alternate-data-stream, extended-attribute, compression/encryption/sparse or other non-main-stream policy. Those concerns and explicit user authorization remain prerequisites for destructive recovery.
+A `MatchesRecordedMainStream` result means only that the same identity-bound object's primary data stream matched the durable post-Copy SHA-256 at verification time. It does not automatically settle metadata, ACL, alternate-data-stream, extended-attribute, compression/encryption/sparse or other non-main-stream policy.
 
 ## Safety boundary
 
-The inspector exposes no `CanDelete`, `CanUndo`, delete candidate, replacement, or mutation authority. A `RecoveryRequired` entry remains `UndoKind.None` even when the inspector observes `SameObject` and durable SHA-256 evidence exists.
+The inspector and content verifier expose no `CanDelete`, `CanUndo`, delete candidate, replacement, or mutation authority. A `RecoveryRequired` entry remains `UndoKind.None` even when namespace identity and main-stream SHA-256 both match.
 
-No new native filesystem API is introduced here. The existing Windows canonical resolver opens existing paths with metadata-only desired access `0`, then uses `GetFinalPathNameByHandleW` and `GetFileInformationByHandle` to resolve canonical location and stable identity. Missing leaves are resolved through their existing canonical parent without creating the leaf.
+The canonical resolver itself still introduces no content-read access: it opens existing paths with metadata-only desired access `0`, then uses `GetFinalPathNameByHandleW` and `GetFileInformationByHandle` to resolve canonical location and stable identity. Missing leaves are resolved through their existing canonical parent without creating the leaf.
+
+The later stable content-read stage is documented separately in `file-operation-recovery-content-verification.md` and remains read-only.
 
 ## Validation without hosted Actions
 
@@ -61,13 +63,19 @@ Run the fingerprint evidence model/source guard:
 python tools/verify_copy_content_fingerprint.py --repo-root . --cases 20000
 ```
 
+Run the stable main-stream verification model/source guard:
+
+```powershell
+python tools/verify_recovery_main_stream.py --repo-root . --cases 50000
+```
+
 Run the complete Copy offline gate:
 
 ```powershell
 python tools/test-copy-executor-local.py --repo-root .
 ```
 
-On Windows with Python and .NET 10:
+On Windows with Python and .NET 10, the compiler/native checks can be batched later through:
 
 ```bat
 tools\test-windows-copy-local.cmd
@@ -77,8 +85,7 @@ None of these gates require GitHub Actions.
 
 ## Still out of scope
 
-- current-file fingerprint verification;
-- complete no-user-change proof;
+- complete no-user-change policy across non-main-stream state;
 - actual Undo or deletion;
 - destructive recovery actions;
 - directory Copy recovery;
