@@ -7,6 +7,7 @@ import random
 import sys
 from enum import IntEnum
 from pathlib import Path
+from typing import Optional
 
 
 class CurrentState(IntEnum):
@@ -32,11 +33,15 @@ class Status(IntEnum):
 def classify(
     state: CurrentState,
     *,
-    expected_identity: int | None,
-    actual_identity: int | None,
+    expected_identity: Optional[int],
+    actual_identity: Optional[int],
     redirected: bool,
     reparse: bool,
 ) -> Status:
+    if state == CurrentState.FILE and reparse:
+        return Status.REPARSE_POINT
+    if state in (CurrentState.MISSING, CurrentState.FILE, CurrentState.DIRECTORY) and redirected:
+        return Status.REDIRECTED
     if state == CurrentState.MISSING:
         return Status.MISSING
     if state == CurrentState.INACCESSIBLE:
@@ -45,10 +50,6 @@ def classify(
         return Status.ERROR
     if state == CurrentState.DIRECTORY:
         return Status.UNEXPECTED_TYPE
-    if reparse:
-        return Status.REPARSE_POINT
-    if redirected:
-        return Status.REDIRECTED
     if expected_identity is None or actual_identity is None:
         return Status.NO_VERIFIED_IDENTITY
     return (
@@ -119,6 +120,16 @@ def fixed_cases() -> list[tuple[dict[str, object], Status]]:
                 reparse=False,
             ),
             Status.MISSING,
+        ),
+        (
+            dict(
+                state=CurrentState.MISSING,
+                expected_identity=10,
+                actual_identity=None,
+                redirected=True,
+                reparse=False,
+            ),
+            Status.REDIRECTED,
         ),
         (
             dict(
@@ -194,13 +205,14 @@ def run_model(cases: int) -> int:
         if expected_identity is None and state == CurrentState.FILE and not redirected and not reparse:
             assert status == Status.NO_VERIFIED_IDENTITY
             checks += 1
+
         if state == CurrentState.FILE and reparse:
             assert status == Status.REPARSE_POINT
             checks += 1
-        elif state == CurrentState.FILE and redirected:
+        elif state in (CurrentState.MISSING, CurrentState.FILE, CurrentState.DIRECTORY) and redirected:
             assert status == Status.REDIRECTED
             checks += 1
-        if state == CurrentState.MISSING:
+        elif state == CurrentState.MISSING:
             assert status == Status.MISSING
             checks += 1
         elif state == CurrentState.DIRECTORY:
@@ -224,6 +236,7 @@ def check_repository(root: Path) -> int:
         "docs": root / "docs/file-operation-recovery-inspection.md",
         "python_wrapper": root / "tools/test-copy-executor-local.py",
         "powershell_wrapper": root / "tools/test-copy-executor-local.ps1",
+        "windows_gate": root / "tools/test-windows-copy-local.ps1",
     }
     missing = [str(path) for path in paths.values() if not path.is_file()]
     if missing:
@@ -243,6 +256,8 @@ def check_repository(root: Path) -> int:
         "allowMissingLeaf: true",
         "entry.DestinationIdentity is not FileIdentity expected",
         "current.Identity is not FileIdentity actual",
+        "current.State is FileOperationCanonicalPathState.Missing or",
+        "!PathsEqual(entry.CanonicalDestinationPath, current.CanonicalPath)",
         "Identity equality is evidence only",
         "Array.AsReadOnly(items.ToArray())",
     )
@@ -277,7 +292,8 @@ def check_repository(root: Path) -> int:
         "SameIdentityAtCanonicalPathIsEvidenceButNotUndoAuthority",
         "RecoveryInspectionClassifiesUnsafeAndChangedDestinationsConservatively",
         "ExistingDestinationWithoutDurableIdentityCannotBeReportedAsSameObject",
-        "InspectorSkipsSettledEntriesAndSnapshotsResults",
+        "InspectorSkipsSettledEntriesAndRejectsMoveHistory",
+        "InspectionDefensivelySnapshotsItems",
     ):
         assert test_name in source["tests"], test_name
 
@@ -292,14 +308,15 @@ def check_repository(root: Path) -> int:
     verifier_name = "verify_file_operation_recovery_inspection.py"
     assert verifier_name in source["python_wrapper"]
     assert verifier_name in source["powershell_wrapper"]
+    assert "FullyQualifiedName~FileOperationRecoveryInspectionTests" in source["windows_gate"]
 
     return (
         len(required_core)
         + len(forbidden_core)
         + len(required_resolver)
+        + 5
         + 4
-        + 4
-        + 2
+        + 3
     )
 
 
