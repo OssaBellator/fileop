@@ -28,6 +28,12 @@ public sealed record FileContentFingerprintReadResult(
     string Message,
     FileOperationCanonicalPath? CurrentDestinationDirectory = null)
 {
+    /// <summary>
+    /// Optional stable hard-link-count observation from the destination leaf handle.
+    /// This is separate topology evidence and is not required for byte verification.
+    /// </summary>
+    public uint? CurrentDestinationHardLinkCount { get; init; }
+
     public FileContentFingerprintReadResult(
         FileContentFingerprintReadStatus status,
         FileOperationCanonicalPath currentDestination,
@@ -98,6 +104,14 @@ public enum FileOperationRecoveryContentStatus
     DestinationRootChanged,
 }
 
+public enum FileOperationRecoveryHardLinkStatus
+{
+    NoRecordedCount,
+    SameCount,
+    DifferentCount,
+    Unavailable,
+}
+
 public sealed record FileOperationRecoveryContentVerificationItem(
     int Ordinal,
     FileOperationRecoveryInspectionItem Inspection,
@@ -107,6 +121,20 @@ public sealed record FileOperationRecoveryContentVerificationItem(
 {
     public FileContentFingerprint? RecordedContentFingerprint =>
         Inspection.Entry.DestinationContentFingerprint;
+
+    public uint? RecordedDestinationHardLinkCount =>
+        Inspection.Entry.DestinationHardLinkCount;
+
+    public uint? CurrentDestinationHardLinkCount { get; init; }
+
+    public FileOperationRecoveryHardLinkStatus HardLinkStatus =>
+        RecordedDestinationHardLinkCount is not uint recorded
+            ? FileOperationRecoveryHardLinkStatus.NoRecordedCount
+            : CurrentDestinationHardLinkCount is not uint current
+                ? FileOperationRecoveryHardLinkStatus.Unavailable
+                : current == recorded
+                    ? FileOperationRecoveryHardLinkStatus.SameCount
+                    : FileOperationRecoveryHardLinkStatus.DifferentCount;
 
     public bool MatchesRecordedMainStream =>
         Status == FileOperationRecoveryContentStatus.MatchesRecordedMainStream;
@@ -142,8 +170,8 @@ public interface IFileOperationRecoveryContentVerifier
 /// Compares durable post-Copy SHA-256 evidence with the current primary data
 /// stream only after read-only recovery inspection has established both the
 /// recorded destination root and destination file as the same stable objects.
-/// The root-bound reader must then re-prove and hold both namespace bindings.
-/// A match is evidence only and grants no mutation, delete, recovery, or Undo authority.
+/// Hard-link count is surfaced separately as topology evidence and never changes
+/// the semantic meaning of a main-stream content result.
 /// </summary>
 public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecoveryContentVerifier
 {
@@ -270,6 +298,12 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
             _ => FileOperationRecoveryContentStatus.Error,
         };
 
+        var stableHardLinkCount =
+            read.Status == FileContentFingerprintReadStatus.Success &&
+            read.CurrentDestinationHardLinkCount is uint count &&
+            count > 0
+                ? (uint?)count
+                : null;
         return Create(
             inspection,
             status,
@@ -277,7 +311,8 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 FileOperationRecoveryContentStatus.DifferentMainStream
                 ? read.ContentFingerprint
                 : null,
-            Describe(status, read.Message));
+            Describe(status, read.Message),
+            stableHardLinkCount);
     }
 
     private static bool IsConsistentSuccess(
@@ -301,20 +336,24 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
         FileOperationRecoveryInspectionItem inspection,
         FileOperationRecoveryContentStatus status,
         FileContentFingerprint? currentFingerprint,
-        string message) =>
+        string message,
+        uint? currentHardLinkCount = null) =>
         new(
             inspection.Ordinal,
             inspection,
             status,
             currentFingerprint,
-            message);
+            message)
+        {
+            CurrentDestinationHardLinkCount = currentHardLinkCount,
+        };
 
     private static string Describe(
         FileOperationRecoveryContentStatus status,
         string readerMessage) => status switch
     {
         FileOperationRecoveryContentStatus.MatchesRecordedMainStream =>
-            "The root-bound identity-verified destination handle produced the same primary-stream SHA-256 as the post-Copy record. This is evidence only, not mutation authorization.",
+            "The root-bound identity-verified destination handle produced the same primary-stream SHA-256 as the post-Copy record. Hard-link count is separate topology evidence, not mutation authorization.",
         FileOperationRecoveryContentStatus.DifferentMainStream =>
             "The same recorded destination object under the verified destination root now has a different primary-stream SHA-256 than the post-Copy record.",
         FileOperationRecoveryContentStatus.DestinationRootChanged =>

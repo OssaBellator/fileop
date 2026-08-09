@@ -17,6 +17,7 @@ namespace FileOp.Windows.Operations;
 /// Verifies a recovery destination by opening the recorded destination root,
 /// validating that directory handle, opening the leaf relative to that root with
 /// NtCreateFile, and holding both handles through SHA-256 and post-read checks.
+/// A successful result also reports the leaf handle's stable hard-link count.
 /// </summary>
 public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFileContentFingerprintReader
 {
@@ -190,6 +191,17 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
                 "The root-relative leaf handle has a different FileIdentity than durable recovery history.");
         }
 
+        if (leafBefore.NumberOfLinks == 0)
+        {
+            return Error(
+                rootPath,
+                leafPath,
+                "InvalidHardLinkCount",
+                "The destination leaf reported a zero hard-link count before hashing.",
+                currentRoot,
+                currentLeaf);
+        }
+
         FileContentFingerprint fingerprint;
         try
         {
@@ -212,25 +224,13 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
 
         if (!GetFileInformationByHandle(rootHandle, out var rootAfter))
         {
-            return Error(
-                rootPath,
-                leafPath,
-                "RootPostReadInfoFailed",
-                Win32Message("Reading destination-root identity after hashing"),
-                currentRoot,
-                currentLeaf);
+            return Error(rootPath, leafPath, "RootPostReadInfoFailed", Win32Message("Reading destination-root identity after hashing"), currentRoot, currentLeaf);
         }
 
         var rootFinalPathAfterRead = TryGetFinalPath(rootHandle, out finalPathError);
         if (rootFinalPathAfterRead is null)
         {
-            return Error(
-                rootPath,
-                leafPath,
-                "RootPostReadPathFailed",
-                new Win32Exception(finalPathError).Message,
-                currentRoot,
-                currentLeaf);
+            return Error(rootPath, leafPath, "RootPostReadPathFailed", new Win32Exception(finalPathError).Message, currentRoot, currentLeaf);
         }
 
         var currentRootAfter = CreateCurrentPath(rootPath, rootFinalPathAfterRead, rootAfter);
@@ -239,46 +239,32 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
             currentRootAfter.Identity != request.DestinationDirectoryIdentity ||
             !PathsEqual(currentRootAfter.CanonicalPath, rootPath))
         {
-            return RootChanged(
-                currentRootAfter,
-                leafPath,
-                "The destination root changed while its child primary stream was being hashed.",
-                currentLeaf);
+            return RootChanged(currentRootAfter, leafPath, "The destination root changed while its child primary stream was being hashed.", currentLeaf);
         }
 
         if (!GetFileInformationByHandle(leafHandle, out var leafAfter))
         {
-            return Error(
-                rootPath,
-                leafPath,
-                "LeafPostReadInfoFailed",
-                Win32Message("Reading destination-leaf identity after hashing"),
-                currentRootAfter,
-                currentLeaf);
+            return Error(rootPath, leafPath, "LeafPostReadInfoFailed", Win32Message("Reading destination-leaf identity after hashing"), currentRootAfter, currentLeaf);
         }
 
         var leafFinalPathAfterRead = TryGetFinalPath(leafHandle, out finalPathError);
         if (leafFinalPathAfterRead is null)
         {
-            return Error(
-                rootPath,
-                leafPath,
-                "LeafPostReadPathFailed",
-                new Win32Exception(finalPathError).Message,
-                currentRootAfter,
-                currentLeaf);
+            return Error(rootPath, leafPath, "LeafPostReadPathFailed", new Win32Exception(finalPathError).Message, currentRootAfter, currentLeaf);
         }
 
         var currentLeafAfter = CreateCurrentPath(leafPath, leafFinalPathAfterRead, leafAfter);
         if (currentLeafAfter.Identity != request.DestinationIdentity ||
             FileSize(leafBefore) != FileSize(leafAfter) ||
-            ToUInt64(leafBefore.LastWriteTime) != ToUInt64(leafAfter.LastWriteTime))
+            ToUInt64(leafBefore.LastWriteTime) != ToUInt64(leafAfter.LastWriteTime) ||
+            leafBefore.NumberOfLinks != leafAfter.NumberOfLinks ||
+            leafAfter.NumberOfLinks == 0)
         {
             return Error(
                 rootPath,
                 leafPath,
                 "ChangedDuringRead",
-                "The destination leaf identity, size, or last-write timestamp changed while its primary stream was being hashed.",
+                "The destination leaf identity, size, last-write timestamp, or hard-link count changed while its primary stream was being hashed.",
                 currentRootAfter,
                 currentLeafAfter);
         }
@@ -296,13 +282,14 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
             FileContentFingerprintReadStatus.Success,
             currentLeafAfter,
             fingerprint,
-            "The destination primary stream was hashed while verified root and leaf handles remained bound and alive.",
-            currentRootAfter);
+            "The destination primary stream and hard-link count were observed while verified root and leaf handles remained bound and alive.",
+            currentRootAfter)
+        {
+            CurrentDestinationHardLinkCount = leafAfter.NumberOfLinks,
+        };
     }
 
-    private static RelativeOpenResult OpenRelativeLeaf(
-        SafeFileHandle rootDirectory,
-        string leafName)
+    private static RelativeOpenResult OpenRelativeLeaf(SafeFileHandle rootDirectory, string leafName)
     {
         var nameBuffer = Marshal.StringToHGlobalUni(leafName);
         var unicodeString = new UnicodeString
@@ -333,10 +320,7 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
                 FileAttributeNormal,
                 (uint)FileShare.Read,
                 FileOpen,
-                FileSequentialOnly |
-                    FileSynchronousIoNonAlert |
-                    FileNonDirectoryFile |
-                    FileOpenReparsePoint,
+                FileSequentialOnly | FileSynchronousIoNonAlert | FileNonDirectoryFile | FileOpenReparsePoint,
                 IntPtr.Zero,
                 0);
             if (status < 0)
@@ -363,126 +347,41 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
         }
     }
 
-    private static FileContentFingerprintReadResult LeafOpenFailure(
-        FileOperationCanonicalPath currentRoot,
-        string leafPath,
-        int status) => status switch
+    private static FileContentFingerprintReadResult LeafOpenFailure(FileOperationCanonicalPath currentRoot, string leafPath, int status) => status switch
     {
-        StatusObjectNameNotFound or StatusObjectPathNotFound => Result(
-            FileContentFingerprintReadStatus.Missing,
-            currentRoot,
-            Missing(leafPath),
-            $"The destination leaf is missing (NTSTATUS 0x{unchecked((uint)status):X8})."),
-        StatusSharingViolation => Result(
-            FileContentFingerprintReadStatus.Busy,
-            currentRoot,
-            ErrorPath(leafPath, "SharingViolation", status),
-            "Existing leaf sharing constraints are incompatible with the stable root-bound read proof."),
-        StatusAccessDenied => Result(
-            FileContentFingerprintReadStatus.Inaccessible,
-            currentRoot,
-            Inaccessible(leafPath, status),
-            "The destination leaf could not be opened for stable root-bound read access."),
-        StatusFileIsADirectory => Result(
-            FileContentFingerprintReadStatus.UnexpectedType,
-            currentRoot,
-            ErrorPath(leafPath, "UnexpectedDirectory", status),
-            "The recorded file destination now resolves to a directory."),
-        _ => Result(
-            FileContentFingerprintReadStatus.Error,
-            currentRoot,
-            ErrorPath(leafPath, $"NTSTATUS:{unchecked((uint)status):X8}", status),
-            $"Root-relative destination open failed with NTSTATUS 0x{unchecked((uint)status):X8}."),
+        StatusObjectNameNotFound or StatusObjectPathNotFound => Result(FileContentFingerprintReadStatus.Missing, currentRoot, Missing(leafPath), $"The destination leaf is missing (NTSTATUS 0x{unchecked((uint)status):X8})."),
+        StatusSharingViolation => Result(FileContentFingerprintReadStatus.Busy, currentRoot, ErrorPath(leafPath, "SharingViolation", status), "Existing leaf sharing constraints are incompatible with the stable root-bound read proof."),
+        StatusAccessDenied => Result(FileContentFingerprintReadStatus.Inaccessible, currentRoot, Inaccessible(leafPath, status), "The destination leaf could not be opened for stable root-bound read access."),
+        StatusFileIsADirectory => Result(FileContentFingerprintReadStatus.UnexpectedType, currentRoot, ErrorPath(leafPath, "UnexpectedDirectory", status), "The recorded file destination now resolves to a directory."),
+        _ => Result(FileContentFingerprintReadStatus.Error, currentRoot, ErrorPath(leafPath, $"NTSTATUS:{unchecked((uint)status):X8}", status), $"Root-relative destination open failed with NTSTATUS 0x{unchecked((uint)status):X8}."),
     };
 
-    private static FileContentFingerprintReadResult RootOpenFailure(
-        string rootPath,
-        string leafPath,
-        int error) => error switch
+    private static FileContentFingerprintReadResult RootOpenFailure(string rootPath, string leafPath, int error) => error switch
     {
-        ErrorSharingViolation => Result(
-            FileContentFingerprintReadStatus.Busy,
-            ErrorPath(rootPath, "SharingViolation", error),
-            ErrorPath(leafPath, "RootSharingViolation", error),
-            "Existing sharing constraints are incompatible with holding the destination-root binding."),
-        ErrorAccessDenied => Result(
-            FileContentFingerprintReadStatus.Inaccessible,
-            Inaccessible(rootPath, error),
-            ErrorPath(leafPath, "RootAccessDenied", error),
-            "The destination root could not be opened for stable namespace verification."),
-        ErrorFileNotFound or ErrorPathNotFound => RootChanged(
-            Missing(rootPath),
-            leafPath,
-            $"The recorded destination root is missing (Win32 error {error})."),
-        _ => Error(
-            rootPath,
-            leafPath,
-            $"Win32:{error}",
-            $"Stable destination-root verification failed with Win32 error {error}."),
+        ErrorSharingViolation => Result(FileContentFingerprintReadStatus.Busy, ErrorPath(rootPath, "SharingViolation", error), ErrorPath(leafPath, "RootSharingViolation", error), "Existing sharing constraints are incompatible with holding the destination-root binding."),
+        ErrorAccessDenied => Result(FileContentFingerprintReadStatus.Inaccessible, Inaccessible(rootPath, error), ErrorPath(leafPath, "RootAccessDenied", error), "The destination root could not be opened for stable namespace verification."),
+        ErrorFileNotFound or ErrorPathNotFound => RootChanged(Missing(rootPath), leafPath, $"The recorded destination root is missing (Win32 error {error})."),
+        _ => Error(rootPath, leafPath, $"Win32:{error}", $"Stable destination-root verification failed with Win32 error {error}."),
     };
 
-    private static FileContentFingerprintReadResult LeafWin32Failure(
-        FileOperationCanonicalPath currentRoot,
-        string leafPath,
-        int error) => error switch
+    private static FileContentFingerprintReadResult LeafWin32Failure(FileOperationCanonicalPath currentRoot, string leafPath, int error) => error switch
     {
-        ErrorFileNotFound or ErrorPathNotFound => Result(
-            FileContentFingerprintReadStatus.Missing,
-            currentRoot,
-            Missing(leafPath),
-            $"The destination leaf is missing (Win32 error {error})."),
-        ErrorSharingViolation => Result(
-            FileContentFingerprintReadStatus.Busy,
-            currentRoot,
-            ErrorPath(leafPath, "SharingViolation", error),
-            "Existing leaf sharing constraints are incompatible with the stable root-bound read proof."),
-        ErrorAccessDenied => Result(
-            FileContentFingerprintReadStatus.Inaccessible,
-            currentRoot,
-            Inaccessible(leafPath, error),
-            "The destination leaf could not be inspected for stable read access."),
-        _ => Result(
-            FileContentFingerprintReadStatus.Error,
-            currentRoot,
-            ErrorPath(leafPath, $"Win32:{error}", error),
-            $"Stable destination-leaf verification failed with Win32 error {error}."),
+        ErrorFileNotFound or ErrorPathNotFound => Result(FileContentFingerprintReadStatus.Missing, currentRoot, Missing(leafPath), $"The destination leaf is missing (Win32 error {error})."),
+        ErrorSharingViolation => Result(FileContentFingerprintReadStatus.Busy, currentRoot, ErrorPath(leafPath, "SharingViolation", error), "Existing leaf sharing constraints are incompatible with the stable root-bound read proof."),
+        ErrorAccessDenied => Result(FileContentFingerprintReadStatus.Inaccessible, currentRoot, Inaccessible(leafPath, error), "The destination leaf could not be inspected for stable read access."),
+        _ => Result(FileContentFingerprintReadStatus.Error, currentRoot, ErrorPath(leafPath, $"Win32:{error}", error), $"Stable destination-leaf verification failed with Win32 error {error}."),
     };
 
-    private static FileContentFingerprintReadResult RootChanged(
-        FileOperationCanonicalPath currentRoot,
-        string leafPath,
-        string message,
-        FileOperationCanonicalPath? currentLeaf = null) =>
-        Result(
-            FileContentFingerprintReadStatus.DestinationRootChanged,
-            currentRoot,
-            currentLeaf ?? ErrorPath(leafPath, "DestinationRootChanged", 0),
-            message);
+    private static FileContentFingerprintReadResult RootChanged(FileOperationCanonicalPath currentRoot, string leafPath, string message, FileOperationCanonicalPath? currentLeaf = null) =>
+        Result(FileContentFingerprintReadStatus.DestinationRootChanged, currentRoot, currentLeaf ?? ErrorPath(leafPath, "DestinationRootChanged", 0), message);
 
-    private static FileContentFingerprintReadResult Result(
-        FileContentFingerprintReadStatus status,
-        FileOperationCanonicalPath currentRoot,
-        FileOperationCanonicalPath currentLeaf,
-        string message) =>
+    private static FileContentFingerprintReadResult Result(FileContentFingerprintReadStatus status, FileOperationCanonicalPath currentRoot, FileOperationCanonicalPath currentLeaf, string message) =>
         new(status, currentLeaf, ContentFingerprint: null, message, currentRoot);
 
-    private static FileContentFingerprintReadResult Error(
-        string rootPath,
-        string leafPath,
-        string code,
-        string message,
-        FileOperationCanonicalPath? currentRoot = null,
-        FileOperationCanonicalPath? currentLeaf = null) =>
-        new(
-            FileContentFingerprintReadStatus.Error,
-            currentLeaf ?? ErrorPath(leafPath, code, 0),
-            ContentFingerprint: null,
-            message,
-            currentRoot ?? ErrorPath(rootPath, code, 0));
+    private static FileContentFingerprintReadResult Error(string rootPath, string leafPath, string code, string message, FileOperationCanonicalPath? currentRoot = null, FileOperationCanonicalPath? currentLeaf = null) =>
+        new(FileContentFingerprintReadStatus.Error, currentLeaf ?? ErrorPath(leafPath, code, 0), ContentFingerprint: null, message, currentRoot ?? ErrorPath(rootPath, code, 0));
 
-    private static FileContentFingerprint HashMainStream(
-        SafeFileHandle handle,
-        CancellationToken cancellationToken)
+    private static FileContentFingerprint HashMainStream(SafeFileHandle handle, CancellationToken cancellationToken)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
@@ -493,12 +392,7 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!ReadFile(
-                        handle,
-                        pointer,
-                        checked((uint)Math.Min(buffer.Length, BufferSize)),
-                        out var bytesRead,
-                        IntPtr.Zero))
+                if (!ReadFile(handle, pointer, checked((uint)Math.Min(buffer.Length, BufferSize)), out var bytesRead, IntPtr.Zero))
                 {
                     throw Win32IOException("Reading destination content for recovery verification");
                 }
@@ -517,58 +411,34 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
             ArrayPool<byte>.Shared.Return(buffer);
         }
 
-        return new FileContentFingerprint(
-            FileContentFingerprintAlgorithm.Sha256,
-            Convert.ToHexString(hash.GetHashAndReset()));
+        return new FileContentFingerprint(FileContentFingerprintAlgorithm.Sha256, Convert.ToHexString(hash.GetHashAndReset()));
     }
 
-    private static FileOperationCanonicalPath CreateCurrentPath(
-        string requestedPath,
-        string finalPath,
-        ByHandleFileInformation information)
+    private static FileOperationCanonicalPath CreateCurrentPath(string requestedPath, string finalPath, ByHandleFileInformation information)
     {
         var isDirectory = (information.FileAttributes & (uint)FileAttributes.Directory) != 0;
         return new FileOperationCanonicalPath(
             requestedPath,
             NormalizeFinalPath(finalPath),
-            isDirectory
-                ? FileOperationCanonicalPathState.Directory
-                : FileOperationCanonicalPathState.File,
+            isDirectory ? FileOperationCanonicalPathState.Directory : FileOperationCanonicalPathState.File,
             (information.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0,
             ToIdentity(information));
     }
 
-    private static FileOperationCanonicalPath Missing(string path) =>
-        new(path, path, FileOperationCanonicalPathState.Missing, IsLeafReparsePoint: false);
+    private static FileOperationCanonicalPath Missing(string path) => new(path, path, FileOperationCanonicalPathState.Missing, IsLeafReparsePoint: false);
 
     private static FileOperationCanonicalPath Inaccessible(string path, int error) =>
-        new(
-            path,
-            path,
-            FileOperationCanonicalPathState.Inaccessible,
-            IsLeafReparsePoint: false,
-            ErrorCode: "AccessDenied",
-            ErrorMessage: $"Stable read open failed with error/status {error}.");
+        new(path, path, FileOperationCanonicalPathState.Inaccessible, IsLeafReparsePoint: false, ErrorCode: "AccessDenied", ErrorMessage: $"Stable read open failed with error/status {error}.");
 
     private static FileOperationCanonicalPath ErrorPath(string path, string code, int error) =>
-        new(
-            path,
-            path,
-            FileOperationCanonicalPathState.Error,
-            IsLeafReparsePoint: false,
-            ErrorCode: code,
-            ErrorMessage: error == 0 ? code : $"Stable read failed with error/status {error}.");
+        new(path, path, FileOperationCanonicalPathState.Error, IsLeafReparsePoint: false, ErrorCode: code, ErrorMessage: error == 0 ? code : $"Stable read failed with error/status {error}.");
 
     private static FileIdentity ToIdentity(ByHandleFileInformation information) =>
-        new(
-            information.VolumeSerialNumber,
-            ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow);
+        new(information.VolumeSerialNumber, ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow);
 
-    private static ulong FileSize(ByHandleFileInformation information) =>
-        ((ulong)information.FileSizeHigh << 32) | information.FileSizeLow;
+    private static ulong FileSize(ByHandleFileInformation information) => ((ulong)information.FileSizeHigh << 32) | information.FileSizeLow;
 
-    private static ulong ToUInt64(FileTime value) =>
-        ((ulong)value.HighDateTime << 32) | value.LowDateTime;
+    private static ulong ToUInt64(FileTime value) => ((ulong)value.HighDateTime << 32) | value.LowDateTime;
 
     private static string? TryGetFinalPath(SafeFileHandle handle, out int error)
     {
@@ -603,9 +473,7 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
             return @"\\" + path[8..];
         }
 
-        if (path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) &&
-            path.Length >= 6 &&
-            path[5] == Path.VolumeSeparatorChar)
+        if (path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) && path.Length >= 6 && path[5] == Path.VolumeSeparatorChar)
         {
             return path[4..];
         }
@@ -614,15 +482,11 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
     }
 
     private static bool PathsEqual(string left, string right) =>
-        string.Equals(
-            NormalizeForComparison(left),
-            NormalizeForComparison(right),
-            StringComparison.OrdinalIgnoreCase);
+        string.Equals(NormalizeForComparison(left), NormalizeForComparison(right), StringComparison.OrdinalIgnoreCase);
 
     private static string NormalizeForComparison(string path)
     {
-        var normalized = Path.GetFullPath(path)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalized = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (normalized.Length == 2 && normalized[1] == Path.VolumeSeparatorChar)
         {
             normalized += Path.DirectorySeparatorChar;
@@ -644,78 +508,32 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.Winapi)]
-    private static extern SafeFileHandle CreateFileW(
-        string lpFileName,
-        uint dwDesiredAccess,
-        FileShare dwShareMode,
-        IntPtr lpSecurityAttributes,
-        FileMode dwCreationDisposition,
-        uint dwFlagsAndAttributes,
-        IntPtr hTemplateFile);
+    private static extern SafeFileHandle CreateFileW(string lpFileName, uint dwDesiredAccess, FileShare dwShareMode, IntPtr lpSecurityAttributes, FileMode dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);
 
     [DllImport("ntdll.dll", ExactSpelling = true, CallingConvention = CallingConvention.Winapi)]
-    private static extern int NtCreateFile(
-        out IntPtr fileHandle,
-        uint desiredAccess,
-        ref ObjectAttributes objectAttributes,
-        out IoStatusBlock ioStatusBlock,
-        IntPtr allocationSize,
-        uint fileAttributes,
-        uint shareAccess,
-        uint createDisposition,
-        uint createOptions,
-        IntPtr eaBuffer,
-        uint eaLength);
+    private static extern int NtCreateFile(out IntPtr fileHandle, uint desiredAccess, ref ObjectAttributes objectAttributes, out IoStatusBlock ioStatusBlock, IntPtr allocationSize, uint fileAttributes, uint shareAccess, uint createDisposition, uint createOptions, IntPtr eaBuffer, uint eaLength);
 
     [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.Winapi)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ReadFile(
-        SafeFileHandle hFile,
-        IntPtr lpBuffer,
-        uint nNumberOfBytesToRead,
-        out uint lpNumberOfBytesRead,
-        IntPtr lpOverlapped);
+    private static extern bool ReadFile(SafeFileHandle hFile, IntPtr lpBuffer, uint nNumberOfBytesToRead, out uint lpNumberOfBytesRead, IntPtr lpOverlapped);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.Winapi)]
-    private static extern uint GetFinalPathNameByHandleW(
-        SafeFileHandle hFile,
-        StringBuilder lpszFilePath,
-        uint cchFilePath,
-        uint dwFlags);
+    private static extern uint GetFinalPathNameByHandleW(SafeFileHandle hFile, StringBuilder lpszFilePath, uint cchFilePath, uint dwFlags);
 
     [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.Winapi)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetFileInformationByHandle(
-        SafeFileHandle hFile,
-        out ByHandleFileInformation lpFileInformation);
+    private static extern bool GetFileInformationByHandle(SafeFileHandle hFile, out ByHandleFileInformation lpFileInformation);
 
     private sealed record RelativeOpenResult(SafeFileHandle? Handle, int Status);
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct UnicodeString
-    {
-        public ushort Length;
-        public ushort MaximumLength;
-        public IntPtr Buffer;
-    }
+    private struct UnicodeString { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct ObjectAttributes
-    {
-        public int Length;
-        public IntPtr RootDirectory;
-        public IntPtr ObjectName;
-        public uint Attributes;
-        public IntPtr SecurityDescriptor;
-        public IntPtr SecurityQualityOfService;
-    }
+    private struct ObjectAttributes { public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService; }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct IoStatusBlock
-    {
-        public IntPtr Status;
-        public UIntPtr Information;
-    }
+    private struct IoStatusBlock { public IntPtr Status; public UIntPtr Information; }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct ByHandleFileInformation
@@ -733,9 +551,5 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct FileTime
-    {
-        public uint LowDateTime;
-        public uint HighDateTime;
-    }
+    private struct FileTime { public uint LowDateTime; public uint HighDateTime; }
 }

@@ -43,6 +43,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "Recovery destination-root identity verification failed with exit code $LASTEXITCODE."
 }
 
+python tools/verify_recovery_hard_link_evidence.py --repo-root $repoRoot --cases 50000
+if ($LASTEXITCODE -ne 0) {
+    throw "Recovery hard-link evidence verification failed with exit code $LASTEXITCODE."
+}
+
 python tools/verify_file_copy_executor.py --repo-root $repoRoot --cases 20000
 if ($LASTEXITCODE -ne 0) {
     throw "File Copy executor verification failed with exit code $LASTEXITCODE."
@@ -68,4 +73,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "Copy basic metadata ABI verification failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "`nPASS: Copy executor, recovery inspection, content fingerprint evidence, root-bound recovery main-stream verification, root-bound reader ABI, destination-root identity evidence, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green
+Write-Host "`nPASS: Copy executor, recovery inspection, content fingerprint evidence, root-bound recovery main-stream verification, root-bound reader ABI, destination-root identity evidence, hard-link evidence, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green
