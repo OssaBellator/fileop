@@ -7,9 +7,16 @@ using FileOp.Core.Models;
 
 namespace FileOp.Core.Operations;
 
+public sealed record FileContentFingerprintReadRequest(
+    string CanonicalDestinationDirectoryPath,
+    FileIdentity DestinationDirectoryIdentity,
+    string CanonicalDestinationPath,
+    FileIdentity DestinationIdentity);
+
 public enum FileContentFingerprintReadStatus
 {
     Success,
+    DestinationRootChanged,
     Missing,
     DifferentObject,
     Redirected,
@@ -22,19 +29,19 @@ public enum FileContentFingerprintReadStatus
 
 public sealed record FileContentFingerprintReadResult(
     FileContentFingerprintReadStatus Status,
+    FileOperationCanonicalPath CurrentDestinationDirectory,
     FileOperationCanonicalPath CurrentDestination,
     FileContentFingerprint? ContentFingerprint,
     string Message);
 
 /// <summary>
-/// Reads a file's primary data stream through a stable read handle and verifies
-/// canonical location and FileIdentity before returning content evidence.
+/// Reads a file's primary data stream while holding the verified destination-root
+/// namespace binding and verifies both root and leaf evidence before returning a digest.
 /// </summary>
 public interface IFileContentFingerprintReader
 {
     ValueTask<FileContentFingerprintReadResult> ReadAsync(
-        string canonicalPath,
-        FileIdentity expectedIdentity,
+        FileContentFingerprintReadRequest request,
         CancellationToken cancellationToken = default);
 }
 
@@ -42,6 +49,7 @@ public enum FileOperationRecoveryContentStatus
 {
     NoRecordedFingerprint,
     DestinationRootNotVerified,
+    DestinationRootChanged,
     NotSameRecordedObject,
     MatchesRecordedMainStream,
     DifferentMainStream,
@@ -99,6 +107,7 @@ public interface IFileOperationRecoveryContentVerifier
 /// Compares durable post-Copy SHA-256 evidence with the current primary data
 /// stream only after read-only recovery inspection has established both the
 /// recorded destination root and destination file as the same stable objects.
+/// The reader must then re-prove and hold both namespace bindings during hashing.
 /// A match is evidence only and grants no mutation, delete, recovery, or Undo authority.
 /// </summary>
 public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecoveryContentVerifier
@@ -129,7 +138,12 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 continue;
             }
 
-            if (!inspection.DestinationDirectory.IsSameRecordedRoot)
+            if (!inspection.DestinationDirectory.IsSameRecordedRoot ||
+                inspection.DestinationDirectory.RecordedIdentity is not FileIdentity expectedDirectoryIdentity ||
+                inspection.DestinationDirectory.CurrentDirectory is not { } currentDirectory ||
+                currentDirectory.State != FileOperationCanonicalPathState.Directory ||
+                currentDirectory.IsLeafReparsePoint ||
+                currentDirectory.Identity != expectedDirectoryIdentity)
             {
                 results.Add(Create(
                     item,
@@ -150,14 +164,17 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 continue;
             }
 
+            var request = new FileContentFingerprintReadRequest(
+                currentDirectory.CanonicalPath,
+                expectedDirectoryIdentity,
+                entry.CanonicalDestinationPath,
+                expectedIdentity);
+
             FileContentFingerprintReadResult read;
             try
             {
                 read = await _reader
-                    .ReadAsync(
-                        entry.CanonicalDestinationPath,
-                        expectedIdentity,
-                        cancellationToken)
+                    .ReadAsync(request, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -170,11 +187,11 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                     item,
                     FileOperationRecoveryContentStatus.Error,
                     currentFingerprint: null,
-                    "Stable-handle content verification failed: " + exception.Message));
+                    "Stable root-bound content verification failed: " + exception.Message));
                 continue;
             }
 
-            results.Add(Classify(item, expectedIdentity, recorded, read));
+            results.Add(Classify(item, request, recorded, read));
         }
 
         return new FileOperationRecoveryContentVerification(inspection.OperationId, results);
@@ -182,18 +199,18 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
 
     private static FileOperationRecoveryContentVerificationItem Classify(
         FileOperationRecoveryInspectionItem inspection,
-        FileIdentity expectedIdentity,
+        FileContentFingerprintReadRequest request,
         FileContentFingerprint recorded,
         FileContentFingerprintReadResult read)
     {
         if (read.Status == FileContentFingerprintReadStatus.Success &&
-            !IsConsistentSuccess(inspection, expectedIdentity, read))
+            !IsConsistentSuccess(request, read))
         {
             return Create(
                 inspection,
                 FileOperationRecoveryContentStatus.Error,
                 currentFingerprint: null,
-                "The content reader reported success without consistent canonical path, file type, identity, or SHA-256 evidence.");
+                "The content reader reported success without consistent root/leaf canonical path, type, identity, or SHA-256 evidence.");
         }
 
         var status = read.Status switch
@@ -202,6 +219,8 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 FileOperationRecoveryContentStatus.MatchesRecordedMainStream,
             FileContentFingerprintReadStatus.Success =>
                 FileOperationRecoveryContentStatus.DifferentMainStream,
+            FileContentFingerprintReadStatus.DestinationRootChanged =>
+                FileOperationRecoveryContentStatus.DestinationRootChanged,
             FileContentFingerprintReadStatus.Missing => FileOperationRecoveryContentStatus.Missing,
             FileContentFingerprintReadStatus.DifferentObject => FileOperationRecoveryContentStatus.DifferentObject,
             FileContentFingerprintReadStatus.Redirected => FileOperationRecoveryContentStatus.Redirected,
@@ -224,18 +243,25 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
     }
 
     private static bool IsConsistentSuccess(
-        FileOperationRecoveryInspectionItem inspection,
-        FileIdentity expectedIdentity,
+        FileContentFingerprintReadRequest request,
         FileContentFingerprintReadResult read) =>
         read.ContentFingerprint is
             { Algorithm: FileContentFingerprintAlgorithm.Sha256 } &&
+        read.CurrentDestinationDirectory is not null &&
+        read.CurrentDestinationDirectory.State == FileOperationCanonicalPathState.Directory &&
+        !read.CurrentDestinationDirectory.IsLeafReparsePoint &&
+        read.CurrentDestinationDirectory.Identity is FileIdentity actualDirectoryIdentity &&
+        actualDirectoryIdentity == request.DestinationDirectoryIdentity &&
+        PathsEqual(
+            request.CanonicalDestinationDirectoryPath,
+            read.CurrentDestinationDirectory.CanonicalPath) &&
         read.CurrentDestination is not null &&
         read.CurrentDestination.State == FileOperationCanonicalPathState.File &&
         !read.CurrentDestination.IsLeafReparsePoint &&
         read.CurrentDestination.Identity is FileIdentity actualIdentity &&
-        actualIdentity == expectedIdentity &&
+        actualIdentity == request.DestinationIdentity &&
         PathsEqual(
-            inspection.Entry.CanonicalDestinationPath,
+            request.CanonicalDestinationPath,
             read.CurrentDestination.CanonicalPath);
 
     private static FileOperationRecoveryContentVerificationItem Create(
@@ -255,9 +281,11 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
         string readerMessage) => status switch
     {
         FileOperationRecoveryContentStatus.MatchesRecordedMainStream =>
-            "The stable identity-bound destination handle produced the same primary-stream SHA-256 as the post-Copy record. This is evidence only, not mutation authorization.",
+            "The root-bound identity-verified destination handle produced the same primary-stream SHA-256 as the post-Copy record. This is evidence only, not mutation authorization.",
         FileOperationRecoveryContentStatus.DifferentMainStream =>
-            "The same recorded destination object now has a different primary-stream SHA-256 than the post-Copy record.",
+            "The same recorded destination object under the verified destination root now has a different primary-stream SHA-256 than the post-Copy record.",
+        FileOperationRecoveryContentStatus.DestinationRootChanged =>
+            "The destination-root binding changed before or during stable content verification, so the main stream is not trusted as recovery evidence.",
         FileOperationRecoveryContentStatus.Missing =>
             "The destination became missing before a stable content-read handle could verify it.",
         FileOperationRecoveryContentStatus.DifferentObject =>
@@ -269,9 +297,9 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
         FileOperationRecoveryContentStatus.UnexpectedType =>
             "The recorded file destination now resolves to a non-file object.",
         FileOperationRecoveryContentStatus.Busy =>
-            "The destination could not be opened with write/delete sharing denied; current sharing constraints prevent a stable content proof.",
+            "The destination root or leaf could not be opened with the required sharing constraints; a stable root-bound content proof is unavailable.",
         FileOperationRecoveryContentStatus.Inaccessible =>
-            "The destination could not be opened for stable read access.",
+            "The destination root or leaf could not be opened for stable read access.",
         FileOperationRecoveryContentStatus.Error =>
             string.IsNullOrWhiteSpace(readerMessage)
                 ? "The destination content could not be verified reliably."
