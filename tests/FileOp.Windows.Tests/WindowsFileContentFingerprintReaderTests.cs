@@ -153,7 +153,7 @@ public sealed class WindowsFileContentFingerprintReaderTests
 
         public ReaderFixture(bool createFile = true)
         {
-            Directory.CreateDirectory(_root);
+            System.IO.Directory.CreateDirectory(_root);
             Directory = _root;
             Path = System.IO.Path.Combine(_root, "payload.bin");
             if (createFile)

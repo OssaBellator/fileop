@@ -121,7 +121,7 @@ public sealed class FileOperationActionHistoryHardLinkEvidenceTests
             await trigger.ExecuteNonQueryAsync();
         }
 
-        await Assert.ThrowsExceptionAsync<SqliteException>(async () =>
+        await Assert.ThrowsAsync<SqliteException>(async () =>
             await store.CommitCopyWithHardLinkEvidenceAsync(
                 validation.Plan.Id,
                 0,
@@ -148,7 +148,7 @@ public sealed class FileOperationActionHistoryHardLinkEvidenceTests
         await store.BeginAsync(validation, DateTimeOffset.UtcNow);
         await store.MarkMutationStartedAsync(validation.Plan.Id, 0, DateTimeOffset.UtcNow);
 
-        await Assert.ThrowsExceptionAsync<ArgumentOutOfRangeException>(async () =>
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
             await store.CommitCopyWithHardLinkEvidenceAsync(
                 validation.Plan.Id,
                 0,

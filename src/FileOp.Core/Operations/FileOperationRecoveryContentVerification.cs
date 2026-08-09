@@ -302,7 +302,7 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
             read.Status == FileContentFingerprintReadStatus.Success &&
             read.CurrentDestinationHardLinkCount is uint count &&
             count > 0
-                ? count
+                ? (uint?)count
                 : null;
         return Create(
             inspection,
