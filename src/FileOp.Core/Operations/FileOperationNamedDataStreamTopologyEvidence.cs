@@ -10,6 +10,7 @@ namespace FileOp.Core.Operations;
 public sealed record FileNamedDataStreamTopologyEvidence
 {
     public const int CurrentFormatVersion = 1;
+    public const int MaximumNamedStreamCount = 4096;
 
     public FileNamedDataStreamTopologyEvidence(
         int formatVersion,
@@ -23,9 +24,11 @@ public sealed record FileNamedDataStreamTopologyEvidence
                 $"Named data-stream topology evidence must use format version {CurrentFormatVersion}.");
         }
 
-        if (namedStreamCount < 0)
+        if (namedStreamCount < 0 || namedStreamCount > MaximumNamedStreamCount)
         {
-            throw new ArgumentOutOfRangeException(nameof(namedStreamCount));
+            throw new ArgumentOutOfRangeException(
+                nameof(namedStreamCount),
+                $"Named data-stream topology evidence supports between 0 and {MaximumNamedStreamCount} named streams.");
         }
 
         ArgumentException.ThrowIfNullOrWhiteSpace(sha256HexDigest);
