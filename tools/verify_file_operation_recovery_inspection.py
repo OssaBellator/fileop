@@ -291,7 +291,7 @@ def check_repository(root: Path) -> int:
         "var hasCanonicalLocation = current.State is",
         "FileOperationCanonicalPathState.Missing or",
         "!PathsEqual(entry.CanonicalDestinationPath, current.CanonicalPath)",
-        "Identity equality is evidence only",
+        "Equality is evidence only",
         "Array.AsReadOnly(items.ToArray())",
     )
     for needle in required_core:
