@@ -42,6 +42,11 @@ class Result(Enum):
     ERROR = auto()
 
 
+ACCESS_READ = 0x1
+ACCESS_WRITE = 0x2
+ACCESS_DELETE = 0x4
+
+
 def classify(
     inspection: Inspection,
     has_fingerprint: bool,
@@ -67,6 +72,18 @@ def classify(
     if read is not Read.SUCCESS:
         return mapping[read], True
     return (Result.MATCH if recorded == current else Result.DIFFERENT_CONTENT), True
+
+
+def share_compatible(
+    existing_access: int,
+    existing_share: int,
+    new_access: int = ACCESS_READ,
+    new_share: int = ACCESS_READ,
+) -> bool:
+    """Model the symmetric Windows desired-access/share-mode compatibility rule."""
+    existing_access_allowed_by_new = (existing_access & ~new_share) == 0
+    new_access_allowed_by_existing = (new_access & ~existing_share) == 0
+    return existing_access_allowed_by_new and new_access_allowed_by_existing
 
 
 def run_model(cases: int) -> int:
@@ -116,6 +133,37 @@ def run_model(cases: int) -> int:
             checks += 1
         else:
             assert read is not Read.SUCCESS
+            checks += 1
+    return checks
+
+
+def run_share_model(cases: int) -> int:
+    rng = random.Random(20260812)
+    checks = 0
+    for _ in range(cases):
+        existing_access = rng.randrange(0, 8)
+        existing_share = rng.randrange(0, 8)
+        compatible = share_compatible(existing_access, existing_share)
+
+        if existing_access & (ACCESS_WRITE | ACCESS_DELETE):
+            assert not compatible
+            checks += 1
+        elif existing_access & ACCESS_READ:
+            assert compatible == bool(existing_share & ACCESS_READ)
+            checks += 1
+        else:
+            assert compatible == bool(existing_share & ACCESS_READ)
+            checks += 1
+
+        if compatible:
+            assert (existing_access & ~(ACCESS_READ)) == 0
+            assert (existing_share & ACCESS_READ) != 0
+            checks += 2
+        else:
+            assert (
+                (existing_access & (ACCESS_WRITE | ACCESS_DELETE)) != 0
+                or (existing_share & ACCESS_READ) == 0
+            )
             checks += 1
     return checks
 
@@ -250,10 +298,12 @@ def main() -> int:
     if args.cases <= 0:
         parser.error("--cases must be greater than zero")
 
-    checks = run_model(args.cases)
+    protocol_checks = run_model(args.cases)
+    share_checks = run_share_model(args.cases)
+    checks = protocol_checks + share_checks
     print(
         f"PASS recovery main-stream verification model: {checks} checks across "
-        f"{args.cases} randomized cases"
+        f"{args.cases} randomized protocol cases + {args.cases} share-compatibility cases"
     )
     if not args.self_test_only:
         print(
