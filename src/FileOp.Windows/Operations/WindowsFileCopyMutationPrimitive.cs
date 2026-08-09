@@ -3,6 +3,7 @@ using System.Buffers;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
@@ -130,7 +131,7 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
             }
 
             WindowsFileCopyBasicMetadata.SuppressAutomaticTimestampUpdates(destinationFile);
-            CopyContents(sourceFile, destinationFile);
+            var destinationContentFingerprint = CopyContents(sourceFile, destinationFile);
             if (!FlushFileBuffers(destinationFile))
             {
                 throw Win32IOException("Flushing copied destination data");
@@ -150,7 +151,8 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
                 sourceCanonicalPath,
                 destinationCanonicalPath,
                 sourceIdentity,
-                destinationIdentity);
+                destinationIdentity,
+                destinationContentFingerprint);
 
             var lease = new MutationLease(
                 receipt,
@@ -404,8 +406,11 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
         }
     }
 
-    private static void CopyContents(SafeFileHandle source, SafeFileHandle destination)
+    private static FileContentFingerprint CopyContents(
+        SafeFileHandle source,
+        SafeFileHandle destination)
     {
+        using var contentHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
         var pinned = GCHandle.Alloc(buffer, GCHandleType.Pinned);
         try
@@ -448,6 +453,8 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
 
                     written = checked(written + justWritten);
                 }
+
+                contentHash.AppendData(buffer, 0, checked((int)bytesRead));
             }
         }
         finally
@@ -455,6 +462,10 @@ public sealed class WindowsFileCopyMutationPrimitive : IFileCopyMutationPrimitiv
             pinned.Free();
             ArrayPool<byte>.Shared.Return(buffer);
         }
+
+        return new FileContentFingerprint(
+            FileContentFingerprintAlgorithm.Sha256,
+            Convert.ToHexString(contentHash.GetHashAndReset()));
     }
 
     private static ByHandleFileInformation GetInformation(
