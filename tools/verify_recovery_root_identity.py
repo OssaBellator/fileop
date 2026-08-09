@@ -58,16 +58,13 @@ def run_model(cases: int) -> int:
         checks += 1
         if not has_fingerprint:
             assert result is ContentGate.NO_FINGERPRINT
-            checks += 1
         elif root_status is not RootStatus.SAME:
             assert result is ContentGate.ROOT_NOT_VERIFIED
-            checks += 1
         elif not file_same:
             assert result is ContentGate.FILE_NOT_SAME
-            checks += 1
         else:
             assert result is ContentGate.READ
-            checks += 1
+        checks += 1
     return checks
 
 
@@ -117,10 +114,8 @@ def run_sqlite_model(cases: int = 5000) -> int:
             "FROM roots WHERE operation_id = ?",
             (operation_id,),
         ).fetchone()
-        restored_source = (from_sqlite(row[0]), from_sqlite(row[1]))
-        restored_destination = (from_sqlite(row[2]), from_sqlite(row[3]))
-        assert restored_source == source
-        assert restored_destination == destination
+        assert (from_sqlite(row[0]), from_sqlite(row[1])) == source
+        assert (from_sqlite(row[2]), from_sqlite(row[3])) == destination
         checks += 2
 
         if index % 5 == 0:
@@ -133,6 +128,22 @@ def run_sqlite_model(cases: int = 5000) -> int:
             ).fetchone()
             assert row == (None,)
             checks += 1
+
+    connection.commit()
+    connection.execute("BEGIN")
+    connection.execute("INSERT INTO actions VALUES ('rollback')")
+    connection.execute("INSERT INTO roots VALUES ('rollback', 1, 2, 3, 4)")
+    connection.rollback()
+    assert connection.execute("SELECT 1 FROM actions WHERE operation_id='rollback'").fetchone() is None
+    assert connection.execute("SELECT 1 FROM roots WHERE operation_id='rollback'").fetchone() is None
+    checks += 2
+
+    connection.execute("INSERT INTO actions VALUES ('cascade')")
+    connection.execute("INSERT INTO roots VALUES ('cascade', 1, 2, 3, 4)")
+    connection.execute("DELETE FROM actions WHERE operation_id='cascade'")
+    assert connection.execute("SELECT 1 FROM roots WHERE operation_id='cascade'").fetchone() is None
+    checks += 1
+
     connection.close()
     return checks
 
@@ -149,6 +160,7 @@ def check_repository(root: Path) -> int:
         "docs": root / "docs/file-operation-recovery-root-identity.md",
         "py_wrapper": root / "tools/test-copy-executor-local.py",
         "ps_wrapper": root / "tools/test-copy-executor-local.ps1",
+        "windows_gate": root / "tools/test-windows-copy-local.ps1",
     }
     missing = [str(path) for path in paths.values() if not path.is_file()]
     if missing:
@@ -243,6 +255,12 @@ def check_repository(root: Path) -> int:
     verifier_name = "verify_recovery_root_identity.py"
     assert verifier_name in source["py_wrapper"]
     assert verifier_name in source["ps_wrapper"]
+    for needle in (
+        "FullyQualifiedName~FileOperationActionHistoryTests",
+        "FullyQualifiedName~FileOperationRecoveryInspectionTests",
+        "FullyQualifiedName~WindowsFileOperationRecoveryContentVerificationTests",
+    ):
+        assert needle in source["windows_gate"], needle
 
     forbidden = (
         "CanDelete",
@@ -267,6 +285,7 @@ def check_repository(root: Path) -> int:
         + 2
         + 7
         + 2
+        + 3
         + (len(forbidden) * 2)
     )
 
