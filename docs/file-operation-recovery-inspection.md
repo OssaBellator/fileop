@@ -35,9 +35,9 @@ Each inspected entry receives one read-only observation:
 
 ## Relationship to content fingerprint evidence
 
-`SameObject` proves only canonical location + stable object identity at inspection time. The durable `DestinationContentFingerprint` records FileOp's post-Copy main-stream SHA-256, but this inspector deliberately does **not** compare that value with current file bytes.
+`SameObject` is **identity evidence only**: it proves canonical location + stable object identity at inspection time. The durable `DestinationContentFingerprint` records FileOp's post-Copy main-stream SHA-256, but this inspector deliberately does **not** compare that value with current file bytes.
 
-The next read-only boundary should open the already-inspected object through a race-resistant identity-bound read handle, hash the current main data stream, and compare it with durable fingerprint evidence. Until that exists, FileOp cannot claim a complete no-user-change proof.
+The next read-only boundary should open the already-inspected object through a race-resistant identity-bound read handle, hash the current main data stream, and compare it with durable fingerprint evidence. Until that exists, FileOp cannot claim a complete **no-user-change** proof.
 
 Even a future content match will not automatically settle metadata, ACL, alternate-data-stream, extended-attribute, compression/encryption/sparse or other non-main-stream policy. Those concerns and explicit user authorization remain prerequisites for destructive recovery.
 
