@@ -100,9 +100,10 @@ public sealed record FileOperationRecoveryEvidenceAssessmentItem
     public FileOperationRecoveryEvidenceDimensionState GetDimensionState(
         FileOperationRecoveryEvidenceDimension dimension)
     {
+        var numericDimension = (int)dimension;
         if (dimension == FileOperationRecoveryEvidenceDimension.None ||
             (dimension & FileOperationRecoveryEvidenceDimension.AllObserved) != dimension ||
-            (dimension & (dimension - 1)) != 0)
+            (numericDimension & (numericDimension - 1)) != 0)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(dimension),
