@@ -209,7 +209,7 @@ def check_repository(root: Path) -> int:
         checks += 6
 
     checks += require(source["verifier"], (
-        "_evidenceStore.GetAsync(inspection.OperationId",
+        ".GetAsync(inspection.OperationId",
         "MatchesDurableHistory(",
         "UnavailableWithoutRecordedEvidence(",
         "GetDestinationBasicMetadataEvidenceAsync(",
