@@ -92,18 +92,19 @@ public sealed class FileOperationRecoveryInspectionTests
     }
 
     [TestMethod]
-    public async Task ExistingDestinationWithoutDurableIdentityCannotBeReportedAsSameObject()
+    public async Task MutationStartedIdentityFieldIsNeverTrusted()
     {
+        var untrustedIdentity = new FileIdentity(4, 44);
         var entry = CreateEntry(
             0,
             FileOperationActionEntryState.MutationStarted,
             @"D:\Dest\uncertain.txt",
-            destinationIdentity: null);
+            untrustedIdentity);
         var resolver = new FakeResolver(new Dictionary<string, FileOperationCanonicalPath>
         {
             [entry.CanonicalDestinationPath] = ExistingFile(
                 entry.CanonicalDestinationPath,
-                new FileIdentity(4, 44)),
+                untrustedIdentity),
         });
         var inspector = new FileOperationRecoveryInspector(resolver);
 
@@ -112,6 +113,7 @@ public sealed class FileOperationRecoveryInspectionTests
         Assert.AreEqual(FileOperationRecoveryDestinationStatus.NoVerifiedIdentity, result.Items[0].Status);
         Assert.IsFalse(result.Items[0].IsSameRecordedObject);
         Assert.IsNull(result.Items[0].RecordedDestinationIdentity);
+        Assert.AreEqual(untrustedIdentity, result.Items[0].Entry.DestinationIdentity);
     }
 
     [TestMethod]
