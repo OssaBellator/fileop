@@ -117,6 +117,19 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
         FileOperationActionEntry entry,
         FileOperationCanonicalPath current)
     {
+        if (current.Exists && current.IsLeafReparsePoint)
+        {
+            return FileOperationRecoveryDestinationStatus.ReparsePoint;
+        }
+
+        if (current.State is FileOperationCanonicalPathState.Missing or
+                FileOperationCanonicalPathState.File or
+                FileOperationCanonicalPathState.Directory &&
+            !PathsEqual(entry.CanonicalDestinationPath, current.CanonicalPath))
+        {
+            return FileOperationRecoveryDestinationStatus.Redirected;
+        }
+
         return current.State switch
         {
             FileOperationCanonicalPathState.Missing =>
@@ -136,16 +149,6 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
         FileOperationActionEntry entry,
         FileOperationCanonicalPath current)
     {
-        if (current.IsLeafReparsePoint)
-        {
-            return FileOperationRecoveryDestinationStatus.ReparsePoint;
-        }
-
-        if (!PathsEqual(entry.CanonicalDestinationPath, current.CanonicalPath))
-        {
-            return FileOperationRecoveryDestinationStatus.Redirected;
-        }
-
         if (entry.DestinationIdentity is not FileIdentity expected ||
             current.Identity is not FileIdentity actual)
         {
@@ -162,13 +165,13 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
         FileOperationRecoveryDestinationStatus.NoVerifiedIdentity =>
             "A destination exists, but durable history does not contain enough stable identity evidence to correlate it.",
         FileOperationRecoveryDestinationStatus.Missing =>
-            "The recorded destination path is currently missing.",
+            "The recorded destination path is currently missing and still resolves through the recorded canonical namespace.",
         FileOperationRecoveryDestinationStatus.SameObject =>
             "The current destination resolves to the recorded canonical location and stable FileIdentity. This is evidence only, not deletion authorization.",
         FileOperationRecoveryDestinationStatus.DifferentObject =>
             "The destination path exists but names a different stable FileIdentity than durable recovery history recorded.",
         FileOperationRecoveryDestinationStatus.Redirected =>
-            "The destination path resolves to a different canonical location than durable recovery history recorded.",
+            "The destination path now resolves through a different canonical location than durable recovery history recorded.",
         FileOperationRecoveryDestinationStatus.ReparsePoint =>
             "The destination leaf is currently a reparse point and is not treated as the recorded recovery object.",
         FileOperationRecoveryDestinationStatus.UnexpectedType =>
