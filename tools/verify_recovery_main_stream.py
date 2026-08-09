@@ -193,6 +193,7 @@ def run_share_model(cases: int) -> int:
 
 def check_repository(root: Path) -> int:
     paths = {
+        "inspection": root / "src/FileOp.Core/Operations/FileOperationRecoveryInspection.cs",
         "core": root / "src/FileOp.Core/Operations/FileOperationRecoveryContentVerification.cs",
         "windows": root / "src/FileOp.Windows/Operations/WindowsRootBoundFileContentFingerprintReader.cs",
         "legacy_windows": root / "src/FileOp.Windows/Operations/WindowsFileContentFingerprintReader.cs",
@@ -209,6 +210,14 @@ def check_repository(root: Path) -> int:
         raise FileNotFoundError(", ".join(missing))
     source = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
 
+    inspection_needles = (
+        "string? RecordedCanonicalPath = null",
+        "history.CanonicalDestinationDirectoryPath",
+        "DescribeRoot(status)",
+    )
+    for needle in inspection_needles:
+        assert needle in source["inspection"], needle
+
     core_needles = (
         "public interface IRootBoundFileContentFingerprintReader",
         "FileContentFingerprintReadRequest",
@@ -216,11 +225,14 @@ def check_repository(root: Path) -> int:
         "DestinationContentFingerprint is not FileContentFingerprint recorded",
         "DestinationRootNotVerified",
         "inspection.DestinationDirectory.IsSameRecordedRoot",
+        "inspection.DestinationDirectory.RecordedCanonicalPath",
+        "string.IsNullOrWhiteSpace(inspection.DestinationDirectory.RecordedCanonicalPath)",
+        "PathsEqual(\n                    inspection.DestinationDirectory.RecordedCanonicalPath",
         "DestinationRootChanged",
         "MatchesRecordedMainStream",
         "DifferentMainStream",
-        "currentDirectory.CanonicalPath",
         "expectedDirectoryIdentity",
+        "new FileContentFingerprintReadRequest(\n                inspection.DestinationDirectory.RecordedCanonicalPath",
         "IsConsistentSuccess(",
         "read.CurrentDestinationDirectory is { } root",
         "root.State == FileOperationCanonicalPathState.Directory",
@@ -275,6 +287,7 @@ def check_repository(root: Path) -> int:
         "DifferentDigestIsDifferentMainStream",
         "MissingFingerprintSkipsRootBoundReader",
         "UnverifiedDestinationRootSkipsRootBoundReader",
+        "InconsistentRecordedRootPathSkipsRootBoundReader",
         "NonSameObjectInspectionSkipsRootBoundReader",
         "RootBoundReaderUnsafeStatusesPropagateConservatively",
         "InconsistentLeafSuccessEvidenceFailsClosedAsError",
@@ -289,6 +302,7 @@ def check_repository(root: Path) -> int:
         "WrongLeafIdentityIsRejectedBeforeHashEvidence",
         "MissingLeafFailsClosedWithoutFingerprint",
         "ExistingWriterCausesBusyInsteadOfWeakRootBoundProof",
+        "RestrictiveExistingReaderAlsoCausesBusyForRootBoundReader",
         "ReplacedRootWithSameFileMovedBackIsRejected",
     ):
         assert test_name in source["windows_tests"], test_name
@@ -330,12 +344,13 @@ def check_repository(root: Path) -> int:
         assert needle not in source["core"], needle
 
     return (
-        len(core_needles)
+        len(inspection_needles)
+        + len(core_needles)
         + len(windows_needles)
         + 4
         + len(forbidden_windows)
-        + 9
-        + 6
+        + 10
+        + 7
         + 5
         + 12
         + 5
