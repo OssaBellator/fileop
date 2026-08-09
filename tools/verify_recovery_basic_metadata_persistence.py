@@ -283,7 +283,7 @@ def check_repository(root: Path) -> int:
         ),
         "current_reader_tests": (
             "ReaderObservesCreationLastWriteAndSafeAttributes",
-            "ExistingWriterMakesCurrentMetadataUnavailableAsBusy",
+            "ExistingWriterCanCoexistWithAttributesOnlyEvidenceRead",
             "WrongLeafIdentityFailsClosed",
             "ReplacedRootWithSameFileMovedBackFailsClosed",
         ),

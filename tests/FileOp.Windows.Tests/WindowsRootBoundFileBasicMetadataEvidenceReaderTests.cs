@@ -38,7 +38,7 @@ public sealed class WindowsRootBoundFileBasicMetadataEvidenceReaderTests
     }
 
     [TestMethod]
-    public async Task ExistingWriterMakesCurrentMetadataUnavailableAsBusy()
+    public async Task ExistingWriterCanCoexistWithAttributesOnlyEvidenceRead()
     {
         using var fixture = new ReaderFixture();
         var request = await fixture.CreateRequestAsync();
@@ -46,12 +46,12 @@ public sealed class WindowsRootBoundFileBasicMetadataEvidenceReaderTests
             fixture.Path,
             FileMode.Open,
             FileAccess.Write,
-            FileShare.ReadWrite);
+            FileShare.None);
 
         var result = await new WindowsRootBoundFileBasicMetadataEvidenceReader().ReadAsync(request);
 
-        Assert.AreEqual(FileContentFingerprintReadStatus.Busy, result.Status);
-        Assert.IsNull(result.BasicMetadata);
+        Assert.AreEqual(FileContentFingerprintReadStatus.Success, result.Status);
+        Assert.IsNotNull(result.BasicMetadata);
     }
 
     [TestMethod]
