@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 def run_step(name: str, repo_root: Path, arguments: list[str]) -> None:
@@ -18,7 +19,7 @@ def run_step(name: str, repo_root: Path, arguments: list[str]) -> None:
     )
 
 
-def find_dotnet_10(repo_root: Path) -> str | None:
+def find_dotnet_10(repo_root: Path) -> Optional[str]:
     dotnet = shutil.which("dotnet")
     if dotnet is None:
         return None
