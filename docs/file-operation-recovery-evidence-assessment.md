@@ -2,14 +2,15 @@
 
 ## Purpose
 
-FileOp now produces several independent read-only recovery observations for a Copy-created file:
+FileOp produces independent read-only recovery observations for a Copy-created file:
 
 - destination-root canonical location and `FileIdentity`;
 - destination leaf canonical location and `FileIdentity`;
 - primary/default data-stream SHA-256;
 - hard-link count;
 - basic metadata owned by the Copy implementation;
-- exact queried owner/group/DACL security-descriptor bytes, represented only by SHA-256.
+- exact queried owner/group/DACL security-descriptor bytes, represented only by SHA-256;
+- named `$DATA` stream topology/size evidence: exact stream names and logical sizes represented by a versioned SHA-256 digest plus count.
 
 Those results intentionally remain separate because they describe different properties. This layer adds a **conservative aggregate assessment** so callers do not have to invent their own precedence rules or accidentally treat one matching dimension as deletion authority.
 
@@ -17,14 +18,15 @@ The assessor performs no filesystem access and no Windows API calls. It only com
 
 ## Evidence dimensions
 
-Each recovery entry exposes six flags in `FileOperationRecoveryEvidenceDimension`:
+Each recovery entry exposes seven flags in `FileOperationRecoveryEvidenceDimension`:
 
 1. `DestinationRoot`;
 2. `DestinationIdentity`;
 3. `MainStream`;
 4. `HardLinkCount`;
 5. `BasicMetadata`;
-6. `OwnerGroupDacl`.
+6. `OwnerGroupDacl`;
+7. `NamedDataStreams`.
 
 Every dimension is placed into exactly one state:
 
@@ -32,6 +34,8 @@ Every dimension is placed into exactly one state:
 - `Changed` — the current observation definitively differs from the durable observation;
 - `Incomplete` — durable history does not contain the evidence needed for that dimension;
 - `Unavailable` — the evidence exists in principle, but the current state could not be verified reliably.
+
+For `NamedDataStreams`, `Matches` means only that the observed named `$DATA` **names and logical sizes** match. It does not mean the bytes inside those named streams match. In particular, replacing ADS content with different bytes of the same length is intentionally invisible to this topology/size dimension.
 
 The result keeps four non-overlapping dimension masks (`MatchingDimensions`, `ChangedDimensions`, `IncompleteDimensions`, `UnavailableDimensions`). Together they always partition `AllObserved`.
 
@@ -53,9 +57,10 @@ This means a known difference is never hidden by a simultaneous read error or mi
 - `FileOperationRecoveryInspection`;
 - `FileOperationRecoveryContentVerification`;
 - `FileOperationRecoveryBasicMetadataVerification`;
-- `FileOperationRecoverySecurityDescriptorVerification`.
+- `FileOperationRecoverySecurityDescriptorVerification`;
+- `FileOperationRecoveryNamedDataStreamTopologyVerification`.
 
-All four must belong to the same operation and contain the exact same unique entry ordinals. Every verification item must point back to the same recovery-inspection snapshot for that ordinal. Mismatched operation ids, duplicate/missing ordinals, or a stale/fabricated inspection item are rejected rather than aggregated.
+All five must belong to the same operation and contain the exact same unique entry ordinals. Every verification item must point back to the same recovery-inspection snapshot for that ordinal. Mismatched operation ids, duplicate/missing ordinals, or a stale/fabricated inspection item are rejected rather than aggregated.
 
 Output is sorted by ordinal and defensively snapshotted.
 
@@ -67,13 +72,13 @@ Output is sorted by ordinal and defensively snapshotted.
 
 It is **not** an “unchanged file” result.
 
-In particular it does not prove equality of:
+In particular it still does not prove equality of:
 
-- alternate data streams;
+- named-data-stream **contents** when names and logical sizes are unchanged;
 - extended attributes;
-- the complete set of hard-link names;
+- the complete set of hard-link names (a link count is not a name inventory);
 - SACL/audit state or other privileged security-information classes;
-- any property not represented by the six current evidence dimensions.
+- any property not represented by the seven current evidence dimensions.
 
 It also cannot prove historical absence of temporary changes that were later restored. The individual observations are point-in-time evidence and are not one atomic file snapshot.
 
@@ -85,7 +90,7 @@ This assessment layer does not:
 - change `UndoKind`;
 - add `CanDelete` or `CanUndo`;
 - delete, replace, move, rename, or recover a destination;
-- alter owner/group/DACL or any other metadata;
+- alter owner/group/DACL, named streams, or any other metadata;
 - authorize Files UI execution or Undo.
 
 Even `ObservedSubsetMatches` grants **no mutation authority**.
@@ -94,13 +99,13 @@ A future destructive recovery boundary must define the still-missing evidence/po
 
 ## Validation
 
-The zero-Actions verifier `tools/verify_recovery_evidence_assessment.py` models the six dimension states and aggregate precedence over randomized cases and source-guards:
+The zero-Actions verifier `tools/verify_recovery_evidence_assessment.py` models the seven dimension states and aggregate precedence over randomized cases and source-guards:
 
-- the complete six-dimension partition;
+- the complete seven-dimension partition;
 - changed > unavailable > incomplete > observed-subset-match precedence;
 - same-operation/same-ordinal/same-inspection binding;
 - defensive sorted snapshots;
 - absence of filesystem and mutation APIs;
-- explicit documentation that `ObservedSubsetMatches` is not an unchanged-file or deletion-authorization claim.
+- explicit documentation that named-stream matching is names/sizes only and `ObservedSubsetMatches` is not an unchanged-file or deletion-authorization claim.
 
-The verifier is wired into the portable Copy wrappers. The focused Windows test gate includes `FileOperationRecoveryEvidenceAssessmentTests`; compiler execution can be batched with the other stacked draft recovery work.
+The verifier is wired into the portable Copy wrappers. The focused Windows test gate includes both aggregate assessment test classes; compiler execution can be batched with the other stacked draft recovery work.
