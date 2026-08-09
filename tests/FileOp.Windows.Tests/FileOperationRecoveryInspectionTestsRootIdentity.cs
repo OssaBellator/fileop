@@ -37,6 +37,9 @@ public sealed class FileOperationRecoveryInspectionTestsRootIdentity
             FileOperationRecoveryRootStatus.NoVerifiedIdentity,
             result.DestinationDirectory.Status);
         Assert.IsNull(result.DestinationDirectory.RecordedIdentity);
+        Assert.AreEqual(
+            history.CanonicalDestinationDirectoryPath,
+            result.DestinationDirectory.RecordedCanonicalPath);
         Assert.IsNull(result.DestinationDirectory.CurrentDirectory);
         Assert.AreEqual(1, resolver.Paths.Count);
         Assert.AreEqual(history.Entries[0].CanonicalDestinationPath, resolver.Paths[0]);
@@ -60,6 +63,9 @@ public sealed class FileOperationRecoveryInspectionTestsRootIdentity
                 same ? FileOperationRecoveryRootStatus.SameObject : FileOperationRecoveryRootStatus.DifferentObject,
                 result.DestinationDirectory.Status);
             Assert.AreEqual(recorded, result.DestinationDirectory.RecordedIdentity);
+            Assert.AreEqual(
+                history.CanonicalDestinationDirectoryPath,
+                result.DestinationDirectory.RecordedCanonicalPath);
             Assert.AreEqual(currentIdentity, result.DestinationDirectory.CurrentDirectory?.Identity);
         }
     }
@@ -84,6 +90,9 @@ public sealed class FileOperationRecoveryInspectionTestsRootIdentity
             var resolver = CreateResolverForRoot(history, pair.Item1);
             var result = await new FileOperationRecoveryInspector(resolver).InspectAsync(history);
             Assert.AreEqual(pair.Item2, result.DestinationDirectory.Status, pair.Item2.ToString());
+            Assert.AreEqual(
+                history.CanonicalDestinationDirectoryPath,
+                result.DestinationDirectory.RecordedCanonicalPath);
             Assert.IsFalse(result.DestinationDirectory.IsSameRecordedRoot);
         }
     }
