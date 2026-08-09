@@ -27,7 +27,7 @@ public sealed class WindowsFileOperationRecoveryContentVerificationTests
         Assert.AreEqual(FileOperationRecoveryDestinationStatus.SameObject, inspection.Items[0].Status);
 
         var result = await new FileOperationRecoveryContentVerifier(
-                new WindowsFileContentFingerprintReader())
+                new WindowsRootBoundFileContentFingerprintReader())
             .VerifyAsync(inspection);
 
         Assert.AreEqual(
@@ -57,7 +57,7 @@ public sealed class WindowsFileOperationRecoveryContentVerificationTests
         await File.WriteAllBytesAsync(fixture.Path, changed);
 
         var result = await new FileOperationRecoveryContentVerifier(
-                new WindowsFileContentFingerprintReader())
+                new WindowsRootBoundFileContentFingerprintReader())
             .VerifyAsync(inspection);
 
         Assert.AreEqual(FileOperationRecoveryContentStatus.DifferentMainStream, result.Items[0].Status);
@@ -83,7 +83,7 @@ public sealed class WindowsFileOperationRecoveryContentVerificationTests
         await File.WriteAllTextAsync(fixture.Path, "replacement");
 
         var result = await new FileOperationRecoveryContentVerifier(
-                new WindowsFileContentFingerprintReader())
+                new WindowsRootBoundFileContentFingerprintReader())
             .VerifyAsync(inspection);
 
         Assert.AreEqual(FileOperationRecoveryContentStatus.DifferentObject, result.Items[0].Status);
@@ -119,11 +119,43 @@ public sealed class WindowsFileOperationRecoveryContentVerificationTests
         Assert.AreEqual(recordedFileIdentity, inspection.Items[0].CurrentDestination.Identity);
 
         var result = await new FileOperationRecoveryContentVerifier(
-                new WindowsFileContentFingerprintReader())
+                new WindowsRootBoundFileContentFingerprintReader())
             .VerifyAsync(inspection);
 
         Assert.AreEqual(
             FileOperationRecoveryContentStatus.DestinationRootNotVerified,
+            result.Items[0].Status);
+        Assert.IsNull(result.Items[0].CurrentContentFingerprint);
+    }
+
+    [TestMethod]
+    public async Task RootReplacementAfterSameObjectInspectionIsCaughtByRootBoundReader()
+    {
+        using var fixture = new VerificationFixture();
+        var original = new byte[3584];
+        new Random(44).NextBytes(original);
+        await File.WriteAllBytesAsync(fixture.Path, original);
+        var history = await fixture.CreateHistoryAsync(original);
+        var inspection = await new FileOperationRecoveryInspector(
+                new WindowsFileOperationCanonicalPathResolver())
+            .InspectAsync(history);
+        Assert.AreEqual(FileOperationRecoveryRootStatus.SameObject, inspection.DestinationDirectory.Status);
+        Assert.AreEqual(FileOperationRecoveryDestinationStatus.SameObject, inspection.Items[0].Status);
+
+        var originalRoot = fixture.Root + ".stale";
+        Directory.Move(fixture.Root, originalRoot);
+        Directory.CreateDirectory(fixture.Root);
+        File.Move(
+            System.IO.Path.Combine(originalRoot, "payload.bin"),
+            fixture.Path);
+        fixture.AddCleanupRoot(originalRoot);
+
+        var result = await new FileOperationRecoveryContentVerifier(
+                new WindowsRootBoundFileContentFingerprintReader())
+            .VerifyAsync(inspection);
+
+        Assert.AreEqual(
+            FileOperationRecoveryContentStatus.DestinationRootChanged,
             result.Items[0].Status);
         Assert.IsNull(result.Items[0].CurrentContentFingerprint);
     }
