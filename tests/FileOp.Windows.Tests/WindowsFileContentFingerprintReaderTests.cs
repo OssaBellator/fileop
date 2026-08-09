@@ -116,6 +116,25 @@ public sealed class WindowsFileContentFingerprintReaderTests
         Assert.IsNull(result.ContentFingerprint);
     }
 
+    [TestMethod]
+    public async Task RestrictiveExistingReaderAlsoCausesBusy()
+    {
+        using var fixture = new ReaderFixture();
+        await File.WriteAllTextAsync(fixture.Path, "content");
+        var expected = await ResolveFileAsync(fixture.Path);
+        await using var reader = new FileStream(
+            fixture.Path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.None);
+
+        var result = await new WindowsFileContentFingerprintReader()
+            .ReadAsync(expected.CanonicalPath, expected.Identity!.Value);
+
+        Assert.AreEqual(FileContentFingerprintReadStatus.Busy, result.Status);
+        Assert.IsNull(result.ContentFingerprint);
+    }
+
     private static async Task<FileOperationCanonicalPath> ResolveFileAsync(string path)
     {
         var resolved = await new WindowsFileOperationCanonicalPathResolver().ResolveAsync(path);
