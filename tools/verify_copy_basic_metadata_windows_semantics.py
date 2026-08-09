@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import random
 from dataclasses import dataclass
+from pathlib import Path
 
 READ_ONLY = 0x00000001
 HIDDEN = 0x00000002
@@ -73,6 +74,36 @@ def automatic_io_update(state: TimestampState, new_value: int) -> TimestampState
     if state.user_set:
         return state
     return TimestampState(new_value, False)
+
+
+def check_source_contract(repo_root: Path) -> int:
+    helper_path = repo_root / "src/FileOp.Windows/Operations/WindowsFileCopyBasicMetadata.cs"
+    if not helper_path.is_file():
+        raise FileNotFoundError(helper_path)
+    helper = helper_path.read_text(encoding="utf-8")
+
+    checks = 0
+    for method_name in (
+        "GetFileInformationByHandle",
+        "SetFileInformationByHandle",
+    ):
+        method_start = helper.index(f"private static extern bool {method_name}(")
+        attribute_start = helper.rfind("[DllImport(", 0, method_start)
+        assert attribute_start >= 0, method_name
+        attributes = helper[attribute_start:method_start]
+        for needle in (
+            '"kernel32.dll"',
+            "SetLastError = true",
+            "ExactSpelling = true",
+            "CallingConvention = CallingConvention.Winapi",
+            "[return: MarshalAs(UnmanagedType.Bool)]",
+        ):
+            assert needle in attributes, f"{method_name}: {needle}"
+            checks += 1
+
+    assert "ExactSpelling = false" not in helper
+    checks += 1
+    return checks
 
 
 def run_fixed_cases() -> int:
@@ -184,16 +215,19 @@ def run_randomized(cases: int) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--cases", type=int, default=100_000)
     args = parser.parse_args()
     if args.cases <= 0:
         parser.error("--cases must be greater than zero")
 
+    source_checks = check_source_contract(args.repo_root.resolve())
     fixed_checks = run_fixed_cases()
     randomized_checks = run_randomized(args.cases)
     print(
-        "PASS Windows FileBasicInformation semantics model: "
-        f"{fixed_checks + randomized_checks:,} checks across {args.cases:,} randomized cases"
+        "PASS Windows FileBasicInformation semantics/source contract: "
+        f"{source_checks + fixed_checks + randomized_checks:,} checks across "
+        f"{args.cases:,} randomized cases"
     )
     return 0
 
