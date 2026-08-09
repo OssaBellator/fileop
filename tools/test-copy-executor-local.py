@@ -74,6 +74,9 @@ def main() -> int:
         ("Recovery main-stream verification", ["tools/verify_recovery_main_stream.py", "--repo-root", str(repo_root), "--cases", "50000"]),
         ("Root-bound reader ABI verification", ["tools/verify_recovery_root_bound_reader_abi.py", "--repo-root", str(repo_root)]),
         ("Recovery destination-root identity verification", ["tools/verify_recovery_root_identity.py", "--repo-root", str(repo_root), "--cases", "50000"]),
+        ("Recovery hard-link evidence verification", ["tools/verify_recovery_hard_link_evidence.py", "--repo-root", str(repo_root), "--cases", "50000"]),
+        ("Recovery basic-metadata semantics verification", ["tools/verify_recovery_basic_metadata_evidence.py", "--repo-root", str(repo_root), "--cases", "50000"]),
+        ("Recovery basic-metadata persistence verification", ["tools/verify_recovery_basic_metadata_persistence.py", "--repo-root", str(repo_root), "--sqlite-cases", "5000"]),
         ("Offline paged directory browse verifier", ["tools/verify_directory_browse.py", "--repo-root", str(repo_root), "--cases", "10000"]),
         ("File Copy executor verification", ["tools/verify_file_copy_executor.py", "--repo-root", str(repo_root), "--cases", "20000"]),
         ("Windows Copy mutation handle-binding verification", ["tools/verify_windows_file_copy_mutation.py", "--repo-root", str(repo_root), "--cases", "2000"]),
@@ -101,7 +104,7 @@ def main() -> int:
     for name, arguments in steps:
         run_step(name, repo_root, arguments)
 
-    print("\nPASS: Copy executor, recovery inspection, content fingerprint evidence, root-bound recovery main-stream verification, root-bound reader ABI, destination-root identity evidence, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions or PowerShell; optional local Clang/.NET 10 checks were used when available.")
+    print("\nPASS: Copy executor, recovery inspection, content fingerprint evidence, root-bound recovery main-stream verification, root-bound reader ABI, destination-root identity evidence, hard-link evidence, recovery basic-metadata evidence, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions or PowerShell; optional local Clang/.NET 10 checks were used when available.")
     return 0
 
 
