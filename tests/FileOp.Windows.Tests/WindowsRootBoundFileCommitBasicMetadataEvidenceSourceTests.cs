@@ -61,7 +61,7 @@ public sealed class WindowsRootBoundFileCommitBasicMetadataEvidenceSourceTests
             fixture.DestinationIdentity!.Value.VolumeSerialNumber,
             fixture.DestinationIdentity.Value.FileReferenceNumber + 1);
 
-        await Assert.ThrowsExceptionAsync<IOException>(async () =>
+        await Assert.ThrowsAsync<IOException>(async () =>
             await new WindowsRootBoundFileCommitBasicMetadataEvidenceSource()
                 .ReadVerifiedEvidenceAsync(history, 0, wrong));
     }
@@ -77,7 +77,7 @@ public sealed class WindowsRootBoundFileCommitBasicMetadataEvidenceSourceTests
         File.Move(System.IO.Path.Combine(originalRoot, "payload.bin"), fixture.Path);
         fixture.AddCleanupRoot(originalRoot);
 
-        await Assert.ThrowsExceptionAsync<IOException>(async () =>
+        await Assert.ThrowsAsync<IOException>(async () =>
             await new WindowsRootBoundFileCommitBasicMetadataEvidenceSource()
                 .ReadVerifiedEvidenceAsync(
                     history,

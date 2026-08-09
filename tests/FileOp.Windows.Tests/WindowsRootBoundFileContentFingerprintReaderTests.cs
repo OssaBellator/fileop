@@ -1,6 +1,8 @@
 using System;
+using System.ComponentModel;
 using System.IO;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
 using FileOp.Core.Operations;
@@ -29,6 +31,32 @@ public sealed class WindowsRootBoundFileContentFingerprintReaderTests
         Assert.AreEqual(request.DestinationDirectoryIdentity, result.CurrentDestinationDirectory.Identity);
         Assert.AreEqual(request.DestinationIdentity, result.CurrentDestination.Identity);
         Assert.IsNotNull(result.ContentFingerprint);
+        Assert.AreEqual(
+            Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant(),
+            result.ContentFingerprint!.HexDigest);
+    }
+
+    [TestMethod]
+    public async Task AdditionalHardLinkIncreasesStableObservedCountWithoutChangingBytesOrIdentity()
+    {
+        using var fixture = new ReaderFixture();
+        var payload = new byte[4096];
+        new Random(20260816).NextBytes(payload);
+        await File.WriteAllBytesAsync(fixture.Path, payload);
+        var request = await fixture.CreateRequestAsync();
+        var additionalLink = System.IO.Path.Combine(fixture.Root, "payload-link.bin");
+        if (!CreateHardLinkW(additionalLink, fixture.Path, IntPtr.Zero))
+        {
+            var error = Marshal.GetLastWin32Error();
+            Assert.Fail($"CreateHardLinkW failed with Win32 error {error}: {new Win32Exception(error).Message}");
+        }
+
+        var result = await new WindowsRootBoundFileContentFingerprintReader()
+            .ReadAsync(request);
+
+        Assert.AreEqual(FileContentFingerprintReadStatus.Success, result.Status);
+        Assert.AreEqual(request.DestinationIdentity, result.CurrentDestination.Identity);
+        Assert.AreEqual((uint)2, result.CurrentDestinationHardLinkCount);
         Assert.AreEqual(
             Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant(),
             result.ContentFingerprint!.HexDigest);
@@ -209,4 +237,7 @@ public sealed class WindowsRootBoundFileContentFingerprintReaderTests
             }
         }
     }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.Winapi)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLinkW(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
 }

@@ -46,7 +46,7 @@ public sealed class WindowsFileOperationActionHistoryBasicMetadataEvidenceStoreT
         var store = new WindowsFileOperationActionHistoryBasicMetadataEvidenceStore(inner, new FakeSource(Evidence));
         var identity = new FileIdentity(8, 80);
 
-        await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await store.CommitCopyAsync(history.OperationId, 0, identity, Fingerprint, DateTimeOffset.UtcNow));
 
         await store.MarkMutationRecoveryRequiredAsync(
@@ -72,7 +72,7 @@ public sealed class WindowsFileOperationActionHistoryBasicMetadataEvidenceStoreT
             new FakeSource(new IOException("metadata unavailable")));
         var identity = new FileIdentity(9, 90);
 
-        await Assert.ThrowsExceptionAsync<IOException>(async () =>
+        await Assert.ThrowsAsync<IOException>(async () =>
             await store.CommitCopyAsync(history.OperationId, 0, identity, Fingerprint, DateTimeOffset.UtcNow));
 
         await store.MarkMutationRecoveryRequiredAsync(

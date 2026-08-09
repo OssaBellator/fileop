@@ -57,7 +57,7 @@ public sealed class WindowsFileOperationActionHistoryHardLinkEvidenceStoreTests
         var store = new WindowsFileOperationActionHistoryHardLinkEvidenceStore(inner, source);
         var destinationIdentity = new FileIdentity(8, 80);
 
-        await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await store.CommitCopyAsync(
                 history.OperationId,
                 0,
@@ -94,7 +94,7 @@ public sealed class WindowsFileOperationActionHistoryHardLinkEvidenceStoreTests
         var store = new WindowsFileOperationActionHistoryHardLinkEvidenceStore(inner, source);
         var destinationIdentity = new FileIdentity(9, 90);
 
-        await Assert.ThrowsExceptionAsync<IOException>(async () =>
+        await Assert.ThrowsAsync<IOException>(async () =>
             await store.CommitCopyAsync(
                 history.OperationId,
                 0,
@@ -129,7 +129,7 @@ public sealed class WindowsFileOperationActionHistoryHardLinkEvidenceStoreTests
         var inner = new FakeStrongStore(history) { ThrowStrongCommit = true };
         var store = new WindowsFileOperationActionHistoryHardLinkEvidenceStore(inner, new FakeEvidenceSource(6));
 
-        await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await store.CommitCopyAsync(
                 history.OperationId,
                 0,

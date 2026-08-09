@@ -120,7 +120,7 @@ public sealed class FileOperationActionHistoryBasicMetadataEvidenceTests
             await trigger.ExecuteNonQueryAsync();
         }
 
-        await Assert.ThrowsExceptionAsync<SqliteException>(async () =>
+        await Assert.ThrowsAsync<SqliteException>(async () =>
             await store.CommitCopyWithBasicMetadataEvidenceAsync(
                 validation.Plan.Id,
                 0,
@@ -143,7 +143,7 @@ public sealed class FileOperationActionHistoryBasicMetadataEvidenceTests
     [TestMethod]
     public void CombinedEvidenceRejectsZeroHardLinkCount()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileCopyDestinationCommitBasicMetadataEvidence(
                 0,
                 new FileBasicMetadataEvidence(1, 2, 3, 4)));

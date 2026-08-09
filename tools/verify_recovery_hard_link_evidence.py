@@ -234,7 +234,9 @@ def check_repository(root: Path) -> int:
         "Hard-link count is surfaced separately as topology evidence",
         "read.CurrentDestinationHardLinkCount is uint count",
     ))
-    assert "CurrentDestinationHardLinkCount" not in method_body(source["content"], "private static bool IsConsistentSuccess(")
+    consistency_start = source["content"].index("private static bool IsConsistentSuccess(")
+    consistency_end = source["content"].index("private static FileOperationRecoveryContentVerificationItem Create(", consistency_start)
+    assert "CurrentDestinationHardLinkCount" not in source["content"][consistency_start:consistency_end]
     checks += 1
 
     checks += require(source["reader"], (

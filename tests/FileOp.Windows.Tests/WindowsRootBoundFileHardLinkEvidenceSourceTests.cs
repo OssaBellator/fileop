@@ -79,7 +79,7 @@ public sealed class WindowsRootBoundFileHardLinkEvidenceSourceTests
             fixture.DestinationIdentity!.Value.VolumeSerialNumber,
             fixture.DestinationIdentity.Value.FileReferenceNumber + 1);
 
-        await Assert.ThrowsExceptionAsync<IOException>(async () =>
+        await Assert.ThrowsAsync<IOException>(async () =>
             await new WindowsRootBoundFileHardLinkEvidenceSource()
                 .ReadVerifiedHardLinkCountAsync(history, 0, wrong));
     }
@@ -95,7 +95,7 @@ public sealed class WindowsRootBoundFileHardLinkEvidenceSourceTests
         File.Move(System.IO.Path.Combine(originalRoot, "payload.bin"), fixture.Path);
         fixture.AddCleanupRoot(originalRoot);
 
-        await Assert.ThrowsExceptionAsync<IOException>(async () =>
+        await Assert.ThrowsAsync<IOException>(async () =>
             await new WindowsRootBoundFileHardLinkEvidenceSource()
                 .ReadVerifiedHardLinkCountAsync(
                     history,
