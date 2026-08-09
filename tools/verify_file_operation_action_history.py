@@ -33,6 +33,8 @@ def run_model(cases: int) -> int:
         count = rng.randint(1, 12)
         directories = [rng.random() < 0.2 for _ in range(count)]
         states = [Entry.SKIPPED if d or rng.random() < 0.25 else Entry.PENDING for d in directories]
+        destination_identity = [False] * count
+        undo_candidate = [False] * count
         for index, state in enumerate(states):
             if state == Entry.SKIPPED:
                 continue
@@ -43,8 +45,11 @@ def run_model(cases: int) -> int:
                 states[index] = Entry.STARTED
                 if action == "commit":
                     states[index] = Entry.COMMITTED
+                    destination_identity[index] = True
+                    undo_candidate[index] = True
                 elif action == "recovery":
                     states[index] = Entry.RECOVERY
+                    destination_identity[index] = rng.random() < 0.5
             checks += 1
 
         ambiguous = any(state in (Entry.STARTED, Entry.RECOVERY) for state in states)
@@ -60,6 +65,15 @@ def run_model(cases: int) -> int:
         assert terminal not in (Terminal.FAILED, Terminal.CANCELLED) or not ambiguous
         assert terminal != Terminal.RECOVERY or ambiguous
         checks += 3
+
+        for index, state in enumerate(states):
+            assert not undo_candidate[index] or (
+                state == Entry.COMMITTED and destination_identity[index]
+            )
+            assert state != Entry.RECOVERY or not undo_candidate[index]
+            if state in (Entry.PENDING, Entry.STARTED, Entry.FAILED, Entry.SKIPPED):
+                assert not destination_identity[index]
+            checks += 3
     return checks
 
 
@@ -97,6 +111,7 @@ def check_repository(root: Path) -> int:
             "RecoveryRequired",
             "DeleteCreatedDestination",
             "Array.AsReadOnly(entrySnapshot)",
+            "FileIdentity? destinationIdentity = null",
         ),
         "store": (
             "PRAGMA journal_mode = WAL;",
@@ -106,9 +121,15 @@ def check_repository(root: Path) -> int:
             "FileOperationCanonicalPathState.Missing",
             "unchecked((long)value)",
             "unchecked((ulong)value)",
+            "destination_volume_serial = @destination_volume_serial",
+            "destination_file_reference = @destination_file_reference",
+            "FileOperationUndoKind.None",
+            "private const int SchemaVersion = 1;",
         ),
         "tests": (
             "CopyCommitPersistsUndoCandidateAndHighBitIdentity",
+            "RecoveryRequiredPersistsVerifiedDestinationIdentityWithoutUndoCandidate",
+            "RecoveryRequiredWithoutVerifiedIdentityRemainsIdentityless",
             "MutationStartedSurvivesAsRecoverySignal",
             "BeginRejectsReadyDirectoryAndMoveWithoutRows",
             "ActionHistoryDefensivelySnapshotsEntries",
@@ -133,7 +154,10 @@ def check_repository(root: Path) -> int:
     commit = executor.index(".CommitCopyAsync(")
     assert start < mutate < commit
     assert ".MarkMutationRecoveryRequiredAsync(" in executor
-    checks += 2
+    assert executor.count("verifiedDestinationIdentity: receipt.DestinationIdentity") == 1
+    assert "FileIdentity? verifiedDestinationIdentity = null" in executor
+    assert "destinationIdentity: verifiedDestinationIdentity" in executor
+    checks += 5
 
     store_surface = source["contract"] + source["store"]
     forbidden = ("File." + "Copy(", "File." + "Move(", "Directory." + "Move(")
