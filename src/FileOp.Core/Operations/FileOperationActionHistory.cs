@@ -205,3 +205,30 @@ public interface IFileOperationActionHistoryStore
         int limit = 100,
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Optional stronger persistence capability used by new Copy execution. Existing
+/// IFileOperationActionHistoryStore implementers remain source-compatible, but the
+/// executor refuses to cross the mutation boundary unless this capability exists.
+/// </summary>
+public interface IFileOperationActionHistoryHardLinkEvidenceStore : IFileOperationActionHistoryStore
+{
+    ValueTask<FileOperationActionHistory> CommitCopyWithHardLinkEvidenceAsync(
+        Guid operationId,
+        int ordinal,
+        FileIdentity destinationIdentity,
+        FileContentFingerprint destinationContentFingerprint,
+        uint destinationHardLinkCount,
+        DateTimeOffset committedAtUtc,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<FileOperationActionHistory> MarkMutationRecoveryRequiredWithHardLinkEvidenceAsync(
+        Guid operationId,
+        int ordinal,
+        FileOperationFailure failure,
+        DateTimeOffset failedAtUtc,
+        FileIdentity destinationIdentity,
+        FileContentFingerprint destinationContentFingerprint,
+        uint destinationHardLinkCount,
+        CancellationToken cancellationToken = default);
+}
