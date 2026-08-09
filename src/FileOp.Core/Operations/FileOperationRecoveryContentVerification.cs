@@ -18,18 +18,42 @@ public enum FileContentFingerprintReadStatus
     Busy,
     Inaccessible,
     Error,
+    DestinationRootChanged,
 }
 
 public sealed record FileContentFingerprintReadResult(
     FileContentFingerprintReadStatus Status,
     FileOperationCanonicalPath CurrentDestination,
     FileContentFingerprint? ContentFingerprint,
-    string Message);
+    string Message,
+    FileOperationCanonicalPath? CurrentDestinationDirectory = null)
+{
+    public FileContentFingerprintReadResult(
+        FileContentFingerprintReadStatus status,
+        FileOperationCanonicalPath currentDestination,
+        FileContentFingerprint? contentFingerprint,
+        string message)
+        : this(status, currentDestination, contentFingerprint, message, CurrentDestinationDirectory: null)
+    {
+    }
+
+    public void Deconstruct(
+        out FileContentFingerprintReadStatus status,
+        out FileOperationCanonicalPath currentDestination,
+        out FileContentFingerprint? contentFingerprint,
+        out string message)
+    {
+        status = Status;
+        currentDestination = CurrentDestination;
+        contentFingerprint = ContentFingerprint;
+        message = Message;
+    }
+}
 
 /// <summary>
-/// Legacy leaf-only reader contract retained unchanged for compatibility.
-/// Recovery content verification no longer depends on this contract because it
-/// cannot hold the destination-root binding.
+/// Legacy leaf-only reader contract retained for compatibility. Recovery content
+/// verification no longer depends on this contract because it cannot hold the
+/// destination-root binding.
 /// </summary>
 public interface IFileContentFingerprintReader
 {
@@ -45,34 +69,13 @@ public sealed record FileContentFingerprintReadRequest(
     string CanonicalDestinationPath,
     FileIdentity DestinationIdentity);
 
-public enum RootBoundFileContentFingerprintReadStatus
-{
-    Success,
-    DestinationRootChanged,
-    Missing,
-    DifferentObject,
-    Redirected,
-    ReparsePoint,
-    UnexpectedType,
-    Busy,
-    Inaccessible,
-    Error,
-}
-
-public sealed record RootBoundFileContentFingerprintReadResult(
-    RootBoundFileContentFingerprintReadStatus Status,
-    FileOperationCanonicalPath CurrentDestinationDirectory,
-    FileOperationCanonicalPath CurrentDestination,
-    FileContentFingerprint? ContentFingerprint,
-    string Message);
-
 /// <summary>
 /// Reads a destination leaf relative to the recorded destination-root binding
 /// and keeps both root and leaf handles alive while producing SHA-256 evidence.
 /// </summary>
 public interface IRootBoundFileContentFingerprintReader
 {
-    ValueTask<RootBoundFileContentFingerprintReadResult> ReadAsync(
+    ValueTask<FileContentFingerprintReadResult> ReadAsync(
         FileContentFingerprintReadRequest request,
         CancellationToken cancellationToken = default);
 }
@@ -205,7 +208,7 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 entry.CanonicalDestinationPath,
                 expectedIdentity);
 
-            RootBoundFileContentFingerprintReadResult read;
+            FileContentFingerprintReadResult read;
             try
             {
                 read = await _reader
@@ -236,9 +239,9 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
         FileOperationRecoveryInspectionItem inspection,
         FileContentFingerprintReadRequest request,
         FileContentFingerprint recorded,
-        RootBoundFileContentFingerprintReadResult read)
+        FileContentFingerprintReadResult read)
     {
-        if (read.Status == RootBoundFileContentFingerprintReadStatus.Success &&
+        if (read.Status == FileContentFingerprintReadStatus.Success &&
             !IsConsistentSuccess(request, read))
         {
             return Create(
@@ -250,20 +253,20 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
 
         var status = read.Status switch
         {
-            RootBoundFileContentFingerprintReadStatus.Success when read.ContentFingerprint == recorded =>
+            FileContentFingerprintReadStatus.Success when read.ContentFingerprint == recorded =>
                 FileOperationRecoveryContentStatus.MatchesRecordedMainStream,
-            RootBoundFileContentFingerprintReadStatus.Success =>
+            FileContentFingerprintReadStatus.Success =>
                 FileOperationRecoveryContentStatus.DifferentMainStream,
-            RootBoundFileContentFingerprintReadStatus.DestinationRootChanged =>
+            FileContentFingerprintReadStatus.DestinationRootChanged =>
                 FileOperationRecoveryContentStatus.DestinationRootChanged,
-            RootBoundFileContentFingerprintReadStatus.Missing => FileOperationRecoveryContentStatus.Missing,
-            RootBoundFileContentFingerprintReadStatus.DifferentObject => FileOperationRecoveryContentStatus.DifferentObject,
-            RootBoundFileContentFingerprintReadStatus.Redirected => FileOperationRecoveryContentStatus.Redirected,
-            RootBoundFileContentFingerprintReadStatus.ReparsePoint => FileOperationRecoveryContentStatus.ReparsePoint,
-            RootBoundFileContentFingerprintReadStatus.UnexpectedType => FileOperationRecoveryContentStatus.UnexpectedType,
-            RootBoundFileContentFingerprintReadStatus.Busy => FileOperationRecoveryContentStatus.Busy,
-            RootBoundFileContentFingerprintReadStatus.Inaccessible => FileOperationRecoveryContentStatus.Inaccessible,
-            RootBoundFileContentFingerprintReadStatus.Error => FileOperationRecoveryContentStatus.Error,
+            FileContentFingerprintReadStatus.Missing => FileOperationRecoveryContentStatus.Missing,
+            FileContentFingerprintReadStatus.DifferentObject => FileOperationRecoveryContentStatus.DifferentObject,
+            FileContentFingerprintReadStatus.Redirected => FileOperationRecoveryContentStatus.Redirected,
+            FileContentFingerprintReadStatus.ReparsePoint => FileOperationRecoveryContentStatus.ReparsePoint,
+            FileContentFingerprintReadStatus.UnexpectedType => FileOperationRecoveryContentStatus.UnexpectedType,
+            FileContentFingerprintReadStatus.Busy => FileOperationRecoveryContentStatus.Busy,
+            FileContentFingerprintReadStatus.Inaccessible => FileOperationRecoveryContentStatus.Inaccessible,
+            FileContentFingerprintReadStatus.Error => FileOperationRecoveryContentStatus.Error,
             _ => FileOperationRecoveryContentStatus.Error,
         };
 
@@ -279,16 +282,15 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
 
     private static bool IsConsistentSuccess(
         FileContentFingerprintReadRequest request,
-        RootBoundFileContentFingerprintReadResult read) =>
+        FileContentFingerprintReadResult read) =>
         read.ContentFingerprint is
             { Algorithm: FileContentFingerprintAlgorithm.Sha256 } &&
-        read.CurrentDestinationDirectory.State == FileOperationCanonicalPathState.Directory &&
-        !read.CurrentDestinationDirectory.IsLeafReparsePoint &&
-        read.CurrentDestinationDirectory.Identity is FileIdentity actualDirectoryIdentity &&
+        read.CurrentDestinationDirectory is { } root &&
+        root.State == FileOperationCanonicalPathState.Directory &&
+        !root.IsLeafReparsePoint &&
+        root.Identity is FileIdentity actualDirectoryIdentity &&
         actualDirectoryIdentity == request.DestinationDirectoryIdentity &&
-        PathsEqual(
-            request.CanonicalDestinationDirectoryPath,
-            read.CurrentDestinationDirectory.CanonicalPath) &&
+        PathsEqual(request.CanonicalDestinationDirectoryPath, root.CanonicalPath) &&
         read.CurrentDestination.State == FileOperationCanonicalPathState.File &&
         !read.CurrentDestination.IsLeafReparsePoint &&
         read.CurrentDestination.Identity is FileIdentity actualIdentity &&
