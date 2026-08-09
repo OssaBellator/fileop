@@ -156,7 +156,7 @@ def run_share_model(cases: int) -> int:
             checks += 1
 
         if compatible:
-            assert (existing_access & ~(ACCESS_READ)) == 0
+            assert (existing_access & ~ACCESS_READ) == 0
             assert (existing_share & ACCESS_READ) != 0
             checks += 2
         else:
@@ -193,6 +193,9 @@ def check_repository(root: Path) -> int:
         "DifferentMainStream",
         "FileContentFingerprintReadStatus.Busy",
         "currentFingerprint: null",
+        "IsConsistentSuccess(",
+        "read.CurrentDestination.State == FileOperationCanonicalPathState.File",
+        "actualIdentity == expectedIdentity",
         "evidence only",
     )
     for needle in core_needles:
@@ -234,6 +237,7 @@ def check_repository(root: Path) -> int:
         "MissingFingerprintSkipsStableReader",
         "NonSameObjectInspectionSkipsStableReader",
         "StableReaderUnsafeStatusesPropagateConservatively",
+        "InconsistentSuccessEvidenceFailsClosedAsError",
         "ReaderExceptionFailsClosedAsError",
     ):
         assert test_name in source["core_tests"], test_name
@@ -280,7 +284,7 @@ def check_repository(root: Path) -> int:
         len(core_needles)
         + len(windows_needles)
         + len(forbidden_windows)
-        + 6
+        + 7
         + 6
         + 3
         + 6
