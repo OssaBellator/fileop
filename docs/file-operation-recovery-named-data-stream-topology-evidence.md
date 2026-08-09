@@ -21,7 +21,7 @@ No pathname-based `FindFirstStreamW`/`FindNextStreamW` enumeration is used.
 
 ## Canonical digest
 
-Raw stream names are not persisted.
+Raw stream names are not persisted and malformed-inventory diagnostics do not echo a raw stream name.
 
 The current format is `FileNamedDataStreamTopologyEvidence.CurrentFormatVersion == 1`. The Windows helper sorts named stream entries by exact returned stream name (`StringComparer.Ordinal`) and hashes a deterministic binary sequence containing:
 
@@ -111,7 +111,7 @@ Even when all seven dimensions match, `ObservedSubsetMatches` is still **not an 
 
 ## Safety boundary
 
-This slice does not:
+This slice grants **no mutation authority**. It does not:
 
 - open or read named-stream contents;
 - create, delete, rename, truncate, or write named streams;
