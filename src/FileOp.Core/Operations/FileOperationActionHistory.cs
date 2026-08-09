@@ -45,6 +45,12 @@ public sealed record FileOperationActionEntry(
     FileOperationFailure? Failure,
     FileContentFingerprint? DestinationContentFingerprint = null)
 {
+    /// <summary>
+    /// Optional durable observation of the destination handle's hard-link count
+    /// after Copy. Null means legacy or otherwise unavailable topology evidence.
+    /// </summary>
+    public uint? DestinationHardLinkCount { get; init; }
+
     public bool IsUndoCandidate =>
         !Entry.IsDirectory &&
         State == FileOperationActionEntryState.Committed &&
