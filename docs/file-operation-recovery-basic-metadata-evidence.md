@@ -108,7 +108,9 @@ A process crash loses the memory-only cache; durable `MutationStarted` remains c
 
 Last-access does not need to remain stable.
 
-`FileOperationRecoveryBasicMetadataVerifier` independently rechecks reader-reported success provenance before comparing current metadata with the durable snapshot.
+Before reading the metadata side table or filesystem, `FileOperationRecoveryBasicMetadataVerifier` reloads the durable action history and binds the supplied inspection back to that durable provenance. The operation/root identity and canonical root path, entry state, source/destination identities, canonical source/destination paths, fingerprint and hard-link count must still describe the same durable entry. A mismatch yields `Unavailable` without trusting the metadata row or invoking the filesystem reader.
+
+The verifier then independently rechecks reader-reported root/leaf success provenance before comparing current metadata with the durable snapshot.
 
 ### Timing limitation
 
@@ -158,4 +160,10 @@ The comparison model is:
 python tools/verify_recovery_basic_metadata_evidence.py --repo-root . --cases 50000
 ```
 
-The persistence/native source guard is documented by the companion metadata persistence verifier on this branch. Windows compiler/native execution remains deferred to the shared Copy batch after the stacked slices are ready.
+The persistence/source guard is:
+
+```powershell
+python tools/verify_recovery_basic_metadata_persistence.py --repo-root . --sqlite-cases 5000
+```
+
+Both are wired into the standard Copy offline wrappers. Windows compiler/native execution remains deferred to the shared Copy batch after the stacked slices are ready.
