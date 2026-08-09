@@ -19,6 +19,10 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
     private static readonly FileSecurityDescriptorEvidence Security = new(
         FileSecurityDescriptorEvidence.QueriedSecurityInformationMask,
         "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd");
+    private static readonly FileNamedDataStreamTopologyEvidence NamedStreams = new(
+        1,
+        1,
+        "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef");
 
     [TestMethod]
     public void AllImplementedEvidenceMatchesWithoutGrantingUndoAuthority()
@@ -29,7 +33,8 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
             input.Inspection,
             input.Content,
             input.BasicMetadata,
-            input.SecurityDescriptor);
+            input.SecurityDescriptor,
+            input.NamedDataStreams);
 
         var item = assessment.Items[0];
         Assert.AreEqual(FileOperationRecoveryEvidenceAssessmentStatus.ObservedSubsetMatches, item.Status);
@@ -41,6 +46,7 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
         Assert.AreEqual(FileOperationUndoKind.None, item.Inspection.Entry.UndoKind);
         Assert.IsFalse(item.Inspection.Entry.IsUndoCandidate);
         StringAssert.Contains(item.Message, "no mutation authority");
+        StringAssert.Contains(item.Message, "not named-stream contents");
 
         foreach (var dimension in new[]
         {
@@ -50,6 +56,7 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
             FileOperationRecoveryEvidenceDimension.HardLinkCount,
             FileOperationRecoveryEvidenceDimension.BasicMetadata,
             FileOperationRecoveryEvidenceDimension.OwnerGroupDacl,
+            FileOperationRecoveryEvidenceDimension.NamedDataStreams,
         })
         {
             Assert.AreEqual(FileOperationRecoveryEvidenceDimensionState.Matches, item.GetDimensionState(dimension));
@@ -88,18 +95,45 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
             input.Inspection,
             content,
             metadata,
-            security).Items[0];
+            security,
+            input.NamedDataStreams).Items[0];
 
         Assert.AreEqual(FileOperationRecoveryEvidenceAssessmentStatus.ObservedEvidenceChanged, item.Status);
-        Assert.AreEqual(
-            FileOperationRecoveryEvidenceDimensionState.Changed,
+        Assert.AreEqual(FileOperationRecoveryEvidenceDimensionState.Changed,
             item.GetDimensionState(FileOperationRecoveryEvidenceDimension.HardLinkCount));
-        Assert.AreEqual(
-            FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        Assert.AreEqual(FileOperationRecoveryEvidenceDimensionState.Unavailable,
             item.GetDimensionState(FileOperationRecoveryEvidenceDimension.BasicMetadata));
-        Assert.AreEqual(
-            FileOperationRecoveryEvidenceDimensionState.Incomplete,
+        Assert.AreEqual(FileOperationRecoveryEvidenceDimensionState.Incomplete,
             item.GetDimensionState(FileOperationRecoveryEvidenceDimension.OwnerGroupDacl));
+    }
+
+    [TestMethod]
+    public void NamedStreamTopologyDifferenceIsAChangedDimension()
+    {
+        var input = CreateMatchingInput();
+        var changed = input.NamedDataStreams.Items[0] with
+        {
+            Comparison = FileOperationRecoveryNamedDataStreamTopologyComparer.Compare(
+                NamedStreams,
+                new FileNamedDataStreamTopologyEvidence(
+                    1,
+                    2,
+                    "1212121212121212121212121212121212121212121212121212121212121212")),
+        };
+        var namedStreams = new FileOperationRecoveryNamedDataStreamTopologyVerification(
+            input.Inspection.OperationId,
+            new[] { changed });
+
+        var item = FileOperationRecoveryEvidenceAssessor.Assess(
+            input.Inspection,
+            input.Content,
+            input.BasicMetadata,
+            input.SecurityDescriptor,
+            namedStreams).Items[0];
+
+        Assert.AreEqual(FileOperationRecoveryEvidenceAssessmentStatus.ObservedEvidenceChanged, item.Status);
+        Assert.AreEqual(FileOperationRecoveryEvidenceDimensionState.Changed,
+            item.GetDimensionState(FileOperationRecoveryEvidenceDimension.NamedDataStreams));
     }
 
     [TestMethod]
@@ -116,22 +150,19 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
         {
             Comparison = FileOperationRecoveryBasicMetadataComparer.Compare(null, null),
         };
-        var metadata = new FileOperationRecoveryBasicMetadataVerification(
-            input.Inspection.OperationId,
-            new[] { metadataItem });
+        var metadata = new FileOperationRecoveryBasicMetadataVerification(input.Inspection.OperationId, new[] { metadataItem });
 
         var item = FileOperationRecoveryEvidenceAssessor.Assess(
             input.Inspection,
             content,
             metadata,
-            input.SecurityDescriptor).Items[0];
+            input.SecurityDescriptor,
+            input.NamedDataStreams).Items[0];
 
         Assert.AreEqual(FileOperationRecoveryEvidenceAssessmentStatus.EvidenceUnavailable, item.Status);
-        Assert.AreEqual(
-            FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        Assert.AreEqual(FileOperationRecoveryEvidenceDimensionState.Unavailable,
             item.GetDimensionState(FileOperationRecoveryEvidenceDimension.MainStream));
-        Assert.AreEqual(
-            FileOperationRecoveryEvidenceDimensionState.Incomplete,
+        Assert.AreEqual(FileOperationRecoveryEvidenceDimensionState.Incomplete,
             item.GetDimensionState(FileOperationRecoveryEvidenceDimension.BasicMetadata));
     }
 
@@ -143,19 +174,17 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
         {
             Comparison = FileOperationRecoverySecurityDescriptorComparer.Compare(null, null),
         };
-        var security = new FileOperationRecoverySecurityDescriptorVerification(
-            input.Inspection.OperationId,
-            new[] { securityItem });
+        var security = new FileOperationRecoverySecurityDescriptorVerification(input.Inspection.OperationId, new[] { securityItem });
 
         var item = FileOperationRecoveryEvidenceAssessor.Assess(
             input.Inspection,
             input.Content,
             input.BasicMetadata,
-            security).Items[0];
+            security,
+            input.NamedDataStreams).Items[0];
 
         Assert.AreEqual(FileOperationRecoveryEvidenceAssessmentStatus.EvidenceIncomplete, item.Status);
-        Assert.AreEqual(
-            FileOperationRecoveryEvidenceDimensionState.Incomplete,
+        Assert.AreEqual(FileOperationRecoveryEvidenceDimensionState.Incomplete,
             item.GetDimensionState(FileOperationRecoveryEvidenceDimension.OwnerGroupDacl));
         Assert.AreEqual(
             FileOperationRecoveryEvidenceDimension.AllObserved & ~FileOperationRecoveryEvidenceDimension.OwnerGroupDacl,
@@ -166,37 +195,38 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
     public void AssessorRejectsOperationOrdinalAndInspectionSnapshotMismatch()
     {
         var input = CreateMatchingInput();
-        var wrongOperation = new FileOperationRecoveryContentVerification(
-            Guid.NewGuid(),
-            input.Content.Items);
+        var wrongOperation = new FileOperationRecoveryContentVerification(Guid.NewGuid(), input.Content.Items);
         Assert.ThrowsException<ArgumentException>(() =>
             FileOperationRecoveryEvidenceAssessor.Assess(
                 input.Inspection,
                 wrongOperation,
                 input.BasicMetadata,
-                input.SecurityDescriptor));
+                input.SecurityDescriptor,
+                input.NamedDataStreams));
 
-        var missingSecurityItem = new FileOperationRecoverySecurityDescriptorVerification(
+        var missingNamedStreams = new FileOperationRecoveryNamedDataStreamTopologyVerification(
             input.Inspection.OperationId,
-            Array.Empty<FileOperationRecoverySecurityDescriptorVerificationItem>());
+            Array.Empty<FileOperationRecoveryNamedDataStreamTopologyVerificationItem>());
         Assert.ThrowsException<ArgumentException>(() =>
             FileOperationRecoveryEvidenceAssessor.Assess(
                 input.Inspection,
                 input.Content,
                 input.BasicMetadata,
-                missingSecurityItem));
+                input.SecurityDescriptor,
+                missingNamedStreams));
 
         var alteredInspection = input.Inspection.Items[0] with { Message = "altered snapshot" };
-        var alteredSecurityItem = input.SecurityDescriptor.Items[0] with { Inspection = alteredInspection };
-        var alteredSecurity = new FileOperationRecoverySecurityDescriptorVerification(
+        var alteredTopologyItem = input.NamedDataStreams.Items[0] with { Inspection = alteredInspection };
+        var alteredTopology = new FileOperationRecoveryNamedDataStreamTopologyVerification(
             input.Inspection.OperationId,
-            new[] { alteredSecurityItem });
+            new[] { alteredTopologyItem });
         Assert.ThrowsException<ArgumentException>(() =>
             FileOperationRecoveryEvidenceAssessor.Assess(
                 input.Inspection,
                 input.Content,
                 input.BasicMetadata,
-                alteredSecurity));
+                input.SecurityDescriptor,
+                alteredTopology));
     }
 
     [TestMethod]
@@ -251,7 +281,14 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
             FileOperationRecoverySecurityDescriptorComparer.Compare(Security, Security),
             "matching security");
         var security = new FileOperationRecoverySecurityDescriptorVerification(operationId, new[] { securityItem });
-        return new MatchingInput(inspection, content, metadata, security);
+        var streamItem = new FileOperationRecoveryNamedDataStreamTopologyVerificationItem(
+            0,
+            inspectionItem,
+            FileContentFingerprintReadStatus.Success,
+            FileOperationRecoveryNamedDataStreamTopologyComparer.Compare(NamedStreams, NamedStreams),
+            "matching named streams");
+        var streams = new FileOperationRecoveryNamedDataStreamTopologyVerification(operationId, new[] { streamItem });
+        return new MatchingInput(inspection, content, metadata, security, streams);
     }
 
     private static FileOperationRecoveryEvidenceAssessmentItem CreateDirectAssessmentItem(int ordinal)
@@ -306,5 +343,6 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
         FileOperationRecoveryInspection Inspection,
         FileOperationRecoveryContentVerification Content,
         FileOperationRecoveryBasicMetadataVerification BasicMetadata,
-        FileOperationRecoverySecurityDescriptorVerification SecurityDescriptor);
+        FileOperationRecoverySecurityDescriptorVerification SecurityDescriptor,
+        FileOperationRecoveryNamedDataStreamTopologyVerification NamedDataStreams);
 }

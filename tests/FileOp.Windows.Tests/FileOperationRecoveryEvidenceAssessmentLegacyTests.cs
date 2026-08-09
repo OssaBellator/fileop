@@ -16,6 +16,10 @@ public sealed class FileOperationRecoveryEvidenceAssessmentLegacyTests
     private static readonly FileSecurityDescriptorEvidence Security = new(
         FileSecurityDescriptorEvidence.QueriedSecurityInformationMask,
         "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd");
+    private static readonly FileNamedDataStreamTopologyEvidence NamedStreams = new(
+        1,
+        0,
+        "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef");
 
     [TestMethod]
     public void LegacyMissingRootIdentityMakesBlockedMainStreamIncomplete()
@@ -90,12 +94,24 @@ public sealed class FileOperationRecoveryEvidenceAssessmentLegacyTests
                     FileOperationRecoverySecurityDescriptorComparer.Compare(Security, Security),
                     "matching security"),
             });
+        var streams = new FileOperationRecoveryNamedDataStreamTopologyVerification(
+            operationId,
+            new[]
+            {
+                new FileOperationRecoveryNamedDataStreamTopologyVerificationItem(
+                    0,
+                    inspectionItem,
+                    FileContentFingerprintReadStatus.Success,
+                    FileOperationRecoveryNamedDataStreamTopologyComparer.Compare(NamedStreams, NamedStreams),
+                    "matching named streams"),
+            });
 
         var item = FileOperationRecoveryEvidenceAssessor.Assess(
             inspection,
             content,
             metadata,
-            security).Items[0];
+            security,
+            streams).Items[0];
 
         Assert.AreEqual(FileOperationRecoveryEvidenceAssessmentStatus.EvidenceIncomplete, item.Status);
         Assert.AreEqual(

@@ -19,78 +19,51 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 python tools/verify_file_operation_recovery_inspection.py --repo-root $repoRoot --cases 50000
-if ($LASTEXITCODE -ne 0) {
-    throw "Read-only Copy recovery inspection verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Read-only Copy recovery inspection verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_copy_content_fingerprint.py --repo-root $repoRoot --cases 20000
-if ($LASTEXITCODE -ne 0) {
-    throw "Copy content fingerprint evidence verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Copy content fingerprint evidence verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_recovery_main_stream.py --repo-root $repoRoot --cases 50000
-if ($LASTEXITCODE -ne 0) {
-    throw "Recovery main-stream verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Recovery main-stream verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_recovery_root_bound_reader_abi.py --repo-root $repoRoot
-if ($LASTEXITCODE -ne 0) {
-    throw "Recovery root-bound reader ABI verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Recovery root-bound reader ABI verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_recovery_root_identity.py --repo-root $repoRoot --cases 50000
-if ($LASTEXITCODE -ne 0) {
-    throw "Recovery destination-root identity verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Recovery destination-root identity verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_recovery_hard_link_evidence.py --repo-root $repoRoot --cases 50000
-if ($LASTEXITCODE -ne 0) {
-    throw "Recovery hard-link evidence verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Recovery hard-link evidence verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_recovery_basic_metadata_evidence.py --repo-root $repoRoot --cases 50000
-if ($LASTEXITCODE -ne 0) {
-    throw "Recovery basic-metadata semantics verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Recovery basic-metadata semantics verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_recovery_basic_metadata_persistence.py --repo-root $repoRoot --sqlite-cases 5000
-if ($LASTEXITCODE -ne 0) {
-    throw "Recovery basic-metadata persistence verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Recovery basic-metadata persistence verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_recovery_security_descriptor_evidence.py --repo-root $repoRoot --cases 50000 --sqlite-cases 5000
-if ($LASTEXITCODE -ne 0) {
-    throw "Recovery owner/group/DACL security evidence verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Recovery owner/group/DACL security evidence verification failed with exit code $LASTEXITCODE." }
+
+python tools/verify_recovery_named_data_stream_topology.py --repo-root $repoRoot --cases 50000 --sqlite-cases 5000
+if ($LASTEXITCODE -ne 0) { throw "Recovery named-data-stream topology verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_recovery_evidence_assessment.py --repo-root $repoRoot --cases 50000
-if ($LASTEXITCODE -ne 0) {
-    throw "Aggregate recovery evidence assessment verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Aggregate recovery evidence assessment verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_file_copy_executor.py --repo-root $repoRoot --cases 20000
-if ($LASTEXITCODE -ne 0) {
-    throw "File Copy executor verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "File Copy executor verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_windows_file_copy_mutation.py --repo-root $repoRoot --cases 2000
-if ($LASTEXITCODE -ne 0) {
-    throw "Windows Copy mutation handle-binding verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Windows Copy mutation handle-binding verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_copy_basic_metadata.py --repo-root $repoRoot --cases 50000
-if ($LASTEXITCODE -ne 0) {
-    throw "Copy basic metadata verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Copy basic metadata verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_copy_basic_metadata_windows_semantics.py --cases 100000
-if ($LASTEXITCODE -ne 0) {
-    throw "Windows FileBasicInformation semantics verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Windows FileBasicInformation semantics verification failed with exit code $LASTEXITCODE." }
 
 python tools/verify_copy_basic_metadata_abi.py --repo-root $repoRoot
-if ($LASTEXITCODE -ne 0) {
-    throw "Copy basic metadata ABI verification failed with exit code $LASTEXITCODE."
-}
+if ($LASTEXITCODE -ne 0) { throw "Copy basic metadata ABI verification failed with exit code $LASTEXITCODE." }
 
-Write-Host "`nPASS: Copy executor, recovery inspection, content fingerprint evidence, root-bound recovery main-stream verification, root-bound reader ABI, destination-root identity evidence, hard-link evidence, recovery basic-metadata evidence, owner/group/DACL security evidence, aggregate recovery evidence assessment, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green
+Write-Host "`nPASS: Copy executor, recovery inspection, content fingerprint evidence, root-bound recovery main-stream verification, root-bound reader ABI, destination-root identity evidence, hard-link evidence, recovery basic-metadata evidence, owner/group/DACL security evidence, named-data-stream topology evidence, aggregate recovery evidence assessment, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green
