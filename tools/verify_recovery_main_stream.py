@@ -93,11 +93,10 @@ def share_compatible(
     return existing_access_allowed_by_new and new_access_allowed_by_existing
 
 
-def root_namespace_compatible(existing_access: int, existing_share: int) -> bool:
-    """The root verifier requests traverse/read attributes and shares read/write, not delete."""
-    verifier_access = ACCESS_READ
-    verifier_share = ACCESS_READ | ACCESS_WRITE
-    return share_compatible(existing_access, existing_share, verifier_access, verifier_share)
+def root_namespace_compatible(existing_access: int) -> bool:
+    """Model only the required parent guarantee: delete access cannot coexist."""
+    root_share = ACCESS_READ | ACCESS_WRITE
+    return (existing_access & ~root_share) == 0
 
 
 def run_model(cases: int) -> int:
@@ -180,14 +179,15 @@ def run_share_model(cases: int) -> int:
             assert leaf_compatible == bool(existing_share & ACCESS_READ)
             checks += 1
 
-        root_compatible = root_namespace_compatible(existing_access, existing_share)
+        root_compatible = root_namespace_compatible(existing_access)
+        assert root_compatible == ((existing_access & ACCESS_DELETE) == 0)
+        checks += 1
         if existing_access & ACCESS_DELETE:
             assert not root_compatible
             checks += 1
-        if root_compatible:
-            assert (existing_access & ACCESS_DELETE) == 0
-            assert (existing_share & ACCESS_READ) != 0
-            checks += 2
+        else:
+            assert root_compatible
+            checks += 1
     return checks
 
 
