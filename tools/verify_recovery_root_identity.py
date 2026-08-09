@@ -156,6 +156,7 @@ def check_repository(root: Path) -> int:
         "content": root / "src/FileOp.Core/Operations/FileOperationRecoveryContentVerification.cs",
         "store_tests": root / "tests/FileOp.Windows.Tests/FileOperationActionHistoryTestsRootIdentity.cs",
         "inspection_tests": root / "tests/FileOp.Windows.Tests/FileOperationRecoveryInspectionTestsRootIdentity.cs",
+        "content_tests": root / "tests/FileOp.Windows.Tests/FileOperationRecoveryContentVerificationTests.cs",
         "integration_tests": root / "tests/FileOp.Windows.Tests/WindowsFileOperationRecoveryContentVerificationTests.cs",
         "docs": root / "docs/file-operation-recovery-root-identity.md",
         "py_wrapper": root / "tools/test-copy-executor-local.py",
@@ -202,8 +203,10 @@ def check_repository(root: Path) -> int:
         "public enum FileOperationRecoveryRootStatus",
         "NoVerifiedIdentity",
         "public sealed record FileOperationRecoveryRootInspection",
+        "string? RecordedCanonicalPath = null",
         "public FileOperationRecoveryRootInspection DestinationDirectory",
         "history.DestinationDirectoryIdentity is not FileIdentity expected",
+        "history.CanonicalDestinationDirectoryPath",
         "FileOperationRecoveryRootStatus.SameObject",
         "FileOperationRecoveryRootStatus.DifferentObject",
         "FileOperationRecoveryRootStatus.Redirected",
@@ -215,6 +218,11 @@ def check_repository(root: Path) -> int:
     content_needles = (
         "DestinationRootNotVerified",
         "inspection.DestinationDirectory.IsSameRecordedRoot",
+        "var recordedDirectoryPath = inspection.DestinationDirectory.RecordedCanonicalPath",
+        "string.IsNullOrWhiteSpace(recordedDirectoryPath)",
+        "PathsEqual(recordedDirectoryPath, currentDirectory.CanonicalPath)",
+        "new FileContentFingerprintReadRequest(",
+        "recordedDirectoryPath",
         "Main-stream verification is skipped because the destination root is not verified",
     )
     for needle in content_needles:
@@ -234,10 +242,14 @@ def check_repository(root: Path) -> int:
         "RootUnsafeStatesAreClassifiedConservatively",
     ):
         assert test_name in source["inspection_tests"], test_name
+    assert "RecordedCanonicalPath" in source["inspection_tests"]
+
+    assert "InconsistentRecordedRootPathSkipsRootBoundReader" in source["content_tests"]
 
     for test_name in (
         "StableSameObjectAndDigestProducesMainStreamMatchEvidence",
         "ReplacedRootWithSameFileMovedBackIsEvidenceInsufficient",
+        "RootReplacementAfterSameObjectInspectionIsCaughtByRootBoundReader",
     ):
         assert test_name in source["integration_tests"], test_name
 
@@ -246,9 +258,11 @@ def check_repository(root: Path) -> int:
         "legacy",
         "no migration",
         "same file object",
+        "root-bound",
+        "NtCreateFile",
         "final handle-bound authorization protocol",
         "hard-link",
-        "not a held namespace lock",
+        "own root/leaf validation",
     ):
         assert needle.casefold() in source["docs"].casefold(), needle
 
@@ -258,6 +272,7 @@ def check_repository(root: Path) -> int:
     for needle in (
         "FullyQualifiedName~FileOperationActionHistoryTests",
         "FullyQualifiedName~FileOperationRecoveryInspectionTests",
+        "FullyQualifiedName~WindowsRootBoundFileContentFingerprintReaderTests",
         "FullyQualifiedName~WindowsFileOperationRecoveryContentVerificationTests",
     ):
         assert needle in source["windows_gate"], needle
@@ -281,11 +296,12 @@ def check_repository(root: Path) -> int:
         + len(inspection_needles)
         + len(content_needles)
         + 4
+        + 4
+        + 1
         + 3
+        + 9
         + 2
-        + 7
-        + 2
-        + 3
+        + 4
         + (len(forbidden) * 2)
     )
 

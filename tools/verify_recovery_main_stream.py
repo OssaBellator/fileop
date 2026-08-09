@@ -17,6 +17,7 @@ class Inspection(Enum):
 
 class Read(Enum):
     SUCCESS = auto()
+    ROOT_CHANGED = auto()
     MISSING = auto()
     DIFFERENT_OBJECT = auto()
     REDIRECTED = auto()
@@ -30,6 +31,7 @@ class Read(Enum):
 class Result(Enum):
     NO_FINGERPRINT = auto()
     ROOT_NOT_VERIFIED = auto()
+    ROOT_CHANGED = auto()
     NOT_SAME_OBJECT = auto()
     MATCH = auto()
     DIFFERENT_CONTENT = auto()
@@ -51,19 +53,20 @@ ACCESS_DELETE = 0x4
 def classify(
     inspection: Inspection,
     has_fingerprint: bool,
-    root_same: bool,
+    root_same_at_inspection: bool,
     read: Read,
     recorded: bytes,
     current: bytes,
 ) -> tuple[Result, bool]:
     if not has_fingerprint:
         return Result.NO_FINGERPRINT, False
-    if not root_same:
+    if not root_same_at_inspection:
         return Result.ROOT_NOT_VERIFIED, False
     if inspection is not Inspection.SAME:
         return Result.NOT_SAME_OBJECT, False
 
     mapping = {
+        Read.ROOT_CHANGED: Result.ROOT_CHANGED,
         Read.MISSING: Result.MISSING,
         Read.DIFFERENT_OBJECT: Result.DIFFERENT_OBJECT,
         Read.REDIRECTED: Result.REDIRECTED,
@@ -88,6 +91,12 @@ def share_compatible(
     existing_access_allowed_by_new = (existing_access & ~new_share) == 0
     new_access_allowed_by_existing = (new_access & ~existing_share) == 0
     return existing_access_allowed_by_new and new_access_allowed_by_existing
+
+
+def root_namespace_compatible(existing_access: int) -> bool:
+    """Model only the required parent guarantee: delete access cannot coexist."""
+    root_share = ACCESS_READ | ACCESS_WRITE
+    return (existing_access & ~root_share) == 0
 
 
 def run_model(cases: int) -> int:
@@ -143,6 +152,9 @@ def run_model(cases: int) -> int:
         elif result is Result.DIFFERENT_CONTENT:
             assert read is Read.SUCCESS and recorded != current
             checks += 1
+        elif result is Result.ROOT_CHANGED:
+            assert read is Read.ROOT_CHANGED
+            checks += 1
         else:
             assert read is not Read.SUCCESS
             checks += 1
@@ -155,37 +167,38 @@ def run_share_model(cases: int) -> int:
     for _ in range(cases):
         existing_access = rng.randrange(0, 8)
         existing_share = rng.randrange(0, 8)
-        compatible = share_compatible(existing_access, existing_share)
+        leaf_compatible = share_compatible(existing_access, existing_share)
 
         if existing_access & (ACCESS_WRITE | ACCESS_DELETE):
-            assert not compatible
+            assert not leaf_compatible
             checks += 1
         elif existing_access & ACCESS_READ:
-            assert compatible == bool(existing_share & ACCESS_READ)
+            assert leaf_compatible == bool(existing_share & ACCESS_READ)
             checks += 1
         else:
-            assert compatible == bool(existing_share & ACCESS_READ)
+            assert leaf_compatible == bool(existing_share & ACCESS_READ)
             checks += 1
 
-        if compatible:
-            assert (existing_access & ~ACCESS_READ) == 0
-            assert (existing_share & ACCESS_READ) != 0
-            checks += 2
+        root_compatible = root_namespace_compatible(existing_access)
+        assert root_compatible == ((existing_access & ACCESS_DELETE) == 0)
+        checks += 1
+        if existing_access & ACCESS_DELETE:
+            assert not root_compatible
+            checks += 1
         else:
-            assert (
-                (existing_access & (ACCESS_WRITE | ACCESS_DELETE)) != 0
-                or (existing_share & ACCESS_READ) == 0
-            )
+            assert root_compatible
             checks += 1
     return checks
 
 
 def check_repository(root: Path) -> int:
     paths = {
+        "inspection": root / "src/FileOp.Core/Operations/FileOperationRecoveryInspection.cs",
         "core": root / "src/FileOp.Core/Operations/FileOperationRecoveryContentVerification.cs",
-        "windows": root / "src/FileOp.Windows/Operations/WindowsFileContentFingerprintReader.cs",
+        "windows": root / "src/FileOp.Windows/Operations/WindowsRootBoundFileContentFingerprintReader.cs",
+        "legacy_windows": root / "src/FileOp.Windows/Operations/WindowsFileContentFingerprintReader.cs",
         "core_tests": root / "tests/FileOp.Windows.Tests/FileOperationRecoveryContentVerificationTests.cs",
-        "windows_tests": root / "tests/FileOp.Windows.Tests/WindowsFileContentFingerprintReaderTests.cs",
+        "windows_tests": root / "tests/FileOp.Windows.Tests/WindowsRootBoundFileContentFingerprintReaderTests.cs",
         "integration_tests": root / "tests/FileOp.Windows.Tests/WindowsFileOperationRecoveryContentVerificationTests.cs",
         "docs": root / "docs/file-operation-recovery-content-verification.md",
         "py_wrapper": root / "tools/test-copy-executor-local.py",
@@ -197,41 +210,65 @@ def check_repository(root: Path) -> int:
         raise FileNotFoundError(", ".join(missing))
     source = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
 
+    inspection_needles = (
+        "string? RecordedCanonicalPath = null",
+        "history.CanonicalDestinationDirectoryPath",
+        "DescribeRoot(status)",
+    )
+    for needle in inspection_needles:
+        assert needle in source["inspection"], needle
+
     core_needles = (
-        "public interface IFileContentFingerprintReader",
+        "public interface IRootBoundFileContentFingerprintReader",
+        "FileContentFingerprintReadRequest",
         "FileOperationRecoveryDestinationStatus.SameObject",
         "DestinationContentFingerprint is not FileContentFingerprint recorded",
         "DestinationRootNotVerified",
         "inspection.DestinationDirectory.IsSameRecordedRoot",
+        "var recordedDirectoryPath = inspection.DestinationDirectory.RecordedCanonicalPath",
+        "string.IsNullOrWhiteSpace(recordedDirectoryPath)",
+        "PathsEqual(recordedDirectoryPath, currentDirectory.CanonicalPath)",
+        "DestinationRootChanged",
         "MatchesRecordedMainStream",
         "DifferentMainStream",
-        "FileContentFingerprintReadStatus.Busy",
-        "currentFingerprint: null",
+        "expectedDirectoryIdentity",
+        "new FileContentFingerprintReadRequest(\n                recordedDirectoryPath",
         "IsConsistentSuccess(",
-        "read.CurrentDestination.State == FileOperationCanonicalPathState.File",
-        "actualIdentity == expectedIdentity",
-        "evidence only",
+        "read.CurrentDestinationDirectory is { } root",
+        "root.State == FileOperationCanonicalPathState.Directory",
+        "actualDirectoryIdentity == request.DestinationDirectoryIdentity",
+        "actualIdentity == request.DestinationIdentity",
+        "not mutation authorization",
     )
     for needle in core_needles:
         assert needle.casefold() in source["core"].casefold(), needle
 
     windows_needles = (
-        "class WindowsFileContentFingerprintReader",
-        "FileReadData | FileReadAttributes | Synchronize",
-        "FileShare.Read",
+        "class WindowsRootBoundFileContentFingerprintReader",
+        "IRootBoundFileContentFingerprintReader",
+        "FileTraverse | FileReadAttributes | Synchronize",
+        "FileShare.ReadWrite",
         "FileFlagOpenReparsePoint",
+        "OpenRelativeLeaf(rootHandle, leafName)",
+        "NtCreateFile(",
+        "RootDirectory = rootDirectory.DangerousGetHandle()",
+        "(uint)FileShare.Read",
+        "FileNonDirectoryFile",
+        "FileOpenReparsePoint",
         "IncrementalHash.CreateHash(HashAlgorithmName.SHA256)",
-        "GetFileInformationByHandle(",
-        "GetFinalPathNameByHandleW(",
-        "ReadFile(",
-        "identity != expectedIdentity",
-        "FileContentFingerprintReadStatus.Busy",
-        "ErrorSharingViolation = 32",
-        "FileSize(before) != FileSize(after)",
-        "ToUInt64(before.LastWriteTime) != ToUInt64(after.LastWriteTime)",
+        "GetFileInformationByHandle(rootHandle, out var rootAfter)",
+        "GetFileInformationByHandle(leafHandle, out var leafAfter)",
+        "DestinationRootChanged",
+        "FileSize(leafBefore) != FileSize(leafAfter)",
+        "ToUInt64(leafBefore.LastWriteTime) != ToUInt64(leafAfter.LastWriteTime)",
     )
     for needle in windows_needles:
         assert needle in source["windows"], needle
+
+    assert source["windows"].count("CreateFileW(") == 2, "CreateFileW must be root-open invocation + declaration only"
+    assert "CreateFileW(\n            leafPath" not in source["windows"]
+    assert "IFileContentFingerprintReader" in source["legacy_windows"]
+    assert "IRootBoundFileContentFingerprintReader" not in source["legacy_windows"]
 
     forbidden_windows = (
         "File.WriteAll",
@@ -246,25 +283,27 @@ def check_repository(root: Path) -> int:
         assert needle not in source["windows"], needle
 
     for test_name in (
-        "MatchingMainStreamRequiresSameObjectAndRemainsEvidenceOnly",
+        "MatchingMainStreamRequiresRootAndLeafProvenanceAndRemainsEvidenceOnly",
         "DifferentDigestIsDifferentMainStream",
-        "MissingFingerprintSkipsStableReader",
-        "UnverifiedDestinationRootSkipsStableReader",
-        "NonSameObjectInspectionSkipsStableReader",
-        "StableReaderUnsafeStatusesPropagateConservatively",
-        "InconsistentSuccessEvidenceFailsClosedAsError",
+        "MissingFingerprintSkipsRootBoundReader",
+        "UnverifiedDestinationRootSkipsRootBoundReader",
+        "InconsistentRecordedRootPathSkipsRootBoundReader",
+        "NonSameObjectInspectionSkipsRootBoundReader",
+        "RootBoundReaderUnsafeStatusesPropagateConservatively",
+        "InconsistentLeafSuccessEvidenceFailsClosedAsError",
+        "InconsistentRootSuccessEvidenceFailsClosedAsError",
         "ReaderExceptionFailsClosedAsError",
     ):
         assert test_name in source["core_tests"], test_name
 
     for test_name in (
-        "ReaderHashesPrimaryStreamAndPreservesIdentityEvidence",
-        "EmptyFileProducesStandardSha256Digest",
-        "DifferentExpectedIdentityIsRejectedBeforeHashEvidence",
-        "MissingDestinationFailsClosedWithoutFingerprint",
-        "DirectoryDestinationFailsClosedWithoutFingerprint",
-        "ExistingWriterCausesBusyInsteadOfWeakReadProof",
-        "RestrictiveExistingReaderAlsoCausesBusy",
+        "ReaderHashesLeafRelativeToVerifiedRoot",
+        "WrongRootIdentityIsRejectedBeforeLeafEvidence",
+        "WrongLeafIdentityIsRejectedBeforeHashEvidence",
+        "MissingLeafFailsClosedWithoutFingerprint",
+        "ExistingWriterCausesBusyInsteadOfWeakRootBoundProof",
+        "RestrictiveExistingReaderAlsoCausesBusyForRootBoundReader",
+        "ReplacedRootWithSameFileMovedBackIsRejected",
     ):
         assert test_name in source["windows_tests"], test_name
 
@@ -273,21 +312,22 @@ def check_repository(root: Path) -> int:
         "ContentEditAfterSameObjectInspectionIsDetectedBySecondStage",
         "ReplacementAfterSameObjectInspectionIsDetectedBeforeHashEvidence",
         "ReplacedRootWithSameFileMovedBackIsEvidenceInsufficient",
+        "RootReplacementAfterSameObjectInspectionIsCaughtByRootBoundReader",
     ):
         assert test_name in source["integration_tests"], test_name
 
     for needle in (
         "main data stream",
         "not deletion authorization",
+        "root-bound",
+        "NtCreateFile",
         "FileShare.Read",
         "sharing",
         "metadata",
         "alternate data streams",
         "no explicit target-file write/delete access",
         "filesystem-managed",
-        "last-access",
-        "hard-link count",
-        "parent directory",
+        "hard-link",
         "not a historical audit log",
     ):
         assert needle.casefold() in source["docs"].casefold(), needle
@@ -296,7 +336,7 @@ def check_repository(root: Path) -> int:
     assert verifier in source["py_wrapper"]
     assert verifier in source["ps_wrapper"]
     assert "FullyQualifiedName~FileOperationRecoveryContentVerificationTests" in source["windows_gate"]
-    assert "FullyQualifiedName~WindowsFileContentFingerprintReaderTests" in source["windows_gate"]
+    assert "FullyQualifiedName~WindowsRootBoundFileContentFingerprintReaderTests" in source["windows_gate"]
     assert "FullyQualifiedName~WindowsFileOperationRecoveryContentVerificationTests" in source["windows_gate"]
 
     forbidden_core = ("CanDelete", "CanUndo", "DeleteCreatedDestination")
@@ -304,12 +344,14 @@ def check_repository(root: Path) -> int:
         assert needle not in source["core"], needle
 
     return (
-        len(core_needles)
+        len(inspection_needles)
+        + len(core_needles)
         + len(windows_needles)
-        + len(forbidden_windows)
-        + 8
-        + 7
         + 4
+        + len(forbidden_windows)
+        + 10
+        + 7
+        + 5
         + 12
         + 5
         + len(forbidden_core)
@@ -329,12 +371,12 @@ def main() -> int:
     share_checks = run_share_model(args.cases)
     checks = protocol_checks + share_checks
     print(
-        f"PASS recovery main-stream verification model: {checks} checks across "
-        f"{args.cases} randomized protocol cases + {args.cases} share-compatibility cases"
+        f"PASS root-bound recovery main-stream model: {checks} checks across "
+        f"{args.cases} randomized protocol cases + {args.cases} sharing cases"
     )
     if not args.self_test_only:
         print(
-            "PASS recovery main-stream source wiring: "
+            "PASS root-bound recovery main-stream source wiring: "
             f"{check_repository(args.repo_root.resolve())} checks"
         )
     return 0

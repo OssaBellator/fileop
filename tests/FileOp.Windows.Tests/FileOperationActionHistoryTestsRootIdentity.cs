@@ -76,7 +76,7 @@ public sealed class FileOperationActionHistoryTestsRootIdentity
             destinationIdentity: null);
         using var store = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath);
 
-        await Assert.ThrowsExceptionAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
             await store.BeginAsync(validation, DateTimeOffset.UtcNow));
         Assert.IsNull(await store.GetAsync(validation.Plan.Id));
     }
@@ -98,7 +98,7 @@ public sealed class FileOperationActionHistoryTestsRootIdentity
             FileOperationUndoKind.None,
             null);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileOperationActionHistory(
                 Guid.NewGuid(),
                 now,

@@ -24,7 +24,8 @@ public sealed record FileOperationRecoveryRootInspection(
     FileIdentity? RecordedIdentity,
     FileOperationRecoveryRootStatus Status,
     FileOperationCanonicalPath? CurrentDirectory,
-    string Message)
+    string Message,
+    string? RecordedCanonicalPath = null)
 {
     public bool IsSameRecordedRoot =>
         Status == FileOperationRecoveryRootStatus.SameObject;
@@ -94,8 +95,8 @@ public interface IFileOperationRecoveryInspector
 
 /// <summary>
 /// Performs read-only inspection of recovery-sensitive Copy destinations and the
-/// durable destination-root identity. Identity equality is evidence only; this
-/// type grants no mutation or Undo authority.
+/// durable destination-root identity/path. Equality is evidence only; this type
+/// grants no mutation or Undo authority.
 /// </summary>
 public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspector
 {
@@ -164,7 +165,8 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
                 RecordedIdentity: null,
                 FileOperationRecoveryRootStatus.NoVerifiedIdentity,
                 CurrentDirectory: null,
-                "Legacy durable history does not contain a verified destination-root identity.");
+                "Legacy durable history does not contain a verified destination-root identity.",
+                history.CanonicalDestinationDirectoryPath);
         }
 
         var current = await _resolver
@@ -181,7 +183,8 @@ public sealed class FileOperationRecoveryInspector : IFileOperationRecoveryInspe
             expected,
             status,
             current,
-            DescribeRoot(status));
+            DescribeRoot(status),
+            history.CanonicalDestinationDirectoryPath);
     }
 
     private static FileOperationRecoveryRootStatus ClassifyRoot(
