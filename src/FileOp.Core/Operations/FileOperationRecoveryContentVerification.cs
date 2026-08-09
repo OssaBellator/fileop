@@ -7,12 +7,6 @@ using FileOp.Core.Models;
 
 namespace FileOp.Core.Operations;
 
-public sealed record FileContentFingerprintReadRequest(
-    string CanonicalDestinationDirectoryPath,
-    FileIdentity DestinationDirectoryIdentity,
-    string CanonicalDestinationPath,
-    FileIdentity DestinationIdentity);
-
 public enum FileContentFingerprintReadStatus
 {
     Success,
@@ -29,16 +23,34 @@ public enum FileContentFingerprintReadStatus
 
 public sealed record FileContentFingerprintReadResult(
     FileContentFingerprintReadStatus Status,
-    FileOperationCanonicalPath CurrentDestinationDirectory,
     FileOperationCanonicalPath CurrentDestination,
     FileContentFingerprint? ContentFingerprint,
-    string Message);
+    string Message,
+    FileOperationCanonicalPath? CurrentDestinationDirectory = null);
 
 /// <summary>
-/// Reads a file's primary data stream while holding the verified destination-root
-/// namespace binding and verifies both root and leaf evidence before returning a digest.
+/// Legacy leaf-only reader contract. Recovery content verification no longer
+/// depends on this contract because it cannot hold the destination-root binding.
 /// </summary>
 public interface IFileContentFingerprintReader
+{
+    ValueTask<FileContentFingerprintReadResult> ReadAsync(
+        string canonicalPath,
+        FileIdentity expectedIdentity,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed record FileContentFingerprintReadRequest(
+    string CanonicalDestinationDirectoryPath,
+    FileIdentity DestinationDirectoryIdentity,
+    string CanonicalDestinationPath,
+    FileIdentity DestinationIdentity);
+
+/// <summary>
+/// Reads a destination leaf relative to the recorded destination-root binding
+/// and keeps both root and leaf handles alive while producing SHA-256 evidence.
+/// </summary>
+public interface IRootBoundFileContentFingerprintReader
 {
     ValueTask<FileContentFingerprintReadResult> ReadAsync(
         FileContentFingerprintReadRequest request,
@@ -107,14 +119,14 @@ public interface IFileOperationRecoveryContentVerifier
 /// Compares durable post-Copy SHA-256 evidence with the current primary data
 /// stream only after read-only recovery inspection has established both the
 /// recorded destination root and destination file as the same stable objects.
-/// The reader must then re-prove and hold both namespace bindings during hashing.
+/// The root-bound reader must then re-prove and hold both namespace bindings.
 /// A match is evidence only and grants no mutation, delete, recovery, or Undo authority.
 /// </summary>
 public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecoveryContentVerifier
 {
-    private readonly IFileContentFingerprintReader _reader;
+    private readonly IRootBoundFileContentFingerprintReader _reader;
 
-    public FileOperationRecoveryContentVerifier(IFileContentFingerprintReader reader) =>
+    public FileOperationRecoveryContentVerifier(IRootBoundFileContentFingerprintReader reader) =>
         _reader = reader ?? throw new ArgumentNullException(nameof(reader));
 
     public async ValueTask<FileOperationRecoveryContentVerification> VerifyAsync(
@@ -247,22 +259,18 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
         FileContentFingerprintReadResult read) =>
         read.ContentFingerprint is
             { Algorithm: FileContentFingerprintAlgorithm.Sha256 } &&
-        read.CurrentDestinationDirectory is not null &&
-        read.CurrentDestinationDirectory.State == FileOperationCanonicalPathState.Directory &&
-        !read.CurrentDestinationDirectory.IsLeafReparsePoint &&
-        read.CurrentDestinationDirectory.Identity is FileIdentity actualDirectoryIdentity &&
+        read.CurrentDestinationDirectory is { } root &&
+        root.State == FileOperationCanonicalPathState.Directory &&
+        !root.IsLeafReparsePoint &&
+        root.Identity is FileIdentity actualDirectoryIdentity &&
         actualDirectoryIdentity == request.DestinationDirectoryIdentity &&
-        PathsEqual(
-            request.CanonicalDestinationDirectoryPath,
-            read.CurrentDestinationDirectory.CanonicalPath) &&
+        PathsEqual(request.CanonicalDestinationDirectoryPath, root.CanonicalPath) &&
         read.CurrentDestination is not null &&
         read.CurrentDestination.State == FileOperationCanonicalPathState.File &&
         !read.CurrentDestination.IsLeafReparsePoint &&
         read.CurrentDestination.Identity is FileIdentity actualIdentity &&
         actualIdentity == request.DestinationIdentity &&
-        PathsEqual(
-            request.CanonicalDestinationPath,
-            read.CurrentDestination.CanonicalPath);
+        PathsEqual(request.CanonicalDestinationPath, read.CurrentDestination.CanonicalPath);
 
     private static FileOperationRecoveryContentVerificationItem Create(
         FileOperationRecoveryInspectionItem inspection,
