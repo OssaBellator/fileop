@@ -21,11 +21,16 @@ function Invoke-Step {
     }
 }
 
-if (-not $SkipOfflineModels) {
-    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-        throw "Python 3 is required for the zero-Actions Copy property models."
-    }
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    throw "Python 3 is required for the zero-Actions Copy validation gates."
+}
 
+python -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)"
+if ($LASTEXITCODE -ne 0) {
+    throw "The 'python' command must run Python 3 for the zero-Actions Copy validation gates."
+}
+
+if (-not $SkipOfflineModels) {
     Invoke-Step "Copy executor and mutation property models" {
         & (Join-Path $PSScriptRoot "test-copy-executor-local.ps1")
     }
@@ -33,6 +38,12 @@ if (-not $SkipOfflineModels) {
 
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw ".NET 10 SDK is required for the focused Windows Copy compiler/native test gate."
+}
+
+# The SDK selector pins an installed .NET 10 SDK, then compiles/runs the project and
+# C# program defined by verify_copy_basic_metadata_dotnet.py from an empty local feed.
+Invoke-Step "Package-free .NET Copy metadata interop probe" {
+    python tools/verify_copy_basic_metadata_dotnet_sdk.py --repo-root $repoRoot
 }
 
 Invoke-Step "FileOp.Core Release build" {
@@ -46,7 +57,9 @@ Invoke-Step "FileOp.Windows Release build" {
 $filter = @(
     "FullyQualifiedName~FileOperationActionHistoryTests",
     "FullyQualifiedName~FileCopyOperationExecutorTests",
-    "FullyQualifiedName~WindowsFileCopyMutationPrimitiveTests"
+    "FullyQualifiedName~WindowsFileCopyMutationPrimitiveTests",
+    "FullyQualifiedName~WindowsFileCopyMutationPrimitiveMetadataTests",
+    "FullyQualifiedName~WindowsFileCopyBasicMetadataInteropTests"
 ) -join "|"
 
 Invoke-Step "Focused action-history/Copy native regressions" {

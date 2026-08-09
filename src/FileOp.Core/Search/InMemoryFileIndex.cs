@@ -212,7 +212,7 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
             .ToArray();
 
         var logicalBytes = allEntries.Sum(static entry => entry.LogicalBytes);
-        var allocatedBytes = allEntries.All(static entry => entry.AllocatedBytes.HasValue)
+        long? allocatedBytes = allEntries.All(static entry => entry.AllocatedBytes.HasValue)
             ? allEntries.Sum(static entry => entry.AllocatedBytes!.Value)
             : null;
 
@@ -284,7 +284,7 @@ public sealed class InMemoryFileIndex : IFileIndex, IStorageAnalytics, IDisposab
             .Select(static aggregate => aggregate.ToEntry())
             .ToArray();
         var logicalBytes = allTypes.Sum(static entry => entry.LogicalBytes);
-        var allocatedBytes = allTypes.All(static entry => entry.AllocatedBytes.HasValue)
+        long? allocatedBytes = allTypes.All(static entry => entry.AllocatedBytes.HasValue)
             ? allTypes.Sum(static entry => entry.AllocatedBytes!.Value)
             : null;
         var usePhysicalOrdering = allocatedBytes.HasValue;

@@ -28,7 +28,10 @@ public sealed class WindowsFileCopyMutationPrimitiveTests
         var lease = await primitive.CopyNewFileAsync(request);
         try
         {
-            CollectionAssert.AreEqual(payload, await File.ReadAllBytesAsync(fixture.DestinationPath));
+            await using var destinationReader = new FileStream(fixture.DestinationPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var copiedPayload = new byte[payload.Length];
+            await destinationReader.ReadExactlyAsync(copiedPayload);
+            CollectionAssert.AreEqual(payload, copiedPayload);
             Assert.AreEqual(request.Item.Source.Identity, lease.Receipt.SourceIdentity);
             Assert.IsFalse(lease.Receipt.DestinationIdentity == lease.Receipt.SourceIdentity);
 

@@ -233,7 +233,7 @@ public sealed class SqliteStorageAnalyticsTests
         {
             try
             {
-                File.Delete(databasePath + suffix);
+                System.IO.File.Delete(databasePath + suffix);
             }
             catch (IOException)
             {

@@ -249,8 +249,12 @@ def check_repository(root: Path) -> int:
     dispose = source["executor"].index("DisposeMutationLeaseAsync(mutationLease)", progress)
     assert start < mutate < commit < progress < dispose
 
-    recovery = source["executor"].index("MarkMutationRecoveryRequiredAsync(", mutate)
-    assert recovery < dispose or "finally" in source["executor"][recovery:dispose]
+    failure_path = source["executor"].index("return await FailAfterMutationAsync(", mutate)
+    assert mutate < failure_path < dispose
+    helper_start = source["executor"].index("private async ValueTask<FileOperationExecutionSnapshot> FailAfterMutationAsync(")
+    helper_end = source["executor"].index("private static async ValueTask DisposeMutationLeaseAsync(", helper_start)
+    helper = source["executor"][helper_start:helper_end]
+    assert "MarkMutationRecoveryRequiredAsync(" in helper
 
     for forbidden in [
         "File.Copy(", "File.Move(", "File.Delete(",

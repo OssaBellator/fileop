@@ -20,7 +20,7 @@ public sealed class StorageHistoryIndexingServiceBackend : IIndexingServiceBacke
         _databaseDirectory = Path.GetFullPath(databaseDirectory);
         Directory.CreateDirectory(_databaseDirectory);
         _inner = new NtfsIndexingServiceBackend(_databaseDirectory);
-        _utcNow = utcNow ?? static () => DateTimeOffset.UtcNow;
+        _utcNow = utcNow ?? (static () => DateTimeOffset.UtcNow);
     }
 
     public ValueTask<IndexingHelloResponse> HelloAsync(

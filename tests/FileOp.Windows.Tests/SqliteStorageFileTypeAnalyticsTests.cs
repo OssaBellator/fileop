@@ -184,7 +184,7 @@ public sealed class SqliteStorageFileTypeAnalyticsTests
         {
             try
             {
-                File.Delete(databasePath + suffix);
+                System.IO.File.Delete(databasePath + suffix);
             }
             catch (IOException)
             {
