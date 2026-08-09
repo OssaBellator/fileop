@@ -71,6 +71,68 @@ public sealed class FileOperationRecoveryContentVerificationTests
     }
 
     [TestMethod]
+    public async Task MatchingRecordedHardLinkCountIsSeparateTopologyEvidence()
+    {
+        var identity = new FileIdentity(8, 81);
+        var inspectionItem = CreateInspectionItem(
+            FileOperationRecoveryDestinationStatus.SameObject,
+            identity,
+            RecordedFingerprint,
+            hardLinkCount: 2);
+        var reader = new FakeReader(call => Success(call.Request, RecordedFingerprint) with
+        {
+            CurrentDestinationHardLinkCount = 2,
+        });
+
+        var result = await new FileOperationRecoveryContentVerifier(reader)
+            .VerifyAsync(CreateInspection(inspectionItem));
+
+        Assert.AreEqual(FileOperationRecoveryContentStatus.MatchesRecordedMainStream, result.Items[0].Status);
+        Assert.AreEqual(FileOperationRecoveryHardLinkStatus.SameCount, result.Items[0].HardLinkStatus);
+        Assert.AreEqual((uint)2, result.Items[0].CurrentDestinationHardLinkCount);
+    }
+
+    [TestMethod]
+    public async Task DifferentHardLinkCountDoesNotBecomeContentMismatch()
+    {
+        var identity = new FileIdentity(8, 82);
+        var inspectionItem = CreateInspectionItem(
+            FileOperationRecoveryDestinationStatus.SameObject,
+            identity,
+            RecordedFingerprint,
+            hardLinkCount: 2);
+        var reader = new FakeReader(call => Success(call.Request, RecordedFingerprint) with
+        {
+            CurrentDestinationHardLinkCount = 3,
+        });
+
+        var result = await new FileOperationRecoveryContentVerifier(reader)
+            .VerifyAsync(CreateInspection(inspectionItem));
+
+        Assert.AreEqual(FileOperationRecoveryContentStatus.MatchesRecordedMainStream, result.Items[0].Status);
+        Assert.AreEqual(FileOperationRecoveryHardLinkStatus.DifferentCount, result.Items[0].HardLinkStatus);
+        Assert.IsTrue(result.Items[0].MatchesRecordedMainStream);
+    }
+
+    [TestMethod]
+    public async Task MissingCurrentHardLinkCountLeavesContentMatchButTopologyUnavailable()
+    {
+        var identity = new FileIdentity(8, 83);
+        var inspectionItem = CreateInspectionItem(
+            FileOperationRecoveryDestinationStatus.SameObject,
+            identity,
+            RecordedFingerprint,
+            hardLinkCount: 2);
+        var reader = new FakeReader(call => Success(call.Request, RecordedFingerprint));
+
+        var result = await new FileOperationRecoveryContentVerifier(reader)
+            .VerifyAsync(CreateInspection(inspectionItem));
+
+        Assert.AreEqual(FileOperationRecoveryContentStatus.MatchesRecordedMainStream, result.Items[0].Status);
+        Assert.AreEqual(FileOperationRecoveryHardLinkStatus.Unavailable, result.Items[0].HardLinkStatus);
+        Assert.IsNull(result.Items[0].CurrentDestinationHardLinkCount);
+    }
+    [TestMethod]
     public async Task MissingFingerprintSkipsRootBoundReader()
     {
         var identity = new FileIdentity(9, 90);
@@ -324,7 +386,8 @@ public sealed class FileOperationRecoveryContentVerificationTests
     private static FileOperationRecoveryInspectionItem CreateInspectionItem(
         FileOperationRecoveryDestinationStatus status,
         FileIdentity identity,
-        FileContentFingerprint? fingerprint)
+        FileContentFingerprint? fingerprint,
+        uint? hardLinkCount = null)
     {
         var path = RootPath + @"\payload.bin";
         var entry = new FileOperationActionEntry(
@@ -343,7 +406,10 @@ public sealed class FileOperationRecoveryContentVerificationTests
                 "fixture",
                 path,
                 Retryable: false),
-            fingerprint);
+            fingerprint)
+        {
+            DestinationHardLinkCount = hardLinkCount,
+        };
         var current = status == FileOperationRecoveryDestinationStatus.SameObject
             ? ExistingFile(path, identity)
             : ExistingFile(path, new FileIdentity(identity.VolumeSerialNumber, identity.FileReferenceNumber + 1));

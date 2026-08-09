@@ -45,6 +45,12 @@ public sealed record FileOperationActionEntry(
     FileOperationFailure? Failure,
     FileContentFingerprint? DestinationContentFingerprint = null)
 {
+    /// <summary>
+    /// Optional durable observation of the destination object's hard-link count
+    /// after Copy. Null means legacy or otherwise unavailable topology evidence.
+    /// </summary>
+    public uint? DestinationHardLinkCount { get; init; }
+
     public bool IsUndoCandidate =>
         !Entry.IsDirectory &&
         State == FileOperationActionEntryState.Committed &&
@@ -197,5 +203,33 @@ public interface IFileOperationActionHistoryStore
 
     ValueTask<IReadOnlyList<FileOperationActionHistory>> GetRecentAsync(
         int limit = 100,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Optional stronger persistence capability for destination topology evidence.
+/// Existing IFileOperationActionHistoryStore implementers remain source-compatible.
+/// Windows topology-aware composition wraps this capability so the unchanged Copy
+/// executor's commit/recovery calls cannot silently lose a verified count.
+/// </summary>
+public interface IFileOperationActionHistoryHardLinkEvidenceStore : IFileOperationActionHistoryStore
+{
+    ValueTask<FileOperationActionHistory> CommitCopyWithHardLinkEvidenceAsync(
+        Guid operationId,
+        int ordinal,
+        FileIdentity destinationIdentity,
+        FileContentFingerprint destinationContentFingerprint,
+        uint destinationHardLinkCount,
+        DateTimeOffset committedAtUtc,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<FileOperationActionHistory> MarkMutationRecoveryRequiredWithHardLinkEvidenceAsync(
+        Guid operationId,
+        int ordinal,
+        FileOperationFailure failure,
+        DateTimeOffset failedAtUtc,
+        FileIdentity destinationIdentity,
+        FileContentFingerprint destinationContentFingerprint,
+        uint destinationHardLinkCount,
         CancellationToken cancellationToken = default);
 }
