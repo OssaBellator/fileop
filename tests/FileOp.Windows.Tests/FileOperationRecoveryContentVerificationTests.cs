@@ -107,6 +107,27 @@ public sealed class FileOperationRecoveryContentVerificationTests
     }
 
     [TestMethod]
+    public async Task InconsistentRecordedRootPathSkipsRootBoundReader()
+    {
+        var identity = new FileIdentity(10, 101);
+        var inspectionItem = CreateInspectionItem(
+            FileOperationRecoveryDestinationStatus.SameObject,
+            identity,
+            RecordedFingerprint);
+        var reader = new FakeReader(_ => throw new InvalidOperationException("reader should not run"));
+
+        var result = await new FileOperationRecoveryContentVerifier(reader)
+            .VerifyAsync(CreateInspection(
+                inspectionItem,
+                recordedRootPath: @"D:\Different\Destination"));
+
+        Assert.AreEqual(
+            FileOperationRecoveryContentStatus.DestinationRootNotVerified,
+            result.Items[0].Status);
+        Assert.AreEqual(0, reader.Calls.Count);
+    }
+
+    [TestMethod]
     public async Task NonSameObjectInspectionSkipsRootBoundReader()
     {
         var identity = new FileIdentity(11, 110);
@@ -257,7 +278,8 @@ public sealed class FileOperationRecoveryContentVerificationTests
 
     private static FileOperationRecoveryInspection CreateInspection(
         FileOperationRecoveryInspectionItem item,
-        bool rootVerified = true)
+        bool rootVerified = true,
+        string recordedRootPath = RootPath)
     {
         if (!rootVerified)
         {
@@ -268,7 +290,8 @@ public sealed class FileOperationRecoveryContentVerificationTests
             RootIdentity,
             FileOperationRecoveryRootStatus.SameObject,
             ExistingDirectory(RootPath, RootIdentity),
-            "same root");
+            "same root",
+            recordedRootPath);
         return new FileOperationRecoveryInspection(Guid.NewGuid(), new[] { item }, root);
     }
 
