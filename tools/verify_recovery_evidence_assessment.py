@@ -17,6 +17,7 @@ class Dimension(Enum):
     HARD_LINK_COUNT = auto()
     BASIC_METADATA = auto()
     OWNER_GROUP_DACL = auto()
+    NAMED_DATA_STREAMS = auto()
 
 
 class State(Enum):
@@ -44,9 +45,6 @@ def assess(states: Dict[Dimension, State]) -> Aggregate:
 
 
 def classify_blocked_verification(prerequisite: State) -> State:
-    # A verifier blocked solely because durable identity evidence never existed is
-    # incomplete. Every other blocked prerequisite remains unavailable: a changed
-    # prerequisite is already represented by its own changed dimension.
     return State.INCOMPLETE if prerequisite is State.INCOMPLETE else State.UNAVAILABLE
 
 
@@ -84,8 +82,6 @@ def run_model(cases: int) -> int:
     dimensions = tuple(Dimension)
     states = tuple(State)
 
-    # Exhaust all 4^6 dimension-state combinations first so every precedence edge
-    # is always covered, regardless of the randomized case count.
     for values in itertools.product(states, repeat=len(dimensions)):
         checks += verify_case(dict(zip(dimensions, values)))
 
@@ -99,7 +95,6 @@ def run_model(cases: int) -> int:
     assert classify_blocked_verification(State.CHANGED) is State.UNAVAILABLE
     assert classify_blocked_verification(State.UNAVAILABLE) is State.UNAVAILABLE
     checks += 4
-
     return checks
 
 
@@ -137,6 +132,12 @@ def check_repository(root: Path) -> int:
         "HardLinkCount = 1 << 3",
         "BasicMetadata = 1 << 4",
         "OwnerGroupDacl = 1 << 5",
+        "NamedDataStreams = 1 << 6",
+        "FileOperationRecoveryNamedDataStreamTopologyVerification namedDataStreams",
+        "ClassifyNamedDataStreams(namedDataStreams.Comparison.Status)",
+        "SameNamesAndSizes",
+        "DifferentNamesOrSizes",
+        "NoRecordedEvidence",
         "ObservedSubsetMatches",
         "ObservedEvidenceChanged",
         "EvidenceIncomplete",
@@ -156,20 +157,13 @@ def check_repository(root: Path) -> int:
         "changed != FileOperationRecoveryEvidenceDimension.None",
         "unavailable != FileOperationRecoveryEvidenceDimension.None",
         "incomplete != FileOperationRecoveryEvidenceDimension.None",
+        "not named-stream contents",
         "grants no mutation authority",
     ))
 
     for forbidden in (
-        "File.Delete(",
-        "File.Move(",
-        "File.Copy(",
-        "Directory.Delete(",
-        "Directory.Move(",
-        "FileStream",
-        "CreateFileW",
-        "NtCreateFile",
-        "CanDelete",
-        "CanUndo",
+        "File.Delete(", "File.Move(", "File.Copy(", "Directory.Delete(",
+        "Directory.Move(", "FileStream", "CreateFileW", "NtCreateFile", "CanDelete", "CanUndo",
     ):
         assert forbidden not in source["core"], forbidden
         checks += 1
@@ -177,6 +171,7 @@ def check_repository(root: Path) -> int:
     for test_name in (
         "AllImplementedEvidenceMatchesWithoutGrantingUndoAuthority",
         "ChangedEvidenceWinsOverUnavailableAndIncompleteEvidence",
+        "NamedStreamTopologyDifferenceIsAChangedDimension",
         "UnavailableEvidenceWinsOverIncompleteEvidenceWhenNothingChanged",
         "MissingRecordedDimensionProducesIncompleteAssessment",
         "AssessorRejectsOperationOrdinalAndInspectionSnapshotMismatch",
@@ -193,9 +188,11 @@ def check_repository(root: Path) -> int:
         checks += 1
 
     checks += require(source["docs"], (
-        "ObservedSubsetMatches",
+        "seven flags",
+        "NamedDataStreams",
+        "names and logical sizes",
+        "does not mean the bytes inside those named streams match",
         "not an “unchanged file” result",
-        "alternate data streams",
         "extended attributes",
         "complete set of hard-link names",
         "SACL/audit state",
@@ -210,7 +207,6 @@ def check_repository(root: Path) -> int:
     assert "FullyQualifiedName~FileOperationRecoveryEvidenceAssessmentTests" in source["windows_gate"]
     assert "FullyQualifiedName~FileOperationRecoveryEvidenceAssessmentLegacyTests" in source["windows_gate"]
     checks += 4
-
     return checks
 
 
@@ -226,7 +222,7 @@ def main() -> int:
     repository_checks = check_repository(args.repo_root.resolve())
     print(
         "PASS: aggregate Copy recovery evidence assessment verified "
-        f"with {model_checks:,} model assertions across all 4^6 combinations plus "
+        f"with {model_checks:,} model assertions across all 4^7 combinations plus "
         f"{args.cases:,} randomized cases and {repository_checks:,} source/gate checks."
     )
     return 0
