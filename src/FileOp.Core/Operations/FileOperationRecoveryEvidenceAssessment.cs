@@ -14,12 +14,14 @@ public enum FileOperationRecoveryEvidenceDimension
     HardLinkCount = 1 << 3,
     BasicMetadata = 1 << 4,
     OwnerGroupDacl = 1 << 5,
+    NamedDataStreams = 1 << 6,
     AllObserved = DestinationRoot |
         DestinationIdentity |
         MainStream |
         HardLinkCount |
         BasicMetadata |
-        OwnerGroupDacl,
+        OwnerGroupDacl |
+        NamedDataStreams,
 }
 
 public enum FileOperationRecoveryEvidenceDimensionState
@@ -217,16 +219,19 @@ public static class FileOperationRecoveryEvidenceAssessor
         FileOperationRecoveryInspection inspection,
         FileOperationRecoveryContentVerification content,
         FileOperationRecoveryBasicMetadataVerification basicMetadata,
-        FileOperationRecoverySecurityDescriptorVerification securityDescriptor)
+        FileOperationRecoverySecurityDescriptorVerification securityDescriptor,
+        FileOperationRecoveryNamedDataStreamTopologyVerification namedDataStreams)
     {
         ArgumentNullException.ThrowIfNull(inspection);
         ArgumentNullException.ThrowIfNull(content);
         ArgumentNullException.ThrowIfNull(basicMetadata);
         ArgumentNullException.ThrowIfNull(securityDescriptor);
+        ArgumentNullException.ThrowIfNull(namedDataStreams);
 
         ValidateOperationId(inspection.OperationId, content.OperationId, nameof(content));
         ValidateOperationId(inspection.OperationId, basicMetadata.OperationId, nameof(basicMetadata));
         ValidateOperationId(inspection.OperationId, securityDescriptor.OperationId, nameof(securityDescriptor));
+        ValidateOperationId(inspection.OperationId, namedDataStreams.OperationId, nameof(namedDataStreams));
 
         var inspections = IndexByOrdinal(
             inspection.Items,
@@ -244,10 +249,15 @@ public static class FileOperationRecoveryEvidenceAssessor
             securityDescriptor.Items,
             static item => item.Ordinal,
             nameof(securityDescriptor));
+        var namedStreamItems = IndexByOrdinal(
+            namedDataStreams.Items,
+            static item => item.Ordinal,
+            nameof(namedDataStreams));
 
         RequireSameOrdinals(inspections, contentItems, nameof(content));
         RequireSameOrdinals(inspections, metadataItems, nameof(basicMetadata));
         RequireSameOrdinals(inspections, securityItems, nameof(securityDescriptor));
+        RequireSameOrdinals(inspections, namedStreamItems, nameof(namedDataStreams));
 
         var results = new List<FileOperationRecoveryEvidenceAssessmentItem>(inspections.Count);
         foreach (var ordinal in inspections.Keys.OrderBy(static ordinal => ordinal))
@@ -256,17 +266,20 @@ public static class FileOperationRecoveryEvidenceAssessor
             var contentItem = contentItems[ordinal];
             var metadataItem = metadataItems[ordinal];
             var securityItem = securityItems[ordinal];
+            var namedStreamItem = namedStreamItems[ordinal];
 
             RequireSameInspection(inspectionItem, contentItem.Inspection, nameof(content), ordinal);
             RequireSameInspection(inspectionItem, metadataItem.Inspection, nameof(basicMetadata), ordinal);
             RequireSameInspection(inspectionItem, securityItem.Inspection, nameof(securityDescriptor), ordinal);
+            RequireSameInspection(inspectionItem, namedStreamItem.Inspection, nameof(namedDataStreams), ordinal);
 
             results.Add(AssessItem(
                 inspection.DestinationDirectory,
                 inspectionItem,
                 contentItem,
                 metadataItem,
-                securityItem));
+                securityItem,
+                namedStreamItem));
         }
 
         return new FileOperationRecoveryEvidenceAssessment(inspection.OperationId, results);
@@ -277,55 +290,21 @@ public static class FileOperationRecoveryEvidenceAssessor
         FileOperationRecoveryInspectionItem inspection,
         FileOperationRecoveryContentVerificationItem content,
         FileOperationRecoveryBasicMetadataVerificationItem basicMetadata,
-        FileOperationRecoverySecurityDescriptorVerificationItem securityDescriptor)
+        FileOperationRecoverySecurityDescriptorVerificationItem securityDescriptor,
+        FileOperationRecoveryNamedDataStreamTopologyVerificationItem namedDataStreams)
     {
         var matching = FileOperationRecoveryEvidenceDimension.None;
         var changed = FileOperationRecoveryEvidenceDimension.None;
         var incomplete = FileOperationRecoveryEvidenceDimension.None;
         var unavailable = FileOperationRecoveryEvidenceDimension.None;
 
-        Add(
-            FileOperationRecoveryEvidenceDimension.DestinationRoot,
-            ClassifyRoot(root.Status),
-            ref matching,
-            ref changed,
-            ref incomplete,
-            ref unavailable);
-        Add(
-            FileOperationRecoveryEvidenceDimension.DestinationIdentity,
-            ClassifyDestination(inspection.Status),
-            ref matching,
-            ref changed,
-            ref incomplete,
-            ref unavailable);
-        Add(
-            FileOperationRecoveryEvidenceDimension.MainStream,
-            ClassifyMainStream(content.Status, root.Status, inspection.Status),
-            ref matching,
-            ref changed,
-            ref incomplete,
-            ref unavailable);
-        Add(
-            FileOperationRecoveryEvidenceDimension.HardLinkCount,
-            ClassifyHardLink(content.HardLinkStatus),
-            ref matching,
-            ref changed,
-            ref incomplete,
-            ref unavailable);
-        Add(
-            FileOperationRecoveryEvidenceDimension.BasicMetadata,
-            ClassifyBasicMetadata(basicMetadata.Comparison.Status),
-            ref matching,
-            ref changed,
-            ref incomplete,
-            ref unavailable);
-        Add(
-            FileOperationRecoveryEvidenceDimension.OwnerGroupDacl,
-            ClassifySecurityDescriptor(securityDescriptor.Comparison.Status),
-            ref matching,
-            ref changed,
-            ref incomplete,
-            ref unavailable);
+        Add(FileOperationRecoveryEvidenceDimension.DestinationRoot, ClassifyRoot(root.Status), ref matching, ref changed, ref incomplete, ref unavailable);
+        Add(FileOperationRecoveryEvidenceDimension.DestinationIdentity, ClassifyDestination(inspection.Status), ref matching, ref changed, ref incomplete, ref unavailable);
+        Add(FileOperationRecoveryEvidenceDimension.MainStream, ClassifyMainStream(content.Status, root.Status, inspection.Status), ref matching, ref changed, ref incomplete, ref unavailable);
+        Add(FileOperationRecoveryEvidenceDimension.HardLinkCount, ClassifyHardLink(content.HardLinkStatus), ref matching, ref changed, ref incomplete, ref unavailable);
+        Add(FileOperationRecoveryEvidenceDimension.BasicMetadata, ClassifyBasicMetadata(basicMetadata.Comparison.Status), ref matching, ref changed, ref incomplete, ref unavailable);
+        Add(FileOperationRecoveryEvidenceDimension.OwnerGroupDacl, ClassifySecurityDescriptor(securityDescriptor.Comparison.Status), ref matching, ref changed, ref incomplete, ref unavailable);
+        Add(FileOperationRecoveryEvidenceDimension.NamedDataStreams, ClassifyNamedDataStreams(namedDataStreams.Comparison.Status), ref matching, ref changed, ref incomplete, ref unavailable);
 
         var status = changed != FileOperationRecoveryEvidenceDimension.None
             ? FileOperationRecoveryEvidenceAssessmentStatus.ObservedEvidenceChanged
@@ -346,93 +325,73 @@ public static class FileOperationRecoveryEvidenceAssessor
             Describe(status));
     }
 
-    private static FileOperationRecoveryEvidenceDimensionState ClassifyRoot(
-        FileOperationRecoveryRootStatus status) => status switch
-        {
-            FileOperationRecoveryRootStatus.SameObject => FileOperationRecoveryEvidenceDimensionState.Matches,
-            FileOperationRecoveryRootStatus.NoVerifiedIdentity => FileOperationRecoveryEvidenceDimensionState.Incomplete,
-            FileOperationRecoveryRootStatus.Inaccessible or
-                FileOperationRecoveryRootStatus.Error => FileOperationRecoveryEvidenceDimensionState.Unavailable,
-            FileOperationRecoveryRootStatus.Missing or
-                FileOperationRecoveryRootStatus.DifferentObject or
-                FileOperationRecoveryRootStatus.Redirected or
-                FileOperationRecoveryRootStatus.ReparsePoint or
-                FileOperationRecoveryRootStatus.UnexpectedType => FileOperationRecoveryEvidenceDimensionState.Changed,
-            _ => throw new ArgumentOutOfRangeException(nameof(status)),
-        };
+    private static FileOperationRecoveryEvidenceDimensionState ClassifyRoot(FileOperationRecoveryRootStatus status) => status switch
+    {
+        FileOperationRecoveryRootStatus.SameObject => FileOperationRecoveryEvidenceDimensionState.Matches,
+        FileOperationRecoveryRootStatus.NoVerifiedIdentity => FileOperationRecoveryEvidenceDimensionState.Incomplete,
+        FileOperationRecoveryRootStatus.Inaccessible or FileOperationRecoveryRootStatus.Error => FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        FileOperationRecoveryRootStatus.Missing or FileOperationRecoveryRootStatus.DifferentObject or FileOperationRecoveryRootStatus.Redirected or FileOperationRecoveryRootStatus.ReparsePoint or FileOperationRecoveryRootStatus.UnexpectedType => FileOperationRecoveryEvidenceDimensionState.Changed,
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
 
-    private static FileOperationRecoveryEvidenceDimensionState ClassifyDestination(
-        FileOperationRecoveryDestinationStatus status) => status switch
-        {
-            FileOperationRecoveryDestinationStatus.SameObject => FileOperationRecoveryEvidenceDimensionState.Matches,
-            FileOperationRecoveryDestinationStatus.NoVerifiedIdentity => FileOperationRecoveryEvidenceDimensionState.Incomplete,
-            FileOperationRecoveryDestinationStatus.Inaccessible or
-                FileOperationRecoveryDestinationStatus.Error => FileOperationRecoveryEvidenceDimensionState.Unavailable,
-            FileOperationRecoveryDestinationStatus.Missing or
-                FileOperationRecoveryDestinationStatus.DifferentObject or
-                FileOperationRecoveryDestinationStatus.Redirected or
-                FileOperationRecoveryDestinationStatus.ReparsePoint or
-                FileOperationRecoveryDestinationStatus.UnexpectedType => FileOperationRecoveryEvidenceDimensionState.Changed,
-            _ => throw new ArgumentOutOfRangeException(nameof(status)),
-        };
+    private static FileOperationRecoveryEvidenceDimensionState ClassifyDestination(FileOperationRecoveryDestinationStatus status) => status switch
+    {
+        FileOperationRecoveryDestinationStatus.SameObject => FileOperationRecoveryEvidenceDimensionState.Matches,
+        FileOperationRecoveryDestinationStatus.NoVerifiedIdentity => FileOperationRecoveryEvidenceDimensionState.Incomplete,
+        FileOperationRecoveryDestinationStatus.Inaccessible or FileOperationRecoveryDestinationStatus.Error => FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        FileOperationRecoveryDestinationStatus.Missing or FileOperationRecoveryDestinationStatus.DifferentObject or FileOperationRecoveryDestinationStatus.Redirected or FileOperationRecoveryDestinationStatus.ReparsePoint or FileOperationRecoveryDestinationStatus.UnexpectedType => FileOperationRecoveryEvidenceDimensionState.Changed,
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
 
     private static FileOperationRecoveryEvidenceDimensionState ClassifyMainStream(
         FileOperationRecoveryContentStatus status,
         FileOperationRecoveryRootStatus rootStatus,
         FileOperationRecoveryDestinationStatus destinationStatus) => status switch
-        {
-            FileOperationRecoveryContentStatus.MatchesRecordedMainStream => FileOperationRecoveryEvidenceDimensionState.Matches,
-            FileOperationRecoveryContentStatus.NoRecordedFingerprint => FileOperationRecoveryEvidenceDimensionState.Incomplete,
-            FileOperationRecoveryContentStatus.DifferentMainStream or
-                FileOperationRecoveryContentStatus.Missing or
-                FileOperationRecoveryContentStatus.DifferentObject or
-                FileOperationRecoveryContentStatus.Redirected or
-                FileOperationRecoveryContentStatus.ReparsePoint or
-                FileOperationRecoveryContentStatus.UnexpectedType or
-                FileOperationRecoveryContentStatus.DestinationRootChanged => FileOperationRecoveryEvidenceDimensionState.Changed,
-            FileOperationRecoveryContentStatus.DestinationRootNotVerified =>
-                rootStatus == FileOperationRecoveryRootStatus.NoVerifiedIdentity
-                    ? FileOperationRecoveryEvidenceDimensionState.Incomplete
-                    : FileOperationRecoveryEvidenceDimensionState.Unavailable,
-            FileOperationRecoveryContentStatus.NotSameRecordedObject =>
-                destinationStatus == FileOperationRecoveryDestinationStatus.NoVerifiedIdentity
-                    ? FileOperationRecoveryEvidenceDimensionState.Incomplete
-                    : FileOperationRecoveryEvidenceDimensionState.Unavailable,
-            FileOperationRecoveryContentStatus.Busy or
-                FileOperationRecoveryContentStatus.Inaccessible or
-                FileOperationRecoveryContentStatus.Error => FileOperationRecoveryEvidenceDimensionState.Unavailable,
-            _ => throw new ArgumentOutOfRangeException(nameof(status)),
-        };
+    {
+        FileOperationRecoveryContentStatus.MatchesRecordedMainStream => FileOperationRecoveryEvidenceDimensionState.Matches,
+        FileOperationRecoveryContentStatus.NoRecordedFingerprint => FileOperationRecoveryEvidenceDimensionState.Incomplete,
+        FileOperationRecoveryContentStatus.DifferentMainStream or FileOperationRecoveryContentStatus.Missing or FileOperationRecoveryContentStatus.DifferentObject or FileOperationRecoveryContentStatus.Redirected or FileOperationRecoveryContentStatus.ReparsePoint or FileOperationRecoveryContentStatus.UnexpectedType or FileOperationRecoveryContentStatus.DestinationRootChanged => FileOperationRecoveryEvidenceDimensionState.Changed,
+        FileOperationRecoveryContentStatus.DestinationRootNotVerified => rootStatus == FileOperationRecoveryRootStatus.NoVerifiedIdentity ? FileOperationRecoveryEvidenceDimensionState.Incomplete : FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        FileOperationRecoveryContentStatus.NotSameRecordedObject => destinationStatus == FileOperationRecoveryDestinationStatus.NoVerifiedIdentity ? FileOperationRecoveryEvidenceDimensionState.Incomplete : FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        FileOperationRecoveryContentStatus.Busy or FileOperationRecoveryContentStatus.Inaccessible or FileOperationRecoveryContentStatus.Error => FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
 
-    private static FileOperationRecoveryEvidenceDimensionState ClassifyHardLink(
-        FileOperationRecoveryHardLinkStatus status) => status switch
-        {
-            FileOperationRecoveryHardLinkStatus.SameCount => FileOperationRecoveryEvidenceDimensionState.Matches,
-            FileOperationRecoveryHardLinkStatus.DifferentCount => FileOperationRecoveryEvidenceDimensionState.Changed,
-            FileOperationRecoveryHardLinkStatus.NoRecordedCount => FileOperationRecoveryEvidenceDimensionState.Incomplete,
-            FileOperationRecoveryHardLinkStatus.Unavailable => FileOperationRecoveryEvidenceDimensionState.Unavailable,
-            _ => throw new ArgumentOutOfRangeException(nameof(status)),
-        };
+    private static FileOperationRecoveryEvidenceDimensionState ClassifyHardLink(FileOperationRecoveryHardLinkStatus status) => status switch
+    {
+        FileOperationRecoveryHardLinkStatus.SameCount => FileOperationRecoveryEvidenceDimensionState.Matches,
+        FileOperationRecoveryHardLinkStatus.DifferentCount => FileOperationRecoveryEvidenceDimensionState.Changed,
+        FileOperationRecoveryHardLinkStatus.NoRecordedCount => FileOperationRecoveryEvidenceDimensionState.Incomplete,
+        FileOperationRecoveryHardLinkStatus.Unavailable => FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
 
-    private static FileOperationRecoveryEvidenceDimensionState ClassifyBasicMetadata(
-        FileOperationRecoveryBasicMetadataStatus status) => status switch
-        {
-            FileOperationRecoveryBasicMetadataStatus.SameStableMetadata => FileOperationRecoveryEvidenceDimensionState.Matches,
-            FileOperationRecoveryBasicMetadataStatus.DifferentStableMetadata => FileOperationRecoveryEvidenceDimensionState.Changed,
-            FileOperationRecoveryBasicMetadataStatus.NoRecordedEvidence => FileOperationRecoveryEvidenceDimensionState.Incomplete,
-            FileOperationRecoveryBasicMetadataStatus.Unavailable => FileOperationRecoveryEvidenceDimensionState.Unavailable,
-            _ => throw new ArgumentOutOfRangeException(nameof(status)),
-        };
+    private static FileOperationRecoveryEvidenceDimensionState ClassifyBasicMetadata(FileOperationRecoveryBasicMetadataStatus status) => status switch
+    {
+        FileOperationRecoveryBasicMetadataStatus.SameStableMetadata => FileOperationRecoveryEvidenceDimensionState.Matches,
+        FileOperationRecoveryBasicMetadataStatus.DifferentStableMetadata => FileOperationRecoveryEvidenceDimensionState.Changed,
+        FileOperationRecoveryBasicMetadataStatus.NoRecordedEvidence => FileOperationRecoveryEvidenceDimensionState.Incomplete,
+        FileOperationRecoveryBasicMetadataStatus.Unavailable => FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
 
-    private static FileOperationRecoveryEvidenceDimensionState ClassifySecurityDescriptor(
-        FileOperationRecoverySecurityDescriptorStatus status) => status switch
-        {
-            FileOperationRecoverySecurityDescriptorStatus.SameQueriedDescriptorBytes => FileOperationRecoveryEvidenceDimensionState.Matches,
-            FileOperationRecoverySecurityDescriptorStatus.DifferentQueriedDescriptorBytes => FileOperationRecoveryEvidenceDimensionState.Changed,
-            FileOperationRecoverySecurityDescriptorStatus.NoRecordedEvidence => FileOperationRecoveryEvidenceDimensionState.Incomplete,
-            FileOperationRecoverySecurityDescriptorStatus.Unavailable => FileOperationRecoveryEvidenceDimensionState.Unavailable,
-            _ => throw new ArgumentOutOfRangeException(nameof(status)),
-        };
+    private static FileOperationRecoveryEvidenceDimensionState ClassifySecurityDescriptor(FileOperationRecoverySecurityDescriptorStatus status) => status switch
+    {
+        FileOperationRecoverySecurityDescriptorStatus.SameQueriedDescriptorBytes => FileOperationRecoveryEvidenceDimensionState.Matches,
+        FileOperationRecoverySecurityDescriptorStatus.DifferentQueriedDescriptorBytes => FileOperationRecoveryEvidenceDimensionState.Changed,
+        FileOperationRecoverySecurityDescriptorStatus.NoRecordedEvidence => FileOperationRecoveryEvidenceDimensionState.Incomplete,
+        FileOperationRecoverySecurityDescriptorStatus.Unavailable => FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
+
+    private static FileOperationRecoveryEvidenceDimensionState ClassifyNamedDataStreams(FileOperationRecoveryNamedDataStreamTopologyStatus status) => status switch
+    {
+        FileOperationRecoveryNamedDataStreamTopologyStatus.SameNamesAndSizes => FileOperationRecoveryEvidenceDimensionState.Matches,
+        FileOperationRecoveryNamedDataStreamTopologyStatus.DifferentNamesOrSizes => FileOperationRecoveryEvidenceDimensionState.Changed,
+        FileOperationRecoveryNamedDataStreamTopologyStatus.NoRecordedEvidence => FileOperationRecoveryEvidenceDimensionState.Incomplete,
+        FileOperationRecoveryNamedDataStreamTopologyStatus.Unavailable => FileOperationRecoveryEvidenceDimensionState.Unavailable,
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
 
     private static void Add(
         FileOperationRecoveryEvidenceDimension dimension,
@@ -444,27 +403,15 @@ public static class FileOperationRecoveryEvidenceAssessor
     {
         switch (state)
         {
-            case FileOperationRecoveryEvidenceDimensionState.Matches:
-                matching |= dimension;
-                break;
-            case FileOperationRecoveryEvidenceDimensionState.Changed:
-                changed |= dimension;
-                break;
-            case FileOperationRecoveryEvidenceDimensionState.Incomplete:
-                incomplete |= dimension;
-                break;
-            case FileOperationRecoveryEvidenceDimensionState.Unavailable:
-                unavailable |= dimension;
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(state));
+            case FileOperationRecoveryEvidenceDimensionState.Matches: matching |= dimension; break;
+            case FileOperationRecoveryEvidenceDimensionState.Changed: changed |= dimension; break;
+            case FileOperationRecoveryEvidenceDimensionState.Incomplete: incomplete |= dimension; break;
+            case FileOperationRecoveryEvidenceDimensionState.Unavailable: unavailable |= dimension; break;
+            default: throw new ArgumentOutOfRangeException(nameof(state));
         }
     }
 
-    private static Dictionary<int, T> IndexByOrdinal<T>(
-        IEnumerable<T> items,
-        Func<T, int> getOrdinal,
-        string parameterName)
+    private static Dictionary<int, T> IndexByOrdinal<T>(IEnumerable<T> items, Func<T, int> getOrdinal, string parameterName)
     {
         var result = new Dictionary<int, T>();
         foreach (var item in items)
@@ -472,12 +419,9 @@ public static class FileOperationRecoveryEvidenceAssessor
             var ordinal = getOrdinal(item);
             if (ordinal < 0 || !result.TryAdd(ordinal, item))
             {
-                throw new ArgumentException(
-                    $"{parameterName} must contain unique non-negative entry ordinals.",
-                    parameterName);
+                throw new ArgumentException($"{parameterName} must contain unique non-negative entry ordinals.", parameterName);
             }
         }
-
         return result;
     }
 
@@ -486,12 +430,9 @@ public static class FileOperationRecoveryEvidenceAssessor
         IReadOnlyDictionary<int, T> verification,
         string parameterName)
     {
-        if (inspections.Count != verification.Count ||
-            inspections.Keys.Any(ordinal => !verification.ContainsKey(ordinal)))
+        if (inspections.Count != verification.Count || inspections.Keys.Any(ordinal => !verification.ContainsKey(ordinal)))
         {
-            throw new ArgumentException(
-                "Recovery verification sets must contain exactly the same entry ordinals as the recovery inspection.",
-                parameterName);
+            throw new ArgumentException("Recovery verification sets must contain exactly the same entry ordinals as the recovery inspection.", parameterName);
         }
     }
 
@@ -503,9 +444,7 @@ public static class FileOperationRecoveryEvidenceAssessor
     {
         if (expected != actual)
         {
-            throw new ArgumentException(
-                $"Recovery verification item {ordinal} does not correspond to the supplied recovery inspection snapshot.",
-                parameterName);
+            throw new ArgumentException($"Recovery verification item {ordinal} does not correspond to the supplied recovery inspection snapshot.", parameterName);
         }
     }
 
@@ -513,16 +452,14 @@ public static class FileOperationRecoveryEvidenceAssessor
     {
         if (actual != expected)
         {
-            throw new ArgumentException(
-                "Recovery verification results must belong to the same operation as the supplied recovery inspection.",
-                parameterName);
+            throw new ArgumentException("Recovery verification results must belong to the same operation as the supplied recovery inspection.", parameterName);
         }
     }
 
     private static string Describe(FileOperationRecoveryEvidenceAssessmentStatus status) => status switch
     {
         FileOperationRecoveryEvidenceAssessmentStatus.ObservedSubsetMatches =>
-            "All recovery evidence dimensions implemented by this assessor match their durable observations. This is only an observed-subset match and grants no mutation authority.",
+            "All recovery evidence dimensions implemented by this assessor match their durable observations. Named-stream evidence covers names and logical sizes only, not named-stream contents. This remains an observed-subset match and grants no mutation authority.",
         FileOperationRecoveryEvidenceAssessmentStatus.ObservedEvidenceChanged =>
             "At least one implemented recovery evidence dimension differs from its durable observation; the dimension masks identify the changed evidence.",
         FileOperationRecoveryEvidenceAssessmentStatus.EvidenceIncomplete =>
