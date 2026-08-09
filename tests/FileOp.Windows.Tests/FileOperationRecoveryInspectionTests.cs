@@ -147,12 +147,9 @@ public sealed class FileOperationRecoveryInspectionTests
         Assert.AreEqual(2, result.Items[0].Ordinal);
         Assert.AreEqual(1, resolver.Calls.Count);
         Assert.AreEqual(recovery.CanonicalDestinationPath, resolver.Calls[0].Path);
-        Assert.ThrowsExactly<NotSupportedException>(() =>
-            new FileOperationRecoveryInspector(resolver)
-                .InspectAsync(CreateMoveHistory())
-                .AsTask()
-                .GetAwaiter()
-                .GetResult());
+        await Assert.ThrowsExactlyAsync<NotSupportedException>(async () =>
+            await new FileOperationRecoveryInspector(resolver)
+                .InspectAsync(CreateMoveHistory()));
     }
 
     [TestMethod]
