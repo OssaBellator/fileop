@@ -23,6 +23,11 @@ public sealed class FileNamedDataStreamTopologyEvidenceTests
             new FileNamedDataStreamTopologyEvidence(2, 0, upper));
         Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
             new FileNamedDataStreamTopologyEvidence(1, -1, upper));
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            new FileNamedDataStreamTopologyEvidence(
+                1,
+                FileNamedDataStreamTopologyEvidence.MaximumNamedStreamCount + 1,
+                upper));
         Assert.ThrowsException<ArgumentException>(() =>
             new FileNamedDataStreamTopologyEvidence(1, 0, new string('z', 64)));
     }
