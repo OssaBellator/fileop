@@ -159,8 +159,14 @@ public sealed record FileOperationRecoveryEvidenceAssessment
         IEnumerable<FileOperationRecoveryEvidenceAssessmentItem> items)
     {
         ArgumentNullException.ThrowIfNull(items);
+        var snapshot = items.OrderBy(static item => item.Ordinal).ToArray();
+        if (snapshot.Select(static item => item.Ordinal).Distinct().Count() != snapshot.Length)
+        {
+            throw new ArgumentException("Recovery evidence assessments require unique entry ordinals.", nameof(items));
+        }
+
         OperationId = operationId;
-        Items = Array.AsReadOnly(items.OrderBy(static item => item.Ordinal).ToArray());
+        Items = Array.AsReadOnly(snapshot);
     }
 
     public Guid OperationId { get; }
