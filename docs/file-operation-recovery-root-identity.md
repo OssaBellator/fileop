@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Recovery evidence now distinguishes the destination **file object** from the destination **directory object** that originally contained it.
+Recovery evidence distinguishes the destination **file object** from the destination **directory object** that originally contained it.
 
 File identity plus matching primary-stream SHA-256 is not enough to prove namespace continuity. The original destination directory can be renamed/replaced and the same file object can later be moved back under the same textual path. In that case the file's canonical path, `FileIdentity` and content can all match while its parent namespace object is different.
 
-This slice records the validated source/destination root identities at the action-history `BeginAsync` boundary and adds read-only destination-root inspection. It does not add any mutation authority.
+The root-evidence layer records the validated source/destination root identities at the action-history `BeginAsync` boundary and adds read-only destination-root inspection. The later root-bound content reader consumes that evidence without adding mutation authority.
 
 ## Durable capture
 
@@ -33,7 +33,7 @@ HasVerifiedRootIdentities    = false
 
 Root identity evidence is all-or-neither. New `BeginAsync` calls reject missing root identities before the history transaction writes anything. High-bit unsigned identity values retain their exact bit pattern through SQLite's signed INTEGER representation.
 
-The source root is persisted symmetrically because it is part of the validated operation boundary, although this Copy-recovery slice consumes only destination-root evidence. No Move/source-removal recovery semantics are inferred from it.
+The source root is persisted symmetrically because it is part of the validated operation boundary, although current Copy-recovery evidence consumes only destination-root identity. No Move/source-removal recovery semantics are inferred from it.
 
 ## Read-only destination-root inspection
 
@@ -55,7 +55,7 @@ Leaf inspection still runs separately for diagnostics. This makes an important s
 
 ## Content-verification gate
 
-`FileOperationRecoveryContentVerifier` now requires all three prerequisites before calling the stable content reader:
+`FileOperationRecoveryContentVerifier` requires all three prerequisites before calling the root-bound content reader:
 
 ```text
 durable post-Copy SHA-256 exists
@@ -67,13 +67,15 @@ destination file observation == SameObject
 
 If root identity is missing or the root observation is anything other than `SameObject`, the item returns `DestinationRootNotVerified` and no file-content reader is invoked.
 
-This prevents a known replaced-root state from being silently treated as a content match. It also means legacy histories without root identity remain evidence-insufficient even when their leaf identity and SHA-256 happen to match.
+When those prerequisites pass, the verifier does **not** treat the earlier root observation as a lasting lock. It creates a `FileContentFingerprintReadRequest` containing the observed canonical root path plus durable root identity and the recorded leaf path plus durable leaf identity. `WindowsRootBoundFileContentFingerprintReader` reopens the root, verifies it again, opens the leaf relative to that root with `NtCreateFile`, and keeps both handles alive through hashing and post-read checks.
 
-## Point-in-time limitation
+This means a root replacement after metadata inspection is detected at the actual byte-read boundary as `DestinationRootChanged` rather than silently producing a matching SHA-256 from a file under a replacement directory.
 
-The destination-root observation is still **point-in-time evidence**, not a held namespace lock. The metadata resolver does not keep the root handle alive through the later main-stream read. A directory could theoretically change after root inspection and before/during later evidence collection.
+## Time-bound nature of the evidence
 
-That limitation is intentional at this stage because no destructive action is authorized. A future final recovery/Undo authorization boundary must re-open and validate the destination root and keep the namespace-binding handle alive through the actual relative operation, rather than treating an earlier `SameObject` observation as permanent authority.
+The metadata inspection itself remains **point-in-time evidence**. The root-bound reader closes the inspection-to-hash namespace gap by independently re-establishing and holding the root/leaf bindings while the content observation is made.
+
+That still does not create a durable lock for some later destructive action. Once the read handles are released, the namespace can change again. A future final recovery/Undo authorization boundary must therefore perform its own root/leaf validation and keep those handles alive through the actual relative mutation rather than reusing an earlier `SameObject` or `MatchesRecordedMainStream` result as authority.
 
 The same caution applies to hard links and other names for the file object: root identity improves namespace provenance but does not prove link topology or the absence of other names.
 
@@ -90,13 +92,14 @@ Root identity is recovery evidence only. It does not:
 
 ## Validation without hosted Actions
 
-Run the dedicated root-evidence model/source guard:
+Run the root-evidence and root-bound main-stream model/source guards:
 
 ```powershell
 python tools/verify_recovery_root_identity.py --repo-root . --cases 50000
+python tools/verify_recovery_main_stream.py --repo-root . --cases 50000
 ```
 
-It is also wired into the normal Copy offline wrappers. Windows/.NET compilation and the native integration regressions remain in the shared deferred batch:
+They are wired into the normal Copy offline wrappers. Windows/.NET compilation and native integration regressions remain in the shared deferred batch:
 
 ```bat
 tools\test-windows-copy-local.cmd
@@ -104,4 +107,4 @@ tools\test-windows-copy-local.cmd
 
 ## Next boundary
 
-The remaining destructive-recovery design work still includes non-main-stream state policy and a **final handle-bound authorization protocol**. At that future boundary, FileOp must revalidate destination-root identity and the exact leaf object under handles that remain alive through the authorized relative mutation, then require explicit user authorization. This slice stops before any such mutation.
+The remaining destructive-recovery design work still includes non-main-stream state policy and a **final handle-bound authorization protocol**. At that future boundary, FileOp must revalidate destination-root identity and the exact leaf object under handles that remain alive through the authorized relative mutation, then require explicit user authorization. The current recovery readers stop before any such mutation.
