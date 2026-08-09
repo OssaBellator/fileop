@@ -36,6 +36,7 @@ public sealed class FileCopyOperationExecutorTests
         Assert.AreEqual(@"D:\Real\Destination", mutation.LastRequest.DestinationDirectory.CanonicalPath);
         Assert.AreEqual(new FileIdentity(1, 10), mutation.LastRequest.SourceDirectory.Identity);
         Assert.AreEqual(new FileIdentity(2, 20), mutation.LastRequest.DestinationDirectory.Identity);
+        Assert.AreEqual(CreateFingerprint(), history.LastCommitDestinationContentFingerprint);
     }
 
     [TestMethod]
@@ -80,6 +81,7 @@ public sealed class FileCopyOperationExecutorTests
         Assert.AreEqual("CopyCommitBarrierFailed", result.Failure?.Code);
         Assert.AreEqual(0, result.CompletedEntryCount);
         Assert.AreEqual(new FileIdentity(3, 500), history.LastRecoveryDestinationIdentity);
+        Assert.AreEqual(CreateFingerprint(), history.LastRecoveryDestinationContentFingerprint);
         Assert.IsTrue(IndexOf(events, "history:recovery:0") < IndexOf(events, "lease:dispose"));
         Assert.IsTrue(IndexOf(events, "history:complete:RecoveryRequired") < IndexOf(events, "lease:dispose"));
     }
@@ -100,7 +102,29 @@ public sealed class FileCopyOperationExecutorTests
         Assert.AreEqual(FileOperationExecutionState.Failed, result.State);
         Assert.AreEqual("CopyMutationReceiptInvalid", result.Failure?.Code);
         Assert.IsNull(history.LastRecoveryDestinationIdentity);
+        Assert.IsNull(history.LastRecoveryDestinationContentFingerprint);
         Assert.IsTrue(IndexOf(events, "history:recovery:0") < IndexOf(events, "lease:dispose"));
+    }
+
+    [TestMethod]
+    public async Task MissingFingerprintReceiptIsRejectedWithoutTrustedRecoveryEvidence()
+    {
+        var events = new List<string>();
+        var plan = CreatePlan(1);
+        var validator = new FakeValidator((candidate, _) => ValueTask.FromResult(CreateValidation(candidate)));
+        var history = new RecordingHistoryStore(events);
+        var mutation = new FakeMutation(item => ValueTask.FromResult<IFileCopyMutationLease>(
+            new FakeLease(CreateReceipt(item) with { DestinationContentFingerprint = null }, events)));
+        var executor = new FileCopyOperationExecutor(validator, history, mutation);
+
+        var result = await executor.ExecuteAsync(plan, new RecordingProgress(events));
+
+        Assert.AreEqual(FileOperationExecutionState.Failed, result.State);
+        Assert.AreEqual("CopyMutationReceiptInvalid", result.Failure?.Code);
+        Assert.IsNull(history.LastRecoveryDestinationIdentity);
+        Assert.IsNull(history.LastRecoveryDestinationContentFingerprint);
+        Assert.IsFalse(events.Contains("history:commit:0"));
+        Assert.IsTrue(events.Contains("history:recovery:0"));
     }
 
     [TestMethod]
@@ -118,6 +142,7 @@ public sealed class FileCopyOperationExecutorTests
         Assert.AreEqual(FileOperationExecutionState.Failed, result.State);
         Assert.AreEqual("CopyMutationFailed", result.Failure?.Code);
         Assert.IsNull(history.LastRecoveryDestinationIdentity);
+        Assert.IsNull(history.LastRecoveryDestinationContentFingerprint);
         Assert.IsTrue(events.Contains("history:recovery:0"));
     }
 
@@ -222,6 +247,11 @@ public sealed class FileCopyOperationExecutorTests
         return -1;
     }
 
+    private static FileContentFingerprint CreateFingerprint() =>
+        new(
+            FileContentFingerprintAlgorithm.Sha256,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+
     private static FileOperationPlan CreatePlan(
         int entryCount,
         bool firstIsDirectory = false,
@@ -301,7 +331,8 @@ public sealed class FileCopyOperationExecutorTests
             item.Source.CanonicalPath,
             item.Destination.CanonicalPath,
             item.Source.Identity ?? throw new InvalidOperationException("Missing source identity."),
-            new FileIdentity(3, 500));
+            new FileIdentity(3, 500),
+            CreateFingerprint());
 
     private sealed class FakeValidator : IFileOperationExecutionValidator
     {
@@ -381,7 +412,11 @@ public sealed class FileCopyOperationExecutorTests
 
         public bool ThrowOnCommit { get; set; }
 
+        public FileContentFingerprint? LastCommitDestinationContentFingerprint { get; private set; }
+
         public FileIdentity? LastRecoveryDestinationIdentity { get; private set; }
+
+        public FileContentFingerprint? LastRecoveryDestinationContentFingerprint { get; private set; }
 
         public ValueTask<FileOperationActionHistory> BeginAsync(
             FileOperationExecutionValidationResult validation,
@@ -445,10 +480,12 @@ public sealed class FileCopyOperationExecutorTests
             Guid operationId,
             int ordinal,
             FileIdentity destinationIdentity,
+            FileContentFingerprint destinationContentFingerprint,
             DateTimeOffset committedAtUtc,
             CancellationToken cancellationToken = default)
         {
             _events.Add($"history:commit:{ordinal}");
+            LastCommitDestinationContentFingerprint = destinationContentFingerprint;
             if (ThrowOnCommit)
             {
                 throw new IOException("history commit failed");
@@ -463,10 +500,12 @@ public sealed class FileCopyOperationExecutorTests
             FileOperationFailure failure,
             DateTimeOffset failedAtUtc,
             CancellationToken cancellationToken = default,
-            FileIdentity? destinationIdentity = null)
+            FileIdentity? destinationIdentity = null,
+            FileContentFingerprint? destinationContentFingerprint = null)
         {
             _events.Add($"history:recovery:{ordinal}");
             LastRecoveryDestinationIdentity = destinationIdentity;
+            LastRecoveryDestinationContentFingerprint = destinationContentFingerprint;
             return Current();
         }
 

@@ -189,10 +189,12 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         Guid operationId,
         int ordinal,
         FileIdentity destinationIdentity,
+        FileContentFingerprint destinationContentFingerprint,
         DateTimeOffset committedAtUtc,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(destinationContentFingerprint);
         ValidateOrdinal(ordinal);
         var operationKey = FormatOperationId(operationId);
         var committedAt = NormalizeUtc(committedAtUtc);
@@ -249,6 +251,14 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                     "A Copy entry can be committed only once, after MutationStarted, while its operation remains active.");
             }
 
+            await PersistDestinationContentFingerprintAsync(
+                connection,
+                transaction,
+                operationKey,
+                ordinal,
+                destinationContentFingerprint,
+                cancellationToken).ConfigureAwait(false);
+
             var history = await LoadRequiredAsync(
                 connection,
                 operationId,
@@ -269,11 +279,18 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         FileOperationFailure failure,
         DateTimeOffset failedAtUtc,
         CancellationToken cancellationToken = default,
-        FileIdentity? destinationIdentity = null)
+        FileIdentity? destinationIdentity = null,
+        FileContentFingerprint? destinationContentFingerprint = null)
     {
         ThrowIfDisposed();
         ValidateFailure(failure);
         ValidateOrdinal(ordinal);
+        if (destinationIdentity.HasValue != (destinationContentFingerprint is not null))
+        {
+            throw new ArgumentException(
+                "Verified recovery evidence requires both destination identity and content fingerprint, or neither.");
+        }
+
         var operationKey = FormatOperationId(operationId);
         var failedAt = NormalizeUtc(failedAtUtc);
 
@@ -332,6 +349,17 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             {
                 throw new InvalidOperationException(
                     "A Copy entry can require recovery only after MutationStarted while its operation remains active.");
+            }
+
+            if (destinationContentFingerprint is not null)
+            {
+                await PersistDestinationContentFingerprintAsync(
+                    connection,
+                    transaction,
+                    operationKey,
+                    ordinal,
+                    destinationContentFingerprint,
+                    cancellationToken).ConfigureAwait(false);
             }
 
             var history = await LoadRequiredAsync(
@@ -649,6 +677,17 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 failure_retryable INTEGER NULL CHECK(failure_retryable IS NULL OR failure_retryable IN (0, 1)),
                 PRIMARY KEY(operation_id, ordinal),
                 FOREIGN KEY(operation_id) REFERENCES file_operation_actions(operation_id) ON DELETE CASCADE
+            ) WITHOUT ROWID;
+
+            CREATE TABLE IF NOT EXISTS file_operation_action_entry_content_fingerprints(
+                operation_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+                algorithm INTEGER NOT NULL CHECK(algorithm = 1),
+                digest_hex TEXT NOT NULL CHECK(length(digest_hex) = 64),
+                PRIMARY KEY(operation_id, ordinal),
+                FOREIGN KEY(operation_id, ordinal)
+                    REFERENCES file_operation_action_entries(operation_id, ordinal)
+                    ON DELETE CASCADE
             ) WITHOUT ROWID;
             """;
         command.ExecuteNonQuery();
@@ -969,6 +1008,39 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             : DBNull.Value;
     }
 
+    private static async ValueTask PersistDestinationContentFingerprintAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string operationKey,
+        int ordinal,
+        FileContentFingerprint fingerprint,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO file_operation_action_entry_content_fingerprints(
+                operation_id,
+                ordinal,
+                algorithm,
+                digest_hex)
+            VALUES(
+                @operation_id,
+                @ordinal,
+                @algorithm,
+                @digest_hex);
+            """;
+        command.Parameters.AddWithValue("@operation_id", operationKey);
+        command.Parameters.AddWithValue("@ordinal", ordinal);
+        command.Parameters.AddWithValue("@algorithm", (int)fingerprint.Algorithm);
+        command.Parameters.AddWithValue("@digest_hex", fingerprint.HexDigest);
+        var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        if (changed != 1)
+        {
+            throw new InvalidOperationException("Destination content fingerprint persistence did not write exactly one row.");
+        }
+    }
+
     private async ValueTask<FileOperationActionHistory> LoadRequiredAsync(
         SqliteConnection connection,
         Guid operationId,
@@ -1042,27 +1114,32 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         entriesCommand.Transaction = transaction;
         entriesCommand.CommandText = """
             SELECT
-                ordinal,
-                source_path,
-                source_name,
-                is_directory,
-                canonical_source_path,
-                canonical_destination_path,
-                state,
-                mutation_started_utc_ticks,
-                completed_utc_ticks,
-                source_volume_serial,
-                source_file_reference,
-                destination_volume_serial,
-                destination_file_reference,
-                undo_kind,
-                failure_code,
-                failure_message,
-                failure_path,
-                failure_retryable
-            FROM file_operation_action_entries
-            WHERE operation_id = @operation_id
-            ORDER BY ordinal;
+                entry.ordinal,
+                entry.source_path,
+                entry.source_name,
+                entry.is_directory,
+                entry.canonical_source_path,
+                entry.canonical_destination_path,
+                entry.state,
+                entry.mutation_started_utc_ticks,
+                entry.completed_utc_ticks,
+                entry.source_volume_serial,
+                entry.source_file_reference,
+                entry.destination_volume_serial,
+                entry.destination_file_reference,
+                entry.undo_kind,
+                entry.failure_code,
+                entry.failure_message,
+                entry.failure_path,
+                entry.failure_retryable,
+                fingerprint.algorithm,
+                fingerprint.digest_hex
+            FROM file_operation_action_entries AS entry
+            LEFT JOIN file_operation_action_entry_content_fingerprints AS fingerprint
+              ON fingerprint.operation_id = entry.operation_id
+             AND fingerprint.ordinal = entry.ordinal
+            WHERE entry.operation_id = @operation_id
+            ORDER BY entry.ordinal;
             """;
         entriesCommand.Parameters.AddWithValue("@operation_id", operationKey);
 
@@ -1086,7 +1163,8 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                     ReadIdentity(reader, 9, 10),
                     ReadIdentity(reader, 11, 12),
                     ReadEnum<FileOperationUndoKind>(reader.GetInt64(13), "undo kind"),
-                    ReadFailure(reader, 14)));
+                    ReadFailure(reader, 14),
+                    ReadContentFingerprint(reader, 18, 19)));
             }
         }
 
@@ -1132,6 +1210,15 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 string.IsNullOrWhiteSpace(entry.CanonicalDestinationPath))
             {
                 throw new InvalidDataException("Persisted action-history entry paths are invalid.");
+            }
+
+            if (entry.DestinationContentFingerprint is not null &&
+                (entry.State is not FileOperationActionEntryState.Committed and
+                    not FileOperationActionEntryState.RecoveryRequired ||
+                 !entry.DestinationIdentity.HasValue))
+            {
+                throw new InvalidDataException(
+                    "Persisted content fingerprint evidence requires a committed/recovery Copy destination identity.");
             }
 
             switch (entry.State)
@@ -1266,6 +1353,36 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             retryable);
         ValidatePersistedFailure(failure);
         return failure;
+    }
+
+    private static FileContentFingerprint? ReadContentFingerprint(
+        SqliteDataReader reader,
+        int algorithmOrdinal,
+        int digestOrdinal)
+    {
+        var hasAlgorithm = !reader.IsDBNull(algorithmOrdinal);
+        var hasDigest = !reader.IsDBNull(digestOrdinal);
+        if (hasAlgorithm != hasDigest)
+        {
+            throw new InvalidDataException("Persisted destination content fingerprint is incomplete.");
+        }
+
+        if (!hasAlgorithm)
+        {
+            return null;
+        }
+
+        var algorithm = ReadEnum<FileContentFingerprintAlgorithm>(
+            reader.GetInt64(algorithmOrdinal),
+            "content fingerprint algorithm");
+        try
+        {
+            return new FileContentFingerprint(algorithm, reader.GetString(digestOrdinal));
+        }
+        catch (ArgumentException exception)
+        {
+            throw new InvalidDataException("Persisted destination content fingerprint is invalid.", exception);
+        }
     }
 
     private static FileIdentity? ReadIdentity(

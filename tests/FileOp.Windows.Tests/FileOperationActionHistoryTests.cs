@@ -14,11 +14,12 @@ namespace FileOp.Windows.Tests;
 public sealed class FileOperationActionHistoryTests
 {
     [TestMethod]
-    public async Task CopyCommitPersistsUndoCandidateAndHighBitIdentity()
+    public async Task CopyCommitPersistsUndoCandidateHighBitIdentityAndFingerprint()
     {
         using var fixture = new HistoryFixture();
         var validation = CreateValidation(includeSkippedEntry: true);
         var destinationIdentity = new FileIdentity(ulong.MaxValue - 17, ulong.MaxValue - 31);
+        var fingerprint = CreateFingerprint('a');
 
         using (var store = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath))
         {
@@ -28,15 +29,18 @@ public sealed class FileOperationActionHistoryTests
 
             var started = await store.MarkMutationStartedAsync(validation.Plan.Id, 0, DateTimeOffset.UtcNow);
             Assert.IsTrue(started.RequiresRecovery);
+            Assert.IsNull(started.Entries[0].DestinationContentFingerprint);
 
             var committed = await store.CommitCopyAsync(
                 validation.Plan.Id,
                 0,
                 destinationIdentity,
+                fingerprint,
                 DateTimeOffset.UtcNow);
             Assert.IsFalse(committed.RequiresRecovery);
             Assert.AreEqual(FileOperationActionEntryState.Committed, committed.Entries[0].State);
             Assert.AreEqual(destinationIdentity, committed.Entries[0].DestinationIdentity);
+            Assert.AreEqual(fingerprint, committed.Entries[0].DestinationContentFingerprint);
             Assert.IsTrue(committed.Entries[0].IsUndoCandidate);
 
             await store.CompleteAsync(
@@ -51,14 +55,16 @@ public sealed class FileOperationActionHistoryTests
         Assert.AreEqual(FileOperationActionTerminalState.Succeeded, persisted.TerminalState);
         Assert.AreEqual(1, persisted.UndoCandidateEntries.Count);
         Assert.AreEqual(destinationIdentity, persisted.UndoCandidateEntries[0].DestinationIdentity);
+        Assert.AreEqual(fingerprint, persisted.UndoCandidateEntries[0].DestinationContentFingerprint);
     }
 
     [TestMethod]
-    public async Task RecoveryRequiredPersistsVerifiedDestinationIdentityWithoutUndoCandidate()
+    public async Task RecoveryRequiredPersistsVerifiedDestinationIdentityAndFingerprintWithoutUndoCandidate()
     {
         using var fixture = new HistoryFixture();
         var validation = CreateValidation(includeSkippedEntry: false);
         var destinationIdentity = new FileIdentity(ulong.MaxValue - 41, ulong.MaxValue - 59);
+        var fingerprint = CreateFingerprint('b');
         var failure = new FileOperationFailure(
             "CopyCommitBarrierFailed",
             "Copy completed but durable commit persistence failed.",
@@ -74,10 +80,12 @@ public sealed class FileOperationActionHistoryTests
                 0,
                 failure,
                 DateTimeOffset.UtcNow,
-                destinationIdentity: destinationIdentity);
+                destinationIdentity: destinationIdentity,
+                destinationContentFingerprint: fingerprint);
 
             Assert.AreEqual(FileOperationActionEntryState.RecoveryRequired, recovered.Entries[0].State);
             Assert.AreEqual(destinationIdentity, recovered.Entries[0].DestinationIdentity);
+            Assert.AreEqual(fingerprint, recovered.Entries[0].DestinationContentFingerprint);
             Assert.AreEqual(FileOperationUndoKind.None, recovered.Entries[0].UndoKind);
             Assert.IsFalse(recovered.Entries[0].IsUndoCandidate);
             Assert.AreEqual(failure, recovered.Entries[0].Failure);
@@ -93,12 +101,13 @@ public sealed class FileOperationActionHistoryTests
         Assert.IsNotNull(persisted);
         Assert.AreEqual(FileOperationActionTerminalState.RecoveryRequired, persisted.TerminalState);
         Assert.AreEqual(destinationIdentity, persisted.Entries[0].DestinationIdentity);
+        Assert.AreEqual(fingerprint, persisted.Entries[0].DestinationContentFingerprint);
         Assert.AreEqual(FileOperationUndoKind.None, persisted.Entries[0].UndoKind);
         Assert.AreEqual(0, persisted.UndoCandidateEntries.Count);
     }
 
     [TestMethod]
-    public async Task RecoveryRequiredWithoutVerifiedIdentityRemainsIdentityless()
+    public async Task RecoveryRequiredWithoutVerifiedEvidenceRemainsEvidenceFree()
     {
         using var fixture = new HistoryFixture();
         var validation = CreateValidation(includeSkippedEntry: false);
@@ -119,8 +128,90 @@ public sealed class FileOperationActionHistoryTests
 
         Assert.AreEqual(FileOperationActionEntryState.RecoveryRequired, recovered.Entries[0].State);
         Assert.IsNull(recovered.Entries[0].DestinationIdentity);
+        Assert.IsNull(recovered.Entries[0].DestinationContentFingerprint);
         Assert.AreEqual(FileOperationUndoKind.None, recovered.Entries[0].UndoKind);
         Assert.IsFalse(recovered.Entries[0].IsUndoCandidate);
+    }
+
+    [TestMethod]
+    public async Task RecoveryEvidenceRejectsHalfPairedIdentityAndFingerprint()
+    {
+        using var fixture = new HistoryFixture();
+        var validation = CreateValidation(includeSkippedEntry: false);
+        var identity = new FileIdentity(5, 50);
+        var fingerprint = CreateFingerprint('c');
+        var failure = new FileOperationFailure(
+            "CopyCommitBarrierFailed",
+            "fixture",
+            validation.Items[0].Destination.CanonicalPath,
+            Retryable: false);
+
+        using var store = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath);
+        await store.BeginAsync(validation, DateTimeOffset.UtcNow);
+        await store.MarkMutationStartedAsync(validation.Plan.Id, 0, DateTimeOffset.UtcNow);
+
+        await Assert.ThrowsExactlyAsync<ArgumentException>(async () =>
+            await store.MarkMutationRecoveryRequiredAsync(
+                validation.Plan.Id,
+                0,
+                failure,
+                DateTimeOffset.UtcNow,
+                destinationIdentity: identity));
+        await Assert.ThrowsExactlyAsync<ArgumentException>(async () =>
+            await store.MarkMutationRecoveryRequiredAsync(
+                validation.Plan.Id,
+                0,
+                failure,
+                DateTimeOffset.UtcNow,
+                destinationContentFingerprint: fingerprint));
+
+        var stillStarted = await store.GetAsync(validation.Plan.Id);
+        Assert.IsNotNull(stillStarted);
+        Assert.AreEqual(FileOperationActionEntryState.MutationStarted, stillStarted.Entries[0].State);
+        Assert.IsNull(stillStarted.Entries[0].DestinationIdentity);
+        Assert.IsNull(stillStarted.Entries[0].DestinationContentFingerprint);
+    }
+
+    [TestMethod]
+    public async Task LegacyCommittedRowWithoutFingerprintRemainsReadable()
+    {
+        using var fixture = new HistoryFixture();
+        var validation = CreateValidation(includeSkippedEntry: false);
+        var identity = new FileIdentity(7, 70);
+        var fingerprint = CreateFingerprint('d');
+
+        using (var store = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath))
+        {
+            await store.BeginAsync(validation, DateTimeOffset.UtcNow);
+            await store.MarkMutationStartedAsync(validation.Plan.Id, 0, DateTimeOffset.UtcNow);
+            await store.CommitCopyAsync(
+                validation.Plan.Id,
+                0,
+                identity,
+                fingerprint,
+                DateTimeOffset.UtcNow);
+            await store.CompleteAsync(
+                validation.Plan.Id,
+                FileOperationActionTerminalState.Succeeded,
+                DateTimeOffset.UtcNow);
+        }
+
+        SqliteConnection.ClearAllPools();
+        await using (var connection = new SqliteConnection($"Data Source={fixture.DatabasePath}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM file_operation_action_entry_content_fingerprints;";
+            Assert.AreEqual(1, await command.ExecuteNonQueryAsync());
+        }
+
+        using var reopened = new SqliteFileOperationActionHistoryStore(fixture.DatabasePath);
+        var legacy = await reopened.GetAsync(validation.Plan.Id);
+        Assert.IsNotNull(legacy);
+        Assert.AreEqual(FileOperationActionEntryState.Committed, legacy.Entries[0].State);
+        Assert.AreEqual(identity, legacy.Entries[0].DestinationIdentity);
+        Assert.IsNull(legacy.Entries[0].DestinationContentFingerprint);
+        Assert.IsTrue(legacy.Entries[0].IsUndoCandidate);
     }
 
     [TestMethod]
@@ -141,6 +232,7 @@ public sealed class FileOperationActionHistoryTests
         Assert.IsTrue(persisted.RequiresRecovery);
         Assert.IsNull(persisted.TerminalState);
         Assert.AreEqual(FileOperationActionEntryState.MutationStarted, persisted.Entries[0].State);
+        Assert.IsNull(persisted.Entries[0].DestinationContentFingerprint);
 
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(async () =>
             await reopened.CompleteAsync(
@@ -154,6 +246,7 @@ public sealed class FileOperationActionHistoryTests
             DateTimeOffset.UtcNow);
         Assert.AreEqual(FileOperationActionEntryState.RecoveryRequired, recovered.Entries[0].State);
         Assert.IsTrue(recovered.RequiresRecovery);
+        Assert.IsNull(recovered.Entries[0].DestinationContentFingerprint);
     }
 
     [TestMethod]
@@ -178,6 +271,7 @@ public sealed class FileOperationActionHistoryTests
         Assert.IsFalse(failed.RequiresRecovery);
         Assert.AreEqual(FileOperationActionEntryState.Failed, failed.Entries[0].State);
         Assert.AreEqual(failure, failed.Entries[0].Failure);
+        Assert.IsNull(failed.Entries[0].DestinationContentFingerprint);
 
         var terminal = await store.CompleteAsync(
             validation.Plan.Id,
@@ -261,6 +355,9 @@ public sealed class FileOperationActionHistoryTests
         Assert.AreEqual(1, history.Entries.Count);
         Assert.AreEqual(entry, history.Entries[0]);
     }
+
+    private static FileContentFingerprint CreateFingerprint(char character) =>
+        new(FileContentFingerprintAlgorithm.Sha256, new string(character, 64));
 
     private static FileOperationExecutionValidationResult CreateValidation(
         bool includeSkippedEntry,

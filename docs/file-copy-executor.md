@@ -8,27 +8,25 @@ The mutation path does not use path-only `File.Copy`. The executor passes a `Fil
 
 ## Mutation request and lease
 
-A mutation request carries:
+A mutation request carries the freshly validated file item plus the fresh canonical source/destination directory objects and stable identities.
 
-- the freshly validated `FileOperationExecutionValidationItem`;
-- the fresh canonical source-directory path and stable identity;
-- the fresh canonical destination-directory path and stable identity.
-
-The primitive returns `IFileCopyMutationLease`, not a bare receipt. The lease exposes the immutable `FileCopyMutationReceipt` while retaining the source directory, destination directory, source file and created destination handles until the executor has:
+The primitive returns `IFileCopyMutationLease`, not a bare receipt. The lease exposes the immutable `FileCopyMutationReceipt` while retaining source/destination directory and file handles until the executor has:
 
 ```text
-validated the receipt
+validated receipt identity/path + SHA-256 evidence
         ↓
-durably CommitCopy(destination identity)
+durably CommitCopy(destination identity + fingerprint)
         ↓
 reported progress
         ↓
 released the mutation lease
 ```
 
+A production receipt is valid only when it contains the freshly validated source/path provenance, a distinct created destination identity, and a valid SHA-256 `DestinationContentFingerprint`.
+
 If receipt validation or durable Copy commit fails, the executor records `RecoveryRequired` while the lease is still held, then releases it. Lease disposal is cleanup rather than a durable state transition.
 
-If the receipt has already passed executor validation and only `CommitCopyAsync` fails, the executor also persists that receipt's exact destination `FileIdentity` on the recovery entry. Earlier mutation, missing-lease and invalid-receipt failures do not have trusted destination identity evidence and therefore persist recovery without one.
+If the receipt has already passed executor validation and only `CommitCopyAsync` fails, the executor persists that receipt's exact destination `FileIdentity` and content fingerprint together on the recovery entry. Earlier mutation, missing-lease and invalid-receipt failures persist neither proof.
 
 ## Ordering
 
@@ -49,14 +47,17 @@ for each entry
        ↓ compare source identity/path and destination canonical path
        ↓ cancellation safe-boundary check
        ↓ durable MarkMutationStarted
-       ↓ build FileCopyMutationRequest from fresh item + fresh roots
        ↓ acquire identity-bound Windows Copy mutation lease
        ↓ suppress automatic destination access/write timestamp updates
-       ↓ copy bytes through bound handles + flush data
-       ↓ apply supported basic metadata through the destination handle + flush metadata
-       ↓ read + validate receipt
-       ↓ durable CommitCopy(destination identity)
-          └─ on commit failure, persist RecoveryRequired + verified receipt identity
+       ↓ copy bytes through bound handles
+          └─ after each read chunk is fully written, append it to SHA-256
+       ↓ flush copied data
+       ↓ apply supported basic metadata through destination handle + flush metadata
+       ↓ validate created destination identity
+       ↓ return receipt with destination identity + SHA-256 fingerprint
+       ↓ executor validates receipt
+       ↓ durable CommitCopy(identity + fingerprint)
+          └─ on commit failure, persist RecoveryRequired + same verified evidence pair
        ↓ report progress
        ↓ release mutation lease
        ↓ cancellation safe-boundary check
@@ -76,15 +77,15 @@ A request arriving after the final file has durably committed settles as success
 
 ## Revalidation and native binding
 
-The validator must return the exact plan instance requested. Fresh one-file validation must remain `Ready` with a missing destination and preserve the canonical source/destination root paths and identities, source file path and identity, and destination canonical path.
+The validator must return the exact plan instance requested. Fresh one-file validation must remain `Ready` with a missing destination and preserve canonical roots, source path/identity and destination canonical path.
 
 The executor passes those fresh roots directly to the mutation primitive. The Windows primitive reopens each canonical parent, verifies final path and `FileIdentity`, opens the source relative to the verified source-directory handle, and exclusively creates the destination relative to the verified destination-directory handle. A root swap, source replacement or destination collision after validation therefore fails conservatively rather than silently redirecting or overwriting the Copy.
 
-Destination creation requests `FILE_WRITE_THROUGH`. FileOp suppresses automatic last-access/last-write updates on the destination handle before byte I/O, flushes copied data, applies the supported source basic metadata through that same destination handle, flushes again, and only then validates the destination identity. The mutation receipt must repeat the freshly validated source/destination canonical paths and source identity and provide a different destination identity.
+Destination creation requests `FILE_WRITE_THROUGH`. FileOp suppresses automatic last-access/last-write updates before byte I/O. The content fingerprint is computed from exactly the logical bytes successfully written through that same bound stream; there is no second path-based destination read. FileOp then flushes data, applies the supported source basic metadata through the same destination handle, flushes again, validates destination identity, and returns the receipt while all binding handles remain leased.
 
 ## Basic metadata scope
 
-The Windows primitive now preserves the deliberately narrow basic-metadata subset established by the merged metadata slice:
+The Windows primitive preserves the deliberately narrow basic-metadata subset established by the merged metadata slice:
 
 - creation time;
 - last-access time;
@@ -97,17 +98,15 @@ The Windows primitive now preserves the deliberately narrow basic-metadata subse
 
 Destination-owned `Temporary` and `Offline` values are retained when safe source attributes are overlaid. Compression, sparse, encryption, integrity, reparse semantics, ACLs, alternate data streams and extended attributes are not copied by this basic-metadata layer. Directory Copy remains unsupported.
 
-## Recovery
+## Recovery and content evidence
 
 After `MutationStarted`, native mutation failure, a missing/invalid mutation lease or receipt, or durable Copy-commit failure is recovery-sensitive. The executor attempts to persist entry and operation `RecoveryRequired`. If those follow-up writes also fail, the earlier durable `MutationStarted` record remains the restart-time signal that filesystem effects are uncertain.
 
-A validated mutation receipt is a stronger boundary. If `CommitCopyAsync` fails after that receipt has passed path/source/destination identity validation, the executor persists its destination `FileIdentity` with the recovery entry. That identity is **recovery evidence only**. The entry remains `RecoveryRequired`, keeps `UndoKind.None`, and is never an `IsUndoCandidate`.
+A validated mutation receipt is a stronger boundary. If `CommitCopyAsync` fails after path/source/destination identity and SHA-256 evidence validation, the executor persists destination identity + fingerprint together. That pair is **recovery evidence only**. The entry remains `RecoveryRequired`, keeps `UndoKind.None`, and is never an `IsUndoCandidate`.
 
-`FileOperationRecoveryInspector` now consumes this history through the existing metadata-only canonical resolver. It can report whether a recovery-sensitive destination is missing, still resolves to the recorded identity/location, names a different object, has been redirected, is a reparse leaf, changed type, or cannot be inspected. It performs no mutation and exposes no delete/Undo authorization.
+`FileOperationRecoveryInspector` can report whether a recovery-sensitive destination still resolves to the recorded object/location. It does not yet hash the current destination. A `SameObject` observation plus stored post-Copy SHA-256 still is **not a complete no-user-change proof** until FileOp performs a race-resistant current-file comparison and deliberately handles non-content changes.
 
-A `SameObject` observation still does not prove that the file was left unchanged after Copy. Identity/location is only one prerequisite for a future destructive recovery path; a no-user-change proof and explicit user-facing authorization are still required.
-
-Primitive failure, a missing lease, receipt access failure, or an invalid receipt never supplies destination identity to recovery. Those paths have not established trusted destination identity provenance.
+Primitive failure, missing lease, receipt access failure or invalid receipt never supplies verified identity/fingerprint evidence to recovery.
 
 A pre-mutation revalidation failure instead records ordinary `Failed`, because the mutation barrier was never crossed.
 
@@ -115,7 +114,7 @@ A pre-mutation revalidation failure instead records ordinary `Failed`, because t
 
 The executor rejects Move, directories, empty plans, unresolved/blocked validation and mismatched validator results. Initial Skip files never invoke the mutation primitive. Replace/overwrite remains absent.
 
-The Files UI still does not instantiate or call `FileCopyOperationExecutor`, so the production Copy pipeline remains unreachable from normal application interaction. Directory Copy, Move and actual Undo remain out of scope.
+Neither a destination identity nor a content fingerprint is delete/Undo authorization. The Files UI still does not instantiate or call `FileCopyOperationExecutor`, so the production Copy pipeline remains unreachable from normal application interaction. Directory Copy, Move and actual Undo remain out of scope.
 
 ## Validation without hosted Actions
 
@@ -125,16 +124,16 @@ Run the focused zero-Actions gate:
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-The wrapper runs the existing offline suite, read-only recovery inspection model, executor lease-orchestration model, action-history persistence model, Windows mutation handle/root-binding model, metadata semantics and ABI guards without requiring hosted GitHub Actions.
+The wrapper runs action-history, recovery inspection, SHA-256 content evidence, executor orchestration, Windows handle-binding, metadata semantics and ABI guards without hosted GitHub Actions.
 
-On Windows with Python and .NET 10, run the focused compiler/native gate:
+On Windows with Python and .NET 10, run:
 
 ```bat
 tools\test-windows-copy-local.cmd
 ```
 
-That gate compiles Core/Windows and runs the focused action-history, recovery-inspection, Copy executor and native Windows regressions.
+That gate compiles Core/Windows and runs the focused action-history, recovery-inspection, Copy executor and native Windows regressions, including multi-chunk and zero-byte fingerprint checks.
 
 ## Next boundary
 
-Recovery inspection now establishes whether durable identity/location evidence still matches without mutating anything. The next destructive recovery/Undo boundary must add a no-user-change proof, explicit recovery policy and user-facing authorization before deletion or replacement can occur. Identity evidence alone must never become destructive authority.
+The next safe recovery slice should combine `SameObject` identity/location inspection with an identity-bound **read** handle and compare the current main-stream SHA-256 against durable post-Copy evidence. That verifier must remain read-only. Metadata/ACL/ADS/EA policy and explicit user authorization are still required before any destructive recovery or Undo operation.

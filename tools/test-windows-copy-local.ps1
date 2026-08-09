@@ -55,6 +55,7 @@ Invoke-Step "FileOp.Windows Release build" {
 }
 
 $filter = @(
+    "FullyQualifiedName~FileContentFingerprintTests",
     "FullyQualifiedName~FileOperationActionHistoryTests",
     "FullyQualifiedName~FileOperationRecoveryInspectionTests",
     "FullyQualifiedName~FileCopyOperationExecutorTests",
@@ -63,7 +64,7 @@ $filter = @(
     "FullyQualifiedName~WindowsFileCopyBasicMetadataInteropTests"
 ) -join "|"
 
-Invoke-Step "Focused action-history/recovery/Copy native regressions" {
+Invoke-Step "Focused action-history/recovery/fingerprint/Copy native regressions" {
     dotnet test tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj `
         --configuration Release `
         --filter $filter

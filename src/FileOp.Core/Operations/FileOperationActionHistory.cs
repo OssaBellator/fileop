@@ -42,7 +42,8 @@ public sealed record FileOperationActionEntry(
     FileIdentity? SourceIdentity,
     FileIdentity? DestinationIdentity,
     FileOperationUndoKind UndoKind,
-    FileOperationFailure? Failure)
+    FileOperationFailure? Failure,
+    FileContentFingerprint? DestinationContentFingerprint = null)
 {
     public bool IsUndoCandidate =>
         !Entry.IsDirectory &&
@@ -154,6 +155,7 @@ public interface IFileOperationActionHistoryStore
         Guid operationId,
         int ordinal,
         FileIdentity destinationIdentity,
+        FileContentFingerprint destinationContentFingerprint,
         DateTimeOffset committedAtUtc,
         CancellationToken cancellationToken = default);
 
@@ -163,7 +165,8 @@ public interface IFileOperationActionHistoryStore
         FileOperationFailure failure,
         DateTimeOffset failedAtUtc,
         CancellationToken cancellationToken = default,
-        FileIdentity? destinationIdentity = null);
+        FileIdentity? destinationIdentity = null,
+        FileContentFingerprint? destinationContentFingerprint = null);
 
     ValueTask<FileOperationActionHistory> CompleteAsync(
         Guid operationId,

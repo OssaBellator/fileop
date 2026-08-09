@@ -23,6 +23,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "Read-only Copy recovery inspection verification failed with exit code $LASTEXITCODE."
 }
 
+python tools/verify_copy_content_fingerprint.py --repo-root $repoRoot --cases 20000
+if ($LASTEXITCODE -ne 0) {
+    throw "Copy content fingerprint evidence verification failed with exit code $LASTEXITCODE."
+}
+
 python tools/verify_file_copy_executor.py --repo-root $repoRoot --cases 20000
 if ($LASTEXITCODE -ne 0) {
     throw "File Copy executor verification failed with exit code $LASTEXITCODE."
@@ -48,4 +53,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "Copy basic metadata ABI verification failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "`nPASS: Copy executor, recovery inspection, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green
+Write-Host "`nPASS: Copy executor, recovery inspection, content fingerprint evidence, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green

@@ -34,6 +34,7 @@ def run_model(cases: int) -> int:
         directories = [rng.random() < 0.2 for _ in range(count)]
         states = [Entry.SKIPPED if d or rng.random() < 0.25 else Entry.PENDING for d in directories]
         destination_identity = [False] * count
+        content_fingerprint = [False] * count
         undo_candidate = [False] * count
         for index, state in enumerate(states):
             if state == Entry.SKIPPED:
@@ -46,10 +47,13 @@ def run_model(cases: int) -> int:
                 if action == "commit":
                     states[index] = Entry.COMMITTED
                     destination_identity[index] = True
+                    content_fingerprint[index] = True
                     undo_candidate[index] = True
                 elif action == "recovery":
                     states[index] = Entry.RECOVERY
-                    destination_identity[index] = rng.random() < 0.5
+                    verified = rng.random() < 0.5
+                    destination_identity[index] = verified
+                    content_fingerprint[index] = verified
             checks += 1
 
         ambiguous = any(state in (Entry.STARTED, Entry.RECOVERY) for state in states)
@@ -67,13 +71,15 @@ def run_model(cases: int) -> int:
         checks += 3
 
         for index, state in enumerate(states):
+            assert destination_identity[index] == content_fingerprint[index]
             assert not undo_candidate[index] or (
                 state == Entry.COMMITTED and destination_identity[index]
             )
             assert state != Entry.RECOVERY or not undo_candidate[index]
             if state in (Entry.PENDING, Entry.STARTED, Entry.FAILED, Entry.SKIPPED):
                 assert not destination_identity[index]
-            checks += 3
+                assert not content_fingerprint[index]
+            checks += 5
     return checks
 
 
@@ -93,6 +99,7 @@ def check_sqlite_identity() -> int:
 def check_repository(root: Path) -> int:
     paths = {
         "contract": root / "src/FileOp.Core/Operations/FileOperationActionHistory.cs",
+        "fingerprint": root / "src/FileOp.Core/Operations/FileContentFingerprint.cs",
         "store": root / "src/FileOp.Core/Operations/SqliteFileOperationActionHistoryStore.cs",
         "executor": root / "src/FileOp.Core/Operations/FileCopyOperationExecutor.cs",
         "tests": root / "tests/FileOp.Windows.Tests/FileOperationActionHistoryTests.cs",
@@ -112,23 +119,37 @@ def check_repository(root: Path) -> int:
             "DeleteCreatedDestination",
             "Array.AsReadOnly(entrySnapshot)",
             "FileIdentity? destinationIdentity = null",
+            "FileContentFingerprint? destinationContentFingerprint = null",
+            "DestinationContentFingerprint",
+        ),
+        "fingerprint": (
+            "FileContentFingerprintAlgorithm",
+            "Sha256 = 1",
+            "Sha256HexLength = 64",
+            "HexDigest = hexDigest.ToLowerInvariant()",
+            "does not grant delete",
         ),
         "store": (
             "PRAGMA journal_mode = WAL;",
             "PRAGMA synchronous = FULL;",
             "file_operation_action_entries",
+            "file_operation_action_entry_content_fingerprints",
             "action.terminal_state IS NULL",
             "FileOperationCanonicalPathState.Missing",
             "unchecked((long)value)",
             "unchecked((ulong)value)",
             "destination_volume_serial = @destination_volume_serial",
             "destination_file_reference = @destination_file_reference",
+            "PersistDestinationContentFingerprintAsync(",
+            "destinationIdentity.HasValue != (destinationContentFingerprint is not null)",
             "private const int SchemaVersion = 1;",
         ),
         "tests": (
-            "CopyCommitPersistsUndoCandidateAndHighBitIdentity",
-            "RecoveryRequiredPersistsVerifiedDestinationIdentityWithoutUndoCandidate",
-            "RecoveryRequiredWithoutVerifiedIdentityRemainsIdentityless",
+            "CopyCommitPersistsUndoCandidateHighBitIdentityAndFingerprint",
+            "RecoveryRequiredPersistsVerifiedDestinationIdentityAndFingerprintWithoutUndoCandidate",
+            "RecoveryRequiredWithoutVerifiedEvidenceRemainsEvidenceFree",
+            "RecoveryEvidenceRejectsHalfPairedIdentityAndFingerprint",
+            "LegacyCommittedRowWithoutFingerprintRemainsReadable",
             "MutationStartedSurvivesAsRecoverySignal",
             "BeginRejectsReadyDirectoryAndMoveWithoutRows",
             "ActionHistoryDefensivelySnapshotsEntries",
@@ -137,7 +158,6 @@ def check_repository(root: Path) -> int:
             "FileCopyOperationExecutor",
             "IFileCopyMutationPrimitive",
             "undo candidate",
-            "not sufficient",
             "recovery evidence only",
             "no migration",
         ),
@@ -157,11 +177,13 @@ def check_repository(root: Path) -> int:
     recovery = store[recovery_start:recovery_end]
     for needle in (
         "FileIdentity? destinationIdentity = null",
+        "FileContentFingerprint? destinationContentFingerprint = null",
         "destination_volume_serial = @destination_volume_serial",
         "destination_file_reference = @destination_file_reference",
         "FileOperationUndoKind.None",
         "action.kind = @copy_kind",
         "state = @mutation_started",
+        "PersistDestinationContentFingerprintAsync(",
     ):
         assert needle in recovery, needle
         checks += 1
@@ -182,9 +204,12 @@ def check_repository(root: Path) -> int:
     assert start < mutate < commit
     assert ".MarkMutationRecoveryRequiredAsync(" in executor
     assert executor.count("verifiedDestinationIdentity: receipt.DestinationIdentity") == 1
+    assert executor.count("verifiedDestinationContentFingerprint: receipt.DestinationContentFingerprint") == 1
     assert "FileIdentity? verifiedDestinationIdentity = null" in executor
+    assert "FileContentFingerprint? verifiedDestinationContentFingerprint = null" in executor
     assert "destinationIdentity: verifiedDestinationIdentity" in executor
-    checks += 5
+    assert "destinationContentFingerprint: verifiedDestinationContentFingerprint" in executor
+    checks += 8
 
     store_surface = source["contract"] + source["store"]
     forbidden = ("File." + "Copy(", "File." + "Move(", "Directory." + "Move(")
