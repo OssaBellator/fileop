@@ -38,7 +38,7 @@ The second stage re-proves namespace and identity under the actual content-read 
 
 `WindowsFileContentFingerprintReader` requests only file read-data, read-attributes and synchronize access. It opens with `FileShare.Read` and intentionally omits write and delete sharing for the lifetime of validation and hashing. FileOp does not request target-file write/delete access and calls no target-file write, delete, move or replacement API in this verifier.
 
-That means normal conflicting writer/delete handles cause the read open to fail with a sharing violation. FileOp reports this as `Busy` rather than weakening the proof or hashing through a concurrently writable handle.
+A sharing violation is reported as `Busy` rather than weakened into a proof. This can be caused by an existing writer/delete handle **or** by an otherwise read-only handle whose sharing mode does not permit the verifier's read access. `Busy` therefore means only that existing sharing constraints are incompatible with the stable read proof; it is not evidence that another process is writing.
 
 The final component is opened with `FILE_FLAG_OPEN_REPARSE_POINT`. Before hashing, FileOp verifies:
 
@@ -64,7 +64,7 @@ The Core verifier exposes conservative states:
 - `Redirected` — the read handle resolves to a different canonical location;
 - `ReparsePoint` — the final component is now a reparse point;
 - `UnexpectedType` — the recorded file destination is now a directory/non-file object;
-- `Busy` — conflicting write/delete access prevents a stable read proof;
+- `Busy` — existing sharing constraints prevent a stable read proof;
 - `Inaccessible` — read access is denied;
 - `Error` — content verification could not complete reliably.
 
