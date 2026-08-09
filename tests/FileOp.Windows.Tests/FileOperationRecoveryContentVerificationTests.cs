@@ -137,9 +137,32 @@ public sealed class FileOperationRecoveryContentVerificationTests
     }
 
     [TestMethod]
-    public async Task ReaderExceptionFailsClosedAsError()
+    public async Task InconsistentSuccessEvidenceFailsClosedAsError()
     {
         var identity = new FileIdentity(12, 120);
+        var inspectionItem = CreateInspectionItem(
+            FileOperationRecoveryDestinationStatus.SameObject,
+            identity,
+            RecordedFingerprint);
+        var wrongIdentity = new FileIdentity(12, 121);
+        var reader = new FakeReader(_ => new FileContentFingerprintReadResult(
+            FileContentFingerprintReadStatus.Success,
+            ExistingFile(inspectionItem.Entry.CanonicalDestinationPath, wrongIdentity),
+            RecordedFingerprint,
+            "inconsistent success"));
+
+        var result = await new FileOperationRecoveryContentVerifier(reader)
+            .VerifyAsync(CreateInspection(inspectionItem));
+
+        Assert.AreEqual(FileOperationRecoveryContentStatus.Error, result.Items[0].Status);
+        Assert.IsNull(result.Items[0].CurrentContentFingerprint);
+        Assert.IsFalse(result.Items[0].MatchesRecordedMainStream);
+    }
+
+    [TestMethod]
+    public async Task ReaderExceptionFailsClosedAsError()
+    {
+        var identity = new FileIdentity(13, 130);
         var inspectionItem = CreateInspectionItem(
             FileOperationRecoveryDestinationStatus.SameObject,
             identity,
@@ -156,7 +179,7 @@ public sealed class FileOperationRecoveryContentVerificationTests
     [TestMethod]
     public void VerificationDefensivelySnapshotsItems()
     {
-        var identity = new FileIdentity(13, 130);
+        var identity = new FileIdentity(14, 140);
         var inspectionItem = CreateInspectionItem(
             FileOperationRecoveryDestinationStatus.SameObject,
             identity,
@@ -225,7 +248,7 @@ public sealed class FileOperationRecoveryContentVerificationTests
             path,
             FileOperationCanonicalPathState.File,
             IsLeafReparsePoint: false,
-            identity);
+            Identity: identity);
 
     private sealed class FakeReader : IFileContentFingerprintReader
     {
