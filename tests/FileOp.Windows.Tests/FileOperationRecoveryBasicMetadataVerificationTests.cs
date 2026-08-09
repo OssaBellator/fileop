@@ -20,7 +20,7 @@ public sealed class FileOperationRecoveryBasicMetadataVerificationTests
     public async Task LastAccessOnlyDifferenceRemainsSameStableMetadata()
     {
         var inspection = CreateInspection();
-        var store = new FakeStore(Recorded);
+        var store = new FakeStore(Recorded, inspection);
         var reader = new FakeReader(request => Success(request, Recorded with { LastAccessTimeFileTime = 201 }));
 
         var result = await new FileOperationRecoveryBasicMetadataVerifier(store, reader).VerifyAsync(inspection);
@@ -35,7 +35,7 @@ public sealed class FileOperationRecoveryBasicMetadataVerificationTests
     public async Task LastWriteDifferenceIsReportedWithoutMutationAuthority()
     {
         var inspection = CreateInspection();
-        var store = new FakeStore(Recorded);
+        var store = new FakeStore(Recorded, inspection);
         var reader = new FakeReader(request => Success(request, Recorded with { LastWriteTimeFileTime = 301 }));
 
         var result = await new FileOperationRecoveryBasicMetadataVerifier(store, reader).VerifyAsync(inspection);
@@ -52,11 +52,13 @@ public sealed class FileOperationRecoveryBasicMetadataVerificationTests
     {
         var inspection = CreateInspection();
         var reader = new FakeReader(_ => throw new InvalidOperationException("reader should not run"));
+        var store = new FakeStore(null, inspection);
 
-        var result = await new FileOperationRecoveryBasicMetadataVerifier(new FakeStore(null), reader)
+        var result = await new FileOperationRecoveryBasicMetadataVerifier(store, reader)
             .VerifyAsync(inspection);
 
         Assert.AreEqual(FileOperationRecoveryBasicMetadataStatus.NoRecordedEvidence, result.Items[0].Comparison.Status);
+        Assert.AreEqual(1, store.MetadataReadCount);
         Assert.AreEqual(0, reader.Calls.Count);
     }
 
@@ -66,12 +68,29 @@ public sealed class FileOperationRecoveryBasicMetadataVerificationTests
         var baseInspection = CreateInspection();
         var inspection = new FileOperationRecoveryInspection(baseInspection.OperationId, baseInspection.Items);
         var reader = new FakeReader(_ => throw new InvalidOperationException("reader should not run"));
+        var store = new FakeStore(Recorded, baseInspection);
 
-        var result = await new FileOperationRecoveryBasicMetadataVerifier(new FakeStore(Recorded), reader)
+        var result = await new FileOperationRecoveryBasicMetadataVerifier(store, reader)
             .VerifyAsync(inspection);
 
         Assert.AreEqual(FileOperationRecoveryBasicMetadataStatus.Unavailable, result.Items[0].Comparison.Status);
         Assert.AreEqual(0, reader.Calls.Count);
+    }
+
+    [TestMethod]
+    public async Task MismatchedDurableHistorySkipsMetadataAndReader()
+    {
+        var inspection = CreateInspection();
+        var store = new FakeStore(Recorded, inspection, matchDurableHistory: false);
+        var reader = new FakeReader(_ => throw new InvalidOperationException("reader should not run"));
+
+        var result = await new FileOperationRecoveryBasicMetadataVerifier(store, reader)
+            .VerifyAsync(inspection);
+
+        Assert.AreEqual(FileOperationRecoveryBasicMetadataStatus.Unavailable, result.Items[0].Comparison.Status);
+        Assert.AreEqual(0, store.MetadataReadCount);
+        Assert.AreEqual(0, reader.Calls.Count);
+        StringAssert.Contains(result.Items[0].Message, "durable action-history");
     }
 
     [TestMethod]
@@ -85,7 +104,7 @@ public sealed class FileOperationRecoveryBasicMetadataVerificationTests
             BasicMetadata: null,
             "busy"));
 
-        var result = await new FileOperationRecoveryBasicMetadataVerifier(new FakeStore(Recorded), reader)
+        var result = await new FileOperationRecoveryBasicMetadataVerifier(new FakeStore(Recorded, inspection), reader)
             .VerifyAsync(inspection);
 
         Assert.AreEqual(FileContentFingerprintReadStatus.Busy, result.Items[0].ReaderStatus);
@@ -103,7 +122,7 @@ public sealed class FileOperationRecoveryBasicMetadataVerificationTests
             Recorded,
             "inconsistent"));
 
-        var result = await new FileOperationRecoveryBasicMetadataVerifier(new FakeStore(Recorded), reader)
+        var result = await new FileOperationRecoveryBasicMetadataVerifier(new FakeStore(Recorded, inspection), reader)
             .VerifyAsync(inspection);
 
         Assert.AreEqual(FileOperationRecoveryBasicMetadataStatus.Unavailable, result.Items[0].Comparison.Status);
@@ -140,6 +159,29 @@ public sealed class FileOperationRecoveryBasicMetadataVerificationTests
         return new FileOperationRecoveryInspection(Guid.NewGuid(), new[] { item }, root);
     }
 
+    private static FileOperationActionHistory CreateDurableHistory(
+        FileOperationRecoveryInspection inspection,
+        bool matchDurableHistory)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new FileOperationActionHistory(
+            inspection.OperationId,
+            now,
+            now,
+            now,
+            now,
+            FileOperationKind.Copy,
+            FileOperationCollisionPolicy.Stop,
+            @"C:\Source",
+            @"D:\Destination",
+            @"C:\Real\Source",
+            RootPath,
+            FileOperationActionTerminalState.RecoveryRequired,
+            new[] { inspection.Items[0].Entry },
+            new FileIdentity(4, 40),
+            matchDurableHistory ? RootIdentity : new FileIdentity(5, 51));
+    }
+
     private static FileBasicMetadataReadResult Success(
         FileContentFingerprintReadRequest request,
         FileBasicMetadataEvidence metadata) =>
@@ -171,8 +213,28 @@ public sealed class FileOperationRecoveryBasicMetadataVerificationTests
     private sealed class FakeStore : IFileOperationActionHistoryBasicMetadataEvidenceStore
     {
         private readonly FileBasicMetadataEvidence? _recorded;
-        public FakeStore(FileBasicMetadataEvidence? recorded) => _recorded = recorded;
-        public ValueTask<FileBasicMetadataEvidence?> GetDestinationBasicMetadataEvidenceAsync(Guid operationId, int ordinal, CancellationToken cancellationToken = default) => ValueTask.FromResult(_recorded);
+        private readonly FileOperationActionHistory _history;
+
+        public FakeStore(
+            FileBasicMetadataEvidence? recorded,
+            FileOperationRecoveryInspection inspection,
+            bool matchDurableHistory = true)
+        {
+            _recorded = recorded;
+            _history = CreateDurableHistory(inspection, matchDurableHistory);
+        }
+
+        public int MetadataReadCount { get; private set; }
+
+        public ValueTask<FileBasicMetadataEvidence?> GetDestinationBasicMetadataEvidenceAsync(Guid operationId, int ordinal, CancellationToken cancellationToken = default)
+        {
+            MetadataReadCount++;
+            return ValueTask.FromResult(_recorded);
+        }
+
+        public ValueTask<FileOperationActionHistory?> GetAsync(Guid operationId, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<FileOperationActionHistory?>(operationId == _history.OperationId ? _history : null);
+
         public ValueTask<FileOperationActionHistory> BeginAsync(FileOperationExecutionValidationResult validation, DateTimeOffset startedAtUtc, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<FileOperationActionHistory> MarkMutationStartedAsync(Guid operationId, int ordinal, DateTimeOffset startedAtUtc, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<FileOperationActionHistory> MarkEntryFailedBeforeMutationAsync(Guid operationId, int ordinal, FileOperationFailure failure, DateTimeOffset failedAtUtc, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -183,7 +245,6 @@ public sealed class FileOperationRecoveryBasicMetadataVerificationTests
         public ValueTask<FileOperationActionHistory> CommitCopyWithBasicMetadataEvidenceAsync(Guid operationId, int ordinal, FileIdentity destinationIdentity, FileContentFingerprint destinationContentFingerprint, FileCopyDestinationCommitBasicMetadataEvidence destinationEvidence, DateTimeOffset committedAtUtc, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<FileOperationActionHistory> MarkMutationRecoveryRequiredWithBasicMetadataEvidenceAsync(Guid operationId, int ordinal, FileOperationFailure failure, DateTimeOffset failedAtUtc, FileIdentity destinationIdentity, FileContentFingerprint destinationContentFingerprint, FileCopyDestinationCommitBasicMetadataEvidence destinationEvidence, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<FileOperationActionHistory> CompleteAsync(Guid operationId, FileOperationActionTerminalState terminalState, DateTimeOffset completedAtUtc, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<FileOperationActionHistory?> GetAsync(Guid operationId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<IReadOnlyList<FileOperationActionHistory>> GetRecentAsync(int limit = 100, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }
