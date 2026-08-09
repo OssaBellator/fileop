@@ -152,10 +152,14 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
 
             if (!inspection.DestinationDirectory.IsSameRecordedRoot ||
                 inspection.DestinationDirectory.RecordedIdentity is not FileIdentity expectedDirectoryIdentity ||
+                string.IsNullOrWhiteSpace(inspection.DestinationDirectory.RecordedCanonicalPath) ||
                 inspection.DestinationDirectory.CurrentDirectory is not { } currentDirectory ||
                 currentDirectory.State != FileOperationCanonicalPathState.Directory ||
                 currentDirectory.IsLeafReparsePoint ||
-                currentDirectory.Identity != expectedDirectoryIdentity)
+                currentDirectory.Identity != expectedDirectoryIdentity ||
+                !PathsEqual(
+                    inspection.DestinationDirectory.RecordedCanonicalPath,
+                    currentDirectory.CanonicalPath))
             {
                 results.Add(Create(
                     item,
@@ -177,7 +181,7 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
             }
 
             var request = new FileContentFingerprintReadRequest(
-                currentDirectory.CanonicalPath,
+                inspection.DestinationDirectory.RecordedCanonicalPath,
                 expectedDirectoryIdentity,
                 entry.CanonicalDestinationPath,
                 expectedIdentity);
