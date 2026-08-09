@@ -58,6 +58,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "Recovery basic-metadata persistence verification failed with exit code $LASTEXITCODE."
 }
 
+python tools/verify_recovery_security_descriptor_evidence.py --repo-root $repoRoot --cases 50000 --sqlite-cases 5000
+if ($LASTEXITCODE -ne 0) {
+    throw "Recovery owner/group/DACL security evidence verification failed with exit code $LASTEXITCODE."
+}
+
 python tools/verify_file_copy_executor.py --repo-root $repoRoot --cases 20000
 if ($LASTEXITCODE -ne 0) {
     throw "File Copy executor verification failed with exit code $LASTEXITCODE."
@@ -83,4 +88,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "Copy basic metadata ABI verification failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "`nPASS: Copy executor, recovery inspection, content fingerprint evidence, root-bound recovery main-stream verification, root-bound reader ABI, destination-root identity evidence, hard-link evidence, recovery basic-metadata evidence, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green
+Write-Host "`nPASS: Copy executor, recovery inspection, content fingerprint evidence, root-bound recovery main-stream verification, root-bound reader ABI, destination-root identity evidence, hard-link evidence, recovery basic-metadata evidence, owner/group/DACL security evidence, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green

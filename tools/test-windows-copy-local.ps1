@@ -40,8 +40,6 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw ".NET 10 SDK is required for the focused Windows Copy compiler/native test gate."
 }
 
-# The SDK selector pins an installed .NET 10 SDK, then compiles/runs the project and
-# C# program defined by verify_copy_basic_metadata_dotnet.py from an empty local feed.
 Invoke-Step "Package-free .NET Copy metadata interop probe" {
     python tools/verify_copy_basic_metadata_dotnet_sdk.py --repo-root $repoRoot
 }
@@ -56,13 +54,16 @@ Invoke-Step "FileOp.Windows Release build" {
 
 $filter = @(
     "FullyQualifiedName~FileContentFingerprintTests",
+    "FullyQualifiedName~FileSecurityDescriptorEvidenceTests",
     "FullyQualifiedName~FileOperationActionHistoryTests",
     "FullyQualifiedName~FileOperationActionHistoryHardLinkEvidence",
     "FullyQualifiedName~FileOperationActionHistoryBasicMetadataEvidenceTests",
+    "FullyQualifiedName~FileOperationActionHistorySecurityDescriptorEvidenceTests",
     "FullyQualifiedName~FileOperationRecoveryInspectionTests",
     "FullyQualifiedName~FileOperationRecoveryContentVerificationTests",
     "FullyQualifiedName~FileOperationRecoveryBasicMetadataComparerTests",
     "FullyQualifiedName~FileOperationRecoveryBasicMetadataVerificationTests",
+    "FullyQualifiedName~FileOperationRecoverySecurityDescriptorVerificationTests",
     "FullyQualifiedName~FileCopyOperationExecutorTests",
     "FullyQualifiedName~WindowsFileContentFingerprintReaderTests",
     "FullyQualifiedName~WindowsRootBoundFileContentFingerprintReaderTests",
@@ -71,6 +72,9 @@ $filter = @(
     "FullyQualifiedName~WindowsRootBoundFileCommitBasicMetadataEvidenceSourceTests",
     "FullyQualifiedName~WindowsRootBoundFileBasicMetadataEvidenceReaderTests",
     "FullyQualifiedName~WindowsFileOperationActionHistoryBasicMetadataEvidenceStoreTests",
+    "FullyQualifiedName~WindowsRootBoundFileCommitSecurityDescriptorEvidenceSourceTests",
+    "FullyQualifiedName~WindowsRootBoundFileSecurityDescriptorEvidenceReaderTests",
+    "FullyQualifiedName~WindowsFileOperationActionHistorySecurityDescriptorEvidenceStoreTests",
     "FullyQualifiedName~WindowsFileOperationRecoveryContentVerificationTests",
     "FullyQualifiedName~WindowsFileCopyMutationPrimitiveTests",
     "FullyQualifiedName~WindowsFileCopyMutationPrimitiveMetadataTests",
