@@ -162,7 +162,8 @@ public interface IFileOperationActionHistoryStore
         int ordinal,
         FileOperationFailure failure,
         DateTimeOffset failedAtUtc,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        FileIdentity? destinationIdentity = null);
 
     ValueTask<FileOperationActionHistory> CompleteAsync(
         Guid operationId,
