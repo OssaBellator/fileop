@@ -123,7 +123,6 @@ def check_repository(root: Path) -> int:
             "unchecked((ulong)value)",
             "destination_volume_serial = @destination_volume_serial",
             "destination_file_reference = @destination_file_reference",
-            "FileOperationUndoKind.None",
             "private const int SchemaVersion = 1;",
         ),
         "tests": (
@@ -139,6 +138,8 @@ def check_repository(root: Path) -> int:
             "IFileCopyMutationPrimitive",
             "undo candidate",
             "not sufficient",
+            "recovery evidence only",
+            "no migration",
         ),
         "local": ("verify_file_operation_action_history.py",),
     }
@@ -147,6 +148,32 @@ def check_repository(root: Path) -> int:
         for needle in needles:
             assert needle.casefold() in source[name].casefold(), needle
             checks += 1
+
+    store = source["store"]
+    recovery_start = store.index(
+        "public async ValueTask<FileOperationActionHistory> MarkMutationRecoveryRequiredAsync(")
+    recovery_end = store.index(
+        "public async ValueTask<FileOperationActionHistory> CompleteAsync(", recovery_start)
+    recovery = store[recovery_start:recovery_end]
+    for needle in (
+        "FileIdentity? destinationIdentity = null",
+        "destination_volume_serial = @destination_volume_serial",
+        "destination_file_reference = @destination_file_reference",
+        "FileOperationUndoKind.None",
+        "action.kind = @copy_kind",
+        "state = @mutation_started",
+    ):
+        assert needle in recovery, needle
+        checks += 1
+    assert "DeleteCreatedDestination" not in recovery
+    checks += 1
+
+    recovery_case_start = store.index(
+        "case FileOperationActionEntryState.RecoveryRequired:")
+    recovery_case_end = store.index("default:", recovery_case_start)
+    recovery_case = store[recovery_case_start:recovery_case_end]
+    assert "RequireNoUndo(entry);" in recovery_case
+    checks += 1
 
     executor = source["executor"]
     start = executor.index(".MarkMutationStartedAsync(")
