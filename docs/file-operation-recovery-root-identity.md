@@ -23,7 +23,7 @@ file_operation_action_root_identities
   destination_file_reference
 ```
 
-The schema version remains `1`. Opening an older v1 database creates the side table idempotently. Existing operation rows with no side-table row remain readable with:
+The schema version remains `1`. This is an additive **no migration** change: opening an older v1 database creates the side table idempotently. Existing operation rows with no side-table row remain readable with:
 
 ```text
 SourceDirectoryIdentity      = null
@@ -51,7 +51,7 @@ The source root is persisted symmetrically because it is part of the validated o
 
 Legacy history is intentionally **not upgraded by observation**. If durable root identity is absent, the inspector reports `NoVerifiedIdentity` without pretending the current directory identity is historical evidence.
 
-Leaf inspection still runs separately for diagnostics. This makes an important state representable: the destination root can be `DifferentObject` while the destination file itself remains `SameObject` because the same file was moved into a replacement directory.
+Leaf inspection still runs separately for diagnostics. This makes an important state representable: the destination root can be `DifferentObject` while the destination file itself remains `SameObject` because the same file object was moved into a replacement directory.
 
 ## Content-verification gate
 
