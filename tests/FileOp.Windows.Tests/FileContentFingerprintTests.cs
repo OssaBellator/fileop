@@ -23,9 +23,9 @@ public sealed class FileContentFingerprintTests
     [TestMethod]
     public void Sha256FingerprintRejectsWrongLengthOrNonHexDigest()
     {
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileContentFingerprint(FileContentFingerprintAlgorithm.Sha256, "abc"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileContentFingerprint(
                 FileContentFingerprintAlgorithm.Sha256,
                 new string('g', FileContentFingerprint.Sha256HexLength)));
@@ -34,7 +34,7 @@ public sealed class FileContentFingerprintTests
     [TestMethod]
     public void UnsupportedFingerprintAlgorithmIsRejected()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileContentFingerprint(
                 (FileContentFingerprintAlgorithm)99,
                 new string('0', FileContentFingerprint.Sha256HexLength)));
