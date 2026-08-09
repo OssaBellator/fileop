@@ -233,9 +233,9 @@ def check_repository(root: Path) -> int:
     checks += 1
 
     executor = source["executor"]
-    invalid = executor.index("The mutation primitive did not provide the required SHA-256")
-    commit = executor.index(".CommitCopyAsync(", invalid)
-    assert invalid < commit
+    receipt_validation = executor.index("if (!TryValidateMutationReceipt(")
+    commit = executor.index(".CommitCopyAsync(", receipt_validation)
+    assert receipt_validation < commit
     checks += 1
 
     for needle in (
