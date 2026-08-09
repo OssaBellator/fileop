@@ -68,6 +68,16 @@ public sealed record FileOperationRecoveryEvidenceAssessmentItem
             changedDimensions,
             incompleteDimensions,
             unavailableDimensions);
+        var expectedStatus = ClassifyPartition(
+            changedDimensions,
+            incompleteDimensions,
+            unavailableDimensions);
+        if (status != expectedStatus)
+        {
+            throw new ArgumentException(
+                $"Assessment status {status} does not match its dimension masks; expected {expectedStatus}.",
+                nameof(status));
+        }
 
         Ordinal = ordinal;
         Status = status;
@@ -150,6 +160,18 @@ public sealed record FileOperationRecoveryEvidenceAssessmentItem
                 "Recovery evidence dimension masks must form one complete, non-overlapping partition of the implemented evidence dimensions.");
         }
     }
+
+    private static FileOperationRecoveryEvidenceAssessmentStatus ClassifyPartition(
+        FileOperationRecoveryEvidenceDimension changed,
+        FileOperationRecoveryEvidenceDimension incomplete,
+        FileOperationRecoveryEvidenceDimension unavailable) =>
+        changed != FileOperationRecoveryEvidenceDimension.None
+            ? FileOperationRecoveryEvidenceAssessmentStatus.ObservedEvidenceChanged
+            : unavailable != FileOperationRecoveryEvidenceDimension.None
+                ? FileOperationRecoveryEvidenceAssessmentStatus.EvidenceUnavailable
+                : incomplete != FileOperationRecoveryEvidenceDimension.None
+                    ? FileOperationRecoveryEvidenceAssessmentStatus.EvidenceIncomplete
+                    : FileOperationRecoveryEvidenceAssessmentStatus.ObservedSubsetMatches;
 }
 
 public sealed record FileOperationRecoveryEvidenceAssessment
@@ -278,7 +300,7 @@ public static class FileOperationRecoveryEvidenceAssessor
             ref unavailable);
         Add(
             FileOperationRecoveryEvidenceDimension.MainStream,
-            ClassifyMainStream(content.Status),
+            ClassifyMainStream(content.Status, root.Status, inspection.Status),
             ref matching,
             ref changed,
             ref incomplete,
@@ -355,7 +377,9 @@ public static class FileOperationRecoveryEvidenceAssessor
         };
 
     private static FileOperationRecoveryEvidenceDimensionState ClassifyMainStream(
-        FileOperationRecoveryContentStatus status) => status switch
+        FileOperationRecoveryContentStatus status,
+        FileOperationRecoveryRootStatus rootStatus,
+        FileOperationRecoveryDestinationStatus destinationStatus) => status switch
         {
             FileOperationRecoveryContentStatus.MatchesRecordedMainStream => FileOperationRecoveryEvidenceDimensionState.Matches,
             FileOperationRecoveryContentStatus.NoRecordedFingerprint => FileOperationRecoveryEvidenceDimensionState.Incomplete,
@@ -366,9 +390,15 @@ public static class FileOperationRecoveryEvidenceAssessor
                 FileOperationRecoveryContentStatus.ReparsePoint or
                 FileOperationRecoveryContentStatus.UnexpectedType or
                 FileOperationRecoveryContentStatus.DestinationRootChanged => FileOperationRecoveryEvidenceDimensionState.Changed,
-            FileOperationRecoveryContentStatus.DestinationRootNotVerified or
-                FileOperationRecoveryContentStatus.NotSameRecordedObject or
-                FileOperationRecoveryContentStatus.Busy or
+            FileOperationRecoveryContentStatus.DestinationRootNotVerified =>
+                rootStatus == FileOperationRecoveryRootStatus.NoVerifiedIdentity
+                    ? FileOperationRecoveryEvidenceDimensionState.Incomplete
+                    : FileOperationRecoveryEvidenceDimensionState.Unavailable,
+            FileOperationRecoveryContentStatus.NotSameRecordedObject =>
+                destinationStatus == FileOperationRecoveryDestinationStatus.NoVerifiedIdentity
+                    ? FileOperationRecoveryEvidenceDimensionState.Incomplete
+                    : FileOperationRecoveryEvidenceDimensionState.Unavailable,
+            FileOperationRecoveryContentStatus.Busy or
                 FileOperationRecoveryContentStatus.Inaccessible or
                 FileOperationRecoveryContentStatus.Error => FileOperationRecoveryEvidenceDimensionState.Unavailable,
             _ => throw new ArgumentOutOfRangeException(nameof(status)),
