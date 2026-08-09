@@ -27,7 +27,7 @@ Committed
         ↓ report entry progress
 ```
 
-The important barrier is after the filesystem mutation and before progress is reported. A valid mutation receipt now carries both the newly created destination `FileIdentity` and a SHA-256 fingerprint of the logical bytes written through the bound Copy stream. `CommitCopyAsync` persists those two proofs atomically with the `Committed` transition.
+The important barrier is after the filesystem mutation and before progress is reported. A valid mutation receipt carries both the newly created destination `FileIdentity` and a SHA-256 fingerprint of the logical bytes written through the bound Copy stream. `CommitCopyAsync` persists those two proofs atomically with the `Committed` transition.
 
 If `CommitCopyAsync` cannot durably finalize that record after the receipt passed executor validation, the executor retains the exact destination identity **and** fingerprint together while the entry settles as `RecoveryRequired`. If the mutation primitive fails, the lease is missing, or the receipt is invalid, neither proof is trusted or persisted.
 
@@ -56,11 +56,11 @@ DeleteCreatedDestination
 
 It is attached only by `CommitCopyAsync`, and only after a file entry crosses `Pending → MutationStarted`. A `Pending` entry exists only when canonical execution validation saw the destination leaf as missing. The history therefore records a destination FileOp intended to create rather than an existing object it replaced.
 
-A committed file with the exact destination `FileIdentity` becomes an **undo candidate**, not deletion authorization. Identity equality is necessary to prove the path still names the same filesystem object, but it is **not sufficient** to prove the user or another program has not modified that object's contents or metadata since Copy. The new SHA-256 value records FileOp's post-Copy main-stream content, but this slice does not yet perform a race-safe current-file comparison and does not define policy for non-content changes.
+A committed file with the exact destination `FileIdentity` becomes an **undo candidate**, not deletion authorization. Identity equality is necessary to prove the path still names the same filesystem object, but it is **not sufficient** to prove the user or another program has not modified that object's contents or metadata since Copy. SHA-256 records FileOp's post-Copy main-stream content, and the separate read-only recovery content verifier can compare current primary-stream bytes under a stable identity-bound read handle, but non-main-stream change policy remains intentionally undefined.
 
 A `RecoveryRequired` entry is different. Even when it carries verified destination identity + fingerprint evidence, its `UndoKind` remains `None`: recovery evidence only does not authorize deletion or make the entry an undo candidate. Primitive failures, missing leases and invalid receipts continue to persist recovery without verified destination evidence.
 
-`FileOperationRecoveryInspector` consumes recovery-sensitive Copy history through the metadata-only canonical resolver. It classifies the current destination as missing, same identity/location, different identity, redirected, reparse, unexpected type, inaccessible or error. This inspection is read-only; even `SameObject` remains evidence only and does not alter `UndoKind` or authorize deletion.
+`FileOperationRecoveryInspector` consumes recovery-sensitive Copy history through the metadata-only canonical resolver. It classifies the current destination as missing, same identity/location, different identity, redirected, reparse, unexpected type, inaccessible or error. `FileOperationRecoveryContentVerifier` may then hash only a `SameObject` entry that also has durable fingerprint evidence. On Windows the content reader re-proves canonical location, ordinary-file type, non-reparse state and exact `FileIdentity` under the read handle and denies write/delete sharing while hashing. Both stages are read-only and neither changes `UndoKind` or authorizes deletion.
 
 Directory entries are never undo candidates in schema v1. Existing destinations handled by `Skip` never receive undo metadata. Replace/overwrite remains unsupported. Move does not receive Copy-style undo candidates because Move has additional source-removal and cross-volume partial-failure semantics that are not designed yet.
 
@@ -77,7 +77,7 @@ file_operation_action_entry_content_fingerprints
 
 The operation row stores queued/validated/started/completed timestamps, operation/collision kind, captured roots, canonical roots and terminal state. Each entry stores its original source metadata, canonical source/destination paths, durable state timestamps, source/destination identities, undo kind and structured failure information. The additive fingerprint side table stores algorithm + digest keyed by `(operation_id, ordinal)`.
 
-Recovery destination identity continues to use the nullable `destination_volume_serial` and `destination_file_reference` columns. Content evidence uses the new side table rather than changing the main entry layout. This remains additive schema-v1 behavior and requires **no migration** or schema-version increment; opening an older v1 database creates the side table idempotently.
+Recovery destination identity continues to use the nullable `destination_volume_serial` and `destination_file_reference` columns. Content evidence uses the side table rather than changing the main entry layout. This remains additive schema-v1 behavior and requires **no migration** or schema-version increment; opening an older v1 database creates the side table idempotently.
 
 Older valid committed/recovery entries may have no fingerprint row and remain readable with `DestinationContentFingerprint == null`. New production Copy commits are stricter: a receipt without SHA-256 content evidence is rejected before durable commit.
 
@@ -97,7 +97,7 @@ After `MutationStarted`, a failure must use `MarkMutationRecoveryRequiredAsync`.
 
 The action-history contract and SQLite store contain no `File.Copy`, `File.Move`, `File.Delete`, `Directory.Move`, `Directory.Delete`, or target-file write path. SQLite persistence necessarily writes FileOp's own action-history database; that application metadata write is separate from mutating the user's queued source/destination namespace.
 
-The production Windows mutation primitive is handle-bound and remains outside the history store. Neither destination identity nor SHA-256 evidence is deletion authorization. The Files UI still does not expose Run/Execute/Undo.
+The production Windows mutation primitive is handle-bound and remains outside the history store. Neither destination identity, SHA-256 evidence, nor a later `MatchesRecordedMainStream` result is deletion authorization. The Files UI still does not expose Run/Execute/Undo.
 
 ## Validation without hosted Actions
 
@@ -119,6 +119,12 @@ Run the read-only recovery inspection model/source guard:
 python tools/verify_file_operation_recovery_inspection.py --repo-root . --cases 50000
 ```
 
+Run the stable recovery main-stream verifier:
+
+```powershell
+python tools/verify_recovery_main_stream.py --repo-root . --cases 50000
+```
+
 Run the complete offline gate without consuming GitHub Actions quota:
 
 ```powershell
@@ -131,8 +137,8 @@ For the Copy orchestration layer, run:
 pwsh -File tools/test-copy-executor-local.ps1
 ```
 
-On Windows with .NET 10, `tools\test-windows-copy-local.cmd` remains the compiler/runtime source of truth for Core/Windows and the focused native Copy regressions.
+On Windows with .NET 10, `tools\test-windows-copy-local.cmd` remains the compiler/runtime source of truth for Core/Windows and the focused native Copy regressions; these checks may be batched for the stacked Copy-recovery work.
 
 ## Next boundary
 
-FileOp now has durable post-Copy content evidence but not a complete no-user-change proof. The next safe slice should reopen a recovery-inspected destination under a race-resistant identity-bound **read** handle and compare its current main-stream SHA-256 with the stored value, while still granting no destructive authority. Metadata/ACL/ADS/EA policy and explicit user authorization remain necessary before actual recovery/Undo. Directory Copy and Move remain separate later slices.
+FileOp can now compare a recovery-inspected destination's primary data stream with durable post-Copy SHA-256 evidence under a stable read handle. The next design boundary is the **non-main-stream change policy and final authorization protocol**: decide what metadata/ACL/ADS/EA/filesystem-specific changes invalidate destructive recovery, revalidate at the final action boundary, and require explicit user authorization. Directory Copy and Move remain separate later slices.
