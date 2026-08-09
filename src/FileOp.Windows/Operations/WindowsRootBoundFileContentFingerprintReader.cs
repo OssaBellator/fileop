@@ -17,6 +17,7 @@ namespace FileOp.Windows.Operations;
 /// Verifies a recovery destination by opening the recorded destination root,
 /// validating that directory handle, opening the leaf relative to that root with
 /// NtCreateFile, and holding both handles through SHA-256 and post-read checks.
+/// A successful result also reports the leaf handle's stable hard-link count.
 /// </summary>
 public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFileContentFingerprintReader
 {
@@ -190,6 +191,17 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
                 "The root-relative leaf handle has a different FileIdentity than durable recovery history.");
         }
 
+        if (leafBefore.NumberOfLinks == 0)
+        {
+            return Error(
+                rootPath,
+                leafPath,
+                "InvalidHardLinkCount",
+                "The destination leaf reported a zero hard-link count before hashing.",
+                currentRoot,
+                currentLeaf);
+        }
+
         FileContentFingerprint fingerprint;
         try
         {
@@ -272,13 +284,15 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
         var currentLeafAfter = CreateCurrentPath(leafPath, leafFinalPathAfterRead, leafAfter);
         if (currentLeafAfter.Identity != request.DestinationIdentity ||
             FileSize(leafBefore) != FileSize(leafAfter) ||
-            ToUInt64(leafBefore.LastWriteTime) != ToUInt64(leafAfter.LastWriteTime))
+            ToUInt64(leafBefore.LastWriteTime) != ToUInt64(leafAfter.LastWriteTime) ||
+            leafBefore.NumberOfLinks != leafAfter.NumberOfLinks ||
+            leafAfter.NumberOfLinks == 0)
         {
             return Error(
                 rootPath,
                 leafPath,
                 "ChangedDuringRead",
-                "The destination leaf identity, size, or last-write timestamp changed while its primary stream was being hashed.",
+                "The destination leaf identity, size, last-write timestamp, or hard-link count changed while its primary stream was being hashed.",
                 currentRootAfter,
                 currentLeafAfter);
         }
@@ -296,8 +310,11 @@ public sealed class WindowsRootBoundFileContentFingerprintReader : IRootBoundFil
             FileContentFingerprintReadStatus.Success,
             currentLeafAfter,
             fingerprint,
-            "The destination primary stream was hashed while verified root and leaf handles remained bound and alive.",
-            currentRootAfter);
+            "The destination primary stream and hard-link count were observed while verified root and leaf handles remained bound and alive.",
+            currentRootAfter)
+        {
+            CurrentDestinationHardLinkCount = leafAfter.NumberOfLinks,
+        };
     }
 
     private static RelativeOpenResult OpenRelativeLeaf(
