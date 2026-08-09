@@ -28,6 +28,12 @@ public sealed record FileContentFingerprintReadResult(
     string Message,
     FileOperationCanonicalPath? CurrentDestinationDirectory = null)
 {
+    /// <summary>
+    /// Optional stable observation from the destination leaf handle. The root-bound
+    /// reader supplies it only when the full read boundary succeeds.
+    /// </summary>
+    public uint? CurrentDestinationHardLinkCount { get; init; }
+
     public FileContentFingerprintReadResult(
         FileContentFingerprintReadStatus status,
         FileOperationCanonicalPath currentDestination,
@@ -98,6 +104,14 @@ public enum FileOperationRecoveryContentStatus
     DestinationRootChanged,
 }
 
+public enum FileOperationRecoveryHardLinkStatus
+{
+    NoRecordedCount,
+    SameCount,
+    DifferentCount,
+    Unavailable,
+}
+
 public sealed record FileOperationRecoveryContentVerificationItem(
     int Ordinal,
     FileOperationRecoveryInspectionItem Inspection,
@@ -107,6 +121,20 @@ public sealed record FileOperationRecoveryContentVerificationItem(
 {
     public FileContentFingerprint? RecordedContentFingerprint =>
         Inspection.Entry.DestinationContentFingerprint;
+
+    public uint? RecordedDestinationHardLinkCount =>
+        Inspection.Entry.DestinationHardLinkCount;
+
+    public uint? CurrentDestinationHardLinkCount { get; init; }
+
+    public FileOperationRecoveryHardLinkStatus HardLinkStatus =>
+        RecordedDestinationHardLinkCount is not uint recorded
+            ? FileOperationRecoveryHardLinkStatus.NoRecordedCount
+            : CurrentDestinationHardLinkCount is not uint current
+                ? FileOperationRecoveryHardLinkStatus.Unavailable
+                : current == recorded
+                    ? FileOperationRecoveryHardLinkStatus.SameCount
+                    : FileOperationRecoveryHardLinkStatus.DifferentCount;
 
     public bool MatchesRecordedMainStream =>
         Status == FileOperationRecoveryContentStatus.MatchesRecordedMainStream;
@@ -143,7 +171,8 @@ public interface IFileOperationRecoveryContentVerifier
 /// stream only after read-only recovery inspection has established both the
 /// recorded destination root and destination file as the same stable objects.
 /// The root-bound reader must then re-prove and hold both namespace bindings.
-/// A match is evidence only and grants no mutation, delete, recovery, or Undo authority.
+/// Hard-link count is surfaced separately as topology evidence and does not change
+/// the meaning of a main-stream content match. No result grants mutation authority.
 /// </summary>
 public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecoveryContentVerifier
 {
@@ -248,7 +277,7 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 inspection,
                 FileOperationRecoveryContentStatus.Error,
                 currentFingerprint: null,
-                "The content reader reported success without consistent root/leaf canonical path, type, identity, or SHA-256 evidence.");
+                "The content reader reported success without consistent root/leaf canonical path, type, identity, SHA-256, or stable hard-link-count evidence.");
         }
 
         var status = read.Status switch
@@ -270,6 +299,9 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
             _ => FileOperationRecoveryContentStatus.Error,
         };
 
+        var stableHardLinkCount = read.Status == FileContentFingerprintReadStatus.Success
+            ? read.CurrentDestinationHardLinkCount
+            : null;
         return Create(
             inspection,
             status,
@@ -277,7 +309,8 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 FileOperationRecoveryContentStatus.DifferentMainStream
                 ? read.ContentFingerprint
                 : null,
-            Describe(status, read.Message));
+            Describe(status, read.Message),
+            stableHardLinkCount);
     }
 
     private static bool IsConsistentSuccess(
@@ -285,6 +318,8 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
         FileContentFingerprintReadResult read) =>
         read.ContentFingerprint is
             { Algorithm: FileContentFingerprintAlgorithm.Sha256 } &&
+        read.CurrentDestinationHardLinkCount is uint hardLinkCount &&
+        hardLinkCount > 0 &&
         read.CurrentDestinationDirectory is { } root &&
         root.State == FileOperationCanonicalPathState.Directory &&
         !root.IsLeafReparsePoint &&
@@ -301,20 +336,24 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
         FileOperationRecoveryInspectionItem inspection,
         FileOperationRecoveryContentStatus status,
         FileContentFingerprint? currentFingerprint,
-        string message) =>
+        string message,
+        uint? currentHardLinkCount = null) =>
         new(
             inspection.Ordinal,
             inspection,
             status,
             currentFingerprint,
-            message);
+            message)
+        {
+            CurrentDestinationHardLinkCount = currentHardLinkCount,
+        };
 
     private static string Describe(
         FileOperationRecoveryContentStatus status,
         string readerMessage) => status switch
     {
         FileOperationRecoveryContentStatus.MatchesRecordedMainStream =>
-            "The root-bound identity-verified destination handle produced the same primary-stream SHA-256 as the post-Copy record. This is evidence only, not mutation authorization.",
+            "The root-bound identity-verified destination handle produced the same primary-stream SHA-256 as the post-Copy record. Hard-link count is separate topology evidence, not mutation authorization.",
         FileOperationRecoveryContentStatus.DifferentMainStream =>
             "The same recorded destination object under the verified destination root now has a different primary-stream SHA-256 than the post-Copy record.",
         FileOperationRecoveryContentStatus.DestinationRootChanged =>
