@@ -64,6 +64,8 @@ $filter = @(
     "FullyQualifiedName~FileOperationRecoveryBasicMetadataComparerTests",
     "FullyQualifiedName~FileOperationRecoveryBasicMetadataVerificationTests",
     "FullyQualifiedName~FileOperationRecoverySecurityDescriptorVerificationTests",
+    "FullyQualifiedName~FileOperationRecoveryEvidenceAssessmentTests",
+    "FullyQualifiedName~FileOperationRecoveryEvidenceAssessmentLegacyTests",
     "FullyQualifiedName~FileCopyOperationExecutorTests",
     "FullyQualifiedName~WindowsFileContentFingerprintReaderTests",
     "FullyQualifiedName~WindowsRootBoundFileContentFingerprintReaderTests",
