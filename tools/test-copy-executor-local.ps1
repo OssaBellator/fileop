@@ -33,9 +33,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "Copy basic metadata verification failed with exit code $LASTEXITCODE."
 }
 
+python tools/verify_copy_basic_metadata_windows_semantics.py --cases 100000
+if ($LASTEXITCODE -ne 0) {
+    throw "Windows FileBasicInformation semantics verification failed with exit code $LASTEXITCODE."
+}
+
 python tools/verify_copy_basic_metadata_abi.py --repo-root $repoRoot
 if ($LASTEXITCODE -ne 0) {
     throw "Copy basic metadata ABI verification failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "`nPASS: Copy executor, Windows mutation handle binding, basic metadata, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green
+Write-Host "`nPASS: Copy executor, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions." -ForegroundColor Green
