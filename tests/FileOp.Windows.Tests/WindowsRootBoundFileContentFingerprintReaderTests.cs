@@ -31,7 +31,7 @@ public sealed class WindowsRootBoundFileContentFingerprintReaderTests
         Assert.IsNotNull(result.ContentFingerprint);
         Assert.AreEqual(
             Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant(),
-            result.ContentFingerprint.HexDigest);
+            result.ContentFingerprint!.HexDigest);
     }
 
     [TestMethod]
@@ -100,6 +100,25 @@ public sealed class WindowsRootBoundFileContentFingerprintReaderTests
             FileMode.Open,
             FileAccess.Write,
             FileShare.ReadWrite);
+
+        var result = await new WindowsRootBoundFileContentFingerprintReader()
+            .ReadAsync(request);
+
+        Assert.AreEqual(FileContentFingerprintReadStatus.Busy, result.Status);
+        Assert.IsNull(result.ContentFingerprint);
+    }
+
+    [TestMethod]
+    public async Task RestrictiveExistingReaderAlsoCausesBusyForRootBoundReader()
+    {
+        using var fixture = new ReaderFixture();
+        await File.WriteAllTextAsync(fixture.Path, "content");
+        var request = await fixture.CreateRequestAsync();
+        await using var reader = new FileStream(
+            fixture.Path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.None);
 
         var result = await new WindowsRootBoundFileContentFingerprintReader()
             .ReadAsync(request);
