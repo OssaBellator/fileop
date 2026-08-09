@@ -162,7 +162,7 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 continue;
             }
 
-            results.Add(Classify(item, recorded, read));
+            results.Add(Classify(item, expectedIdentity, recorded, read));
         }
 
         return new FileOperationRecoveryContentVerification(inspection.OperationId, results);
@@ -170,13 +170,22 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
 
     private static FileOperationRecoveryContentVerificationItem Classify(
         FileOperationRecoveryInspectionItem inspection,
+        FileIdentity expectedIdentity,
         FileContentFingerprint recorded,
         FileContentFingerprintReadResult read)
     {
+        if (read.Status == FileContentFingerprintReadStatus.Success &&
+            !IsConsistentSuccess(inspection, expectedIdentity, read))
+        {
+            return Create(
+                inspection,
+                FileOperationRecoveryContentStatus.Error,
+                currentFingerprint: null,
+                "The content reader reported success without consistent canonical path, file type, identity, or SHA-256 evidence.");
+        }
+
         var status = read.Status switch
         {
-            FileContentFingerprintReadStatus.Success when read.ContentFingerprint is null =>
-                FileOperationRecoveryContentStatus.Error,
             FileContentFingerprintReadStatus.Success when read.ContentFingerprint == recorded =>
                 FileOperationRecoveryContentStatus.MatchesRecordedMainStream,
             FileContentFingerprintReadStatus.Success =>
@@ -201,6 +210,21 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 : null,
             Describe(status, read.Message));
     }
+
+    private static bool IsConsistentSuccess(
+        FileOperationRecoveryInspectionItem inspection,
+        FileIdentity expectedIdentity,
+        FileContentFingerprintReadResult read) =>
+        read.ContentFingerprint is
+            { Algorithm: FileContentFingerprintAlgorithm.Sha256 } &&
+        read.CurrentDestination is not null &&
+        read.CurrentDestination.State == FileOperationCanonicalPathState.File &&
+        !read.CurrentDestination.IsLeafReparsePoint &&
+        read.CurrentDestination.Identity is FileIdentity actualIdentity &&
+        actualIdentity == expectedIdentity &&
+        PathsEqual(
+            inspection.Entry.CanonicalDestinationPath,
+            read.CurrentDestination.CanonicalPath);
 
     private static FileOperationRecoveryContentVerificationItem Create(
         FileOperationRecoveryInspectionItem inspection,
@@ -242,4 +266,13 @@ public sealed class FileOperationRecoveryContentVerifier : IFileOperationRecover
                 : readerMessage,
         _ => readerMessage,
     };
+
+    private static bool PathsEqual(string left, string right) =>
+        string.Equals(
+            TrimTrailingSeparators(left),
+            TrimTrailingSeparators(right),
+            StringComparison.OrdinalIgnoreCase);
+
+    private static string TrimTrailingSeparators(string path) =>
+        path.TrimEnd('\\', '/');
 }
