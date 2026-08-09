@@ -108,8 +108,15 @@ def run_model(cases: int) -> int:
             assert result not in (Result.MATCH, Result.DIFFERENT_CONTENT)
             checks += 1
 
-        assert result is Result.MATCH or result is not Result.MATCH
-        checks += 1
+        if result is Result.MATCH:
+            assert read is Read.SUCCESS and recorded == current
+            checks += 1
+        elif result is Result.DIFFERENT_CONTENT:
+            assert read is Read.SUCCESS and recorded != current
+            checks += 1
+        else:
+            assert read is not Read.SUCCESS
+            checks += 1
     return checks
 
 
@@ -119,6 +126,7 @@ def check_repository(root: Path) -> int:
         "windows": root / "src/FileOp.Windows/Operations/WindowsFileContentFingerprintReader.cs",
         "core_tests": root / "tests/FileOp.Windows.Tests/FileOperationRecoveryContentVerificationTests.cs",
         "windows_tests": root / "tests/FileOp.Windows.Tests/WindowsFileContentFingerprintReaderTests.cs",
+        "integration_tests": root / "tests/FileOp.Windows.Tests/WindowsFileOperationRecoveryContentVerificationTests.cs",
         "docs": root / "docs/file-operation-recovery-content-verification.md",
         "py_wrapper": root / "tools/test-copy-executor-local.py",
         "ps_wrapper": root / "tools/test-copy-executor-local.ps1",
@@ -192,6 +200,13 @@ def check_repository(root: Path) -> int:
     ):
         assert test_name in source["windows_tests"], test_name
 
+    for test_name in (
+        "StableSameObjectAndDigestProducesMainStreamMatchEvidence",
+        "ContentEditAfterSameObjectInspectionIsDetectedBySecondStage",
+        "ReplacementAfterSameObjectInspectionIsDetectedBeforeHashEvidence",
+    ):
+        assert test_name in source["integration_tests"], test_name
+
     for needle in (
         "main data stream",
         "not deletion authorization",
@@ -207,6 +222,7 @@ def check_repository(root: Path) -> int:
     assert verifier in source["ps_wrapper"]
     assert "FullyQualifiedName~FileOperationRecoveryContentVerificationTests" in source["windows_gate"]
     assert "FullyQualifiedName~WindowsFileContentFingerprintReaderTests" in source["windows_gate"]
+    assert "FullyQualifiedName~WindowsFileOperationRecoveryContentVerificationTests" in source["windows_gate"]
 
     forbidden_core = ("CanDelete", "CanUndo", "DeleteCreatedDestination")
     for needle in forbidden_core:
@@ -218,8 +234,9 @@ def check_repository(root: Path) -> int:
         + len(forbidden_windows)
         + 6
         + 6
+        + 3
         + 6
-        + 4
+        + 5
         + len(forbidden_core)
     )
 
