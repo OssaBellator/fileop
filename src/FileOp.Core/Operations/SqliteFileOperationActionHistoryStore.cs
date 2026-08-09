@@ -57,6 +57,10 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         var startedAt = NormalizeUtc(startedAtUtc);
         var operationKey = FormatOperationId(plan.Id);
         var entries = CreateInitialEntries(validation, startedAt);
+        var sourceDirectoryIdentity = validation.SourceDirectory.Identity
+            ?? throw new InvalidOperationException("Validated source directory identity is missing.");
+        var destinationDirectoryIdentity = validation.DestinationDirectory.Identity
+            ?? throw new InvalidOperationException("Validated destination directory identity is missing.");
 
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -112,6 +116,14 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 await operation.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
+            await PersistRootIdentitiesAsync(
+                connection,
+                transaction,
+                operationKey,
+                sourceDirectoryIdentity,
+                destinationDirectoryIdentity,
+                cancellationToken).ConfigureAwait(false);
+
             using (var entryCommand = CreateEntryInsertCommand(connection, transaction))
             {
                 foreach (var entry in entries)
@@ -135,7 +147,9 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 validation.SourceDirectory.CanonicalPath,
                 validation.DestinationDirectory.CanonicalPath,
                 TerminalState: null,
-                Array.AsReadOnly(entries));
+                Array.AsReadOnly(entries),
+                SourceDirectoryIdentity: sourceDirectoryIdentity,
+                DestinationDirectoryIdentity: destinationDirectoryIdentity);
             ValidatePersistedHistory(history);
             transaction.Commit();
             return history;
@@ -655,6 +669,15 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             CREATE INDEX IF NOT EXISTS ix_file_operation_actions_started
                 ON file_operation_actions(started_utc_ticks DESC, operation_id DESC);
 
+            CREATE TABLE IF NOT EXISTS file_operation_action_root_identities(
+                operation_id TEXT PRIMARY KEY,
+                source_volume_serial INTEGER NOT NULL,
+                source_file_reference INTEGER NOT NULL,
+                destination_volume_serial INTEGER NOT NULL,
+                destination_file_reference INTEGER NOT NULL,
+                FOREIGN KEY(operation_id) REFERENCES file_operation_actions(operation_id) ON DELETE CASCADE
+            ) WITHOUT ROWID;
+
             CREATE TABLE IF NOT EXISTS file_operation_action_entries(
                 operation_id TEXT NOT NULL,
                 ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
@@ -845,11 +868,15 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
 
         if (validation.SourceDirectory.State != FileOperationCanonicalPathState.Directory ||
             validation.DestinationDirectory.State != FileOperationCanonicalPathState.Directory ||
+            validation.SourceDirectory.IsLeafReparsePoint ||
+            validation.DestinationDirectory.IsLeafReparsePoint ||
+            !validation.SourceDirectory.Identity.HasValue ||
+            !validation.DestinationDirectory.Identity.HasValue ||
             string.IsNullOrWhiteSpace(validation.SourceDirectory.CanonicalPath) ||
             string.IsNullOrWhiteSpace(validation.DestinationDirectory.CanonicalPath))
         {
             throw new ArgumentException(
-                "Execution validation must contain canonical source and destination directories.",
+                "Execution validation must contain canonical non-reparse source/destination directories with stable identities.",
                 nameof(validation));
         }
 
@@ -1008,6 +1035,50 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             : DBNull.Value;
     }
 
+    private static async ValueTask PersistRootIdentitiesAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string operationKey,
+        FileIdentity sourceDirectoryIdentity,
+        FileIdentity destinationDirectoryIdentity,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO file_operation_action_root_identities(
+                operation_id,
+                source_volume_serial,
+                source_file_reference,
+                destination_volume_serial,
+                destination_file_reference)
+            VALUES(
+                @operation_id,
+                @source_volume_serial,
+                @source_file_reference,
+                @destination_volume_serial,
+                @destination_file_reference);
+            """;
+        command.Parameters.AddWithValue("@operation_id", operationKey);
+        command.Parameters.AddWithValue(
+            "@source_volume_serial",
+            ToSqliteInteger(sourceDirectoryIdentity.VolumeSerialNumber));
+        command.Parameters.AddWithValue(
+            "@source_file_reference",
+            ToSqliteInteger(sourceDirectoryIdentity.FileReferenceNumber));
+        command.Parameters.AddWithValue(
+            "@destination_volume_serial",
+            ToSqliteInteger(destinationDirectoryIdentity.VolumeSerialNumber));
+        command.Parameters.AddWithValue(
+            "@destination_file_reference",
+            ToSqliteInteger(destinationDirectoryIdentity.FileReferenceNumber));
+        var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        if (changed != 1)
+        {
+            throw new InvalidOperationException("Root identity persistence did not write exactly one row.");
+        }
+    }
+
     private static async ValueTask PersistDestinationContentFingerprintAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1060,19 +1131,25 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         operationCommand.Transaction = transaction;
         operationCommand.CommandText = """
             SELECT
-                queued_utc_ticks,
-                validated_utc_ticks,
-                started_utc_ticks,
-                completed_utc_ticks,
-                kind,
-                collision_policy,
-                source_directory_path,
-                destination_directory_path,
-                canonical_source_directory_path,
-                canonical_destination_directory_path,
-                terminal_state
-            FROM file_operation_actions
-            WHERE operation_id = @operation_id;
+                action.queued_utc_ticks,
+                action.validated_utc_ticks,
+                action.started_utc_ticks,
+                action.completed_utc_ticks,
+                action.kind,
+                action.collision_policy,
+                action.source_directory_path,
+                action.destination_directory_path,
+                action.canonical_source_directory_path,
+                action.canonical_destination_directory_path,
+                action.terminal_state,
+                roots.source_volume_serial,
+                roots.source_file_reference,
+                roots.destination_volume_serial,
+                roots.destination_file_reference
+            FROM file_operation_actions AS action
+            LEFT JOIN file_operation_action_root_identities AS roots
+              ON roots.operation_id = action.operation_id
+            WHERE action.operation_id = @operation_id;
             """;
         operationCommand.Parameters.AddWithValue("@operation_id", operationKey);
 
@@ -1087,6 +1164,8 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         string canonicalSourceDirectoryPath;
         string canonicalDestinationDirectoryPath;
         FileOperationActionTerminalState? terminalState;
+        FileIdentity? sourceDirectoryIdentity;
+        FileIdentity? destinationDirectoryIdentity;
 
         await using (var reader = await operationCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -1108,6 +1187,12 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             terminalState = reader.IsDBNull(10)
                 ? null
                 : ReadEnum<FileOperationActionTerminalState>(reader.GetInt64(10), "terminal state");
+            sourceDirectoryIdentity = ReadIdentity(reader, 11, 12);
+            destinationDirectoryIdentity = ReadIdentity(reader, 13, 14);
+            if (sourceDirectoryIdentity.HasValue != destinationDirectoryIdentity.HasValue)
+            {
+                throw new InvalidDataException("Persisted action-history root identity evidence is incomplete.");
+            }
         }
 
         using var entriesCommand = connection.CreateCommand();
@@ -1186,7 +1271,9 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             canonicalSourceDirectoryPath,
             canonicalDestinationDirectoryPath,
             terminalState,
-            entries.AsReadOnly());
+            entries.AsReadOnly(),
+            sourceDirectoryIdentity,
+            destinationDirectoryIdentity);
         ValidatePersistedHistory(history);
         return history;
     }
@@ -1197,6 +1284,7 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             string.IsNullOrWhiteSpace(history.DestinationDirectoryPath) ||
             string.IsNullOrWhiteSpace(history.CanonicalSourceDirectoryPath) ||
             string.IsNullOrWhiteSpace(history.CanonicalDestinationDirectoryPath) ||
+            history.SourceDirectoryIdentity.HasValue != history.DestinationDirectoryIdentity.HasValue ||
             history.TerminalState.HasValue != history.CompletedAtUtc.HasValue)
         {
             throw new InvalidDataException("Persisted action-history operation metadata is inconsistent.");

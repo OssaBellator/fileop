@@ -72,6 +72,7 @@ def main() -> int:
         ("Read-only Copy recovery inspection verifier", ["tools/verify_file_operation_recovery_inspection.py", "--repo-root", str(repo_root), "--cases", "50000"]),
         ("Copy content fingerprint evidence verifier", ["tools/verify_copy_content_fingerprint.py", "--repo-root", str(repo_root), "--cases", "20000"]),
         ("Recovery main-stream verification", ["tools/verify_recovery_main_stream.py", "--repo-root", str(repo_root), "--cases", "50000"]),
+        ("Recovery destination-root identity verification", ["tools/verify_recovery_root_identity.py", "--repo-root", str(repo_root), "--cases", "50000"]),
         ("Offline paged directory browse verifier", ["tools/verify_directory_browse.py", "--repo-root", str(repo_root), "--cases", "10000"]),
         ("File Copy executor verification", ["tools/verify_file_copy_executor.py", "--repo-root", str(repo_root), "--cases", "20000"]),
         ("Windows Copy mutation handle-binding verification", ["tools/verify_windows_file_copy_mutation.py", "--repo-root", str(repo_root), "--cases", "2000"]),
@@ -99,7 +100,7 @@ def main() -> int:
     for name, arguments in steps:
         run_step(name, repo_root, arguments)
 
-    print("\nPASS: Copy executor, recovery inspection, content fingerprint evidence, stable recovery main-stream verification, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions or PowerShell; optional local Clang/.NET 10 checks were used when available.")
+    print("\nPASS: Copy executor, recovery inspection, content fingerprint evidence, stable recovery main-stream verification, destination-root identity evidence, Windows mutation handle binding, basic metadata, Windows FileBasicInformation semantics, and interop ABI boundaries verified without GitHub Actions or PowerShell; optional local Clang/.NET 10 checks were used when available.")
     return 0
 
 
