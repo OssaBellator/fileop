@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
 using FileOp.Core.Operations;
@@ -34,6 +35,13 @@ public sealed class WindowsFileCopyMutationPrimitiveTests
             CollectionAssert.AreEqual(payload, copiedPayload);
             Assert.AreEqual(request.Item.Source.Identity, lease.Receipt.SourceIdentity);
             Assert.IsFalse(lease.Receipt.DestinationIdentity == lease.Receipt.SourceIdentity);
+            Assert.IsNotNull(lease.Receipt.DestinationContentFingerprint);
+            Assert.AreEqual(
+                FileContentFingerprintAlgorithm.Sha256,
+                lease.Receipt.DestinationContentFingerprint.Algorithm);
+            Assert.AreEqual(
+                Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant(),
+                lease.Receipt.DestinationContentFingerprint.HexDigest);
 
             var resolver = new WindowsFileOperationCanonicalPathResolver();
             var created = await resolver.ResolveAsync(fixture.DestinationPath);
@@ -64,6 +72,29 @@ public sealed class WindowsFileCopyMutationPrimitiveTests
 
         File.Delete(fixture.DestinationPath);
         Assert.IsFalse(File.Exists(fixture.DestinationPath));
+    }
+
+    [TestMethod]
+    public async Task EmptyCopyReportsStandardSha256EmptyDigest()
+    {
+        using var fixture = new CopyFixture();
+        await File.WriteAllBytesAsync(fixture.SourcePath, Array.Empty<byte>());
+        var validation = await fixture.ValidateAsync();
+
+        var lease = await new WindowsFileCopyMutationPrimitive()
+            .CopyNewFileAsync(CreateMutationRequest(validation));
+        try
+        {
+            Assert.AreEqual(0, new FileInfo(fixture.DestinationPath).Length);
+            Assert.IsNotNull(lease.Receipt.DestinationContentFingerprint);
+            Assert.AreEqual(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                lease.Receipt.DestinationContentFingerprint.HexDigest);
+        }
+        finally
+        {
+            await lease.DisposeAsync();
+        }
     }
 
     [TestMethod]
