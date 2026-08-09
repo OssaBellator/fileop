@@ -57,30 +57,47 @@ def run_sqlite_model(cases: int = 5000) -> int:
         """
     )
     checks = 0
+
     for index in range(cases):
         op = f"op-{index}"
         times = tuple(rng.getrandbits(64) for _ in range(3))
         attrs = rng.getrandbits(32)
         count = rng.randint(1, 2**32 - 1)
+
+        # MutationStarted is already durable before the stronger commit barrier.
         connection.execute("INSERT INTO entries VALUES (?, 0, 1, NULL)", (op,))
-        connection.execute("BEGIN")
-        connection.execute("UPDATE entries SET state=2, destination_identity=? WHERE operation_id=?", (f"id-{index}", op))
-        connection.execute("INSERT INTO fingerprints VALUES (?, 0, ?)", (op, f"digest-{index}"))
-        connection.execute("INSERT INTO hard_links VALUES (?, 0, ?)", (op, count))
-        connection.execute(
-            "INSERT INTO metadata VALUES (?, 0, ?, ?, ?, ?)",
-            (op, to_sqlite(times[0]), to_sqlite(times[1]), to_sqlite(times[2]), attrs),
-        )
         connection.commit()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "UPDATE entries SET state=2, destination_identity=? "
+                "WHERE operation_id=? AND ordinal=0 AND state=1",
+                (f"id-{index}", op),
+            )
+            connection.execute("INSERT INTO fingerprints VALUES (?, 0, ?)", (op, f"digest-{index}"))
+            connection.execute("INSERT INTO hard_links VALUES (?, 0, ?)", (op, count))
+            connection.execute(
+                "INSERT INTO metadata VALUES (?, 0, ?, ?, ?, ?)",
+                (op, to_sqlite(times[0]), to_sqlite(times[1]), to_sqlite(times[2]), attrs),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+
         row = connection.execute(
-            "SELECT e.state, h.hard_link_count, m.creation, m.last_access, m.last_write, m.attributes "
-            "FROM entries e JOIN hard_links h USING(operation_id, ordinal) "
+            "SELECT e.state, e.destination_identity, f.digest, h.hard_link_count, "
+            "m.creation, m.last_access, m.last_write, m.attributes "
+            "FROM entries e JOIN fingerprints f USING(operation_id, ordinal) "
+            "JOIN hard_links h USING(operation_id, ordinal) "
             "JOIN metadata m USING(operation_id, ordinal) WHERE e.operation_id=?",
             (op,),
         ).fetchone()
-        assert row[0] == 2 and row[1] == count and row[5] == attrs
-        assert tuple(from_sqlite(value) for value in row[2:5]) == times
-        checks += 5
+        assert row is not None
+        assert row[:4] == (2, f"id-{index}", f"digest-{index}", count)
+        assert tuple(from_sqlite(value) for value in row[4:7]) == times
+        assert row[7] == attrs
+        checks += 8
 
     connection.execute("INSERT INTO entries VALUES ('rollback', 0, 1, NULL)")
     connection.commit()
@@ -92,15 +109,21 @@ def run_sqlite_model(cases: int = 5000) -> int:
         """
     )
     try:
-        connection.execute("BEGIN")
-        connection.execute("UPDATE entries SET state=2, destination_identity='id' WHERE operation_id='rollback'")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE entries SET state=2, destination_identity='id' "
+            "WHERE operation_id='rollback' AND ordinal=0 AND state=1"
+        )
         connection.execute("INSERT INTO fingerprints VALUES ('rollback', 0, 'digest')")
         connection.execute("INSERT INTO hard_links VALUES ('rollback', 0, 1)")
         connection.execute("INSERT INTO metadata VALUES ('rollback', 0, 1, 2, 3, 32)")
         raise AssertionError("metadata trigger should abort")
     except sqlite3.IntegrityError:
         connection.rollback()
-    assert connection.execute("SELECT state, destination_identity FROM entries WHERE operation_id='rollback'").fetchone() == (1, None)
+
+    assert connection.execute(
+        "SELECT state, destination_identity FROM entries WHERE operation_id='rollback'"
+    ).fetchone() == (1, None)
     assert connection.execute("SELECT 1 FROM fingerprints WHERE operation_id='rollback'").fetchone() is None
     assert connection.execute("SELECT 1 FROM hard_links WHERE operation_id='rollback'").fetchone() is None
     assert connection.execute("SELECT 1 FROM metadata WHERE operation_id='rollback'").fetchone() is None
@@ -138,6 +161,9 @@ def check_repository(root: Path) -> int:
         "commit_reader_tests": root / "tests/FileOp.Windows.Tests/WindowsRootBoundFileCommitBasicMetadataEvidenceSourceTests.cs",
         "current_reader_tests": root / "tests/FileOp.Windows.Tests/WindowsRootBoundFileBasicMetadataEvidenceReaderTests.cs",
         "docs": root / "docs/file-operation-recovery-basic-metadata-evidence.md",
+        "py_wrapper": root / "tools/test-copy-executor-local.py",
+        "ps_wrapper": root / "tools/test-copy-executor-local.ps1",
+        "windows_gate": root / "tools/test-windows-copy-local.ps1",
     }
     missing = [str(path) for path in paths.values() if not path.is_file()]
     if missing:
@@ -147,7 +173,7 @@ def check_repository(root: Path) -> int:
 
     checks += require(source["semantics"], (
         "StableCopiedAttributesMask",
-        "0x00002027u",
+        "0x00002000u",
         "LastAccessTimeMatchesDiagnostic",
         "creationMatches && lastWriteMatches && attributesMatch",
     ))
@@ -175,13 +201,14 @@ def check_repository(root: Path) -> int:
         "public async ValueTask<FileOperationActionHistory> MarkMutationRecoveryRequiredWithBasicMetadataEvidenceAsync(",
     ):
         body = method_body(source["store"], signature)
+        assert body.index("LoadRequiredAsync(") < body.index("connection.BeginTransaction()")
         assert body.index("PersistFingerprintAsync(") < body.index("PersistHardLinkCountAsync(")
         assert body.index("PersistHardLinkCountAsync(") < body.index("PersistBasicMetadataAsync(")
         assert body.index("PersistBasicMetadataAsync(") < body.index("transaction.Commit();")
         after_commit = body[body.index("transaction.Commit();"):]
         assert "OpenConnection(" not in after_commit
         assert "GetAsync(" not in after_commit
-        checks += 5
+        checks += 6
 
     checks += require(source["verifier"], (
         "GetDestinationBasicMetadataEvidenceAsync(",
@@ -221,48 +248,44 @@ def check_repository(root: Path) -> int:
         "ClearPending(operationId)",
     ))
 
-    for test_name in (
-        "CombinedCommitPersistsMetadataAndHardLinkEvidenceAcrossReopen",
-        "CombinedRecoveryPersistsMetadataWithoutUndoAuthority",
-        "HardLinkOnlyCommitLoadsWithNoBasicMetadataEvidence",
-        "MetadataInsertFailureRollsBackStateFingerprintAndHardLinkEvidence",
-        "CombinedEvidenceRejectsZeroHardLinkCount",
-    ):
-        assert test_name in source["store_tests"], test_name
-        checks += 1
-    for test_name in (
-        "LegacyCommitCallPersistsCombinedEvidence",
-        "FailedCombinedCommitReusesExactMetadataEvidenceForRecovery",
-        "EvidenceCollectionFailureDowngradesRecoveryToNoPartialProof",
-    ):
-        assert test_name in source["bridge_tests"], test_name
-        checks += 1
-    for test_name in (
-        "LastAccessOnlyDifferenceRemainsSameStableMetadata",
-        "LastWriteDifferenceIsReportedWithoutMutationAuthority",
-        "MissingRecordedMetadataSkipsReader",
-        "UnverifiedRootSkipsReaderAndReturnsUnavailable",
-        "UnsafeReaderStatusReturnsUnavailable",
-        "InconsistentSuccessEvidenceFailsClosedAsUnavailable",
-    ):
-        assert test_name in source["verifier_tests"], test_name
-        checks += 1
-    for test_name in (
-        "SourceCapturesPositiveCountAndStableBasicMetadata",
-        "ExistingTrustedWriterCanCoexistWithCommitMetadataRead",
-        "WrongDestinationIdentityFailsClosed",
-        "ReplacedRootWithSameFileMovedBackFailsClosed",
-    ):
-        assert test_name in source["commit_reader_tests"], test_name
-        checks += 1
-    for test_name in (
-        "ReaderObservesCreationLastWriteAndSafeAttributes",
-        "ExistingWriterMakesCurrentMetadataUnavailableAsBusy",
-        "WrongLeafIdentityFailsClosed",
-        "ReplacedRootWithSameFileMovedBackFailsClosed",
-    ):
-        assert test_name in source["current_reader_tests"], test_name
-        checks += 1
+    expected_tests = {
+        "store_tests": (
+            "CombinedCommitPersistsMetadataAndHardLinkEvidenceAcrossReopen",
+            "CombinedRecoveryPersistsMetadataWithoutUndoAuthority",
+            "HardLinkOnlyCommitLoadsWithNoBasicMetadataEvidence",
+            "MetadataInsertFailureRollsBackStateFingerprintAndHardLinkEvidence",
+            "CombinedEvidenceRejectsZeroHardLinkCount",
+        ),
+        "bridge_tests": (
+            "LegacyCommitCallPersistsCombinedEvidence",
+            "FailedCombinedCommitReusesExactMetadataEvidenceForRecovery",
+            "EvidenceCollectionFailureDowngradesRecoveryToNoPartialProof",
+        ),
+        "verifier_tests": (
+            "LastAccessOnlyDifferenceRemainsSameStableMetadata",
+            "LastWriteDifferenceIsReportedWithoutMutationAuthority",
+            "MissingRecordedMetadataSkipsReader",
+            "UnverifiedRootSkipsReaderAndReturnsUnavailable",
+            "UnsafeReaderStatusReturnsUnavailable",
+            "InconsistentSuccessEvidenceFailsClosedAsUnavailable",
+        ),
+        "commit_reader_tests": (
+            "SourceCapturesPositiveCountAndStableBasicMetadata",
+            "ExistingTrustedWriterCanCoexistWithCommitMetadataRead",
+            "WrongDestinationIdentityFailsClosed",
+            "ReplacedRootWithSameFileMovedBackFailsClosed",
+        ),
+        "current_reader_tests": (
+            "ReaderObservesCreationLastWriteAndSafeAttributes",
+            "ExistingWriterMakesCurrentMetadataUnavailableAsBusy",
+            "WrongLeafIdentityFailsClosed",
+            "ReplacedRootWithSameFileMovedBackFailsClosed",
+        ),
+    }
+    for name, test_names in expected_tests.items():
+        for test_name in test_names:
+            assert test_name in source[name], test_name
+            checks += 1
 
     checks += require(source["docs"], (
         "Last-access is diagnostic only",
@@ -272,6 +295,24 @@ def check_repository(root: Path) -> int:
         "No one status is renamed \"unchanged file\"",
         "explicit user authorization",
     ), folded=True)
+
+    # The standard wrappers must run both this slice and the inherited hard-link slice.
+    for wrapper in ("py_wrapper", "ps_wrapper"):
+        assert "verify_recovery_hard_link_evidence.py" in source[wrapper]
+        assert "verify_recovery_basic_metadata_evidence.py" in source[wrapper]
+        assert "verify_recovery_basic_metadata_persistence.py" in source[wrapper]
+        checks += 3
+    for needle in (
+        "FullyQualifiedName~FileOperationActionHistoryHardLinkEvidence",
+        "FullyQualifiedName~FileOperationActionHistoryBasicMetadataEvidenceTests",
+        "FullyQualifiedName~FileOperationRecoveryBasicMetadataComparerTests",
+        "FullyQualifiedName~FileOperationRecoveryBasicMetadataVerificationTests",
+        "FullyQualifiedName~WindowsRootBoundFileCommitBasicMetadataEvidenceSourceTests",
+        "FullyQualifiedName~WindowsRootBoundFileBasicMetadataEvidenceReaderTests",
+        "FullyQualifiedName~WindowsFileOperationActionHistoryBasicMetadataEvidenceStoreTests",
+    ):
+        assert needle in source["windows_gate"], needle
+        checks += 1
 
     for name in ("semantics", "store", "verifier", "bridge"):
         for forbidden in ("CanDelete", "CanUndo"):
@@ -291,9 +332,15 @@ def main() -> int:
         parser.error("--sqlite-cases must be greater than zero")
 
     sqlite_checks = run_sqlite_model(args.sqlite_cases)
-    print(f"PASS recovery basic-metadata persistence model: {sqlite_checks} checks across {args.sqlite_cases} SQLite cases + rollback")
+    print(
+        f"PASS recovery basic-metadata persistence model: {sqlite_checks} checks across "
+        f"{args.sqlite_cases} SQLite cases + forced rollback"
+    )
     if not args.self_test_only:
-        print(f"PASS recovery basic-metadata persistence/source wiring: {check_repository(args.repo_root.resolve())} checks")
+        print(
+            "PASS recovery basic-metadata persistence/source wiring: "
+            f"{check_repository(args.repo_root.resolve())} checks"
+        )
     return 0
 
 
