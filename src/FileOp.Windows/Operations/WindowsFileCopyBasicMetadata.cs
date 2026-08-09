@@ -208,6 +208,7 @@ internal static class WindowsFileCopyBasicMetadata
     [DllImport(
         "kernel32.dll",
         SetLastError = true,
+        ExactSpelling = true,
         CallingConvention = CallingConvention.Winapi)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(
@@ -217,6 +218,7 @@ internal static class WindowsFileCopyBasicMetadata
     [DllImport(
         "kernel32.dll",
         SetLastError = true,
+        ExactSpelling = true,
         CallingConvention = CallingConvention.Winapi)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetFileInformationByHandle(
