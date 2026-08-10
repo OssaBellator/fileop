@@ -18,6 +18,10 @@ public static class WindowsDiskIoSystemSessionPolicy
 {
     public const string SessionName = "FileOp Disk I/O Diagnostics";
 
+    // Stable FileOp-owned identifier for the dedicated SystemTraceProvider session.
+    public static readonly Guid SessionGuid =
+        new("6def68d0-e21a-403d-9ba5-0dc373e02eb8");
+
     // evntrace.h logging-mode constants. FileOp deliberately uses a dedicated
     // SystemTraceProvider session instead of the deprecated NT Kernel Logger identity.
     public const uint EventTraceRealTimeMode = 0x00000100;
@@ -41,8 +45,6 @@ public static class WindowsDiskIoSystemSessionPolicy
 
     public static uint EnableFlags => EventTraceFlagDiskIo | EventTraceFlagNoSysConfig;
 
-    public static Guid RequestedSessionGuid => Guid.Empty;
-
     public static bool UsesLegacyNtKernelLoggerIdentity => false;
 
     public static bool TryClassifyExpectedStartFailure(
@@ -58,7 +60,7 @@ public static class WindowsDiskIoSystemSessionPolicy
             ErrorAlreadyExists => new WindowsDiskIoSessionFailure(
                 DiskIoCaptureStatus.SessionUnavailable,
                 win32Error,
-                $"An ETW session named '{SessionName}' already exists. FileOp will not stop or reuse a session whose ownership it cannot prove."),
+                $"The FileOp disk-I/O ETW session name or GUID is already active. FileOp will not stop or reuse a session whose ownership it cannot prove."),
             ErrorNoSystemResources => new WindowsDiskIoSessionFailure(
                 DiskIoCaptureStatus.SessionUnavailable,
                 win32Error,
