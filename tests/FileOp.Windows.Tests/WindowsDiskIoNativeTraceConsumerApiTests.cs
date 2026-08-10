@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Runtime.InteropServices;
 using FileOp.Windows.Performance;
 
 namespace FileOp.Windows.Tests;
@@ -8,49 +7,96 @@ namespace FileOp.Windows.Tests;
 public sealed class WindowsDiskIoNativeTraceConsumerApiTests
 {
     [TestMethod]
-    public void NativeStructSizesAndCallbackOffsetsMatchWindowsAbi()
+    public void ExplicitLogfileLayoutMatchesWindowsAbi()
     {
-        Assert.AreEqual(
-            48,
-            Marshal.SizeOf<WindowsDiskIoNativeTraceConsumerApi.EventTraceHeaderNative>());
-        Assert.AreEqual(
-            88,
-            Marshal.SizeOf<WindowsDiskIoNativeTraceConsumerApi.EventTraceNative>());
-        Assert.AreEqual(
-            172,
-            Marshal.SizeOf<WindowsDiskIoNativeTraceConsumerApi.TimeZoneInformationNative>());
+        Assert.AreEqual(48, WindowsDiskIoTraceLogfileBuffer.EventTraceHeaderSize);
+        Assert.AreEqual(88, WindowsDiskIoTraceLogfileBuffer.EventTraceSize);
+        Assert.AreEqual(172, WindowsDiskIoTraceLogfileBuffer.TimeZoneInformationSize);
         Assert.AreEqual(
             IntPtr.Size == 8 ? 280 : 272,
-            Marshal.SizeOf<WindowsDiskIoNativeTraceConsumerApi.TraceLogfileHeaderNative>());
+            IntPtr.Size == 8
+                ? WindowsDiskIoTraceLogfileBuffer.TraceLogfileHeaderSize64
+                : WindowsDiskIoTraceLogfileBuffer.TraceLogfileHeaderSize32);
         Assert.AreEqual(
             IntPtr.Size == 8 ? 448 : 416,
-            Marshal.SizeOf<WindowsDiskIoNativeTraceConsumerApi.EventTraceLogfileWNative>());
+            IntPtr.Size == 8
+                ? WindowsDiskIoTraceLogfileBuffer.EventTraceLogfileSize64
+                : WindowsDiskIoTraceLogfileBuffer.EventTraceLogfileSize32);
 
-        Assert.AreEqual(
-            IntPtr.Size == 8 ? 400 : 384,
-            Marshal.OffsetOf<WindowsDiskIoNativeTraceConsumerApi.EventTraceLogfileWNative>(
-                nameof(WindowsDiskIoNativeTraceConsumerApi.EventTraceLogfileWNative.BufferCallback)).ToInt32());
-        Assert.AreEqual(
-            IntPtr.Size == 8 ? 424 : 400,
-            Marshal.OffsetOf<WindowsDiskIoNativeTraceConsumerApi.EventTraceLogfileWNative>(
-                nameof(WindowsDiskIoNativeTraceConsumerApi.EventTraceLogfileWNative.EventRecordCallback)).ToInt32());
-        Assert.AreEqual(
-            IntPtr.Size == 8 ? 440 : 408,
-            Marshal.OffsetOf<WindowsDiskIoNativeTraceConsumerApi.EventTraceLogfileWNative>(
-                nameof(WindowsDiskIoNativeTraceConsumerApi.EventTraceLogfileWNative.Context)).ToInt32());
+        Assert.AreEqual(IntPtr.Size == 8 ? 8 : 4, WindowsDiskIoTraceLogfileBuffer.LoggerNameOffset);
+        Assert.AreEqual(IntPtr.Size == 8 ? 28 : 20, WindowsDiskIoTraceLogfileBuffer.ProcessTraceModeOffset);
+        Assert.AreEqual(IntPtr.Size == 8 ? 400 : 384, WindowsDiskIoTraceLogfileBuffer.BufferCallbackOffset);
+        Assert.AreEqual(IntPtr.Size == 8 ? 424 : 400, WindowsDiskIoTraceLogfileBuffer.EventRecordCallbackOffset);
+        Assert.AreEqual(IntPtr.Size == 8 ? 440 : 408, WindowsDiskIoTraceLogfileBuffer.ContextOffset);
     }
 
     [TestMethod]
-    public void TraceHeaderPerfFrequencyOffsetMatchesPointerWidth()
+    public void TraceHeaderEvidenceOffsetsMatchPointerWidth()
     {
         Assert.AreEqual(
-            IntPtr.Size == 8 ? 256 : 248,
-            Marshal.OffsetOf<WindowsDiskIoNativeTraceConsumerApi.TraceLogfileHeaderNative>(
-                nameof(WindowsDiskIoNativeTraceConsumerApi.TraceLogfileHeaderNative.PerfFreq)).ToInt32());
+            IntPtr.Size == 8 ? 376 : 360,
+            WindowsDiskIoTraceLogfileBuffer.TraceLogfilePerfFreqOffset);
         Assert.AreEqual(
-            IntPtr.Size == 8 ? 276 : 268,
-            Marshal.OffsetOf<WindowsDiskIoNativeTraceConsumerApi.TraceLogfileHeaderNative>(
-                nameof(WindowsDiskIoNativeTraceConsumerApi.TraceLogfileHeaderNative.BuffersLost)).ToInt32());
+            IntPtr.Size == 8 ? 396 : 380,
+            WindowsDiskIoTraceLogfileBuffer.TraceLogfileBuffersLostOffset);
+    }
+
+    [TestMethod]
+    public void RealtimeOpenBufferStartsZeroedAndWritesOnlyRequiredInputs()
+    {
+        var logger = new IntPtr(0x1111);
+        var bufferCallback = new IntPtr(0x2222);
+        var eventCallback = new IntPtr(0x3333);
+        var context = new IntPtr(0x4444);
+        const uint mode = 0x10000100;
+
+        using var buffer = WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
+            logger,
+            mode,
+            bufferCallback,
+            eventCallback,
+            context);
+
+        Assert.AreEqual(
+            IntPtr.Size == 8 ? 448 : 416,
+            buffer.TotalSize);
+        Assert.AreEqual(IntPtr.Zero, buffer.ReadPointer(0));
+        Assert.AreEqual(logger, buffer.ReadPointer(WindowsDiskIoTraceLogfileBuffer.LoggerNameOffset));
+        Assert.AreEqual(mode, buffer.ReadUInt32(WindowsDiskIoTraceLogfileBuffer.ProcessTraceModeOffset));
+        Assert.AreEqual(bufferCallback, buffer.ReadPointer(WindowsDiskIoTraceLogfileBuffer.BufferCallbackOffset));
+        Assert.AreEqual(eventCallback, buffer.ReadPointer(WindowsDiskIoTraceLogfileBuffer.EventRecordCallbackOffset));
+        Assert.AreEqual(context, buffer.ReadPointer(WindowsDiskIoTraceLogfileBuffer.ContextOffset));
+
+        var bytes = buffer.SnapshotBytes();
+        var currentTimeOffset = IntPtr.Size == 8 ? 16 : 8;
+        Assert.IsTrue(bytes.Skip(currentTimeOffset).Take(8).All(value => value == 0));
+    }
+
+    [TestMethod]
+    public void RealtimeOpenBufferRejectsMissingRequiredPointers()
+    {
+        var nonzero = new IntPtr(1);
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
+                IntPtr.Zero,
+                1,
+                nonzero,
+                nonzero,
+                IntPtr.Zero));
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
+                nonzero,
+                1,
+                IntPtr.Zero,
+                nonzero,
+                IntPtr.Zero));
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
+                nonzero,
+                1,
+                nonzero,
+                IntPtr.Zero,
+                IntPtr.Zero));
     }
 
     [TestMethod]
