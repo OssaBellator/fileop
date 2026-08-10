@@ -10,9 +10,7 @@ internal interface IWindowsDiskIoNativeTraceCallbackSink
     bool OnBuffer(IntPtr logfile);
 }
 
-internal sealed class WindowsDiskIoNativeTraceConsumerApi :
-    IWindowsDiskIoTraceConsumerApi,
-    IWindowsDiskIoTraceEvidenceSource
+internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoCaptureConsumerApi
 {
     private const string NativeLibrary = "sechost.dll";
 
