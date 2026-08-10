@@ -171,6 +171,7 @@ def check_repository(repo_root: Path) -> int:
     sqlite_path = repo_root / "src/FileOp.Core/Search/SqliteFileDirectoryBrowser.cs"
     backend_interface_path = repo_root / "src/FileOp.Windows/IndexingService/IIndexingServiceBackend.cs"
     backend_path = repo_root / "src/FileOp.Windows/IndexingService/PagedDirectoryIndexingServiceBackend.cs"
+    outer_backend_path = repo_root / "src/FileOp.Windows/IndexingService/StorageOptimizationIndexingServiceBackend.cs"
     client_path = repo_root / "src/FileOp.Windows/IndexingService/IndexingServiceClient.cs"
     dispatcher_path = repo_root / "src/FileOp.Windows/IndexingService/IndexingServiceDispatcher.cs"
     program_path = repo_root / "src/FileOp.Indexer/Program.cs"
@@ -185,6 +186,7 @@ def check_repository(repo_root: Path) -> int:
         sqlite_path,
         backend_interface_path,
         backend_path,
+        outer_backend_path,
         client_path,
         dispatcher_path,
         program_path,
@@ -201,6 +203,7 @@ def check_repository(repo_root: Path) -> int:
     sqlite = texts[sqlite_path]
     backend_interface = texts[backend_interface_path]
     backend = texts[backend_path]
+    outer_backend = texts[outer_backend_path]
     client = texts[client_path]
     dispatcher = texts[dispatcher_path]
     program = texts[program_path]
@@ -209,7 +212,7 @@ def check_repository(repo_root: Path) -> int:
     tests = texts[tests_path]
 
     required = [
-        (protocol, "public const int CurrentVersion = 6;"),
+        (protocol, "public const int CurrentVersion = 7;"),
         (protocol, "BrowseDirectory,"),
         (protocol, "IndexingDirectoryBrowseRequest"),
         (protocol, "FileDirectoryBrowseCursor? Cursor = null"),
@@ -224,6 +227,8 @@ def check_repository(repo_root: Path) -> int:
         (backend, "HasCheckpointAsync(sourceKey"),
         (backend, "DirectoryExistsAsync(request.DirectoryPath"),
         (backend, "SqliteFileDirectoryBrowser(databasePath)"),
+        (outer_backend, "_inner = new PagedDirectoryIndexingServiceBackend(_databaseDirectory)"),
+        (outer_backend, "_inner.BrowseDirectoryAsync(request, cancellationToken)"),
         (sqlite, "Mode = SqliteOpenMode.ReadOnly"),
         (sqlite, "OR EXISTS("),
         (sqlite, "parent_volume_serial = @parent_volume_serial"),
@@ -234,7 +239,7 @@ def check_repository(repo_root: Path) -> int:
         (sqlite, "ORDER BY is_directory DESC, name_norm ASC, path_norm ASC"),
         (sqlite, "LIMIT @take"),
         (sqlite, "checked(pageSize + 1)"),
-        (program, "new PagedDirectoryIndexingServiceBackend(databaseDirectory)"),
+        (program, "new StorageOptimizationIndexingServiceBackend(databaseDirectory)"),
         (engine, "_searchOperationGate.WaitAsync(_lifetimeCancellation.Token)"),
         (engine, "_nativeOperationGate.WaitAsync(_lifetimeCancellation.Token)"),
         (engine, "session.Client.BrowseDirectoryAsync("),
