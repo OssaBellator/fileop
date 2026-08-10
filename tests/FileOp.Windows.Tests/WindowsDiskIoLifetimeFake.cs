@@ -117,10 +117,10 @@ internal sealed class WindowsDiskIoLifetimeFake : IWindowsDiskIoLifetimeApi
     public bool IsProcessHandle(IntPtr handle) => _processByHandle.ContainsKey(handle);
 
     public IntPtr ThreadHandle(uint threadId) =>
-        new(0x100000 + checked((int)threadId));
+        new(unchecked(0x100000L + threadId));
 
     public IntPtr ProcessHandle(uint processId) =>
-        new(0x200000 + checked((int)processId));
+        new(unchecked(0x200000L + processId));
 
     private sealed record FakeThread(
         IntPtr Handle,
