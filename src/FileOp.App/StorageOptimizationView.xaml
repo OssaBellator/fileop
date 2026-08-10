@@ -1,7 +1,8 @@
 <UserControl
     x:Class="FileOp.App.StorageOptimizationView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:FileOp.App">
     <Grid RowSpacing="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -17,7 +18,7 @@
             <StackPanel Spacing="4">
                 <TextBlock Text="Optimization advisor" FontSize="20" FontWeight="SemiBold" />
                 <TextBlock
-                    Text="Read-only index analysis. Same-size groups are candidates for later content verification, not confirmed duplicates."
+                    Text="Read-only storage and performance evidence. Same-size groups are candidates for later content verification, not confirmed duplicates."
                     TextWrapping="Wrap"
                     Opacity="0.72" />
             </StackPanel>
@@ -37,7 +38,9 @@
             Opacity="0.8" />
 
         <ScrollViewer Grid.Row="2">
-            <StackPanel Spacing="20" Padding="0,0,12,12">
+            <StackPanel Spacing="24" Padding="0,0,12,12">
+                <local:PerformanceDiagnosticsView x:Name="PerformanceDiagnostics" />
+
                 <StackPanel Spacing="8">
                     <TextBlock Text="Largest files" FontSize="16" FontWeight="SemiBold" />
                     <TextBlock
