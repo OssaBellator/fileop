@@ -113,7 +113,8 @@ public sealed record StorageSameSizeContentVerification(
     long BytesRead,
     long MaxBytesRead,
     IReadOnlyList<StorageVerifiedContentMatchSet> MatchingSets,
-    string Detail)
+    string Detail,
+    StoragePhysicalReclaimVerification? PhysicalReclaim = null)
 {
     public bool HasVerifiedDuplicateEvidence =>
         Status == StorageSameSizeContentVerificationStatus.Completed &&
@@ -148,6 +149,12 @@ public sealed record StorageSameSizeContentVerification(
             return total;
         }
     }
+
+    public long VerifiedPhysicalReclaimableBytesUpperBound =>
+        Status == StorageSameSizeContentVerificationStatus.Completed &&
+        PhysicalReclaim is { Status: StoragePhysicalReclaimEvidenceStatus.Verified } physical
+            ? physical.ReclaimableBytesUpperBound
+            : 0;
 }
 
 public sealed record StorageOptimizationAnalysis(
