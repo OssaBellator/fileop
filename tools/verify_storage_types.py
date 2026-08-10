@@ -268,6 +268,7 @@ def _category_map(rows: list[tuple]) -> dict[int, tuple]:
 def check_sql_semantics() -> int:
     cases = 0
 
+    # Nested extension aggregation + exact category rollup.
     connection = _db()
     _add(connection, r"C:\Data\Images", r"C:\Data", directory=True)
     _add(connection, r"C:\Data\Images\one.JPG", r"C:\Data\Images", "JPG", 100, 128)
@@ -287,6 +288,7 @@ def check_sql_semantics() -> int:
     assert sum(row[8] for row in categories) == 3
     cases += 1
 
+    # Cross-extension hard link: namespace bytes in both types, physical bytes once.
     connection = _db()
     identity = (0xAABB, 0x2233)
     _add(connection, r"C:\Data\A", r"C:\Data", directory=True)
@@ -302,6 +304,7 @@ def check_sql_semantics() -> int:
     assert images[9:15] == (200, 128, 0, 2, 1, 2)
     cases += 1
 
+    # LIMIT truncates extensions only; categories remain exact and preserve unknown allocation.
     connection = _db()
     _add(connection, r"C:\Data\a.bin", r"C:\Data", "bin", 300, 384)
     _add(connection, r"C:\Data\b.txt", r"C:\Data", "txt", 200, None)
@@ -322,6 +325,7 @@ def check_sql_semantics() -> int:
     assert sum(row[8] for row in categories) == 3
     cases += 1
 
+    # Similar path prefixes must not leak sibling roots into the recursive tree.
     connection = _db()
     _add(connection, r"C:\Data\inside.txt", r"C:\Data", "txt", 10, 16)
     _add(connection, r"C:\Database\sibling.txt", r"C:\Database", "txt", 999, 1024)
