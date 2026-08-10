@@ -35,6 +35,7 @@ public sealed partial class StorageOptimizationView : UserControl
     public void SetReadyForRefresh(bool ready)
     {
         RefreshButton.IsEnabled = ready;
+        PerformanceDiagnostics.SetReadyForRefresh(ready);
     }
 
     public void SetPerformanceUnavailable(string message) =>
