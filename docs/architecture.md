@@ -186,13 +186,13 @@ The provider takes the shared cross-process read lease and verifies the durable 
 - shared-memory bytes;
 - page size/count;
 - freelist page count;
-- configured `cache_size`;
+- `cache_size` observed on the diagnostics reader connection;
 - journal mode;
 - persisted indexed-item count.
 
-Derived values include total helper-file footprint, logical database page bytes, reusable freelist bytes/percentage and the configured cache target.
+Derived values include total helper-file footprint, logical database page bytes, reusable freelist bytes/percentage and the reader-connection cache-default target.
 
-These metrics are not tuning instructions. Freelist pages are reusable internal pages rather than guaranteed disk reclaim, cache size is a configuration target rather than observed resident RAM, and WAL size alone does not justify forcing a checkpoint. The diagnostics path contains no `VACUUM`, WAL checkpoint forcing or cache-setting mutation.
+These metrics are not tuning instructions. Freelist pages are reusable internal pages rather than guaranteed disk reclaim. FileOp currently does not set `PRAGMA cache_size`, so the reader-connection default is not a FileOp-selected cache policy, observed resident RAM, live cache occupancy or a hit-rate measurement. WAL size alone does not justify forcing a checkpoint. The diagnostics path contains no `VACUUM`, WAL checkpoint forcing or cache-setting mutation.
 
 The desktop treats this provider as optional within a performance refresh: Busy/SnapshotRequired/detached-volume failures are shown as provider status while valid Search/Storage timings and volume capacity remain visible.
 
@@ -311,7 +311,7 @@ Hosted CI is useful but not the only gate. FileOp carries reproducible no-Action
 - `verify_storage_types.py` / `verify_storage_types_fuzz.py` — exact SQLite type/category semantics;
 - `verify_storage_optimization.py` — hard-link-aware reclaim-candidate semantics plus protocol-v8/WinUI/read-only safety wiring while preserving v7 Optimize semantics;
 - `verify_performance_diagnostics.py` — capacity arithmetic, exact bounded probes, helper-index evidence, no-polling/no-fake-optimiser boundary and Optimize integration;
-- `verify_index_diagnostics.py` — randomized SQLite footprint/page/freelist/cache semantics, WAL fixture, protocol-v8 wiring, shared database identity and read-only safety boundary;
+- `verify_index_diagnostics.py` — randomized SQLite footprint/page/freelist/reader-cache-default semantics, WAL fixture, protocol-v8 wiring, shared database identity and read-only safety boundary;
 - `verify_storage_history.py` / `verify_storage_history_unicode.py` — history persistence, deltas, corruption and Unicode root identity;
 - `verify_storage_history_service.py` — protocol-v8 history wiring, service-owned timestamps, live-analysis-before-persist ordering, contention mapping and shared database identity;
 - `verify_storage_history_ui.py` — engine-owned low-priority scheduling, UTC-hour cadence, whole-volume scope, fallback exclusion, timeline unit consistency and History UI/source wiring;
@@ -326,7 +326,7 @@ Hosted CI is useful but not the only gate. FileOp carries reproducible no-Action
 
 Implemented foundations include MFT/USN ingestion, durable SQLite metadata, hard-link namespaces, journal-safe mutation/checkpoints, authenticated helper IPC, native-first Search with fallback, multi-instance index leases, exact paged native directory browsing, directory Storage, treemap drill-down, file-type analytics, exact categories, aggregate history persistence, protocol-v5 history capture/query, low-priority native hourly capture, a read-only growth timeline, protocol-v7 read-only Optimize analysis and protocol-v8 helper-owned index database diagnostics.
 
-Current measurable performance evidence includes on-demand source/index status, indexed item count, volume free-space capacity, end-to-end Search/root-Storage probe latency, timer-baseline disclosure, helper-file footprint, SQLite page/freelist evidence and configured cache target. Next engine/lifecycle work includes explicit USN freshness/backlog evidence, low-frequency latency distributions, sparse/compressed/reparse semantics, measured search/analytics memory budgets, specialized filename/path acceleration, case-sensitive namespace policy, shadow-index rebuild and broader multi-volume orchestration.
+Current measurable performance evidence includes on-demand source/index status, indexed item count, volume free-space capacity, end-to-end Search/root-Storage probe latency, timer-baseline disclosure, helper-file footprint, SQLite page/freelist evidence and the reader-connection cache default. Next engine/lifecycle work includes explicit USN freshness/backlog evidence, low-frequency latency distributions, sparse/compressed/reparse semantics, measured search/analytics memory budgets, specialized filename/path acceleration, case-sensitive namespace policy, shadow-index rebuild and broader multi-volume orchestration.
 
 ### File manager
 
