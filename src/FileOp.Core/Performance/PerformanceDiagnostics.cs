@@ -15,7 +15,8 @@ public sealed record PerformanceDiagnosticsSnapshot(
     long? VolumeTotalBytes,
     long? VolumeFreeBytes,
     IReadOnlyList<PerformanceProbeMeasurement> Probes,
-    IndexDatabaseDiagnostics? IndexDatabase = null)
+    IndexDatabaseDiagnostics? IndexDatabase = null,
+    string? IndexDatabaseStatus = null)
 {
     public long? VolumeUsedBytes =>
         VolumeTotalBytes is { } total && VolumeFreeBytes is { } free
