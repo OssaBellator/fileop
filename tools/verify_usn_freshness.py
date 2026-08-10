@@ -131,7 +131,7 @@ def check_repository(root: Path) -> int:
 
     for needle in (
         "ReadWithCheckpointAsync(",
-        "NtfsUsnJournal.Query(volume)",
+        "new NtfsUsnJournal().Query(volume)",
         "journal.LowestValidUsn",
         "journal.NextUsn",
         "catch (Win32Exception)",
