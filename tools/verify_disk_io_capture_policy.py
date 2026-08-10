@@ -75,12 +75,18 @@ def validate_result(budget: Budget, result: Result) -> None:
 
     if result.report is None or result.stop_reason is None:
         raise ValueError("completed payload")
+    if result.report.duration_ms < 0:
+        raise ValueError("negative report duration")
     if result.report.duration_ms > budget.duration_ms:
         raise ValueError("duration mismatch")
+    if result.report.accepted_events < 0:
+        raise ValueError("negative report events")
     if result.report.accepted_events > budget.max_observations:
         raise ValueError("event mismatch")
     if result.report.max_owners != budget.max_owners:
         raise ValueError("owner mismatch")
+    if result.stop_reason == "duration" and result.report.duration_ms != budget.duration_ms:
+        raise ValueError("full-duration mismatch")
     if result.stop_reason == "limit" and result.report.accepted_events != budget.max_observations:
         raise ValueError("limit mismatch")
 
@@ -125,11 +131,14 @@ def run_model(cases: int) -> int:
         stop = rng.choice(["duration", "limit"])
         if stop == "limit":
             accepted = budget.max_observations
+            report_duration = rng.randint(0, budget.duration_ms)
+        else:
+            report_duration = budget.duration_ms
         loss = rng.choice(["none", "observed", "unknown"])
         lost = 0 if loss == "none" else rng.randint(1, 10_000) if loss == "observed" else None
         result = Result(
             "completed",
-            Report(rng.randint(0, budget.duration_ms), accepted, budget.max_owners),
+            Report(report_duration, accepted, budget.max_owners),
             stop,
             loss,
             lost,
@@ -137,10 +146,14 @@ def run_model(cases: int) -> int:
         )
         validate_result(budget, result)
         assert result.incomplete == (stop == "limit" or loss != "none")
-        assert result.report is not None and result.report.duration_ms <= budget.duration_ms
-        assert result.report.accepted_events <= budget.max_observations
+        assert result.report is not None and 0 <= result.report.duration_ms <= budget.duration_ms
+        assert 0 <= result.report.accepted_events <= budget.max_observations
         assert result.report.max_owners == budget.max_owners
-        checks += 4
+        if stop == "duration":
+            assert result.report.duration_ms == budget.duration_ms
+        else:
+            assert result.report.accepted_events == budget.max_observations
+        checks += 5
 
         unavailable = Result(
             rng.choice(["unsupported", "permission", "session"]),
@@ -155,12 +168,14 @@ def run_model(cases: int) -> int:
         assert unavailable.report is None and unavailable.stop_reason is None
         checks += 2
 
+        mismatched_owner_count = budget.max_owners - 1 if budget.max_owners > 1 else 2
         invalid_variants = [
+            Result("completed", Report(-1, accepted, budget.max_owners), "limit", "none", 0, None),
+            Result("completed", Report(budget.duration_ms, -1, budget.max_owners), "duration", "none", 0, None),
             Result("completed", Report(budget.duration_ms + 1, accepted, budget.max_owners), "duration", "none", 0, None),
+            Result("completed", Report(max(0, budget.duration_ms - 1), accepted, budget.max_owners), "duration", "none", 0, None),
             Result("completed", Report(budget.duration_ms, budget.max_observations + 1, budget.max_owners), "duration", "none", 0, None),
-            Result("completed", Report(budget.duration_ms, accepted, max(1, budget.max_owners - 1)), "duration", "none", 0, None)
-            if budget.max_owners != 1
-            else Result("completed", Report(budget.duration_ms, accepted, 2), "duration", "none", 0, None),
+            Result("completed", Report(budget.duration_ms, accepted, mismatched_owner_count), "duration", "none", 0, None),
             Result("completed", Report(budget.duration_ms, max(0, budget.max_observations - 1), budget.max_owners), "limit", "none", 0, None),
             Result("completed", Report(budget.duration_ms, accepted, budget.max_owners), "duration", "none", None, None),
             Result("completed", Report(budget.duration_ms, accepted, budget.max_owners), "duration", "observed", 0, None),
@@ -210,9 +225,12 @@ def check_repository(root: Path) -> int:
         "DiskIoCaptureLossState",
         "EvidenceMayBeIncomplete",
         "ProviderOverheadDuration",
+        "report.ObservationDuration < TimeSpan.Zero",
         "report.ObservationDuration > budget.Duration",
+        "report.AcceptedEventCount < 0",
         "report.AcceptedEventCount > budget.MaxObservations",
         "report.MaxOwnersPerDisk != budget.MaxOwnersPerDisk",
+        "report.ObservationDuration != budget.Duration",
     ):
         assert needle in text["contract"], needle
         checks += 1
@@ -226,6 +244,7 @@ def check_repository(root: Path) -> int:
         "CompletedNoLossResultIsNotMarkedIncomplete",
         "ObservationLimitAndEventLossAreExplicitlyIncomplete",
         "CompletedResultMustMatchItsBudget",
+        "MalformedManualReportsFailClosed",
         "LossStateAndCountMustAgree",
         "UnavailableResultsCannotMasqueradeAsSuccessfulEvidence",
         "ResultRejectsNegativeOverheadAndBlankDetail",
@@ -236,11 +255,12 @@ def check_repository(root: Path) -> int:
     for needle in (
         "workload-safety policy, not statistical guarantees",
         "Cancellation is a caller-controlled operation boundary",
+        "full requested observation window",
         "PermissionRequired",
         "SessionUnavailable",
         "EvidenceMayBeIncomplete",
         "not a quality/health score",
-        "must not",
+        "negative duration",
         "does **not** start, control or consume an ETW session",
     ):
         assert needle in text["doc"], needle
