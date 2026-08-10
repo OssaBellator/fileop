@@ -59,7 +59,7 @@ The stop buffer is newly zeroed and carries only the control identity/offset fie
 
 A successful native status paired with control-trace ID `0` fails closed because the SDK defines zero as invalid.
 
-Crucially, failed start attempts never invoke STOP. A colliding session name/GUID does not become FileOp-owned merely because it uses FileOp's public identifiers.
+Failed start attempts never invoke STOP. A colliding session name/GUID does not become FileOp-owned merely because it uses FileOp's public identifiers.
 
 ## Stop rule
 
