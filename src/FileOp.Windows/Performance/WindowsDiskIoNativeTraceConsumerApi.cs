@@ -21,6 +21,7 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
 
     private ulong _openedHandle;
     private bool _processStarted;
+    private bool _processActive;
     private bool _callbackCancellationRequested;
     private ExceptionDispatchInfo? _callbackFault;
 
@@ -38,10 +39,10 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionName);
         lock (_gate)
         {
-            if (_openedHandle != 0)
+            if (_openedHandle != 0 || _processActive)
             {
                 throw new InvalidOperationException(
-                    "This native ETW consumer adapter already owns an open processing handle.");
+                    "This native ETW consumer adapter still owns or is draining a processing handle.");
             }
 
             _processStarted = false;
@@ -94,23 +95,34 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
             }
 
             _processStarted = true;
+            _processActive = true;
         }
 
-        var handle = processingHandle;
-        var status = ProcessTraceNative(
-            ref handle,
-            handleCount: 1,
-            IntPtr.Zero,
-            IntPtr.Zero);
-
-        ExceptionDispatchInfo? callbackFault;
-        lock (_gate)
+        try
         {
-            callbackFault = _callbackFault;
-        }
+            var handle = processingHandle;
+            var status = ProcessTraceNative(
+                ref handle,
+                handleCount: 1,
+                IntPtr.Zero,
+                IntPtr.Zero);
 
-        callbackFault?.Throw();
-        return status;
+            ExceptionDispatchInfo? callbackFault;
+            lock (_gate)
+            {
+                callbackFault = _callbackFault;
+            }
+
+            callbackFault?.Throw();
+            return status;
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _processActive = false;
+            }
+        }
     }
 
     public uint CloseTrace(ulong processingHandle)
