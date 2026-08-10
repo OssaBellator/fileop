@@ -33,8 +33,8 @@
                     <TextBlock x:Name="PrivateMemoryText" Text="—" FontSize="18" FontWeight="SemiBold" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Spacing="3">
-                    <TextBlock Text="Managed allocated" Opacity="0.62" />
-                    <TextBlock x:Name="ManagedAllocatedText" Text="—" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="Managed memory" Opacity="0.62" />
+                    <TextBlock x:Name="ManagedMemoryText" Text="—" FontSize="18" FontWeight="SemiBold" />
                 </StackPanel>
                 <StackPanel Grid.Column="3" Spacing="3">
                     <TextBlock Text="Threads" Opacity="0.62" />
