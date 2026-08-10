@@ -93,6 +93,7 @@ public static class StoragePhysicalReclaimAnalyzer
         }
 
         var consumedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var consumedIdentities = new HashSet<StoragePhysicalFileIdentity>();
         var verifiedSets = new List<StorageVerifiedPhysicalMatchSet>(contentMatches.Count);
         long totalReclaimable = 0;
 
@@ -121,8 +122,19 @@ public static class StoragePhysicalReclaimAnalyzer
             var physicalFiles = new List<StorageVerifiedPhysicalFile>();
             foreach (var identityGroup in setEvidence.GroupBy(static evidence => evidence.Identity))
             {
-                var first = identityGroup.First();
-                if (identityGroup.Any(evidence =>
+                var groupedEvidence = identityGroup.ToArray();
+                var first = groupedEvidence[0];
+                if (!consumedIdentities.Add(first.Identity))
+                {
+                    return StoragePhysicalReclaimVerification.Unavailable(
+                        "One current physical file identity appeared in more than one content-match set, so reclaim accounting was rejected.");
+                }
+                if (first.HardLinkCount < groupedEvidence.Length)
+                {
+                    return StoragePhysicalReclaimVerification.Unavailable(
+                        "The current hard-link count was smaller than the number of sampled paths mapping to the same physical file.");
+                }
+                if (groupedEvidence.Any(evidence =>
                     evidence.HardLinkCount != first.HardLinkCount ||
                     evidence.AllocatedBytes != first.AllocatedBytes))
                 {
@@ -132,7 +144,7 @@ public static class StoragePhysicalReclaimAnalyzer
 
                 physicalFiles.Add(new StorageVerifiedPhysicalFile(
                     first.Identity,
-                    identityGroup
+                    groupedEvidence
                         .Select(static evidence => evidence.Path)
                         .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
                         .ToArray(),
