@@ -333,24 +333,22 @@ public sealed partial class MainWindow
         finally
         {
             _storageSameSizeVerificationActive = false;
-            if (_closed)
+            if (!_closed)
             {
-                return;
-            }
-
-            if (ReferenceEquals(analysis, _storageOptimizationAnalysis))
-            {
-                _storageOptimizationView.SetReadyForRefresh(
-                    _storageViewMode == StorageViewMode.Optimize &&
-                    _searchEngine.StorageOptimizationAvailable &&
-                    !_searchEngine.State.IsBusy);
-                _storageOptimizationView.SetDiskIoReadyForCapture(
-                    _storageViewMode == StorageViewMode.Optimize &&
-                    !_performanceDiskIoCaptureActive);
-            }
-            else
-            {
-                HandleStorageOptimizationEngineState(_searchEngine.State);
+                if (ReferenceEquals(analysis, _storageOptimizationAnalysis))
+                {
+                    _storageOptimizationView.SetReadyForRefresh(
+                        _storageViewMode == StorageViewMode.Optimize &&
+                        _searchEngine.StorageOptimizationAvailable &&
+                        !_searchEngine.State.IsBusy);
+                    _storageOptimizationView.SetDiskIoReadyForCapture(
+                        _storageViewMode == StorageViewMode.Optimize &&
+                        !_performanceDiskIoCaptureActive);
+                }
+                else
+                {
+                    HandleStorageOptimizationEngineState(_searchEngine.State);
+                }
             }
         }
     }
