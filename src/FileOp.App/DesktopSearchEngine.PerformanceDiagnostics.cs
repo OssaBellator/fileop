@@ -20,7 +20,8 @@ internal sealed partial class DesktopSearchEngine
             timerOverhead,
             "Minimum Stopwatch start/stop cost across 128 samples; shown to bound measurement overhead."));
 
-        if (!state.IsBusy && state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback)
+        if (!state.IsBusy &&
+            (state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback))
         {
             var searchStart = Stopwatch.GetTimestamp();
             var search = await SearchAsync(string.Empty, limit: 1).ConfigureAwait(false);
