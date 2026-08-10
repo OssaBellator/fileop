@@ -15,7 +15,7 @@ def analyze(
     newer_allocated: int | None,
     total: int | None,
     free: int | None,
-) -> tuple[int, bool, int | None, float | None]:
+) -> tuple[int, bool, int | None, float | None, float | None]:
     known_total = total if total is not None and total > 0 else None
     known_free = None if free is None else max(0, free)
     if known_total is not None and known_free is not None:
@@ -95,6 +95,7 @@ def check_repository(root: Path) -> int:
         "view": root / "src/FileOp.App/StorageHistoryView.xaml",
         "view_code": root / "src/FileOp.App/StorageHistoryView.xaml.cs",
         "tests": root / "tests/FileOp.Windows.Tests/StorageHistoryPressureEvidenceTests.cs",
+        "doc": root / "docs/storage-pressure-history.md",
         "gate": root / "tools/test-local.ps1",
     }
     text: dict[str, str] = {}
@@ -160,6 +161,17 @@ def check_repository(root: Path) -> int:
         "OneObservationShowsLatestEvidenceWithoutInventingChange",
     ):
         assert needle in text["tests"], needle
+        checks += 1
+
+    for needle in (
+        "descriptive ratio, not a time estimate",
+        "Logical-size growth is never substituted for physical allocation",
+        "does not calculate",
+        "time to full",
+        "disk-full date",
+        "Only the newest two observations feed the pressure comparison",
+    ):
+        assert needle.casefold() in text["doc"].casefold(), needle
         checks += 1
 
     source = "\n".join(text[name] for name in ("model", "view", "view_code"))
