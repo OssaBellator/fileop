@@ -87,7 +87,7 @@ This PR does not decode `EVENT_RECORD`, copy its user payload, or retain ETW-own
 
 The next event-adapter slice must copy every field/payload it needs into FileOp-owned values before returning from `OnEventRecord`.
 
-## Cancellation
+## Cancellation and draining
 
 The callback sink may return `false` from either callback contract.
 
@@ -96,6 +96,8 @@ For an event callback, FileOp records cancellation and suppresses subsequent eve
 For a buffer callback, FileOp returns `FALSE` immediately.
 
 #75 still provides the independent prompt `CloseTrace` path for cancellation from another thread while `ProcessTrace` is blocked. The callback cancellation path is complementary; it does not add polling or a background timer.
+
+A successful `CloseTrace`, including `ERROR_CTX_CLOSE_PENDING`, may release the processing handle while the blocking `ProcessTrace` call is still draining previously queued events. The native adapter tracks that separately with `_processActive`: it cannot be reopened and cannot reset callback state until the prior `ProcessTrace` invocation has actually returned.
 
 ## Callback exceptions
 
@@ -133,8 +135,8 @@ Those boundaries remain separate so FileOp can distinguish transport correctness
 
 ## Validation without GitHub Actions
 
-`tools/verify_disk_io_native_consumer.py` checks x86/x64 ABI arithmetic, explicit pointer-width offsets, callback-state behavior, native imports, rooted delegate setup, callback-fault containment, focused tests and scope guards. It is wired into `tools/test-local.ps1 -OfflineOnly`.
+`tools/verify_disk_io_native_consumer.py` checks x86/x64 ABI arithmetic, explicit pointer-width offsets, callback-state behavior, native imports, rooted delegate setup, callback-fault containment, drain/reopen ownership, focused tests and scope guards. It is wired into `tools/test-local.ps1 -OfflineOnly`.
 
-Focused .NET tests validate the actual zeroed unmanaged buffer and the exact values written at the documented offsets, then directly exercise managed callback containment without opening a live ETW session.
+Focused .NET tests validate the actual zeroed unmanaged buffer and the exact values written at the documented offsets, then directly exercise managed callback containment and the close-pending drain guard without opening a live ETW session.
 
 A real `OpenTraceW`/`ProcessTrace` smoke test still requires the Windows/.NET/native test environment and the later provider integration. No live ETW execution is claimed by this slice.
