@@ -79,6 +79,10 @@ Invoke-Step "Offline Storage history UI/scheduler verifier" {
     python tools/verify_storage_history_ui.py --repo-root $repoRoot --cases 10000
 }
 
+Invoke-Step "Offline Storage pressure/history verifier" {
+    python tools/verify_storage_pressure_history.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline indexed Files browser verifier" {
     python tools/verify_files_ui.py --repo-root $repoRoot --cases 10000
 }
