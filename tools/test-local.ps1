@@ -67,6 +67,10 @@ Invoke-Step "Offline disk I/O attribution verifier" {
     python tools/verify_disk_io_attribution.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline disk I/O capture-policy verifier" {
+    python tools/verify_disk_io_capture_policy.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Storage history verifier" {
     python tools/verify_storage_history.py --repo-root $repoRoot --cases 1000
 }
