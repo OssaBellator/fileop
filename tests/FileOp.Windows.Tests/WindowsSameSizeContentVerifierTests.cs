@@ -38,7 +38,7 @@ public sealed class WindowsSameSizeContentVerifierTests
             new[] { first, second },
             result.MatchingSets[0].Paths.ToArray());
         Assert.IsTrue(result.HasVerifiedDuplicateEvidence);
-        Assert.AreEqual(content.Length, result.VerifiedLogicalDuplicateBytes);
+        Assert.AreEqual((long)content.Length, result.VerifiedLogicalDuplicateBytes);
         StringAssert.Contains(result.Detail, "physical reclaimable space is not verified");
     }
 
