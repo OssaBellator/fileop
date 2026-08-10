@@ -7,6 +7,7 @@ import random
 from pathlib import Path
 
 SESSION_NAME = "FileOp Disk I/O Diagnostics"
+SESSION_GUID = "6def68d0-e21a-403d-9ba5-0dc373e02eb8"
 REAL_TIME_MODE = 0x00000100
 SYSTEM_LOGGER_MODE = 0x02000000
 DISK_IO = 0x00000100
@@ -43,10 +44,11 @@ def classify_stop(error: int) -> str | None:
 def run_model(cases: int) -> int:
     checks = 0
     assert SESSION_NAME == "FileOp Disk I/O Diagnostics"
+    assert SESSION_GUID == "6def68d0-e21a-403d-9ba5-0dc373e02eb8"
     assert REAL_TIME_MODE | SYSTEM_LOGGER_MODE == 0x02000100
     assert DISK_IO | NO_SYSCONFIG == 0x10000100
     assert QPC_CLOCK == 1
-    checks += 4
+    checks += 5
 
     assert classify_start(ERROR_ACCESS_DENIED) == "permission"
     assert classify_start(ERROR_ALREADY_EXISTS) == "session"
@@ -87,7 +89,6 @@ def run_model(cases: int) -> int:
         assert classify_stop(unexpected) is None
         checks += 2
 
-        # Policy invariants stay fixed regardless of error inputs.
         assert (REAL_TIME_MODE | SYSTEM_LOGGER_MODE) & SYSTEM_LOGGER_MODE
         assert (DISK_IO | NO_SYSCONFIG) & DISK_IO
         assert (DISK_IO | NO_SYSCONFIG) & NO_SYSCONFIG
@@ -112,12 +113,12 @@ def check_repository(root: Path) -> int:
     checks = 0
     for needle in (
         'SessionName = "FileOp Disk I/O Diagnostics"',
+        'new("6def68d0-e21a-403d-9ba5-0dc373e02eb8")',
         "EventTraceRealTimeMode = 0x00000100",
         "EventTraceSystemLoggerMode = 0x02000000",
         "EventTraceFlagDiskIo = 0x00000100",
         "EventTraceFlagNoSysConfig = 0x10000000",
         "QueryPerformanceCounterClock = 1",
-        "RequestedSessionGuid => Guid.Empty",
         "UsesLegacyNtKernelLoggerIdentity => false",
         "ErrorAccessDenied = 5",
         "ErrorAlreadyExists = 183",
@@ -134,6 +135,7 @@ def check_repository(root: Path) -> int:
 
     for needle in (
         "UsesDedicatedRealtimeSystemLoggerWithoutLegacyKernelIdentity",
+        "6def68d0-e21a-403d-9ba5-0dc373e02eb8",
         "AccessDeniedMapsOnlyToPermissionRequired",
         "ExistingOrCapacityExhaustedSessionMapsToUnavailableWithoutTakeover",
         "UnexpectedStartErrorsAreNotCollapsedIntoAvailabilityStates",
@@ -145,6 +147,7 @@ def check_repository(root: Path) -> int:
 
     for needle in (
         "dedicated system-logger session",
+        "6def68d0-e21a-403d-9ba5-0dc373e02eb8",
         "EVENT_TRACE_SYSTEM_LOGGER_MODE",
         "EVENT_TRACE_FLAG_NO_SYSCONFIG",
         "descriptive, deterministic session name",
