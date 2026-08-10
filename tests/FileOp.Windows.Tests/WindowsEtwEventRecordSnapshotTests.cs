@@ -21,7 +21,7 @@ public sealed class WindowsEtwEventRecordSnapshotTests
             threadId: 0xAABBCCDD,
             processId: 0x11223344,
             timestamp: 0x0102030405060708,
-            provider,
+            provider: provider,
             descriptor: new WindowsEtwEventDescriptorSnapshot(
                 0xABCD,
                 7,
@@ -31,7 +31,7 @@ public sealed class WindowsEtwEventRecordSnapshotTests
                 0xBCDE,
                 0x1122334455667788),
             processorTime: 0x8877665544332211,
-            activity,
+            activity: activity,
             processorIndex: 0x1234,
             loggerId: 0x5678,
             extendedDataCount: 3);
@@ -75,10 +75,10 @@ public sealed class WindowsEtwEventRecordSnapshotTests
             threadId: 4,
             processId: 5,
             timestamp: 6,
-            Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
-            new WindowsEtwEventDescriptorSnapshot(7, 8, 9, 10, 11, 12, 13),
+            provider: Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+            descriptor: new WindowsEtwEventDescriptorSnapshot(7, 8, 9, 10, 11, 12, 13),
             processorTime: 14,
-            Guid.Parse("99999999-8888-7777-6666-555555555555"),
+            activity: Guid.Parse("99999999-8888-7777-6666-555555555555"),
             processorIndex: 15,
             loggerId: 16,
             extendedDataCount: 0);
