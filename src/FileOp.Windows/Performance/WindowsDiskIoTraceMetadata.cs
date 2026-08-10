@@ -39,7 +39,7 @@ public sealed record WindowsDiskIoTraceMetadata
         FromEventHeaderFlags(
             has32BitHeaderFlag: (eventHeaderFlags & EventHeaderFlag32Bit) != 0,
             has64BitHeaderFlag: (eventHeaderFlags & EventHeaderFlag64Bit) != 0,
-            performanceCounterFrequency);
+            performanceCounterFrequency: performanceCounterFrequency);
 
     public static WindowsDiskIoTraceMetadata FromEventHeaderFlags(
         bool has32BitHeaderFlag,
