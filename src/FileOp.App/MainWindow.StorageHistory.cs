@@ -63,6 +63,7 @@ public sealed partial class MainWindow
         _searchEngine.StorageHistoryCaptured += SearchEngine_StorageHistoryCaptured;
         Closed += StorageHistoryWindow_Closed;
         HandleStorageHistoryEngineState(_searchEngine.State);
+        InitializeStorageOptimizationView();
     }
 
     private void StorageHistoryWindow_Closed(object sender, WindowEventArgs args)

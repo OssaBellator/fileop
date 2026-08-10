@@ -43,6 +43,10 @@ Invoke-Step "Offline Storage file-type randomized verifier" {
     python tools/verify_storage_types_fuzz.py --cases 1000
 }
 
+Invoke-Step "Offline Storage optimization verifier" {
+    python tools/verify_storage_optimization.py --repo-root $repoRoot --cases 10000
+}
+
 Invoke-Step "Offline Storage history verifier" {
     python tools/verify_storage_history.py --repo-root $repoRoot --cases 1000
 }

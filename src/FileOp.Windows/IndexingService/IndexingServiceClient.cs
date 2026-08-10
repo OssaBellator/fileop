@@ -101,6 +101,14 @@ public sealed class IndexingServiceClient : IAsyncDisposable, IDisposable
             request,
             cancellationToken);
 
+    public ValueTask<IndexingStorageOptimizationResponse> AnalyzeStorageOptimizationAsync(
+        IndexingStorageOptimizationRequest request,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IndexingStorageOptimizationRequest, IndexingStorageOptimizationResponse>(
+            IndexingServiceOperation.AnalyzeStorageOptimization,
+            request,
+            cancellationToken);
+
     public ValueTask<IndexingStorageHistoryCaptureResponse> CaptureStorageHistoryAsync(
         IndexingStorageHistoryCaptureRequest request,
         CancellationToken cancellationToken = default) =>
