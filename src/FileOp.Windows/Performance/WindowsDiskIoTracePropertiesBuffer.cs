@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace FileOp.Windows.Performance;
 
@@ -15,9 +14,9 @@ internal sealed class WindowsDiskIoTracePropertiesBuffer : IDisposable
     private WindowsDiskIoTracePropertiesBuffer(bool forStart)
     {
         StructureSize = Marshal.SizeOf<EventTracePropertiesNative>();
-        var loggerNameBytes = Encoding.Unicode.GetBytes(
-            WindowsDiskIoSystemSessionPolicy.SessionName + '\0');
-        TotalSize = checked(StructureSize + loggerNameBytes.Length);
+        LoggerNameCapacityBytes = checked(
+            (WindowsDiskIoSystemSessionPolicy.SessionName.Length + 1) * sizeof(char));
+        TotalSize = checked(StructureSize + LoggerNameCapacityBytes);
         _memory = Marshal.AllocHGlobal(TotalSize);
         Marshal.Copy(new byte[TotalSize], 0, _memory, TotalSize);
 
@@ -46,14 +45,11 @@ internal sealed class WindowsDiskIoTracePropertiesBuffer : IDisposable
         }
 
         Marshal.StructureToPtr(properties, _memory, fDeleteOld: false);
-        Marshal.Copy(
-            loggerNameBytes,
-            0,
-            IntPtr.Add(_memory, StructureSize),
-            loggerNameBytes.Length);
     }
 
     public int StructureSize { get; }
+
+    public int LoggerNameCapacityBytes { get; }
 
     public int TotalSize { get; }
 
