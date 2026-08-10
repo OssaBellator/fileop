@@ -13,12 +13,14 @@ Current Microsoft `StartTrace` guidance prefers `EVENT_TRACE_SYSTEM_LOGGER_MODE`
 FileOp therefore plans one dedicated system-logger session:
 
 - session name: `FileOp Disk I/O Diagnostics`;
+- stable FileOp session GUID: `6def68d0-e21a-403d-9ba5-0dc373e02eb8`;
 - `LogFileMode = EVENT_TRACE_REAL_TIME_MODE | EVENT_TRACE_SYSTEM_LOGGER_MODE`;
 - `EnableFlags = EVENT_TRACE_FLAG_DISK_IO | EVENT_TRACE_FLAG_NO_SYSCONFIG`;
 - `WNODE_HEADER.ClientContext = 1` (QueryPerformanceCounter clock);
-- requested session GUID: `GUID_NULL`, allowing ETW to assign the session GUID;
 - no `KERNEL_LOGGER_NAME`;
 - no `SystemTraceControlGuid`.
+
+The stable GUID follows the SystemTraceProvider guidance to assign a dedicated session GUID that is not `SystemTraceControlGuid`. It is an identifier, not a secret or proof that an already-running session is trustworthy.
 
 `EVENT_TRACE_FLAG_DISK_IO` is the only event group FileOp needs for the current Read/Write/Flush decoder. `EVENT_TRACE_FLAG_NO_SYSCONFIG` prevents the otherwise automatic system-configuration rundown from adding unrelated events to this short diagnostic capture.
 
@@ -28,9 +30,9 @@ The app's supported Windows floor is newer than Windows 8, where multiplexed Sys
 
 Microsoft recommends a descriptive, deterministic session name and specifically advises against random suffixes just to make a session unique. ETW sessions are a limited cross-process resource.
 
-FileOp uses one fixed descriptive name. If `StartTrace` returns `ERROR_ALREADY_EXISTS`, FileOp reports `SessionUnavailable`.
+FileOp uses one fixed descriptive name plus one stable component GUID. If `StartTrace` returns `ERROR_ALREADY_EXISTS`, FileOp reports `SessionUnavailable`.
 
-This policy intentionally does **not** stop or reuse the colliding session based only on its name. A stale FileOp session and an unrelated/spoofed session are not distinguishable by name alone. The later native controller may stop only a trace handle/session that the current capture has positively established it owns.
+This policy intentionally does **not** stop or reuse the colliding session based only on matching name/GUID. An unrelated process can deliberately reuse public identifiers, so those fields alone are not proof of current-capture ownership. The later native controller may stop only a trace handle/session that the current capture has positively established it started.
 
 This is stricter than automatically deleting a presumed orphan, but it avoids terminating another diagnostic tool's session.
 
