@@ -2,6 +2,9 @@ namespace FileOp.Windows.Performance;
 
 public sealed record WindowsDiskIoTraceMetadata
 {
+    public const ushort EventHeaderFlag32Bit = 0x0020;
+    public const ushort EventHeaderFlag64Bit = 0x0040;
+
     public WindowsDiskIoTraceMetadata(
         int pointerSize,
         long performanceCounterFrequency)
@@ -29,6 +32,14 @@ public sealed record WindowsDiskIoTraceMetadata
     public int PointerSize { get; }
 
     public long PerformanceCounterFrequency { get; }
+
+    public static WindowsDiskIoTraceMetadata FromEventHeaderFlags(
+        ushort eventHeaderFlags,
+        long performanceCounterFrequency) =>
+        FromEventHeaderFlags(
+            has32BitHeaderFlag: (eventHeaderFlags & EventHeaderFlag32Bit) != 0,
+            has64BitHeaderFlag: (eventHeaderFlags & EventHeaderFlag64Bit) != 0,
+            performanceCounterFrequency: performanceCounterFrequency);
 
     public static WindowsDiskIoTraceMetadata FromEventHeaderFlags(
         bool has32BitHeaderFlag,
