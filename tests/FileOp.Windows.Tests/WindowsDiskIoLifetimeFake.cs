@@ -4,10 +4,13 @@ namespace FileOp.Windows.Tests;
 
 internal sealed class WindowsDiskIoLifetimeFake : IWindowsDiskIoLifetimeApi
 {
-    private readonly Dictionary<uint, FakeThread> _threads = [];
-    private readonly Dictionary<uint, FakeProcess> _processes = [];
-    private readonly Dictionary<IntPtr, uint> _threadByHandle = [];
-    private readonly Dictionary<IntPtr, uint> _processByHandle = [];
+    private readonly Dictionary<uint, IntPtr> _currentThreads = [];
+    private readonly Dictionary<uint, IntPtr> _currentProcesses = [];
+    private readonly Dictionary<IntPtr, FakeThread> _threadsByHandle = [];
+    private readonly Dictionary<IntPtr, FakeProcess> _processesByHandle = [];
+    private readonly Dictionary<IntPtr, WindowsDiskIoObjectState> _states = [];
+    private long _nextThreadHandle = 0x100000;
+    private long _nextProcessHandle = 0x200000;
 
     public int OpenThreadCalls { get; private set; }
     public int OpenProcessCalls { get; private set; }
@@ -21,13 +24,14 @@ internal sealed class WindowsDiskIoLifetimeFake : IWindowsDiskIoLifetimeApi
         DateTimeOffset startedAt,
         bool creationTimeAvailable = true)
     {
-        var handle = ThreadHandle(threadId);
-        _threads[threadId] = new FakeThread(
-            handle,
+        var handle = new IntPtr(_nextThreadHandle++);
+        _currentThreads[threadId] = handle;
+        _threadsByHandle[handle] = new FakeThread(
+            threadId,
             processId,
             startedAt.ToFileTime(),
             creationTimeAvailable);
-        _threadByHandle[handle] = threadId;
+        _states[handle] = WindowsDiskIoObjectState.Active;
     }
 
     public void AddProcess(
@@ -36,27 +40,47 @@ internal sealed class WindowsDiskIoLifetimeFake : IWindowsDiskIoLifetimeApi
         string? imageName,
         bool creationTimeAvailable = true)
     {
-        var handle = ProcessHandle(processId);
-        _processes[processId] = new FakeProcess(
-            handle,
+        var handle = new IntPtr(_nextProcessHandle++);
+        _currentProcesses[processId] = handle;
+        _processesByHandle[handle] = new FakeProcess(
+            processId,
             startedAt.ToFileTime(),
             imageName,
             creationTimeAvailable);
-        _processByHandle[handle] = processId;
+        _states[handle] = WindowsDiskIoObjectState.Active;
+    }
+
+    public void MarkInactive(IntPtr handle)
+    {
+        if (!_states.ContainsKey(handle))
+        {
+            throw new ArgumentOutOfRangeException(nameof(handle));
+        }
+
+        _states[handle] = WindowsDiskIoObjectState.Terminated;
+    }
+
+    public void MarkStateIndeterminate(IntPtr handle)
+    {
+        if (!_states.ContainsKey(handle))
+        {
+            throw new ArgumentOutOfRangeException(nameof(handle));
+        }
+
+        _states[handle] = WindowsDiskIoObjectState.Unavailable;
     }
 
     public IntPtr OpenThread(uint threadId)
     {
         OpenThreadCalls++;
-        return _threads.TryGetValue(threadId, out var thread)
-            ? thread.Handle
+        return _currentThreads.TryGetValue(threadId, out var handle)
+            ? handle
             : IntPtr.Zero;
     }
 
     public bool TryGetThreadCreationFileTime(IntPtr threadHandle, out long creationFileTime)
     {
-        if (!_threadByHandle.TryGetValue(threadHandle, out var threadId) ||
-            !_threads.TryGetValue(threadId, out var thread) ||
+        if (!_threadsByHandle.TryGetValue(threadHandle, out var thread) ||
             !thread.CreationTimeAvailable)
         {
             creationFileTime = 0;
@@ -68,23 +92,21 @@ internal sealed class WindowsDiskIoLifetimeFake : IWindowsDiskIoLifetimeApi
     }
 
     public uint GetProcessIdOfThread(IntPtr threadHandle) =>
-        _threadByHandle.TryGetValue(threadHandle, out var threadId) &&
-        _threads.TryGetValue(threadId, out var thread)
+        _threadsByHandle.TryGetValue(threadHandle, out var thread)
             ? thread.ProcessId
             : 0;
 
     public IntPtr OpenProcess(uint processId)
     {
         OpenProcessCalls++;
-        return _processes.TryGetValue(processId, out var process)
-            ? process.Handle
+        return _currentProcesses.TryGetValue(processId, out var handle)
+            ? handle
             : IntPtr.Zero;
     }
 
     public bool TryGetProcessCreationFileTime(IntPtr processHandle, out long creationFileTime)
     {
-        if (!_processByHandle.TryGetValue(processHandle, out var processId) ||
-            !_processes.TryGetValue(processId, out var process) ||
+        if (!_processesByHandle.TryGetValue(processHandle, out var process) ||
             !process.CreationTimeAvailable)
         {
             creationFileTime = 0;
@@ -96,10 +118,14 @@ internal sealed class WindowsDiskIoLifetimeFake : IWindowsDiskIoLifetimeApi
     }
 
     public string? TryGetProcessImageName(IntPtr processHandle) =>
-        _processByHandle.TryGetValue(processHandle, out var processId) &&
-        _processes.TryGetValue(processId, out var process)
+        _processesByHandle.TryGetValue(processHandle, out var process)
             ? process.ImageName
             : null;
+
+    public WindowsDiskIoObjectState GetObjectState(IntPtr handle) =>
+        _states.TryGetValue(handle, out var state)
+            ? state
+            : WindowsDiskIoObjectState.Unavailable;
 
     public void CloseHandle(IntPtr handle)
     {
@@ -112,24 +138,28 @@ internal sealed class WindowsDiskIoLifetimeFake : IWindowsDiskIoLifetimeApi
         ClosedHandles.Add(handle);
     }
 
-    public bool IsThreadHandle(IntPtr handle) => _threadByHandle.ContainsKey(handle);
+    public bool IsThreadHandle(IntPtr handle) => _threadsByHandle.ContainsKey(handle);
 
-    public bool IsProcessHandle(IntPtr handle) => _processByHandle.ContainsKey(handle);
+    public bool IsProcessHandle(IntPtr handle) => _processesByHandle.ContainsKey(handle);
 
     public IntPtr ThreadHandle(uint threadId) =>
-        new(unchecked(0x100000L + threadId));
+        _currentThreads.TryGetValue(threadId, out var handle)
+            ? handle
+            : IntPtr.Zero;
 
     public IntPtr ProcessHandle(uint processId) =>
-        new(unchecked(0x200000L + processId));
+        _currentProcesses.TryGetValue(processId, out var handle)
+            ? handle
+            : IntPtr.Zero;
 
     private sealed record FakeThread(
-        IntPtr Handle,
+        uint ThreadId,
         uint ProcessId,
         long CreationFileTime,
         bool CreationTimeAvailable);
 
     private sealed record FakeProcess(
-        IntPtr Handle,
+        uint ProcessId,
         long CreationFileTime,
         string? ImageName,
         bool CreationTimeAvailable);
