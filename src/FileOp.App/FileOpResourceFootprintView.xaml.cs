@@ -10,6 +10,9 @@ public sealed partial class FileOpResourceFootprintView : UserControl
         InitializeComponent();
     }
 
+    public void SetLoading() =>
+        StatusText.Text = "Refreshing current FileOp process resource counters…";
+
     public void Apply(FileOpProcessResourceSnapshot? snapshot, string? status)
     {
         if (snapshot is null || !snapshot.HasValidNonNegativeEvidence)
