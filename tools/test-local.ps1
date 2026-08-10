@@ -123,6 +123,10 @@ Invoke-Step "Offline DiskIo capture-collector verifier" {
     python tools/verify_disk_io_capture_collector.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline Windows DiskIo attribution-provider verifier" {
+    python tools/verify_windows_disk_io_attribution_provider.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Storage history verifier" {
     python tools/verify_storage_history.py --repo-root $repoRoot --cases 1000
 }
