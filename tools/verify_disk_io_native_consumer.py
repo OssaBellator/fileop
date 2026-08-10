@@ -16,7 +16,7 @@ def event_trace_size(pointer_size: int) -> int:
     offset = 48 + 4 + 4 + 16
     offset = align(offset, pointer_size)
     offset += pointer_size + 4 + 4
-    return align(offset, max(8, pointer_size))
+    return align(offset, 8)
 
 
 def trace_logfile_header_layout(pointer_size: int) -> tuple[int, dict[str, int]]:
@@ -116,11 +116,11 @@ class CallbackState:
 
 def run_model(cases: int) -> int:
     checks = 0
-    for pointer, expected_trace, expected_header, expected_logfile in (
-        (4, 84, 272, 416),
-        (8, 88, 280, 448),
+    for pointer, expected_header, expected_logfile in (
+        (4, 272, 416),
+        (8, 280, 448),
     ):
-        assert event_trace_size(pointer) == expected_trace
+        assert event_trace_size(pointer) == 88
         header_size, header = trace_logfile_header_layout(pointer)
         assert header_size == expected_header
         assert header["PerfFreq"] == (248 if pointer == 4 else 256)
@@ -156,15 +156,17 @@ def run_model(cases: int) -> int:
             assert state.event_calls == calls_after_first + 1
             checks += 1
 
-        before_buffer = state.buffer_calls
+        buffer_calls_before = state.buffer_calls
+        was_terminal_before_buffer = state.cancelled or state.fault is not None
         result = state.buffer(buffer, second_token)
-        if state.cancelled and before_buffer == 0 and calls_after_first >= 1 and first != "continue":
+        if was_terminal_before_buffer:
             assert result == 0
-            assert state.buffer_calls == 0
+            assert state.buffer_calls == buffer_calls_before
             checks += 2
         else:
-            assert result in (0, 1)
-            checks += 1
+            assert state.buffer_calls == buffer_calls_before + 1
+            assert result == (1 if buffer == "continue" else 0)
+            checks += 2
 
         if state.fault is not None:
             assert state.cancelled
