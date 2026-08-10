@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using FileOp.Core.Indexing.Service;
 using FileOp.Core.Performance;
@@ -83,6 +84,7 @@ internal sealed partial class DesktopSearchEngine
             indexDatabaseStatus = "Helper-owned index database metrics are native-only; fallback mode has no persistent NTFS database to report.";
         }
 
+        var (fileOpResources, fileOpResourcesStatus) = CaptureFileOpProcessResources(capturedAt);
         var (totalBytes, freeBytes) = ReadVolumeCapacity(root);
         return new PerformanceDiagnosticsSnapshot(
             capturedAt,
@@ -94,7 +96,9 @@ internal sealed partial class DesktopSearchEngine
             freeBytes,
             probes,
             indexDatabase,
-            indexDatabaseStatus);
+            indexDatabaseStatus,
+            fileOpResources,
+            fileOpResourcesStatus);
     }
 
     private async ValueTask<IndexDatabaseDiagnostics?> CaptureNativeIndexDatabaseDiagnosticsAsync()
@@ -129,6 +133,42 @@ internal sealed partial class DesktopSearchEngine
         finally
         {
             _searchOperationGate.Release();
+        }
+    }
+
+    private static (FileOpProcessResourceSnapshot? Snapshot, string? Status)
+        CaptureFileOpProcessResources(DateTimeOffset capturedAt)
+    {
+        try
+        {
+            using var process = Process.GetCurrentProcess();
+            process.Refresh();
+            var startedAt = new DateTimeOffset(process.StartTime.ToUniversalTime());
+            var uptime = capturedAt.ToUniversalTime() - startedAt;
+            if (uptime < TimeSpan.Zero)
+            {
+                uptime = TimeSpan.Zero;
+            }
+
+            var snapshot = new FileOpProcessResourceSnapshot(
+                startedAt,
+                uptime,
+                process.TotalProcessorTime < TimeSpan.Zero
+                    ? TimeSpan.Zero
+                    : process.TotalProcessorTime,
+                Math.Max(0, process.WorkingSet64),
+                Math.Max(0, process.PeakWorkingSet64),
+                Math.Max(0, process.PrivateMemorySize64),
+                Math.Max(0, GC.GetTotalMemory(forceFullCollection: false)),
+                Math.Max(0, process.Threads.Count));
+            return snapshot.HasValidNonNegativeEvidence
+                ? (snapshot, null)
+                : (null, "FileOp process resource counters returned invalid negative evidence.");
+        }
+        catch (Exception exception) when (
+            exception is Win32Exception or InvalidOperationException or NotSupportedException)
+        {
+            return (null, $"FileOp process resource counters are unavailable: {exception.Message}");
         }
     }
 
