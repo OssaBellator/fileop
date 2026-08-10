@@ -34,6 +34,8 @@ public sealed partial class MainWindow
         _storageOptimizationInitialized = true;
         _storageOptimizationButton.Click += StorageOptimizationButton_Click;
         _storageOptimizationView.RefreshRequested += StorageOptimizationView_RefreshRequested;
+        _storageOptimizationView.PerformanceRefreshRequested +=
+            StorageOptimizationView_PerformanceRefreshRequested;
 
         if (StorageFoldersButton.Parent is StackPanel modePanel)
         {
@@ -64,6 +66,8 @@ public sealed partial class MainWindow
         _searchEngine.StateChanged -= StorageOptimizationEngine_StateChanged;
         _storageOptimizationButton.Click -= StorageOptimizationButton_Click;
         _storageOptimizationView.RefreshRequested -= StorageOptimizationView_RefreshRequested;
+        _storageOptimizationView.PerformanceRefreshRequested -=
+            StorageOptimizationView_PerformanceRefreshRequested;
         Closed -= StorageOptimizationWindow_Closed;
     }
 
@@ -181,6 +185,28 @@ public sealed partial class MainWindow
         await LoadStorageOptimizationAsync(forceRefresh: true);
     }
 
+    private async void StorageOptimizationView_PerformanceRefreshRequested(
+        object? sender,
+        EventArgs e)
+    {
+        if (_closed ||
+            _storageViewMode != StorageViewMode.Optimize ||
+            !_searchEngine.StorageOptimizationAvailable ||
+            _searchEngine.State.IsBusy)
+        {
+            return;
+        }
+
+        var generation = Interlocked.Increment(ref _storageOptimizationGeneration);
+        _storageOptimizationView.SetPerformanceLoading();
+        await CapturePerformanceDiagnosticsAsync(generation);
+        if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
+        {
+            _storageOptimizationView.SetReadyForRefresh(
+                _searchEngine.StorageOptimizationAvailable && !_searchEngine.State.IsBusy);
+        }
+    }
+
     private async Task LoadStorageOptimizationAsync(bool forceRefresh)
     {
         if (_closed)
@@ -206,15 +232,12 @@ public sealed partial class MainWindow
             forceRefresh = true;
         }
 
-        if (!forceRefresh && _storageOptimizationLoadedForSource && _storageOptimizationAnalysis is { } cached)
-        {
-            ApplyStorageOptimization(cached);
-            return;
-        }
-
         var generation = Interlocked.Increment(ref _storageOptimizationGeneration);
-        _storageOptimizationView.SetLoading("Analyzing reclaim candidates from the native metadata index…");
-        SetStorageStatus("Analyzing storage optimization candidates…");
+        _storageOptimizationView.SetLoading(
+            forceRefresh || _storageOptimizationAnalysis is null
+                ? "Analyzing reclaim candidates and bounded performance probes from the current source…"
+                : "Refreshing bounded performance probes from the current source…");
+        SetStorageStatus("Refreshing storage and performance optimization evidence…");
 
         try
         {
@@ -226,15 +249,21 @@ public sealed partial class MainWindow
                     return;
                 }
 
-                var analysis = await _searchEngine.AnalyzeStorageOptimizationAsync(root);
-                if (_closed || generation != Volatile.Read(ref _storageOptimizationGeneration))
+                var analysis = _storageOptimizationAnalysis;
+                if (forceRefresh || analysis is null)
                 {
-                    return;
+                    analysis = await _searchEngine.AnalyzeStorageOptimizationAsync(root);
+                    if (_closed || generation != Volatile.Read(ref _storageOptimizationGeneration))
+                    {
+                        return;
+                    }
+
+                    _storageOptimizationAnalysis = analysis;
+                    _storageOptimizationLoadedForSource = true;
                 }
 
-                _storageOptimizationAnalysis = analysis;
-                _storageOptimizationLoadedForSource = true;
                 ApplyStorageOptimization(analysis);
+                await CapturePerformanceDiagnosticsAsync(generation);
             }
             finally
             {
@@ -279,6 +308,31 @@ public sealed partial class MainWindow
                     _storageViewMode == StorageViewMode.Optimize &&
                     _searchEngine.StorageOptimizationAvailable &&
                     !_searchEngine.State.IsBusy);
+            }
+        }
+    }
+
+    private async Task CapturePerformanceDiagnosticsAsync(int generation)
+    {
+        try
+        {
+            var diagnostics = await _searchEngine.CapturePerformanceDiagnosticsAsync();
+            if (_closed || generation != Volatile.Read(ref _storageOptimizationGeneration))
+            {
+                return;
+            }
+
+            _storageOptimizationView.ApplyPerformanceDiagnostics(diagnostics);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
+            {
+                _storageOptimizationView.SetPerformanceUnavailable(
+                    $"Performance diagnostics are unavailable: {exception.Message}");
             }
         }
     }
