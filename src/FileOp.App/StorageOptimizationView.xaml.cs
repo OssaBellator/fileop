@@ -39,15 +39,12 @@ public sealed partial class StorageOptimizationView : UserControl
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetUnavailable(message);
-        PerformanceDiagnostics.SetDiskIoUnavailable(message);
-        PerformanceDiagnostics.SetDiskIoReadyForCapture(false);
     }
 
     public void SetReadyForRefresh(bool ready)
     {
         RefreshButton.IsEnabled = ready;
         PerformanceDiagnostics.SetReadyForRefresh(ready);
-        PerformanceDiagnostics.SetDiskIoReadyForCapture(ready);
     }
 
     public void SetPerformanceUnavailable(string message) =>
