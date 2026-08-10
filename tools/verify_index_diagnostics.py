@@ -9,19 +9,19 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+LONG_MAX = (1 << 63) - 1
+
 
 def saturating_add(left: int, right: int) -> int:
-    maximum = (1 << 63) - 1
     left = max(0, left)
     right = max(0, right)
-    return maximum if left > maximum - right else left + right
+    return LONG_MAX if left > LONG_MAX - right else left + right
 
 
 def saturating_multiply(left: int, right: int) -> int:
-    maximum = (1 << 63) - 1
     if left <= 0 or right <= 0:
         return 0
-    return maximum if left > maximum // right else left * right
+    return LONG_MAX if left > LONG_MAX // right else left * right
 
 
 def derived_metrics(
@@ -49,12 +49,17 @@ def derived_metrics(
 
 def run_model(cases: int) -> int:
     checks = 0
-    maximum = (1 << 63) - 1
-    fixed = derived_metrics(1000, 200, 50, 4096, 100, 25, -2000)
-    assert fixed == (1250, 409600, 102400, 307200, 25.0, 2048000)
+    assert derived_metrics(1000, 200, 50, 4096, 100, 25, -2000) == (
+        1250,
+        409600,
+        102400,
+        307200,
+        25.0,
+        2048000,
+    )
     assert derived_metrics(-10, 20, -30, 4096, 0, 0, 0)[0] == 20
-    assert saturating_add(maximum, 1) == maximum
-    assert saturating_multiply(maximum, 2) == maximum
+    assert saturating_add(LONG_MAX, 1) == LONG_MAX
+    assert saturating_multiply(LONG_MAX, 2) == LONG_MAX
     checks += 4
 
     rng = random.Random(20260810)
@@ -75,18 +80,17 @@ def run_model(cases: int) -> int:
             free_pages,
             cache_setting,
         )
-        assert 0 <= footprint <= maximum
-        assert 0 <= logical <= maximum
+        assert 0 <= footprint <= LONG_MAX
+        assert 0 <= logical <= LONG_MAX
         assert 0 <= reusable <= logical
         assert live == logical - reusable
         assert percent is None if page_count == 0 else 0.0 <= percent <= 100.0
-        assert cache_default is None if cache_setting == 0 else 0 < cache_default <= maximum
+        assert cache_default is None if cache_setting == 0 else 0 < cache_default <= LONG_MAX
         checks += 6
     return checks
 
 
 def run_sqlite_fixture() -> int:
-    checks = 0
     with tempfile.TemporaryDirectory(prefix="fileop-index-diag-") as temp:
         path = Path(temp) / "index.sqlite"
         connection = sqlite3.connect(path)
@@ -112,16 +116,14 @@ def run_sqlite_fixture() -> int:
             assert 0 <= free_pages <= page_count
             assert cache_setting != 0
             assert item_count == 3
-            checks += 6
         finally:
             connection.close()
-    return checks
+    return 6
 
 
 def check_repository(root: Path) -> int:
     paths = {
         "model": root / "src/FileOp.Core/Performance/IndexDatabaseDiagnostics.cs",
-        "snapshot": root / "src/FileOp.Core/Performance/PerformanceDiagnostics.cs",
         "resolver": root / "src/FileOp.Windows/IndexingService/IndexDatabasePathResolver.cs",
         "native": root / "src/FileOp.Windows/IndexingService/NtfsIndexingServiceBackend.cs",
         "history": root / "src/FileOp.Windows/IndexingService/StorageHistoryIndexingServiceBackend.cs",
@@ -182,6 +184,7 @@ def check_repository(root: Path) -> int:
         "TryAcquireRead",
         "HasCheckpointAsync",
         "SqliteIndexDatabaseDiagnosticsReader",
+        "ReadWithCheckpointAsync",
         "IndexDatabasePathResolver.CreatePath",
     ):
         assert needle in text["backend"], needle
@@ -245,8 +248,9 @@ def check_repository(root: Path) -> int:
 
     for needle in (
         "DispatcherNormalizesIndexDiagnosticsRootBeforeBackendCall",
-        "NamedPipeRoundTripPreservesIndexDatabaseEvidence",
+        "NamedPipeRoundTripPreservesIndexDatabaseAndJournalEvidence",
         "ReaderCacheDefaultTargetBytes",
+        "JournalFreshness.BacklogUsnDistance",
     ):
         assert needle in text["protocol_test"], needle
         checks += 1
