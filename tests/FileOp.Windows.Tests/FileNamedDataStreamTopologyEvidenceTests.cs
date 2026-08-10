@@ -1,5 +1,10 @@
 using System;
+using System.Collections;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using FileOp.Core.Operations;
+using FileOp.Windows.Operations;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace FileOp.Windows.Tests;
@@ -55,6 +60,35 @@ public sealed class FileNamedDataStreamTopologyEvidenceTests
         Assert.AreEqual(
             FileOperationRecoveryNamedDataStreamTopologyStatus.DifferentNamesOrSizes,
             FileOperationRecoveryNamedDataStreamTopologyComparer.Compare(recorded, differentCount).Status);
+    }
+
+    [TestMethod]
+    public void ParserAcceptsSpecDefinedEmptyDefaultStreamName()
+    {
+        const int headerBytes = 24;
+        var buffer = Marshal.AllocHGlobal(headerBytes);
+        try
+        {
+            Marshal.Copy(new byte[headerBytes], 0, buffer, headerBytes);
+            var digestType = typeof(WindowsRootBoundFileNamedDataStreamTopologyEvidenceReader)
+                .Assembly
+                .GetType(
+                    "FileOp.Windows.Operations.WindowsFileNamedDataStreamTopologyDigest",
+                    throwOnError: true)!;
+            var parse = digestType.GetMethod(
+                "Parse",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException("Named-stream topology parser was not found.");
+
+            var parsed = parse.Invoke(null, new object[] { buffer, headerBytes }) as IEnumerable
+                ?? throw new InvalidOperationException("Named-stream topology parser returned no inventory.");
+
+            Assert.AreEqual(0, parsed.Cast<object>().Count());
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
     }
 
     private static FileNamedDataStreamTopologyEvidence Evidence(int count, char digestCharacter) =>

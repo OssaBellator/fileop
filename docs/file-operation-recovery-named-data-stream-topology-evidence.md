@@ -12,7 +12,7 @@ Windows enumeration uses `GetFileInformationByHandleEx` with `FileStreamInfo` an
 
 The parser:
 
-- requires the unnamed/default `::$DATA` entry;
+- requires exactly one unnamed/default data-stream entry, accepting NTFS's `::$DATA` spelling or the zero-length stream name permitted by `FILE_STREAM_INFORMATION`;
 - accepts named entries only in `:name:$DATA` form;
 - rejects malformed offsets, odd/invalid UTF-16 lengths, negative stream sizes, duplicate names, unexpected stream types, implausible stream counts, and inventories larger than the configured safety bound;
 - treats an unsupported/no-inventory result as unavailable rather than assuming there are no named streams.

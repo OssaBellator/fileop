@@ -100,8 +100,7 @@ internal static class WindowsFileNamedDataStreamTopologyDigest
             var streamNameLength = unchecked((uint)Marshal.ReadInt32(entry, 4));
             var streamSize = Marshal.ReadInt64(entry, 8);
 
-            if (streamNameLength == 0 ||
-                (streamNameLength & 1u) != 0 ||
+            if ((streamNameLength & 1u) != 0 ||
                 streamNameLength > int.MaxValue ||
                 streamNameLength > bufferSize - offset - HeaderBytes)
             {
@@ -113,16 +112,19 @@ internal static class WindowsFileNamedDataStreamTopologyDigest
                 throw new InvalidDataException("FILE_STREAM_INFO contains a negative logical stream size.");
             }
 
-            var name = Marshal.PtrToStringUni(
-                IntPtr.Add(entry, HeaderBytes),
-                checked((int)streamNameLength / sizeof(char)))
-                ?? throw new InvalidDataException("FILE_STREAM_INFO returned a null stream name.");
+            var name = streamNameLength == 0
+                ? string.Empty
+                : Marshal.PtrToStringUni(
+                    IntPtr.Add(entry, HeaderBytes),
+                    checked((int)streamNameLength / sizeof(char)))
+                    ?? throw new InvalidDataException("FILE_STREAM_INFO returned a null stream name.");
             if (name.IndexOf('\0') >= 0)
             {
                 throw new InvalidDataException("FILE_STREAM_INFO returned an embedded NUL in a stream name.");
             }
 
-            if (string.Equals(name, "::$DATA", StringComparison.OrdinalIgnoreCase))
+            if (name.Length == 0 ||
+                string.Equals(name, "::$DATA", StringComparison.OrdinalIgnoreCase))
             {
                 if (sawDefaultDataStream)
                 {
