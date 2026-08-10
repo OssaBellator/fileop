@@ -103,6 +103,26 @@ Invoke-Step "Offline DiskIo event-record bridge verifier" {
     python tools/verify_disk_io_event_record_bridge.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline DiskIo thread/process resolver verifier" {
+    python tools/verify_disk_io_thread_process_resolver.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline DiskIo trace-evidence verifier" {
+    python tools/verify_disk_io_trace_evidence.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline DiskIo trace-evidence lifecycle verifier" {
+    python tools/verify_disk_io_trace_evidence_source.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline DiskIo loss-evidence verifier" {
+    python tools/verify_disk_io_loss_evidence.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline DiskIo capture-collector verifier" {
+    python tools/verify_disk_io_capture_collector.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Storage history verifier" {
     python tools/verify_storage_history.py --repo-root $repoRoot --cases 1000
 }
