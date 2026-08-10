@@ -1,3 +1,4 @@
+using FileOp.Core.Performance;
 using FileOp.Core.Storage;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -9,6 +10,7 @@ public sealed partial class StorageOptimizationView : UserControl
     public StorageOptimizationView()
     {
         InitializeComponent();
+        PerformanceDiagnostics.RefreshRequested += PerformanceDiagnostics_RefreshRequested;
     }
 
     public event EventHandler? RefreshRequested;
@@ -17,6 +19,7 @@ public sealed partial class StorageOptimizationView : UserControl
     {
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
+        PerformanceDiagnostics.SetLoading();
     }
 
     public void SetUnavailable(string message)
@@ -26,12 +29,16 @@ public sealed partial class StorageOptimizationView : UserControl
         SameSizeGroupsList.ItemsSource = null;
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
+        PerformanceDiagnostics.SetUnavailable(message);
     }
 
     public void SetReadyForRefresh(bool ready)
     {
         RefreshButton.IsEnabled = ready;
     }
+
+    public void SetPerformanceUnavailable(string message) =>
+        PerformanceDiagnostics.SetUnavailable(message);
 
     public void Apply(StorageOptimizationAnalysis analysis)
     {
@@ -55,7 +62,13 @@ public sealed partial class StorageOptimizationView : UserControl
         RefreshButton.IsEnabled = true;
     }
 
+    public void ApplyPerformanceDiagnostics(PerformanceDiagnosticsSnapshot snapshot) =>
+        PerformanceDiagnostics.Apply(snapshot);
+
     private void RefreshButton_Click(object sender, RoutedEventArgs e) =>
+        RefreshRequested?.Invoke(this, EventArgs.Empty);
+
+    private void PerformanceDiagnostics_RefreshRequested(object? sender, EventArgs e) =>
         RefreshRequested?.Invoke(this, EventArgs.Empty);
 }
 
