@@ -1,5 +1,4 @@
 using FileOp.Core.Indexing.Service;
-using FileOp.Core.Performance;
 using FileOp.Core.Storage;
 using FileOp.Windows.IndexingService;
 using Microsoft.UI.Xaml;
@@ -12,7 +11,6 @@ public sealed partial class MainWindow
     private StorageOptimizationView _storageOptimizationView = null!;
     private Button _storageOptimizationButton = null!;
     private StorageOptimizationAnalysis? _storageOptimizationAnalysis;
-    private PerformanceDiagnosticsSnapshot? _performanceDiagnostics;
     private string? _storageOptimizationSourceKey;
     private int _storageOptimizationGeneration;
     private bool _storageOptimizationInitialized;
@@ -108,7 +106,6 @@ public sealed partial class MainWindow
         if (root is null)
         {
             _storageOptimizationLoadedForSource = false;
-            _performanceDiagnostics = null;
             if (_storageViewMode == StorageViewMode.Optimize)
             {
                 _storageOptimizationView.SetUnavailable(
@@ -126,7 +123,6 @@ public sealed partial class MainWindow
         {
             _storageOptimizationSourceKey = sourceKey;
             _storageOptimizationAnalysis = null;
-            _performanceDiagnostics = null;
             _storageOptimizationLoadedForSource = false;
             Interlocked.Increment(ref _storageOptimizationGeneration);
         }
@@ -206,7 +202,6 @@ public sealed partial class MainWindow
         {
             _storageOptimizationSourceKey = sourceKey;
             _storageOptimizationAnalysis = null;
-            _performanceDiagnostics = null;
             _storageOptimizationLoadedForSource = false;
             forceRefresh = true;
         }
@@ -301,7 +296,6 @@ public sealed partial class MainWindow
                 return;
             }
 
-            _performanceDiagnostics = diagnostics;
             _storageOptimizationView.ApplyPerformanceDiagnostics(diagnostics);
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
