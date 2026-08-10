@@ -95,6 +95,10 @@ Invoke-Step "Offline DiskIo native-consumer verifier" {
     python tools/verify_disk_io_native_consumer.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline ETW event-record snapshot verifier" {
+    python tools/verify_etw_event_record_snapshot.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Storage history verifier" {
     python tools/verify_storage_history.py --repo-root $repoRoot --cases 1000
 }
