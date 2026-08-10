@@ -141,10 +141,12 @@ def check_repository(root: Path) -> int:
         "client": root / "src/FileOp.Windows/IndexingService/IndexingServiceClient.cs",
         "desktop": root / "src/FileOp.App/DesktopSearchEngine.StorageOptimization.cs",
         "main": root / "src/FileOp.App/MainWindow.StorageOptimization.cs",
+        "modes": root / "src/FileOp.App/MainWindow.StorageTypes.cs",
         "history": root / "src/FileOp.App/MainWindow.StorageHistory.cs",
         "view_xaml": root / "src/FileOp.App/StorageOptimizationView.xaml",
         "view_code": root / "src/FileOp.App/StorageOptimizationView.xaml.cs",
         "test": root / "tests/FileOp.Windows.Tests/StorageOptimizationAnalyticsTests.cs",
+        "protocol_test": root / "tests/FileOp.Windows.Tests/IndexingStorageOptimizationProtocolTests.cs",
         "program": root / "src/FileOp.Indexer/Program.cs",
         "gate": root / "tools/test-local.ps1",
     }
@@ -192,14 +194,18 @@ def check_repository(root: Path) -> int:
     assert "Fallback snapshots are not used for reclaim recommendations yet" in text["desktop"]
     checks += 6
 
+    coordinated_ui = text["main"] + text["modes"] + text["history"]
     for needle in (
         'Content = "Optimize"',
         "InitializeStorageOptimizationView();",
+        "StorageViewMode.Optimize",
+        "await LoadStorageOptimizationAsync(forceRefresh);",
+        "var leavingOptimization =",
         "Interlocked.Increment(ref _storageOptimizationGeneration);",
         "generation != Volatile.Read(ref _storageOptimizationGeneration)",
-        "StorageOptimizationMode",
+        "_storageOptimizationView.Visibility = optimizationVisible",
     ):
-        assert needle in text["main"] + text["history"], needle
+        assert needle in coordinated_ui, needle
         checks += 1
 
     for needle in (
@@ -225,6 +231,14 @@ def check_repository(root: Path) -> int:
         'Assert.IsFalse(sameSize.SampleFiles.Any(static file => file.Name == "outside.zip"));',
     ):
         assert needle in text["test"], needle
+        checks += 1
+
+    for needle in (
+        "DispatcherNormalizesOptimizationPathsBeforeBackendCall",
+        "NamedPipeRoundTripPreservesOptimizationEvidence",
+        "SameSizePotentialLogicalSavingsUpperBound",
+    ):
+        assert needle in text["protocol_test"], needle
         checks += 1
 
     forbidden = (
