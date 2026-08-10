@@ -20,6 +20,7 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
     private readonly BufferCallbackNative _bufferCallback;
 
     private ulong _openedHandle;
+    private bool _openActive;
     private bool _processStarted;
     private bool _processActive;
     private bool _callbackCancellationRequested;
@@ -39,20 +40,22 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionName);
         lock (_gate)
         {
-            if (_openedHandle != 0 || _processActive)
+            if (_openedHandle != 0 || _openActive || _processActive)
             {
                 throw new InvalidOperationException(
-                    "This native ETW consumer adapter still owns or is draining a processing handle.");
+                    "This native ETW consumer adapter is already opening, owns, or is draining a processing handle.");
             }
 
+            _openActive = true;
             _processStarted = false;
             _callbackCancellationRequested = false;
             _callbackFault = null;
         }
 
-        var loggerName = Marshal.StringToHGlobalUni(sessionName);
+        var loggerName = IntPtr.Zero;
         try
         {
+            loggerName = Marshal.StringToHGlobalUni(sessionName);
             using var logfile = WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
                 loggerName,
                 processTraceMode,
@@ -79,7 +82,15 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
         }
         finally
         {
-            Marshal.FreeHGlobal(loggerName);
+            if (loggerName != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(loggerName);
+            }
+
+            lock (_gate)
+            {
+                _openActive = false;
+            }
         }
     }
 
