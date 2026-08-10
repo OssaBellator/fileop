@@ -39,6 +39,7 @@ public sealed partial class StorageOptimizationView : UserControl
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetUnavailable(message);
+        FileOpResourceFootprint.Apply(null, message);
     }
 
     public void SetReadyForRefresh(bool ready)
@@ -47,8 +48,11 @@ public sealed partial class StorageOptimizationView : UserControl
         PerformanceDiagnostics.SetReadyForRefresh(ready);
     }
 
-    public void SetPerformanceUnavailable(string message) =>
+    public void SetPerformanceUnavailable(string message)
+    {
         PerformanceDiagnostics.SetUnavailable(message);
+        FileOpResourceFootprint.Apply(null, message);
+    }
 
     public void SetDiskIoUnavailable(string message) =>
         PerformanceDiagnostics.SetDiskIoUnavailable(message);
@@ -81,8 +85,12 @@ public sealed partial class StorageOptimizationView : UserControl
         RefreshButton.IsEnabled = true;
     }
 
-    public void ApplyPerformanceDiagnostics(PerformanceDiagnosticsSnapshot snapshot) =>
+    public void ApplyPerformanceDiagnostics(PerformanceDiagnosticsSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
         PerformanceDiagnostics.Apply(snapshot);
+        FileOpResourceFootprint.Apply(snapshot.FileOpResources, snapshot.FileOpResourcesStatus);
+    }
 
     public void ApplyDiskIoCapture(DiskIoCaptureResult result) =>
         PerformanceDiagnostics.ApplyDiskIoCapture(result);
