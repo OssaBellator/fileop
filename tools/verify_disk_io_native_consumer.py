@@ -180,6 +180,7 @@ def check_repository(root: Path) -> int:
         "source": root / "src/FileOp.Windows/Performance/WindowsDiskIoNativeTraceConsumerApi.cs",
         "buffer": root / "src/FileOp.Windows/Performance/WindowsDiskIoTraceLogfileBuffer.cs",
         "tests": root / "tests/FileOp.Windows.Tests/WindowsDiskIoNativeTraceConsumerApiTests.cs",
+        "lifecycle_tests": root / "tests/FileOp.Windows.Tests/WindowsDiskIoNativeTraceConsumerLifecycleGuardsTests.cs",
         "doc": root / "docs/disk-io-native-consumer.md",
         "gate": root / "tools/test-local.ps1",
     }
@@ -202,6 +203,9 @@ def check_repository(root: Path) -> int:
         "_callbackCancellationRequested = true",
         "return 0;",
         "ref ulong handleArray",
+        "_openedHandle != 0 || _processActive",
+        "_processActive = true",
+        "_processActive = false",
     ):
         assert needle in text["source"], needle
         checks += 1
@@ -239,6 +243,9 @@ def check_repository(root: Path) -> int:
         assert needle in text["tests"], needle
         checks += 1
 
+    assert "ReopenIsRejectedWhilePriorProcessTraceIsStillDraining" in text["lifecycle_tests"]
+    checks += 1
+
     for needle in (
         "EVENT_TRACE_LOGFILEW",
         "OpenTraceW",
@@ -248,6 +255,7 @@ def check_repository(root: Path) -> int:
         "does not decode `EVENT_RECORD`",
         "ETW-owned memory",
         "explicit pointer-width offsets",
+        "draining",
     ):
         assert needle in text["doc"], needle
         checks += 1
