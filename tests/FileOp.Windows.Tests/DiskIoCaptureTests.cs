@@ -49,7 +49,7 @@ public sealed class DiskIoCaptureTests
     public void CompletedNoLossResultIsNotMarkedIncomplete()
     {
         var budget = new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 10, 4);
-        var report = Report(budget, acceptedEvents: 2, duration: TimeSpan.FromMilliseconds(900));
+        var report = Report(budget, acceptedEvents: 2, duration: budget.Duration);
         var result = DiskIoCaptureResult.Completed(
             budget,
             report,
@@ -71,10 +71,11 @@ public sealed class DiskIoCaptureTests
     public void ObservationLimitAndEventLossAreExplicitlyIncomplete()
     {
         var budget = new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 3, 4);
-        var report = Report(budget, acceptedEvents: 3, duration: TimeSpan.FromMilliseconds(300));
+        var cappedReport = Report(budget, acceptedEvents: 3, duration: TimeSpan.FromMilliseconds(300));
+        var durationReport = Report(budget, acceptedEvents: 2, duration: budget.Duration);
         var capped = DiskIoCaptureResult.Completed(
             budget,
-            report,
+            cappedReport,
             DiskIoCaptureStopReason.ObservationLimitReached,
             DiskIoCaptureLossState.NoneObserved,
             lostEventCount: 0,
@@ -82,7 +83,7 @@ public sealed class DiskIoCaptureTests
             detail: "Observation cap reached before duration budget.");
         var lost = DiskIoCaptureResult.Completed(
             budget,
-            report,
+            durationReport,
             DiskIoCaptureStopReason.DurationElapsed,
             DiskIoCaptureLossState.Observed,
             lostEventCount: 7,
@@ -90,7 +91,7 @@ public sealed class DiskIoCaptureTests
             detail: "Provider observed ETW event loss.");
         var unknown = DiskIoCaptureResult.Completed(
             budget,
-            report,
+            durationReport,
             DiskIoCaptureStopReason.DurationElapsed,
             DiskIoCaptureLossState.Unknown,
             lostEventCount: null,
@@ -116,6 +117,15 @@ public sealed class DiskIoCaptureTests
             null,
             "Limit reason without a full limit."));
 
+        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+            budget,
+            Report(budget, acceptedEvents: 2, duration: TimeSpan.FromMilliseconds(900)),
+            DiskIoCaptureStopReason.DurationElapsed,
+            DiskIoCaptureLossState.NoneObserved,
+            0,
+            null,
+            "Duration reason without the full requested window."));
+
         var tooLong = DiskIoAttributionAnalyzer.Analyze(
             StartedAt,
             StartedAt.AddSeconds(2),
@@ -132,7 +142,7 @@ public sealed class DiskIoCaptureTests
 
         var wrongOwners = DiskIoAttributionAnalyzer.Analyze(
             StartedAt,
-            StartedAt.AddMilliseconds(500),
+            StartedAt.Add(budget.Duration),
             [],
             maxOwnersPerDisk: budget.MaxOwnersPerDisk + 1);
         Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
@@ -146,10 +156,45 @@ public sealed class DiskIoCaptureTests
     }
 
     [TestMethod]
+    public void MalformedManualReportsFailClosed()
+    {
+        var budget = new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 10, 4);
+        var negativeDuration = new DiskIoAttributionReport(
+            StartedAt,
+            StartedAt.AddTicks(-1),
+            0,
+            budget.MaxOwnersPerDisk,
+            []);
+        var negativeEvents = new DiskIoAttributionReport(
+            StartedAt,
+            StartedAt.Add(budget.Duration),
+            -1,
+            budget.MaxOwnersPerDisk,
+            []);
+
+        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+            budget,
+            negativeDuration,
+            DiskIoCaptureStopReason.ObservationLimitReached,
+            DiskIoCaptureLossState.NoneObserved,
+            0,
+            null,
+            "Negative manual duration."));
+        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+            budget,
+            negativeEvents,
+            DiskIoCaptureStopReason.DurationElapsed,
+            DiskIoCaptureLossState.NoneObserved,
+            0,
+            null,
+            "Negative manual event count."));
+    }
+
+    [TestMethod]
     public void LossStateAndCountMustAgree()
     {
         var budget = new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 10, 4);
-        var report = Report(budget, acceptedEvents: 1, duration: TimeSpan.FromMilliseconds(500));
+        var report = Report(budget, acceptedEvents: 1, duration: budget.Duration);
 
         Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
