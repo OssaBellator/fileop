@@ -178,6 +178,7 @@ def run_model(cases: int) -> int:
 def check_repository(root: Path) -> int:
     paths = {
         "source": root / "src/FileOp.Windows/Performance/WindowsDiskIoNativeTraceConsumerApi.cs",
+        "buffer": root / "src/FileOp.Windows/Performance/WindowsDiskIoTraceLogfileBuffer.cs",
         "tests": root / "tests/FileOp.Windows.Tests/WindowsDiskIoNativeTraceConsumerApiTests.cs",
         "doc": root / "docs/disk-io-native-consumer.md",
         "gate": root / "tools/test-local.ps1",
@@ -191,7 +192,7 @@ def check_repository(root: Path) -> int:
     checks = 0
     for needle in (
         'NativeLibrary = "sechost.dll"',
-        "OpenTraceW(ref EventTraceLogfileWNative logfile)",
+        "OpenTraceW(IntPtr logfile)",
         'EntryPoint = "ProcessTrace"',
         'EntryPoint = "CloseTrace"',
         "Marshal.GetFunctionPointerForDelegate(_bufferCallback)",
@@ -200,18 +201,36 @@ def check_repository(root: Path) -> int:
         "ExceptionDispatchInfo.Capture(exception)",
         "_callbackCancellationRequested = true",
         "return 0;",
-        "public IntPtr EventRecordCallback;",
-        "public TraceLogfileHeaderNative LogfileHeader;",
-        "public long PerfFreq;",
-        "public uint BuffersLost;",
-        "Size = 64",
+        "ref ulong handleArray",
     ):
         assert needle in text["source"], needle
         checks += 1
 
     for needle in (
-        "NativeStructSizesAndCallbackOffsetsMatchWindowsAbi",
-        "TraceHeaderPerfFrequencyOffsetMatchesPointerWidth",
+        "EventTraceHeaderSize = 48",
+        "EventTraceSize = 88",
+        "TimeZoneInformationSize = 172",
+        "TraceLogfileHeaderSize32 = 272",
+        "TraceLogfileHeaderSize64 = 280",
+        "EventTraceLogfileSize32 = 416",
+        "EventTraceLogfileSize64 = 448",
+        "BufferCallbackOffset => IntPtr.Size == 8 ? 400 : 384",
+        "EventRecordCallbackOffset => IntPtr.Size == 8 ? 424 : 400",
+        "ContextOffset => IntPtr.Size == 8 ? 440 : 408",
+        "TraceLogfilePerfFreqOffset",
+        "TraceLogfileBuffersLostOffset",
+        "Marshal.Copy(new byte[TotalSize]",
+        "Marshal.WriteIntPtr(buffer.Pointer, LoggerNameOffset, loggerName)",
+        "Marshal.WriteInt32",
+    ):
+        assert needle in text["buffer"], needle
+        checks += 1
+
+    for needle in (
+        "ExplicitLogfileLayoutMatchesWindowsAbi",
+        "TraceHeaderEvidenceOffsetsMatchPointerWidth",
+        "RealtimeOpenBufferStartsZeroedAndWritesOnlyRequiredInputs",
+        "RealtimeOpenBufferRejectsMissingRequiredPointers",
         "EventCallbackFalseRequestsCancellationAndSuppressesLaterCallbacks",
         "EventCallbackExceptionNeverCrossesCallbackAndIsRethrownLater",
         "NullEventRecordFailsClosedWithoutCallingSink",
@@ -228,10 +247,12 @@ def check_repository(root: Path) -> int:
         "callback exceptions",
         "does not decode `EVENT_RECORD`",
         "ETW-owned memory",
+        "explicit pointer-width offsets",
     ):
         assert needle in text["doc"], needle
         checks += 1
 
+    combined_source = text["source"] + "\n" + text["buffer"]
     for forbidden in (
         "Process.GetProcessById",
         "ManagementObject",
@@ -243,8 +264,9 @@ def check_repository(root: Path) -> int:
         "WindowsDiskIoEtwDecoder",
         "SHA256",
         "Delete(",
+        "Marshal.PtrToStructure",
     ):
-        assert forbidden not in text["source"], forbidden
+        assert forbidden not in combined_source, forbidden
         checks += 1
 
     assert "verify_disk_io_native_consumer.py" in text["gate"]
