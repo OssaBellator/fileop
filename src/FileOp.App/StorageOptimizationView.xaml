@@ -18,7 +18,7 @@
             <StackPanel Spacing="4">
                 <TextBlock Text="Optimization advisor" FontSize="20" FontWeight="SemiBold" />
                 <TextBlock
-                    Text="Read-only storage and performance evidence. Same-size groups are candidates for later content verification, not confirmed duplicates."
+                    Text="Read-only storage and performance evidence. Same-size groups are candidates, not confirmed duplicates, until you explicitly verify sampled file contents."
                     TextWrapping="Wrap"
                     Opacity="0.72" />
             </StackPanel>
@@ -101,24 +101,30 @@
                 <StackPanel Spacing="8">
                     <TextBlock Text="Same-size duplicate candidates" FontSize="16" FontWeight="SemiBold" />
                     <TextBlock
-                        Text="Hard-link aliases are collapsed first. Potential savings are a logical upper bound only until file contents are verified."
+                        Text="Hard-link aliases are collapsed by the index first. Potential savings are a logical upper bound only until content is verified. Verify content fully SHA-256 hashes a bounded sample under your user account. Hash matches verify logical duplicate evidence for those sampled paths only; physical reclaimable space is still not verified."
                         TextWrapping="Wrap"
                         Opacity="0.7" />
                     <ListView x:Name="SameSizeGroupsList" SelectionMode="None">
                         <ListView.ItemTemplate>
                             <DataTemplate>
-                                <Grid Padding="0,6" ColumnSpacing="12">
+                                <Grid Padding="0,8" ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel>
+                                    <StackPanel Spacing="4">
                                         <TextBlock Text="{Binding Heading}" FontWeight="SemiBold" />
                                         <TextBlock Text="{Binding SampleText}" Opacity="0.65" TextWrapping="Wrap" MaxWidth="760" />
+                                        <TextBlock Text="{Binding VerificationText}" Opacity="0.78" TextWrapping="Wrap" MaxWidth="760" />
                                     </StackPanel>
-                                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                    <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="6">
                                         <TextBlock Text="{Binding PotentialText}" HorizontalAlignment="Right" />
-                                        <TextBlock Text="upper bound" Opacity="0.65" HorizontalAlignment="Right" />
+                                        <TextBlock Text="candidate upper bound" Opacity="0.65" HorizontalAlignment="Right" />
+                                        <Button
+                                            Content="Verify content"
+                                            IsEnabled="{Binding CanVerify}"
+                                            HorizontalAlignment="Right"
+                                            Click="VerifySameSizeContentButton_Click" />
                                     </StackPanel>
                                 </Grid>
                             </DataTemplate>

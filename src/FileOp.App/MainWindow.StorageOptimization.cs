@@ -15,6 +15,7 @@ public sealed partial class MainWindow
     private int _storageOptimizationGeneration;
     private int _performanceDiskIoGeneration;
     private bool _performanceDiskIoCaptureActive;
+    private bool _storageSameSizeVerificationActive;
     private bool _storageOptimizationInitialized;
     private bool _storageOptimizationLoadedForSource;
 
@@ -40,6 +41,8 @@ public sealed partial class MainWindow
             StorageOptimizationView_PerformanceRefreshRequested;
         _storageOptimizationView.PerformanceDiskIoCaptureRequested +=
             StorageOptimizationView_PerformanceDiskIoCaptureRequested;
+        _storageOptimizationView.SameSizeVerificationRequested +=
+            StorageOptimizationView_SameSizeVerificationRequested;
 
         if (StorageFoldersButton.Parent is StackPanel modePanel)
         {
@@ -69,6 +72,7 @@ public sealed partial class MainWindow
     {
         Interlocked.Increment(ref _performanceDiskIoGeneration);
         _performanceDiskIoCaptureActive = false;
+        _storageSameSizeVerificationActive = false;
         _searchEngine.StateChanged -= StorageOptimizationEngine_StateChanged;
         _storageOptimizationButton.Click -= StorageOptimizationButton_Click;
         _storageOptimizationView.RefreshRequested -= StorageOptimizationView_RefreshRequested;
@@ -76,6 +80,8 @@ public sealed partial class MainWindow
             StorageOptimizationView_PerformanceRefreshRequested;
         _storageOptimizationView.PerformanceDiskIoCaptureRequested -=
             StorageOptimizationView_PerformanceDiskIoCaptureRequested;
+        _storageOptimizationView.SameSizeVerificationRequested -=
+            StorageOptimizationView_SameSizeVerificationRequested;
         Closed -= StorageOptimizationWindow_Closed;
     }
 
@@ -112,12 +118,17 @@ public sealed partial class MainWindow
         var storageAvailable = _searchEngine.StorageOptimizationAvailable && !state.IsBusy;
         _storageOptimizationButton.IsEnabled = _storageViewMode != StorageViewMode.Optimize;
         _storageOptimizationView.SetReadyForRefresh(
-            _storageViewMode == StorageViewMode.Optimize && storageAvailable);
+            _storageViewMode == StorageViewMode.Optimize &&
+            storageAvailable &&
+            !_storageSameSizeVerificationActive);
         _storageOptimizationView.SetDiskIoReadyForCapture(
-            _storageViewMode == StorageViewMode.Optimize && !_performanceDiskIoCaptureActive);
+            _storageViewMode == StorageViewMode.Optimize &&
+            !_performanceDiskIoCaptureActive &&
+            !_storageSameSizeVerificationActive);
 
         if (root is null)
         {
+            _storageOptimizationAnalysis = null;
             _storageOptimizationLoadedForSource = false;
             if (_storageViewMode == StorageViewMode.Optimize)
             {
@@ -155,6 +166,13 @@ public sealed partial class MainWindow
             Interlocked.Increment(ref _storageGeneration);
         }
 
+        if (_storageSameSizeVerificationActive && !sourceChanged)
+        {
+            SetStorageStatus(
+                "Content verification is running; index availability changes will be reevaluated after it completes.");
+            return;
+        }
+
         if (!storageAvailable)
         {
             _storageOptimizationView.SetUnavailable(
@@ -177,7 +195,8 @@ public sealed partial class MainWindow
         Interlocked.Increment(ref _storageTypeGeneration);
         Interlocked.Increment(ref _storageHistoryGeneration);
         SetStorageViewMode(StorageViewMode.Optimize);
-        _storageOptimizationView.SetDiskIoReadyForCapture(!_performanceDiskIoCaptureActive);
+        _storageOptimizationView.SetDiskIoReadyForCapture(
+            !_performanceDiskIoCaptureActive && !_storageSameSizeVerificationActive);
 
         if (!_searchEngine.StorageOptimizationAvailable || _searchEngine.State.IsBusy)
         {
@@ -192,6 +211,11 @@ public sealed partial class MainWindow
 
     private async void StorageOptimizationView_RefreshRequested(object? sender, EventArgs e)
     {
+        if (_storageSameSizeVerificationActive)
+        {
+            return;
+        }
+
         await LoadStorageOptimizationAsync(forceRefresh: true);
     }
 
@@ -201,6 +225,7 @@ public sealed partial class MainWindow
     {
         if (_closed ||
             _storageViewMode != StorageViewMode.Optimize ||
+            _storageSameSizeVerificationActive ||
             !_searchEngine.StorageOptimizationAvailable ||
             _searchEngine.State.IsBusy)
         {
@@ -213,7 +238,9 @@ public sealed partial class MainWindow
         if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
         {
             _storageOptimizationView.SetReadyForRefresh(
-                _searchEngine.StorageOptimizationAvailable && !_searchEngine.State.IsBusy);
+                _searchEngine.StorageOptimizationAvailable &&
+                !_searchEngine.State.IsBusy &&
+                !_storageSameSizeVerificationActive);
         }
     }
 
@@ -223,6 +250,7 @@ public sealed partial class MainWindow
     {
         if (_closed ||
             _storageViewMode != StorageViewMode.Optimize ||
+            _storageSameSizeVerificationActive ||
             _performanceDiskIoCaptureActive)
         {
             return;
@@ -258,14 +286,84 @@ public sealed partial class MainWindow
             if (!_closed && generation == Volatile.Read(ref _performanceDiskIoGeneration))
             {
                 _storageOptimizationView.SetDiskIoReadyForCapture(
-                    _storageViewMode == StorageViewMode.Optimize);
+                    _storageViewMode == StorageViewMode.Optimize &&
+                    !_storageSameSizeVerificationActive);
+            }
+        }
+    }
+
+    private async void StorageOptimizationView_SameSizeVerificationRequested(
+        object? sender,
+        StorageSameSizeVerificationRequestedEventArgs e)
+    {
+        if (_closed ||
+            _storageViewMode != StorageViewMode.Optimize ||
+            _storageSameSizeVerificationActive ||
+            _performanceDiskIoCaptureActive ||
+            _storageOptimizationAnalysis is not { } analysis ||
+            e.GroupIndex < 0 ||
+            e.GroupIndex >= analysis.SameSizeCandidateGroups.Count)
+        {
+            return;
+        }
+
+        var group = analysis.SameSizeCandidateGroups[e.GroupIndex];
+        _storageSameSizeVerificationActive = true;
+        _storageOptimizationView.SetSameSizeVerificationLoading(e.GroupIndex);
+        _storageOptimizationView.SetReadyForRefresh(false);
+        _storageOptimizationView.SetDiskIoReadyForCapture(false);
+        try
+        {
+            var verification = await _searchEngine.VerifySameSizeContentAsync(
+                analysis.RootPath,
+                group);
+            if (_closed || !ReferenceEquals(analysis, _storageOptimizationAnalysis))
+            {
+                return;
+            }
+
+            _storageOptimizationView.ApplySameSizeVerification(
+                e.GroupIndex,
+                verification);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!_closed && ReferenceEquals(analysis, _storageOptimizationAnalysis))
+            {
+                _storageOptimizationView.SetSameSizeVerificationFailure(
+                    e.GroupIndex,
+                    $"Content verification failed: {exception.Message}");
+            }
+        }
+        finally
+        {
+            _storageSameSizeVerificationActive = false;
+            if (!_closed)
+            {
+                if (ReferenceEquals(analysis, _storageOptimizationAnalysis))
+                {
+                    _storageOptimizationView.SetReadyForRefresh(
+                        _storageViewMode == StorageViewMode.Optimize &&
+                        _searchEngine.StorageOptimizationAvailable &&
+                        !_searchEngine.State.IsBusy);
+                    _storageOptimizationView.SetDiskIoReadyForCapture(
+                        _storageViewMode == StorageViewMode.Optimize &&
+                        !_performanceDiskIoCaptureActive);
+                }
+                else
+                {
+                    HandleStorageOptimizationEngineState(_searchEngine.State);
+                }
             }
         }
     }
 
     private async Task LoadStorageOptimizationAsync(bool forceRefresh)
     {
-        if (_closed)
+        if (_closed || _storageSameSizeVerificationActive)
         {
             return;
         }
@@ -363,7 +461,8 @@ public sealed partial class MainWindow
                 _storageOptimizationView.SetReadyForRefresh(
                     _storageViewMode == StorageViewMode.Optimize &&
                     _searchEngine.StorageOptimizationAvailable &&
-                    !_searchEngine.State.IsBusy);
+                    !_searchEngine.State.IsBusy &&
+                    !_storageSameSizeVerificationActive);
             }
         }
     }
