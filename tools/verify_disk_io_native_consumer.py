@@ -204,11 +204,20 @@ def check_repository(root: Path) -> int:
         "_callbackCancellationRequested = true",
         "return 0;",
         "ref ulong handleArray",
-        "_openedHandle != 0 || _openActive || _processActive",
+        "_openedHandle != 0 || _openActive || _processActive || _logfileBuffer is not null",
         "_openActive = true",
         "_openActive = false",
         "_processActive = true",
         "_processActive = false",
+        "_loggerNameMemory = loggerName",
+        "_logfileBuffer = logfile",
+        "loggerName = IntPtr.Zero",
+        "logfile = null",
+        "ReleaseNativeOpenStateIfSafe();",
+        "_logfileBuffer?.Dispose()",
+        "Marshal.FreeHGlobal(_loggerNameMemory)",
+        "_logfileBuffer is null",
+        "_loggerNameMemory == IntPtr.Zero",
         "logfile == IntPtr.Zero",
         "null EVENT_TRACE_LOGFILEW pointer",
     ):
@@ -251,6 +260,8 @@ def check_repository(root: Path) -> int:
     for needle in (
         "ConcurrentOpenIsRejectedWhileOpenTraceIsInFlight",
         "ReopenIsRejectedWhilePriorProcessTraceIsStillDraining",
+        "NativeLogfileStateIsRetainedUntilProcessDrainCompletes",
+        "ReleaseNativeOpenStateIfSafe",
     ):
         assert needle in text["lifecycle_tests"], needle
         checks += 1
@@ -269,6 +280,8 @@ def check_repository(root: Path) -> int:
         "explicit pointer-width offsets",
         "draining",
         "_openActive",
+        "retains both the unmanaged `EVENT_TRACE_LOGFILEW` block",
+        "released only when both conditions are true",
     ):
         assert needle in text["doc"], needle
         checks += 1
