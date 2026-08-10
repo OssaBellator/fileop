@@ -52,12 +52,14 @@ Unavailable states cannot carry a report or a stop reason. Their event-loss stat
 
 Every completed capture must state why it stopped:
 
-- `DurationElapsed` — the requested observation window completed;
+- `DurationElapsed` — the full requested observation window completed;
 - `ObservationLimitReached` — the normalized-event cap ended collection first.
 
-`ObservationLimitReached` is valid only when the report contains exactly the budget's maximum accepted observation count.
+`DurationElapsed` is valid only when the report duration exactly matches the requested budget duration. A provider must propagate cancellation or another interrupted outcome rather than label a shorter capture as if the full window elapsed.
 
-The report must also obey the requested owner-row limit and must not describe an observation window longer than the budget.
+`ObservationLimitReached` is valid only when the report contains exactly the budget's maximum accepted observation count. Its report duration may be shorter than the budget because the count cap ended collection first.
+
+The report must also obey the requested owner-row limit. A report with negative duration or a negative accepted-event count is malformed even if manually constructed outside `DiskIoAttributionAnalyzer`, and is rejected by the result boundary.
 
 ## Event-loss evidence
 
@@ -97,8 +99,9 @@ In particular FileOp must not:
 
 A completed result is rejected when its report contradicts the budget:
 
-- report duration exceeds requested duration;
-- accepted observations exceed the cap;
+- report duration is negative or exceeds requested duration;
+- `DurationElapsed` is claimed without the full requested observation window;
+- accepted observations are negative or exceed the cap;
 - owner-row limit differs from the request;
 - observation-cap stop reason is claimed before the cap was reached;
 - event-loss state and lost-event count disagree.
@@ -130,7 +133,8 @@ The next Windows-provider PR must remain separately reviewable because it crosse
 - duration/event/owner hard limits;
 - completed versus unavailable result shape;
 - report/budget consistency;
-- observation-limit semantics;
+- full-duration versus observation-limit stop semantics;
+- negative manually constructed report values;
 - event-loss state/count consistency;
 - incomplete-evidence disclosure;
 - non-negative provider-overhead evidence;
