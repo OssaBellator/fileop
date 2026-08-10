@@ -7,7 +7,7 @@ namespace FileOp.Windows.Tests;
 [TestClass]
 public sealed class WindowsDiskIoEventDecoderTests
 {
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(4)]
     [DataRow(8)]
     public void ReadCompletionDecodesDocumentedFieldsForPointerWidth(int pointerSize)
@@ -39,7 +39,7 @@ public sealed class WindowsDiskIoEventDecoderTests
         Assert.AreEqual(123_456_789L, completion.ByteOffset);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(4)]
     [DataRow(8)]
     public void WriteCompletionUsesSameTypeGroup1Layout(int pointerSize)
@@ -69,7 +69,7 @@ public sealed class WindowsDiskIoEventDecoderTests
         Assert.AreEqual(uint.MaxValue - 1, completion.IssuingThreadId);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(4)]
     [DataRow(8)]
     public void FlushCompletionDecodesWithoutInventingTransferBytes(int pointerSize)
@@ -142,7 +142,7 @@ public sealed class WindowsDiskIoEventDecoderTests
                 out _));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(4, 43)]
     [DataRow(8, 51)]
     public void TruncatedReadWritePayloadFailsClosed(int pointerSize, int truncatedLength)
@@ -158,7 +158,7 @@ public sealed class WindowsDiskIoEventDecoderTests
                 out _));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(4, 23)]
     [DataRow(8, 27)]
     public void TruncatedFlushPayloadFailsClosed(int pointerSize, int truncatedLength)
