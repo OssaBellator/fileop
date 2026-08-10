@@ -39,7 +39,8 @@ public sealed class WindowsSameSizeContentVerifierTests
             result.MatchingSets[0].Paths.ToArray());
         Assert.IsTrue(result.HasVerifiedDuplicateEvidence);
         Assert.AreEqual((long)content.Length, result.VerifiedLogicalDuplicateBytes);
-        StringAssert.Contains(result.Detail, "physical reclaimable space is not verified");
+        Assert.IsNotNull(result.PhysicalReclaim);
+        StringAssert.Contains(result.Detail, "Hash matches are verified logical duplicate evidence");
     }
 
     [TestMethod]
@@ -64,6 +65,7 @@ public sealed class WindowsSameSizeContentVerifierTests
         Assert.AreEqual(0L, result.BytesRead);
         Assert.IsFalse(result.HasVerifiedDuplicateEvidence);
         Assert.AreEqual(0L, result.VerifiedLogicalDuplicateBytes);
+        Assert.IsNull(result.PhysicalReclaim);
         StringAssert.Contains(result.Detail, "No content was read");
     }
 
@@ -87,6 +89,7 @@ public sealed class WindowsSameSizeContentVerifierTests
         Assert.AreEqual(0, result.FullyHashedFileCount);
         Assert.AreEqual(0L, result.BytesRead);
         Assert.AreEqual(0, result.MatchingSets.Count);
+        Assert.IsNull(result.PhysicalReclaim);
         StringAssert.Contains(result.Detail, "Refresh Optimize");
     }
 
@@ -114,6 +117,7 @@ public sealed class WindowsSameSizeContentVerifierTests
         Assert.AreEqual(StorageSameSizeContentVerificationStatus.Unavailable, result.Status);
         Assert.AreEqual(0, result.MatchingSets.Count);
         Assert.IsFalse(result.HasVerifiedDuplicateEvidence);
+        Assert.IsNull(result.PhysicalReclaim);
         StringAssert.Contains(result.Detail, "Partial hash evidence was discarded");
     }
 
@@ -142,6 +146,7 @@ public sealed class WindowsSameSizeContentVerifierTests
         Assert.AreEqual(1, result.MatchingSets.Count);
         Assert.AreEqual(3, result.MatchingSets[0].FileCount);
         Assert.AreEqual(content.Length * 2L, result.VerifiedLogicalDuplicateBytes);
+        Assert.IsNotNull(result.PhysicalReclaim);
     }
 
     [TestMethod]
