@@ -14,6 +14,7 @@ public sealed partial class StorageOptimizationView : UserControl
     }
 
     public event EventHandler? RefreshRequested;
+    public event EventHandler? PerformanceRefreshRequested;
 
     public void SetLoading(string message)
     {
@@ -21,6 +22,9 @@ public sealed partial class StorageOptimizationView : UserControl
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetLoading();
     }
+
+    public void SetPerformanceLoading() =>
+        PerformanceDiagnostics.SetLoading();
 
     public void SetUnavailable(string message)
     {
@@ -70,7 +74,7 @@ public sealed partial class StorageOptimizationView : UserControl
         RefreshRequested?.Invoke(this, EventArgs.Empty);
 
     private void PerformanceDiagnostics_RefreshRequested(object? sender, EventArgs e) =>
-        RefreshRequested?.Invoke(this, EventArgs.Empty);
+        PerformanceRefreshRequested?.Invoke(this, EventArgs.Empty);
 }
 
 public sealed record StorageOptimizationFileRow(
