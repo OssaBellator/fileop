@@ -76,7 +76,7 @@ def check_repository(root: Path) -> int:
         "long WorkingSetBytes",
         "long PeakWorkingSetBytes",
         "long PrivateMemoryBytes",
-        "long ManagedAllocatedBytes",
+        "long ManagedMemoryBytes",
         "int ThreadCount",
         "FileOpProcessResourceSnapshot? FileOpResources = null",
         "string? FileOpResourcesStatus = null",
@@ -117,7 +117,7 @@ def check_repository(root: Path) -> int:
         "Current FileOp process evidence",
         "Working set",
         "Private memory",
-        "Managed allocated",
+        "Managed memory",
         "CPU time since start",
         "Process uptime",
     ):
@@ -129,7 +129,7 @@ def check_repository(root: Path) -> int:
         "not current CPU utilisation",
         "ByteFormatter.Format(snapshot.WorkingSetBytes)",
         "ByteFormatter.Format(snapshot.PrivateMemoryBytes)",
-        "ByteFormatter.Format(snapshot.ManagedAllocatedBytes)",
+        "ByteFormatter.Format(snapshot.ManagedMemoryBytes)",
     ):
         assert needle in view, needle
         checks += 1
