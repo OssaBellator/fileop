@@ -13,6 +13,8 @@ public sealed partial class MainWindow
     private StorageOptimizationAnalysis? _storageOptimizationAnalysis;
     private string? _storageOptimizationSourceKey;
     private int _storageOptimizationGeneration;
+    private int _performanceDiskIoGeneration;
+    private bool _performanceDiskIoCaptureActive;
     private bool _storageOptimizationInitialized;
     private bool _storageOptimizationLoadedForSource;
 
@@ -36,6 +38,8 @@ public sealed partial class MainWindow
         _storageOptimizationView.RefreshRequested += StorageOptimizationView_RefreshRequested;
         _storageOptimizationView.PerformanceRefreshRequested +=
             StorageOptimizationView_PerformanceRefreshRequested;
+        _storageOptimizationView.PerformanceDiskIoCaptureRequested +=
+            StorageOptimizationView_PerformanceDiskIoCaptureRequested;
 
         if (StorageFoldersButton.Parent is StackPanel modePanel)
         {
@@ -63,11 +67,15 @@ public sealed partial class MainWindow
 
     private void StorageOptimizationWindow_Closed(object sender, WindowEventArgs args)
     {
+        Interlocked.Increment(ref _performanceDiskIoGeneration);
+        _performanceDiskIoCaptureActive = false;
         _searchEngine.StateChanged -= StorageOptimizationEngine_StateChanged;
         _storageOptimizationButton.Click -= StorageOptimizationButton_Click;
         _storageOptimizationView.RefreshRequested -= StorageOptimizationView_RefreshRequested;
         _storageOptimizationView.PerformanceRefreshRequested -=
             StorageOptimizationView_PerformanceRefreshRequested;
+        _storageOptimizationView.PerformanceDiskIoCaptureRequested -=
+            StorageOptimizationView_PerformanceDiskIoCaptureRequested;
         Closed -= StorageOptimizationWindow_Closed;
     }
 
@@ -129,6 +137,7 @@ public sealed partial class MainWindow
             _storageOptimizationAnalysis = null;
             _storageOptimizationLoadedForSource = false;
             Interlocked.Increment(ref _storageOptimizationGeneration);
+            InvalidatePerformanceDiskIoCapture();
         }
 
         if (_storageViewMode != StorageViewMode.Optimize)
@@ -207,6 +216,68 @@ public sealed partial class MainWindow
         }
     }
 
+    private async void StorageOptimizationView_PerformanceDiskIoCaptureRequested(
+        object? sender,
+        EventArgs e)
+    {
+        if (_closed ||
+            _storageViewMode != StorageViewMode.Optimize ||
+            !_searchEngine.StorageOptimizationAvailable ||
+            _searchEngine.State.IsBusy ||
+            _performanceDiskIoCaptureActive)
+        {
+            return;
+        }
+
+        var generation = Interlocked.Increment(ref _performanceDiskIoGeneration);
+        _performanceDiskIoCaptureActive = true;
+        _storageOptimizationView.SetDiskIoLoading();
+        try
+        {
+            var result = await _searchEngine.CaptureDiskIoAttributionAsync();
+            if (_closed ||
+                generation != Volatile.Read(ref _performanceDiskIoGeneration) ||
+                _storageViewMode != StorageViewMode.Optimize)
+            {
+                return;
+            }
+
+            _storageOptimizationView.ApplyDiskIoCapture(result);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!_closed &&
+                generation == Volatile.Read(ref _performanceDiskIoGeneration))
+            {
+                _storageOptimizationView.SetDiskIoUnavailable(
+                    $"Disk I/O attribution capture failed: {exception.Message}");
+            }
+        }
+        finally
+        {
+            _performanceDiskIoCaptureActive = false;
+            if (_closed)
+            {
+                return;
+            }
+
+            if (generation != Volatile.Read(ref _performanceDiskIoGeneration) ||
+                _storageViewMode != StorageViewMode.Optimize)
+            {
+                _storageOptimizationView.SetDiskIoUnavailable(
+                    "The previous Disk I/O capture was discarded because the Performance context changed.");
+            }
+
+            _storageOptimizationView.SetDiskIoReadyForCapture(
+                _storageViewMode == StorageViewMode.Optimize &&
+                _searchEngine.StorageOptimizationAvailable &&
+                !_searchEngine.State.IsBusy);
+        }
+    }
+
     private async Task LoadStorageOptimizationAsync(bool forceRefresh)
     {
         if (_closed)
@@ -230,6 +301,7 @@ public sealed partial class MainWindow
             _storageOptimizationAnalysis = null;
             _storageOptimizationLoadedForSource = false;
             forceRefresh = true;
+            InvalidatePerformanceDiskIoCapture();
         }
 
         var generation = Interlocked.Increment(ref _storageOptimizationGeneration);
@@ -349,5 +421,18 @@ public sealed partial class MainWindow
             $"Read-only optimization advisor · {analysis.LargestFiles.Count:N0} large file(s) · " +
             $"{analysis.StaleLargeFiles.Count:N0} old large file(s) · " +
             $"{analysis.SameSizeCandidateGroups.Count:N0} same-size group(s)");
+    }
+
+    private void InvalidatePerformanceDiskIoCapture()
+    {
+        Interlocked.Increment(ref _performanceDiskIoGeneration);
+        if (_performanceDiskIoCaptureActive)
+        {
+            _storageOptimizationView.SetDiskIoLoading();
+        }
+        else
+        {
+            _storageOptimizationView.ResetDiskIoCapture();
+        }
     }
 }
