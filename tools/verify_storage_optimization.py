@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,6 +140,11 @@ def check_repository(root: Path) -> int:
         "backend": root / "src/FileOp.Windows/IndexingService/StorageOptimizationIndexingServiceBackend.cs",
         "client": root / "src/FileOp.Windows/IndexingService/IndexingServiceClient.cs",
         "desktop": root / "src/FileOp.App/DesktopSearchEngine.StorageOptimization.cs",
+        "main": root / "src/FileOp.App/MainWindow.StorageOptimization.cs",
+        "history": root / "src/FileOp.App/MainWindow.StorageHistory.cs",
+        "view_xaml": root / "src/FileOp.App/StorageOptimizationView.xaml",
+        "view_code": root / "src/FileOp.App/StorageOptimizationView.xaml.cs",
+        "test": root / "tests/FileOp.Windows.Tests/StorageOptimizationAnalyticsTests.cs",
         "program": root / "src/FileOp.Indexer/Program.cs",
         "gate": root / "tools/test-local.ps1",
     }
@@ -148,7 +154,8 @@ def check_repository(root: Path) -> int:
             raise FileNotFoundError(path)
         text[name] = path.read_text(encoding="utf-8")
 
-    checks = 0
+    ET.fromstring(text["view_xaml"])
+    checks = 1
     for needle in (
         "public const int CurrentVersion = 7;",
         "AnalyzeStorageOptimization",
@@ -182,11 +189,57 @@ def check_repository(root: Path) -> int:
     assert "HasCheckpointAsync" in text["backend"]
     assert "AnalyzeStorageOptimizationAsync" in text["client"]
     assert "StorageOptimizationAvailable" in text["desktop"]
-    checks += 5
+    assert "Fallback snapshots are not used for reclaim recommendations yet" in text["desktop"]
+    checks += 6
 
-    forbidden = ("File.Delete(", "Directory.Delete(", "DELETE FROM", "SHA256", "Registry.")
+    for needle in (
+        'Content = "Optimize"',
+        "InitializeStorageOptimizationView();",
+        "Interlocked.Increment(ref _storageOptimizationGeneration);",
+        "generation != Volatile.Read(ref _storageOptimizationGeneration)",
+        "StorageOptimizationMode",
+    ):
+        assert needle in text["main"] + text["history"], needle
+        checks += 1
+
+    for needle in (
+        "Read-only index analysis",
+        "not confirmed duplicates",
+        "Potential savings are a logical upper bound only",
+        "Age is based only on last-write metadata",
+    ):
+        assert needle in text["view_xaml"], needle
+        checks += 1
+
+    for needle in (
+        "SameSizePotentialLogicalSavingsUpperBound",
+        "StorageOptimizationFileRow.FromCandidate",
+        "StorageSameSizeGroupRow.FromGroup",
+    ):
+        assert needle in text["view_code"], needle
+        checks += 1
+
+    for needle in (
+        "AnalyzerRanksMeasuredSpaceAndCollapsesHardLinkAliases",
+        'Assert.AreEqual(1, hardLinkNames);',
+        'Assert.IsFalse(sameSize.SampleFiles.Any(static file => file.Name == "outside.zip"));',
+    ):
+        assert needle in text["test"], needle
+        checks += 1
+
+    forbidden = (
+        "File.Delete(",
+        "Directory.Delete(",
+        "DELETE FROM",
+        "SHA256",
+        "Registry.",
+        'Content="Delete"',
+        'Content="Clean"',
+        'Content="Run"',
+    )
     optimization_source = "\n".join(
-        text[name] for name in ("model", "sqlite", "backend", "desktop")
+        text[name]
+        for name in ("model", "sqlite", "backend", "desktop", "main", "view_xaml", "view_code")
     )
     for needle in forbidden:
         assert needle not in optimization_source, needle
