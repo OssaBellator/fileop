@@ -60,6 +60,15 @@ public sealed partial class StorageHistoryView : UserControl
         RefreshButton.IsEnabled = true;
         _timeline.Clear();
         _growth.Clear();
+
+        if (volumeTotalBytes is null &&
+            volumeFreeBytes is null &&
+            snapshots.FirstOrDefault() is { } capacityRootSnapshot)
+        {
+            (volumeTotalBytes, volumeFreeBytes) =
+                DesktopSearchEngine.ReadVolumeCapacity(capacityRootSnapshot.RootPath);
+        }
+
         ApplyPressureEvidence(StorageHistoryPressureEvidence.Analyze(
             snapshots,
             volumeTotalBytes,
@@ -183,7 +192,7 @@ public sealed partial class StorageHistoryView : UserControl
         if (evidence.NewerCapturedAt is null)
         {
             PressureStatusText.Text =
-                "Current free space is measured from the active volume, but no native aggregate history observation exists yet.";
+                "No native aggregate history observation exists yet, so current free space is not correlated with a history change.";
             return;
         }
 
