@@ -12,6 +12,8 @@ from pathlib import Path
 
 def saturating_add(left: int, right: int) -> int:
     maximum = (1 << 63) - 1
+    left = max(0, left)
+    right = max(0, right)
     return maximum if left > maximum - right else left + right
 
 
@@ -37,19 +39,20 @@ def derived_metrics(
     live = max(0, logical - reusable)
     reusable_percent = None if page_count <= 0 else min(100.0, max(0.0, free_pages * 100.0 / page_count))
     if cache_setting == 0:
-        cache_target = None
+        cache_default = None
     elif cache_setting < 0:
-        cache_target = saturating_multiply(abs(cache_setting), 1024)
+        cache_default = saturating_multiply(abs(cache_setting), 1024)
     else:
-        cache_target = saturating_multiply(cache_setting, page_size)
-    return footprint, logical, reusable, live, reusable_percent, cache_target
+        cache_default = saturating_multiply(cache_setting, page_size)
+    return footprint, logical, reusable, live, reusable_percent, cache_default
 
 
 def run_model(cases: int) -> int:
     checks = 0
     fixed = derived_metrics(1000, 200, 50, 4096, 100, 25, -2000)
     assert fixed == (1250, 409600, 102400, 307200, 25.0, 2048000)
-    checks += 1
+    assert derived_metrics(-10, 20, -30, 4096, 0, 0, 0)[0] == 20
+    checks += 2
 
     rng = random.Random(20260810)
     maximum = (1 << 63) - 1
@@ -61,7 +64,7 @@ def run_model(cases: int) -> int:
         page_count = rng.randint(0, 10_000_000)
         free_pages = rng.randint(0, page_count) if page_count else 0
         cache_setting = rng.choice([-2000, -8192, 0, 128, 512, 2000])
-        footprint, logical, reusable, live, percent, cache_target = derived_metrics(
+        footprint, logical, reusable, live, percent, cache_default = derived_metrics(
             database,
             wal,
             shm,
@@ -75,7 +78,7 @@ def run_model(cases: int) -> int:
         assert 0 <= reusable <= logical
         assert live == logical - reusable
         assert percent is None if page_count == 0 else 0.0 <= percent <= 100.0
-        assert cache_target is None if cache_setting == 0 else 0 < cache_target <= maximum
+        assert cache_default is None if cache_setting == 0 else 0 < cache_default <= maximum
         checks += 6
     return checks
 
@@ -155,8 +158,10 @@ def check_repository(root: Path) -> int:
         'SELECT item_count FROM index_metadata WHERE id = 1;',
         'ReadOptionalFileLength(_databasePath + "-wal")',
         'ReadOptionalFileLength(_databasePath + "-shm")',
-        "ConfiguredCacheTargetBytes",
+        "ReaderCacheDefaultTargetBytes",
         "ReusableFreePageBytes",
+        "Math.Max(0, DatabaseFileBytes)",
+        "FileOp currently does not set PRAGMA cache_size",
     ):
         assert needle in text["model"], needle
         checks += 1
@@ -211,17 +216,17 @@ def check_repository(root: Path) -> int:
         "FileOp index footprint",
         "Helper files",
         "Reusable pages",
-        "Cache target",
-        "configuration, not observed RAM usage",
+        "Reader cache default",
+        "connection setting, not observed RAM usage",
     ):
         assert needle in text["view"], needle
         checks += 1
 
     for needle in (
         "Reusable pages can be reused by SQLite",
-        "cache target is not observed resident memory",
+        "reader cache default is not observed resident memory",
         "ReusableFreePagePercent",
-        "ConfiguredCacheTargetBytes",
+        "ReaderCacheDefaultTargetBytes",
     ):
         assert needle in text["view_code"], needle
         checks += 1
@@ -229,6 +234,7 @@ def check_repository(root: Path) -> int:
     for needle in (
         "ReaderReportsHelperFileAndPageEvidence",
         "DerivedMetricsStayConservativeAndDoNotClaimResidentCache",
+        "DerivedFileFootprintClampsMalformedNegativeInputs",
         "SharedResolverPreservesHistoricalDatabaseKeyFormat",
         '"ntfs-0000000000001234-c"',
     ):
@@ -238,6 +244,7 @@ def check_repository(root: Path) -> int:
     for needle in (
         "DispatcherNormalizesIndexDiagnosticsRootBeforeBackendCall",
         "NamedPipeRoundTripPreservesIndexDatabaseEvidence",
+        "ReaderCacheDefaultTargetBytes",
     ):
         assert needle in text["protocol_test"], needle
         checks += 1
