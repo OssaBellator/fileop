@@ -51,6 +51,10 @@ Invoke-Step "Offline performance diagnostics verifier" {
     python tools/verify_performance_diagnostics.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline Performance DiskIo UI verifier" {
+    python tools/verify_performance_disk_io_ui.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline latency distribution verifier" {
     python tools/verify_latency_distributions.py --repo-root $repoRoot --cases 50000
 }
