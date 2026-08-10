@@ -22,7 +22,7 @@ public sealed record PerformanceDiagnosticsSnapshot(
             : null;
 
     public double? VolumeFreePercent =>
-        VolumeTotalBytes is > 0 and var total && VolumeFreeBytes is { } free
+        VolumeTotalBytes is { } total && total > 0 && VolumeFreeBytes is { } free
             ? Math.Clamp(free * 100d / total, 0d, 100d)
             : null;
 }
