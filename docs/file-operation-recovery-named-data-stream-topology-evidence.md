@@ -14,6 +14,7 @@ The parser:
 
 - requires exactly one unnamed/default data-stream entry, accepting NTFS's `::$DATA` spelling or the zero-length stream name permitted by `FILE_STREAM_INFORMATION`;
 - accepts named entries only in `:name:$DATA` form;
+- enforces the Windows stream-name component boundary: at most 255 characters and no `\`, `/`, `:`, or NUL inside the named component;
 - rejects malformed offsets, odd/invalid UTF-16 lengths, negative stream sizes, duplicate names, unexpected stream types, implausible stream counts, and inventories larger than the configured safety bound;
 - treats an unsupported/no-inventory result as unavailable rather than assuming there are no named streams.
 

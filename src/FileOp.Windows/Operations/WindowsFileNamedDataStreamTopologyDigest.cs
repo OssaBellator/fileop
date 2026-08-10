@@ -22,6 +22,7 @@ internal static class WindowsFileNamedDataStreamTopologyDigest
     private const int InitialBufferBytes = 4096;
     private const int MaximumBufferBytes = 1024 * 1024;
     private const int MaximumNamedStreams = 4096;
+    private const int MaximumStreamNameCharacters = 255;
     private static readonly byte[] CanonicalPrefix = Encoding.ASCII.GetBytes("FileOp.NamedDataStreams.v1\0");
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
@@ -193,8 +194,15 @@ internal static class WindowsFileNamedDataStreamTopologyDigest
         }
 
         var streamNameLength = name.Length - 1 - ":$DATA".Length;
-        return streamNameLength > 0 &&
-            name.AsSpan(1, streamNameLength).IndexOf(':') < 0;
+        if (streamNameLength is <= 0 or > MaximumStreamNameCharacters)
+        {
+            return false;
+        }
+
+        var streamName = name.AsSpan(1, streamNameLength);
+        return streamName.IndexOf(':') < 0 &&
+            streamName.IndexOf('\\') < 0 &&
+            streamName.IndexOf('/') < 0;
     }
 
     private static FileNamedDataStreamTopologyEvidence CreateEvidence(
