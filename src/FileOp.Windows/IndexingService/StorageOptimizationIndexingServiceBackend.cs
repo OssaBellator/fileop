@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using FileOp.Core.Indexing.Service;
 using FileOp.Core.Performance;
 using FileOp.Core.Search;
@@ -70,7 +71,38 @@ public sealed class StorageOptimizationIndexingServiceBackend : IIndexingService
             }
 
             var reader = new SqliteIndexDatabaseDiagnosticsReader(databasePath);
-            var diagnostics = await reader.ReadAsync(_utcNow(), cancellationToken).ConfigureAwait(false);
+            var diagnostics = await reader
+                .ReadWithCheckpointAsync(sourceKey, _utcNow(), cancellationToken)
+                .ConfigureAwait(false);
+
+            if (diagnostics.DurableCheckpoint is { } checkpoint)
+            {
+                try
+                {
+                    var journal = new NtfsUsnJournal().Query(volume);
+                    diagnostics = diagnostics with
+                    {
+                        JournalFreshness = new IndexJournalFreshnessDiagnostics(
+                            checkpoint.JournalId,
+                            checkpoint.NextUsn,
+                            checkpoint.UpdatedAt,
+                            journal.JournalId,
+                            journal.LowestValidUsn,
+                            journal.NextUsn),
+                    };
+                }
+                catch (Win32Exception)
+                {
+                    // Durable checkpoint/database evidence remains valid when the live
+                    // journal metadata cannot be opened in the current security context.
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // Treat access failure as optional live-evidence loss, not as a
+                    // failure of the already-completed read-only SQLite diagnostics.
+                }
+            }
+
             return new IndexingIndexDiagnosticsResponse(diagnostics);
         }
         catch (SqliteException exception) when (exception.SqliteErrorCode is 5 or 6)
