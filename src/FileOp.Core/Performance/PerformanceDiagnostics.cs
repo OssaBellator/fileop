@@ -1,10 +1,19 @@
 namespace FileOp.Core.Performance;
 
+public enum PerformanceProbeKind
+{
+    Other,
+    TimerBaseline,
+    Search,
+    Storage,
+}
+
 public sealed record PerformanceProbeMeasurement(
     string Name,
     string Scope,
     long ElapsedMicroseconds,
-    string Detail);
+    string Detail,
+    PerformanceProbeKind Kind = PerformanceProbeKind.Other);
 
 public sealed record PerformanceDiagnosticsSnapshot(
     DateTimeOffset CapturedAt,
