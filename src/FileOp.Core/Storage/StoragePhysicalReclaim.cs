@@ -191,15 +191,15 @@ public static class StoragePhysicalReclaimAnalyzer
             return 0;
         }
 
-        long singletonBytes = 0;
-        foreach (var file in singletonFiles)
-        {
-            singletonBytes = SaturatingAdd(singletonBytes, file.AllocatedBytes);
-        }
-
         if (physicalFiles.Any(static file => !file.IsSingletonLink))
         {
-            return singletonBytes;
+            long reclaimable = 0;
+            foreach (var file in singletonFiles)
+            {
+                reclaimable = SaturatingAdd(reclaimable, file.AllocatedBytes);
+            }
+
+            return reclaimable;
         }
 
         if (singletonFiles.Length < 2)
@@ -207,8 +207,25 @@ public static class StoragePhysicalReclaimAnalyzer
             return 0;
         }
 
-        var bytesToKeep = singletonFiles.Min(static file => file.AllocatedBytes);
-        return Math.Max(0, singletonBytes - bytesToKeep);
+        var keepIndex = 0;
+        for (var index = 1; index < singletonFiles.Length; index++)
+        {
+            if (singletonFiles[index].AllocatedBytes < singletonFiles[keepIndex].AllocatedBytes)
+            {
+                keepIndex = index;
+            }
+        }
+
+        long result = 0;
+        for (var index = 0; index < singletonFiles.Length; index++)
+        {
+            if (index != keepIndex)
+            {
+                result = SaturatingAdd(result, singletonFiles[index].AllocatedBytes);
+            }
+        }
+
+        return result;
     }
 
     private static long SaturatingAdd(long left, long right) =>
