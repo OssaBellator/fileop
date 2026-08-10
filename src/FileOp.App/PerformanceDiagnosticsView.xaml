@@ -8,6 +8,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Grid>
@@ -73,7 +74,53 @@
             </Border>
         </Grid>
 
-        <Border Grid.Row="3" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+        <Border Grid.Row="3" Padding="14" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+            <StackPanel Spacing="10">
+                <StackPanel Spacing="3">
+                    <TextBlock Text="FileOp index footprint" FontSize="16" FontWeight="SemiBold" />
+                    <TextBlock
+                        Text="Helper-owned read-only SQLite evidence. Reusable pages are internal database free pages; the cache target is configuration, not observed RAM usage."
+                        Opacity="0.68"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Spacing="3">
+                        <TextBlock Text="Helper files" Opacity="0.62" />
+                        <TextBlock x:Name="IndexFootprintText" Text="—" FontSize="18" FontWeight="SemiBold" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="3">
+                        <TextBlock Text="Main database" Opacity="0.62" />
+                        <TextBlock x:Name="IndexDatabaseText" Text="—" FontSize="18" FontWeight="SemiBold" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="3">
+                        <TextBlock Text="WAL" Opacity="0.62" />
+                        <TextBlock x:Name="IndexWalText" Text="—" FontSize="18" FontWeight="SemiBold" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="3" Spacing="3">
+                        <TextBlock Text="Reusable pages" Opacity="0.62" />
+                        <TextBlock x:Name="IndexReusableText" Text="—" FontSize="18" FontWeight="SemiBold" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="4" Spacing="3">
+                        <TextBlock Text="Cache target" Opacity="0.62" />
+                        <TextBlock x:Name="IndexCacheText" Text="—" FontSize="18" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Grid>
+                <TextBlock x:Name="IndexStatusText"
+                           Text="Native index database metrics have not been captured yet."
+                           Opacity="0.7"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="4" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
             <Grid>
                 <Grid.RowDefinitions>
