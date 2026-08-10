@@ -195,6 +195,13 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
 
     private uint BufferCallback(IntPtr logfile)
     {
+        if (logfile == IntPtr.Zero)
+        {
+            CaptureCallbackFault(new InvalidDataException(
+                "ETW invoked FileOp's BufferCallback with a null EVENT_TRACE_LOGFILEW pointer."));
+            return 0;
+        }
+
         lock (_gate)
         {
             if (_callbackCancellationRequested || _callbackFault is not null)
