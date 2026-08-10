@@ -179,6 +179,7 @@ internal sealed class WindowsDiskIoOwnedTraceConsumer : IDisposable
 {
     private readonly IWindowsDiskIoTraceConsumerApi _api;
     private readonly object _gate = new();
+    private bool _processingClaimed;
     private WindowsDiskIoTraceCloseDisposition? _closeDisposition;
     private Exception? _terminalCloseFailure;
 
@@ -217,6 +218,14 @@ internal sealed class WindowsDiskIoOwnedTraceConsumer : IDisposable
                     "The ETW processing handle had a terminal close failure and will not be reused.",
                     _terminalCloseFailure);
             }
+
+            if (_processingClaimed)
+            {
+                throw new InvalidOperationException(
+                    "ProcessTrace is single-shot for each FileOp ETW processing handle.");
+            }
+
+            _processingClaimed = true;
         }
 
         var status = _api.ProcessTrace(ProcessingHandle);
