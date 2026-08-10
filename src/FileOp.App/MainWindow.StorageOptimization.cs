@@ -77,10 +77,14 @@ public sealed partial class MainWindow
 
     private void HideStorageOptimizationView(object sender, RoutedEventArgs e)
     {
-        if (_storageOptimizationInitialized)
+        if (!_storageOptimizationInitialized)
         {
-            _storageOptimizationView.Visibility = Visibility.Collapsed;
+            return;
         }
+
+        Interlocked.Increment(ref _storageOptimizationGeneration);
+        _storageOptimizationView.Visibility = Visibility.Collapsed;
+        _storageOptimizationView.SetReadyForRefresh(false);
     }
 
     private void StorageOptimizationEngine_StateChanged(DesktopSearchEngineState state)
