@@ -47,6 +47,10 @@ Invoke-Step "Offline Storage optimization verifier" {
     python tools/verify_storage_optimization.py --repo-root $repoRoot --cases 10000
 }
 
+Invoke-Step "Offline same-size content verification verifier" {
+    python tools/verify_same_size_content_verification.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline performance diagnostics verifier" {
     python tools/verify_performance_diagnostics.py --repo-root $repoRoot --cases 50000
 }
