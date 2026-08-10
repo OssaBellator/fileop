@@ -23,21 +23,21 @@ public sealed partial class FileOpResourceFootprintView : UserControl
 
         WorkingSetText.Text = ByteFormatter.Format(snapshot.WorkingSetBytes);
         PrivateMemoryText.Text = ByteFormatter.Format(snapshot.PrivateMemoryBytes);
-        ManagedAllocatedText.Text = ByteFormatter.Format(snapshot.ManagedAllocatedBytes);
+        ManagedMemoryText.Text = ByteFormatter.Format(snapshot.ManagedMemoryBytes);
         ThreadCountText.Text = $"{snapshot.ThreadCount:N0}";
         PeakWorkingSetText.Text = ByteFormatter.Format(snapshot.PeakWorkingSetBytes);
         CpuTimeText.Text = FormatDuration(snapshot.TotalProcessorTime);
         UptimeText.Text = FormatDuration(snapshot.Uptime);
         StatusText.Text =
             $"Process started {snapshot.ProcessStartedAt.ToLocalTime():g}. Working set/private memory are current OS process counters; " +
-            "managed allocated uses GC.GetTotalMemory(false) without forcing a collection. CPU time is cumulative across FileOp threads since process start, not current CPU utilisation.";
+            "managed memory uses GC.GetTotalMemory(false) without forcing a collection. CPU time is cumulative across FileOp threads since process start, not current CPU utilisation.";
     }
 
     private void ResetMetrics()
     {
         WorkingSetText.Text = "—";
         PrivateMemoryText.Text = "—";
-        ManagedAllocatedText.Text = "—";
+        ManagedMemoryText.Text = "—";
         ThreadCountText.Text = "—";
         PeakWorkingSetText.Text = "—";
         CpuTimeText.Text = "—";
