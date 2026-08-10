@@ -6,6 +6,8 @@ namespace FileOp.App;
 
 public sealed partial class DiskIoAttributionView : UserControl
 {
+    private bool _captureActive;
+
     public DiskIoAttributionView()
     {
         InitializeComponent();
@@ -15,16 +17,18 @@ public sealed partial class DiskIoAttributionView : UserControl
 
     public void SetLoading()
     {
+        _captureActive = true;
         StatusText.Text =
             "Capturing a bounded 2-second Disk I/O sample. FileOp will stop its owned ETW session, drain the consumer, then report evidence quality…";
         CaptureButton.IsEnabled = false;
     }
 
     public void SetReady(bool ready) =>
-        CaptureButton.IsEnabled = ready;
+        CaptureButton.IsEnabled = ready && !_captureActive;
 
     public void SetUnavailable(string message)
     {
+        _captureActive = false;
         ResetRows();
         ResetSummary();
         StatusText.Text = message;
@@ -32,6 +36,7 @@ public sealed partial class DiskIoAttributionView : UserControl
 
     public void Reset()
     {
+        _captureActive = false;
         ResetRows();
         ResetSummary();
         StatusText.Text = "No Disk I/O attribution capture has been run.";
@@ -40,6 +45,7 @@ public sealed partial class DiskIoAttributionView : UserControl
     public void Apply(DiskIoCaptureResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
+        _captureActive = false;
         if (result.Status != DiskIoCaptureStatus.Completed || result.Report is null)
         {
             ResetRows();
