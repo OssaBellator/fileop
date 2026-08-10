@@ -39,8 +39,6 @@ def required_payload(opcode: int, pointer_size: int) -> int:
 def convert_ticks(response_ticks: int, frequency: int) -> int:
     if frequency <= 0:
         raise ValueError("frequency")
-    # Model TimeSpan ticks (10,000,000/sec), away-from-zero is ordinary nearest
-    # rounding for these non-negative values.
     numerator = response_ticks * 10_000_000
     quotient, remainder = divmod(numerator, frequency)
     if remainder * 2 >= frequency:
@@ -82,7 +80,6 @@ def run_model(cases: int) -> int:
         assert required_payload(opcode, pointer_size) == required
         checks += 2
 
-        # Extra bytes are allowed by #71; one-byte truncation is not.
         actual = required + rng.randrange(0, 128)
         assert actual >= required
         assert required - 1 < required
@@ -96,7 +93,6 @@ def run_model(cases: int) -> int:
             assert converted == 0
         checks += 2
 
-        # Id is deliberately irrelevant to MOF DiskIo identity.
         event_id = rng.randrange(0, 65536)
         assert classify(DISK_PROVIDER, opcode, flags)[0] == "decode"
         assert 0 <= event_id <= 65535
@@ -127,8 +123,8 @@ def check_repository(root: Path) -> int:
     checks = 0
 
     for needle in (
-        "EventHeaderFlag32Bit = 0x0020",
-        "EventHeaderFlag64Bit = 0x0040",
+        "WindowsDiskIoTraceMetadata.EventHeaderFlag32Bit",
+        "WindowsDiskIoTraceMetadata.EventHeaderFlag64Bit",
         "EventHeaderFlagClassic = 0x0100",
         "record.Descriptor.Opcode",
         "WindowsDiskIoEventDecoder.DiskIoProviderId",
@@ -137,6 +133,7 @@ def check_repository(root: Path) -> int:
         "WindowsDiskIoEventDecoder.FlushEventType",
         "EVENT_HEADER_FLAG_CLASSIC_HEADER",
         "WindowsDiskIoTraceMetadata.FromEventHeaderFlags",
+        "record.Flags",
         "WindowsDiskIoEventDecoder.TryDecodeCompletion",
         "record.UserData",
         "metadata.ConvertHighResolutionResponseTime",
@@ -148,6 +145,8 @@ def check_repository(root: Path) -> int:
         checks += 1
 
     for forbidden in (
+        "EventHeaderFlag32Bit = 0x0020",
+        "EventHeaderFlag64Bit = 0x0040",
         "BinaryPrimitives",
         "Marshal.",
         "BitConverter",
@@ -166,9 +165,12 @@ def check_repository(root: Path) -> int:
     assert "ReadEventType = 10" in text["decoder"]
     assert "WriteEventType = 11" in text["decoder"]
     assert "FlushEventType = 14" in text["decoder"]
+    assert "EventHeaderFlag32Bit = 0x0020" in text["metadata"]
+    assert "EventHeaderFlag64Bit = 0x0040" in text["metadata"]
+    assert "ushort eventHeaderFlags" in text["metadata"]
     assert "FromEventHeaderFlags" in text["metadata"]
     assert "ReadOnlySpan<byte> UserData => _userData" in text["snapshot"]
-    checks += 6
+    checks += 9
 
     for needle in (
         "Classic32BitReadUsesOpcodeAndExistingDecoder",
