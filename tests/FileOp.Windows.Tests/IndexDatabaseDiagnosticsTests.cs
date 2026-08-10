@@ -44,7 +44,7 @@ public sealed class IndexDatabaseDiagnosticsTests
             Assert.IsTrue(diagnostics.FreePageCount >= 0);
             Assert.IsTrue(diagnostics.FreePageCount <= diagnostics.PageCount);
             Assert.IsTrue(diagnostics.LivePageBytes >= 0);
-            Assert.IsTrue(diagnostics.ConfiguredCacheTargetBytes is > 0);
+            Assert.IsTrue(diagnostics.ReaderCacheDefaultTargetBytes is > 0);
             Assert.IsTrue(string.Equals("wal", diagnostics.JournalMode, StringComparison.OrdinalIgnoreCase));
         }
         finally
@@ -77,7 +77,27 @@ public sealed class IndexDatabaseDiagnosticsTests
         Assert.AreEqual(102_400L, diagnostics.ReusableFreePageBytes);
         Assert.AreEqual(307_200L, diagnostics.LivePageBytes);
         Assert.AreEqual(25d, diagnostics.ReusableFreePagePercent);
-        Assert.AreEqual(2_048_000L, diagnostics.ConfiguredCacheTargetBytes);
+        Assert.AreEqual(2_048_000L, diagnostics.ReaderCacheDefaultTargetBytes);
+    }
+
+    [TestMethod]
+    public void DerivedFileFootprintClampsMalformedNegativeInputs()
+    {
+        var diagnostics = new IndexDatabaseDiagnostics(
+            DateTimeOffset.UnixEpoch,
+            0,
+            DatabaseFileBytes: -1,
+            WalFileBytes: 20,
+            SharedMemoryFileBytes: -30,
+            PageSizeBytes: 4_096,
+            PageCount: 0,
+            FreePageCount: 0,
+            CacheSizeSetting: 0,
+            JournalMode: string.Empty);
+
+        Assert.AreEqual(20L, diagnostics.FileFootprintBytes);
+        Assert.IsNull(diagnostics.ReusableFreePagePercent);
+        Assert.IsNull(diagnostics.ReaderCacheDefaultTargetBytes);
     }
 
     [TestMethod]
