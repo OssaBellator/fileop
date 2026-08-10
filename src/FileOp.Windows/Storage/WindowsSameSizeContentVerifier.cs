@@ -24,13 +24,11 @@ public sealed class WindowsSameSizeContentVerifier
         policy.Validate();
         ValidateGroup(group);
 
-        var maxByBytes = group.LogicalBytesPerFile == 0
-            ? policy.MaxFiles
-            : Math.Min(
-                policy.MaxFiles,
-                checked((int)Math.Min(
-                    int.MaxValue,
-                    policy.MaxTotalBytesRead / group.LogicalBytesPerFile)));
+        var maxByBytes = Math.Min(
+            policy.MaxFiles,
+            checked((int)Math.Min(
+                int.MaxValue,
+                policy.MaxTotalBytesRead / group.LogicalBytesPerFile)));
         var selectedCount = Math.Min(group.SampleFiles.Count, maxByBytes);
         if (selectedCount < 2)
         {
@@ -166,8 +164,7 @@ public sealed class WindowsSameSizeContentVerifier
         catch (Exception exception) when (
             exception is IOException or
             UnauthorizedAccessException or
-            NotSupportedException or
-            PathTooLongException)
+            NotSupportedException)
         {
             return new StorageSameSizeContentVerification(
                 StorageSameSizeContentVerificationStatus.Unavailable,
