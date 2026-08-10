@@ -4,7 +4,7 @@
 
 `FileOp.Indexer` isolates native NTFS indexing from the WinUI desktop process. `FileOp.App` always remains `asInvoker`; only the on-demand indexing helper may be relaunched after explicit user action when raw NTFS access requires elevation.
 
-The indexer is not the future disk-administration helper. It exposes indexing, search, exact read-only directory browsing, read-only Storage analytics and aggregate Storage-history capture/query. Partition changes, formatting, BitLocker administration and other destructive storage operations require a separate privileged surface.
+The indexer is not the future disk-administration helper. It exposes indexing, search, exact read-only directory browsing, read-only Storage analytics, read-only optimization analysis and aggregate Storage-history capture/query. Partition changes, formatting, BitLocker administration and other destructive storage operations require a separate privileged surface.
 
 ## Process model
 
@@ -25,6 +25,7 @@ FileOp.Indexer (normal token first; same-account elevation only)
         +-- per-volume SQLite ownership
         +-- Search + paged direct-child browsing
         +-- directory/type/category analytics
+        +-- read-only storage optimization analysis
         +-- aggregate Storage history capture/query
 ```
 
@@ -40,7 +41,7 @@ Oversized responses are replaced by retryable `ResponseTooLarge` without killing
 
 Protocol mismatch is rejected before backend work.
 
-## Protocol v6
+## Protocol v7
 
 Current operations are:
 
@@ -53,6 +54,7 @@ Current operations are:
 - `BrowseDirectory`;
 - `AnalyzeStorage`;
 - `AnalyzeStorageTypes`;
+- `AnalyzeStorageOptimization`;
 - `CaptureStorageHistory`;
 - `GetStorageHistory`.
 
@@ -63,9 +65,10 @@ Version progression is deliberate:
 - v3 added file-type analysis;
 - v4 enriched `AnalyzeStorageTypes` with exact category rows;
 - v5 added aggregate history capture/query;
-- v6 adds exact paged direct-child browsing.
+- v6 added exact paged direct-child browsing;
+- v7 adds read-only storage optimization analysis.
 
-The v6 bump is required because old desktop/helper binaries do not agree on the operation set. Strict negotiation fails safely instead of allowing an old helper to receive an unknown browse operation.
+The v7 bump is required because old desktop/helper binaries do not agree on the operation set. Strict negotiation fails safely instead of allowing an old helper to advertise compatibility with an optimization operation it cannot serve.
 
 There are no cleanup, file-mutation, partition, format, TRIM, BitLocker or process-management commands in this protocol.
 
@@ -106,7 +109,7 @@ Continuation is a keyset cursor over the last returned row. The SQL predicate ad
 
 The SQLite browse class opens the index in `ReadOnly` mode and never runs schema creation or mutation. When an indexed directory has a stable `FileIdentity`, direct-child filtering uses the existing parent-identity columns; the path predicate is only a fallback for indexes where that identity is unavailable.
 
-The production `PagedDirectoryIndexingServiceBackend` is a thin wrapper around `StorageHistoryIndexingServiceBackend`. Existing index/search/storage/history behavior is delegated unchanged. Browse requests independently:
+The production `PagedDirectoryIndexingServiceBackend` remains a thin wrapper around `StorageHistoryIndexingServiceBackend`, and protocol v7 adds `StorageOptimizationIndexingServiceBackend` as the outer composition layer. Existing index/search/storage/history/browse behavior is delegated unchanged. Browse requests independently:
 
 1. resolve the attached physical NTFS volume/root;
 2. validate directory containment;
@@ -129,6 +132,41 @@ The desktop exposes the same page model in fallback mode by filtering and paging
 `AnalyzeStorageTypes` returns complete root totals, bounded extension groups and exact category aggregates. `MaxTypes` bounds only the extension rows; categories are calculated over the complete extension aggregate set.
 
 Hard links preserve namespace meaning without double-counting physical allocation. Unknown physical metadata remains unknown instead of being replaced with logical size.
+
+## Storage optimization operation
+
+### `AnalyzeStorageOptimization`
+
+Request:
+
+```text
+VolumeIdentity
+VolumeRootPath
+DirectoryPath
+```
+
+The first protocol-v7 optimization policy is service-owned and explicit in the returned `StorageOptimizationAnalysis`. It surfaces bounded sets of large files, old large files and same-size physical-file candidate groups from the existing metadata index.
+
+`StorageOptimizationIndexingServiceBackend` is the outer production wrapper. For optimization requests it:
+
+1. resolves the attached physical NTFS volume/root;
+2. validates directory containment;
+3. takes the same shared cross-process read lease used by other live indexed reads;
+4. verifies the durable NTFS checkpoint;
+5. verifies that the requested path is an indexed directory;
+6. opens the SQLite index read-only with `query_only` enabled;
+7. runs bounded metadata queries; and
+8. translates SQLite contention to retryable `Busy`.
+
+Hard-link aliases are collapsed using stable volume/file-reference identity before physical candidates are selected. When identity is missing, the path remains a conservative distinct candidate.
+
+Largest-file ranking uses allocated bytes when known and logical bytes otherwise. The stale list is an explicit last-write-age filter over large candidates; age is not interpreted as permission to remove a file.
+
+Same-size groups use exact logical length only. They are a duplicate **prefilter**, not content-equality evidence. Potential savings is reported as a logical upper bound of `length × (candidate count - 1)` and must not be described as guaranteed reclaimable space until a later content-verification layer confirms equality.
+
+The initial desktop Optimize view is native-only. A bounded profile crawler snapshot is not presented as complete volume reclaim analysis.
+
+The operation does not hash contents and has no mutation capability.
 
 ## Storage history operations
 
@@ -176,11 +214,11 @@ Live namespace reads have two coordination layers:
 - a process-local desktop/native operation discipline;
 - a cross-process reader/writer file gate beside the persistent database.
 
-Search, exact browse and live Storage analytics take shared leases. Rebuild and journal synchronization hold an exclusive maintenance lease across the entire semantic operation, including checkpoint invalidation.
+Search, exact browse, live Storage analytics and optimization analysis take shared leases. Rebuild and journal synchronization hold an exclusive maintenance lease across the entire semantic operation, including checkpoint invalidation.
 
 History persistence uses an independently versioned `storage_history_*` sub-schema in the same database. Namespace rebuilds do not erase history. History root identity uses a custom ordinal-ignore-case SQLite collation so Unicode Windows path casing follows the same semantics as the .NET domain model rather than SQLite's ASCII-only `NOCASE`.
 
-The service composition deliberately leaves the reviewed `NtfsIndexingServiceBackend` lifecycle unchanged. History and exact-browse wrappers delegate existing operations directly.
+The service composition deliberately leaves the reviewed `NtfsIndexingServiceBackend` lifecycle unchanged. History, exact-browse and optimization wrappers delegate existing operations directly.
 
 ## Privilege policy
 
@@ -194,7 +232,7 @@ The desktop build places `FileOp.Indexer.exe` and its host metadata beside the a
 
 Search, indexed Files and Storage share one native/fallback lifecycle and foreground operation discipline. Storage history scheduling is engine-owned and independent of whether its view is open.
 
-The current Files view still renders the first compatibility slice through bounded `AnalyzeStorage`; protocol v6 and `DesktopSearchEngine.BrowseDirectoryAsync` now establish the exact page boundary required to replace that bridge. The next UI slice should consume pages incrementally and expose an explicit Load more/infinite-scroll policy without reintroducing recursive Storage aggregation into browser rows.
+Files consumes `DesktopSearchEngine.BrowseDirectoryAsync` pages incrementally with explicit continuation behavior. Storage Folders/Types continue to use recursive aggregate analysis, History uses persisted hourly observations, and Optimize uses the protocol-v7 read-only optimization analysis. Optimize invalidates stale loads when the user changes Storage mode so a completed background result cannot overwrite the newly selected view.
 
 ## Error contract
 
@@ -209,7 +247,7 @@ Expected errors remain structured:
 - `ResponseTooLarge`;
 - `InternalError`.
 
-`BrowseDirectory` requires an attached volume and current durable checkpoint and can return `Busy`, `SnapshotRequired`, `InvalidRequest` or `ResponseTooLarge`. `CaptureStorageHistory` inherits live-analysis errors such as `SnapshotRequired` and `Busy`. `GetStorageHistory` can return `VolumeNotFound` for a detached/mismatched volume but does not require a current checkpoint.
+`BrowseDirectory` and `AnalyzeStorageOptimization` require an attached volume and current durable checkpoint and can return `Busy`, `SnapshotRequired`, `InvalidRequest` or `ResponseTooLarge`. `CaptureStorageHistory` inherits live-analysis errors such as `SnapshotRequired` and `Busy`. `GetStorageHistory` can return `VolumeNotFound` for a detached/mismatched volume but does not require a current checkpoint.
 
 ## Validation without hosted Actions
 
@@ -218,12 +256,14 @@ Expected errors remain structured:
 - exact multi-page reconstruction without duplicates;
 - directory-first/name/path ordering;
 - cursor behavior when rows are inserted before an already-consumed cursor;
-- protocol-v6 DTO/client/dispatcher wiring;
+- protocol-v7 DTO/client/dispatcher wiring while preserving the v6 browse contract;
 - read-only SQLite mode;
 - shared read-lease and checkpoint validation;
 - wrapper isolation from the reviewed native synchronization backend;
 - native/fallback desktop routing and no-rescan behavior.
 
-`IndexingDirectoryBrowseProtocolTests` adds dispatcher page-size validation and a typed named-pipe browse/cursor round trip for the full Windows/.NET gate.
+`tools/verify_storage_optimization.py` exercises hard-link collapse, measured-size ranking, stale filtering and same-size upper-bound semantics over randomized inventories. Repository mode additionally guards the protocol/client/backend/Desktop/WinUI wiring, read-only boundary, safety disclaimers and stale-load invalidation.
+
+`IndexingDirectoryBrowseProtocolTests` preserves dispatcher page-size validation and typed named-pipe browse/cursor round trips. `StorageOptimizationAnalyticsTests` covers SQLite ranking/scope/hard-link semantics, and `IndexingStorageOptimizationProtocolTests` covers protocol-v7 path normalization and typed named-pipe optimization evidence.
 
 The existing Storage/history/UI verifiers remain in the local gate. `tools/test-local.ps1 -OfflineOnly` runs all standard-library checks without requiring the .NET SDK; the normal local gate continues through Core/native/indexer/tests/WinUI/bundled-helper compilation and the real process handshake without consuming GitHub Actions usage.
