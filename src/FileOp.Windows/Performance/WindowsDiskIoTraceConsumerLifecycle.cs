@@ -59,7 +59,7 @@ internal static class WindowsDiskIoTraceConsumerPolicy
         : uint.MaxValue;
 
     public static bool IsInvalidProcessingHandle(ulong handle) =>
-        handle == InvalidProcessTraceHandle;
+        handle == 0 || handle == InvalidProcessTraceHandle;
 
     public static bool TryClassifyExpectedOpenFailure(
         uint win32Error,
@@ -155,7 +155,7 @@ internal sealed class WindowsDiskIoTraceConsumerLifecycle
                 result.ProcessingHandle))
             {
                 throw new InvalidDataException(
-                    "OpenTrace reported success but returned INVALID_PROCESSTRACE_HANDLE.");
+                    "OpenTrace reported success but returned an invalid ETW processing handle.");
             }
 
             return WindowsDiskIoTraceConsumerOpenResult.Success(
@@ -192,7 +192,7 @@ internal sealed class WindowsDiskIoOwnedTraceConsumer : IDisposable
             throw new ArgumentOutOfRangeException(
                 nameof(processingHandle),
                 processingHandle,
-                "Owned ETW consumers require a valid processing handle.");
+                "Owned ETW consumers require a valid nonzero processing handle.");
         }
 
         ProcessingHandle = processingHandle;
