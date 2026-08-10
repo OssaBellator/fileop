@@ -125,37 +125,16 @@ def run_model(cases: int) -> int:
     assert DEFAULT_PROCESSES == 1024
     checks += 2
 
-    # Same numeric TID, distinct object generations.
-    model = ResolverModel()
-    p1 = Process(50, 100, 1)
-    t1 = Thread(100, 50, 110, 1)
-    assert model.resolve(t1, p1, 120) == "resolved"
-    model.mark_thread(100, TERMINATED)
-    p2 = Process(51, 200, 1)
-    t2 = Thread(100, 51, 210, 2)
-    assert model.resolve(t2, p2, 220) == "resolved"
-    assert model.thread_opens == 2 and model.thread_closes == 1
-    checks += 3
-
-    # Delayed old event cannot be assigned to the newly reused object.
-    model2 = ResolverModel()
-    assert model2.resolve(t1, p1, 120) == "resolved"
-    model2.mark_thread(100, TERMINATED)
-    p3 = Process(51, 300, 1)
-    t3 = Thread(100, 51, 310, 2)
-    assert model2.resolve(t3, p3, 250) == "process-after-event"
-    checks += 2
-
-    # Indeterminate cached state is fail-closed.
-    model3 = ResolverModel()
-    assert model3.resolve(t1, p1, 120) == "resolved"
-    model3.mark_thread(100, UNKNOWN)
-    assert model3.resolve(t1, p1, 130) == "thread-state-unavailable"
+    # Cache limits remain fail-closed independently of reuse handling.
+    capped = ResolverModel(thread_cap=1, process_cap=1)
+    p = Process(1, 10, 1)
+    t = Thread(1, 1, 11, 1)
+    assert capped.resolve(t, p, 12) == "resolved"
+    assert capped.resolve(Thread(2, 1, 11, 1), p, 12) == "thread-cap"
     checks += 2
 
     rng = random.Random(20260811)
     for _ in range(cases):
-        model = ResolverModel(thread_cap=rng.randrange(1, 9), process_cap=rng.randrange(1, 5))
         pid = rng.randrange(1, 10000)
         tid = rng.randrange(1, 100000)
         process_start = rng.randrange(1_000_000, 2_000_000)
@@ -163,52 +142,68 @@ def run_model(cases: int) -> int:
         event = max(process_start, thread_start) + 1
         p_old = Process(pid, process_start, 1)
         t_old = Thread(tid, pid, thread_start, 1)
-        assert model.resolve(t_old, p_old, event) == "resolved"
-        checks += 1
 
-        mode = rng.choice((ACTIVE, TERMINATED, UNKNOWN))
-        model.mark_thread(tid, mode)
-        if mode == ACTIVE:
+        # TID cache state.
+        model = ResolverModel()
+        assert model.resolve(t_old, p_old, event) == "resolved"
+        state = rng.choice((ACTIVE, TERMINATED, UNKNOWN))
+        model.mark_thread(tid, state)
+        if state == ACTIVE:
             assert model.resolve(t_old, p_old, event + 1) == "resolved"
             assert model.thread_opens == 1
-            checks += 2
-        elif mode == UNKNOWN:
+            checks += 3
+        elif state == UNKNOWN:
             assert model.resolve(t_old, p_old, event + 1) == "thread-state-unavailable"
             assert model.thread_opens == 1
-            checks += 2
+            checks += 3
         else:
-            new_pid = pid + 1
+            new_pid = pid + 10_000
             p_new = Process(new_pid, event + 10, 1)
             t_new = Thread(tid, new_pid, event + 20, 2)
             assert model.resolve(t_new, p_new, event + 30) == "resolved"
             assert model.thread_opens == 2
             assert model.thread_closes == 1
-            checks += 3
+            checks += 4
 
-        # Exercise PID reuse independently with a new TID.
-        pid2 = rng.randrange(20_000, 30_000)
-        tid2 = rng.randrange(200_000, 300_000)
-        p_first = Process(pid2, 100, 1)
-        t_first = Thread(tid2, pid2, 110, 1)
+            # A delayed pre-reuse event must not be attributed to the new instance.
+            delayed = ResolverModel()
+            assert delayed.resolve(t_old, p_old, event) == "resolved"
+            delayed.mark_thread(tid, TERMINATED)
+            assert delayed.resolve(t_new, p_new, event + 5) == "process-after-event"
+            checks += 2
+
+        # PID cache state, using a new TID so process reuse is tested independently.
         other = ResolverModel()
-        assert other.resolve(t_first, p_first, 120) == "resolved"
-        state = rng.choice((ACTIVE, TERMINATED, UNKNOWN))
-        other.mark_process(pid2, state)
-        t_next = Thread(tid2 + 1, pid2, 210, 1)
-        p_next = Process(pid2, 200, 2)
-        if state == ACTIVE:
-            assert other.resolve(t_next, p_next, 220) == "resolved"
+        assert other.resolve(t_old, p_old, event) == "resolved"
+        process_state = rng.choice((ACTIVE, TERMINATED, UNKNOWN))
+        other.mark_process(pid, process_state)
+        p_new_same_pid = Process(pid, event + 10, 2)
+        t_new_id = Thread(tid + 1_000_000, pid, event + 20, 1)
+        if process_state == ACTIVE:
+            # The cached active process remains authoritative for the same PID.
+            assert other.resolve(t_new_id, p_new_same_pid, event + 30) == "resolved"
             assert other.process_opens == 1
-            checks += 2
-        elif state == UNKNOWN:
-            assert other.resolve(t_next, p_next, 220) == "process-state-unavailable"
+            checks += 3
+        elif process_state == UNKNOWN:
+            assert other.resolve(t_new_id, p_new_same_pid, event + 30) == "process-state-unavailable"
             assert other.process_opens == 1
-            checks += 2
+            checks += 3
         else:
-            assert other.resolve(t_next, p_next, 220) == "resolved"
+            assert other.resolve(t_new_id, p_new_same_pid, event + 30) == "resolved"
             assert other.process_opens == 2
             assert other.process_closes == 1
-            checks += 3
+            checks += 4
+
+        # Out-of-range native PID never reaches process-open logic.
+        oversized = ResolverModel()
+        too_large = MAX_PID + 1 + rng.randrange(0, 1000)
+        assert oversized.resolve(
+            Thread(tid + 2_000_000, too_large, thread_start, 1),
+            Process(too_large, process_start, 1),
+            event,
+        ) == "pid-range"
+        assert oversized.process_opens == 0
+        checks += 2
 
     return checks
 
