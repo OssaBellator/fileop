@@ -2,6 +2,64 @@ using Microsoft.Data.Sqlite;
 
 namespace FileOp.Core.Performance;
 
+public sealed record IndexJournalCheckpointDiagnostics(
+    ulong JournalId,
+    long NextUsn,
+    DateTimeOffset UpdatedAt);
+
+public sealed record IndexJournalFreshnessDiagnostics(
+    ulong DurableJournalId,
+    long DurableNextUsn,
+    DateTimeOffset DurableUpdatedAt,
+    ulong LiveJournalId,
+    long LowestValidUsn,
+    long LiveNextUsn)
+{
+    public bool JournalIdentityMatches => DurableJournalId == LiveJournalId;
+
+    public bool CheckpointWithinReadableWindow =>
+        JournalIdentityMatches &&
+        DurableNextUsn >= LowestValidUsn &&
+        DurableNextUsn <= LiveNextUsn;
+
+    public bool CheckpointBelowRetentionFloor =>
+        JournalIdentityMatches && DurableNextUsn < LowestValidUsn;
+
+    public bool CheckpointAheadOfJournal =>
+        JournalIdentityMatches && DurableNextUsn > LiveNextUsn;
+
+    public long? BacklogUsnDistance => CheckpointWithinReadableWindow
+        ? SaturatingDistance(LiveNextUsn, DurableNextUsn)
+        : null;
+
+    public long? RetentionHeadroomUsnDistance => CheckpointWithinReadableWindow
+        ? SaturatingDistance(DurableNextUsn, LowestValidUsn)
+        : null;
+
+    public TimeSpan AgeAt(DateTimeOffset capturedAt)
+    {
+        var age = capturedAt.ToUniversalTime() - DurableUpdatedAt.ToUniversalTime();
+        return age < TimeSpan.Zero ? TimeSpan.Zero : age;
+    }
+
+    private static long SaturatingDistance(long high, long low)
+    {
+        if (high < low)
+        {
+            return 0;
+        }
+
+        try
+        {
+            return checked(high - low);
+        }
+        catch (OverflowException)
+        {
+            return long.MaxValue;
+        }
+    }
+}
+
 public sealed record IndexDatabaseDiagnostics(
     DateTimeOffset CapturedAt,
     int IndexedItemCount,
@@ -12,7 +70,9 @@ public sealed record IndexDatabaseDiagnostics(
     long PageCount,
     long FreePageCount,
     long CacheSizeSetting,
-    string JournalMode)
+    string JournalMode,
+    IndexJournalCheckpointDiagnostics? DurableCheckpoint = null,
+    IndexJournalFreshnessDiagnostics? JournalFreshness = null)
 {
     public long FileFootprintBytes => SaturatingAdd(
         SaturatingAdd(Math.Max(0, DatabaseFileBytes), Math.Max(0, WalFileBytes)),
@@ -85,9 +145,24 @@ public sealed class SqliteIndexDatabaseDiagnosticsReader
         }.ToString();
     }
 
-    public async ValueTask<IndexDatabaseDiagnostics> ReadAsync(
+    public ValueTask<IndexDatabaseDiagnostics> ReadAsync(
+        DateTimeOffset? capturedAt = null,
+        CancellationToken cancellationToken = default) =>
+        ReadCoreAsync(null, capturedAt, cancellationToken);
+
+    public ValueTask<IndexDatabaseDiagnostics> ReadWithCheckpointAsync(
+        string sourceKey,
         DateTimeOffset? capturedAt = null,
         CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceKey);
+        return ReadCoreAsync(sourceKey, capturedAt, cancellationToken);
+    }
+
+    private async ValueTask<IndexDatabaseDiagnostics> ReadCoreAsync(
+        string? sourceKey,
+        DateTimeOffset? capturedAt,
+        CancellationToken cancellationToken)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -109,6 +184,9 @@ public sealed class SqliteIndexDatabaseDiagnosticsReader
             .ConfigureAwait(false);
         var indexedItemCount = await ReadIndexedItemCountAsync(connection, cancellationToken)
             .ConfigureAwait(false);
+        var checkpoint = sourceKey is null
+            ? null
+            : await ReadCheckpointAsync(connection, sourceKey, cancellationToken).ConfigureAwait(false);
 
         return new IndexDatabaseDiagnostics(
             (capturedAt ?? DateTimeOffset.UtcNow).ToUniversalTime(),
@@ -120,7 +198,44 @@ public sealed class SqliteIndexDatabaseDiagnosticsReader
             NonNegative(pageCount, "page_count"),
             NonNegative(freePageCount, "freelist_count"),
             cacheSize,
-            journalMode);
+            journalMode,
+            checkpoint);
+    }
+
+    private static async ValueTask<IndexJournalCheckpointDiagnostics?> ReadCheckpointAsync(
+        SqliteConnection connection,
+        string sourceKey,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT generation, position, updated_utc_ticks
+            FROM source_checkpoints
+            WHERE source_key = @source_key;
+            """;
+        command.Parameters.AddWithValue("@source_key", sourceKey);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        var nextUsn = reader.GetInt64(1);
+        if (nextUsn < 0)
+        {
+            throw new InvalidDataException($"Durable NTFS checkpoint USN {nextUsn} is invalid.");
+        }
+
+        var updatedTicks = reader.GetInt64(2);
+        if (updatedTicks < DateTime.MinValue.Ticks || updatedTicks > DateTime.MaxValue.Ticks)
+        {
+            throw new InvalidDataException($"Durable NTFS checkpoint timestamp {updatedTicks} is invalid.");
+        }
+
+        return new IndexJournalCheckpointDiagnostics(
+            FromSqlInteger(reader.GetInt64(0)),
+            nextUsn,
+            new DateTimeOffset(new DateTime(updatedTicks, DateTimeKind.Utc)));
     }
 
     private static async ValueTask<int> ReadIndexedItemCountAsync(
@@ -192,4 +307,6 @@ public sealed class SqliteIndexDatabaseDiagnosticsReader
 
         return value;
     }
+
+    private static ulong FromSqlInteger(long value) => unchecked((ulong)value);
 }
