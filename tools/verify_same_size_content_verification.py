@@ -168,6 +168,10 @@ def check_repository(root: Path) -> int:
         "_searchEngine.VerifySameSizeContentAsync(",
         "ReferenceEquals(analysis, _storageOptimizationAnalysis)",
         "_performanceDiskIoCaptureActive ||",
+        "_storageSameSizeVerificationActive && !sourceChanged",
+        "Content verification is running; index availability changes will be reevaluated after it completes.",
+        "_storageOptimizationAnalysis = null;",
+        "HandleStorageOptimizationEngineState(_searchEngine.State);",
     ):
         assert needle in main, needle
         checks += 1
