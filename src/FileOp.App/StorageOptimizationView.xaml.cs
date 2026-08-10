@@ -7,6 +7,9 @@ namespace FileOp.App;
 
 public sealed partial class StorageOptimizationView : UserControl
 {
+    private const string FileOpResourceRefreshUnavailableMessage =
+        "FileOp process counters have not been refreshed because the foreground Performance diagnostics path is currently unavailable; this is not evidence of a process-counter failure.";
+
     public StorageOptimizationView()
     {
         InitializeComponent();
@@ -23,10 +26,14 @@ public sealed partial class StorageOptimizationView : UserControl
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetLoading();
+        FileOpResourceFootprint.SetLoading();
     }
 
-    public void SetPerformanceLoading() =>
+    public void SetPerformanceLoading()
+    {
         PerformanceDiagnostics.SetLoading();
+        FileOpResourceFootprint.SetLoading();
+    }
 
     public void SetDiskIoLoading() =>
         PerformanceDiagnostics.SetDiskIoLoading();
@@ -39,6 +46,7 @@ public sealed partial class StorageOptimizationView : UserControl
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetUnavailable(message);
+        FileOpResourceFootprint.Apply(null, FileOpResourceRefreshUnavailableMessage);
     }
 
     public void SetReadyForRefresh(bool ready)
@@ -47,8 +55,11 @@ public sealed partial class StorageOptimizationView : UserControl
         PerformanceDiagnostics.SetReadyForRefresh(ready);
     }
 
-    public void SetPerformanceUnavailable(string message) =>
+    public void SetPerformanceUnavailable(string message)
+    {
         PerformanceDiagnostics.SetUnavailable(message);
+        FileOpResourceFootprint.Apply(null, FileOpResourceRefreshUnavailableMessage);
+    }
 
     public void SetDiskIoUnavailable(string message) =>
         PerformanceDiagnostics.SetDiskIoUnavailable(message);
@@ -81,8 +92,12 @@ public sealed partial class StorageOptimizationView : UserControl
         RefreshButton.IsEnabled = true;
     }
 
-    public void ApplyPerformanceDiagnostics(PerformanceDiagnosticsSnapshot snapshot) =>
+    public void ApplyPerformanceDiagnostics(PerformanceDiagnosticsSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
         PerformanceDiagnostics.Apply(snapshot);
+        FileOpResourceFootprint.Apply(snapshot.FileOpResources, snapshot.FileOpResourcesStatus);
+    }
 
     public void ApplyDiskIoCapture(DiskIoCaptureResult result) =>
         PerformanceDiagnostics.ApplyDiskIoCapture(result);
