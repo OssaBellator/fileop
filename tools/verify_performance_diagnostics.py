@@ -81,7 +81,8 @@ def check_repository(root: Path) -> int:
         "IndexDatabaseDiagnostics",
         "FileFootprintBytes",
         "ReusableFreePageBytes",
-        "ConfiguredCacheTargetBytes",
+        "ReaderCacheDefaultTargetBytes",
+        "FileOp currently does not set PRAGMA cache_size",
         "SqliteOpenMode.ReadOnly",
         "PRAGMA query_only = ON",
     ):
@@ -113,8 +114,8 @@ def check_repository(root: Path) -> int:
         "disable services",
         "FileOp index footprint",
         "Reusable pages",
-        "Cache target",
-        "configuration, not observed RAM usage",
+        "Reader cache default",
+        "connection setting, not observed RAM usage",
         "Exact measurement",
         "Refresh diagnostics",
     ):
@@ -123,9 +124,9 @@ def check_repository(root: Path) -> int:
 
     for needle in (
         "Reusable pages can be reused by SQLite",
-        "cache target is not observed resident memory",
+        "reader cache default is not observed resident memory",
         "ReusableFreePagePercent",
-        "ConfiguredCacheTargetBytes",
+        "ReaderCacheDefaultTargetBytes",
     ):
         assert needle in text["view_code"], needle
         checks += 1
@@ -165,6 +166,7 @@ def check_repository(root: Path) -> int:
     for needle in (
         "ReaderReportsHelperFileAndPageEvidence",
         "DerivedMetricsStayConservativeAndDoNotClaimResidentCache",
+        "DerivedFileFootprintClampsMalformedNegativeInputs",
         "SharedResolverPreservesHistoricalDatabaseKeyFormat",
     ):
         assert needle in text["index_test"], needle
@@ -175,6 +177,7 @@ def check_repository(root: Path) -> int:
         "SearchAsync(string.Empty, limit: 1)",
         "AnalyzeStorageAsync(root, maxEntries: 1)",
         "does not turn those values into a green/yellow/red health grade",
+        "reader-connection cache default",
     ):
         assert needle in text["doc"], needle
         checks += 1
