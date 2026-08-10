@@ -128,6 +128,7 @@ public sealed partial class MainWindow
 
         if (root is null)
         {
+            _storageOptimizationAnalysis = null;
             _storageOptimizationLoadedForSource = false;
             if (_storageViewMode == StorageViewMode.Optimize)
             {
@@ -163,6 +164,13 @@ public sealed partial class MainWindow
             _storageEntries.Clear();
             ResetStorageSummary();
             Interlocked.Increment(ref _storageGeneration);
+        }
+
+        if (_storageSameSizeVerificationActive && !sourceChanged)
+        {
+            SetStorageStatus(
+                "Content verification is running; index availability changes will be reevaluated after it completes.");
+            return;
         }
 
         if (!storageAvailable)
