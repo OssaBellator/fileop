@@ -143,8 +143,15 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                     durationTask,
                     durationCancellation.Token).ConfigureAwait(false);
 
-                processDisposition = await processTask.ConfigureAwait(false);
-                processObserved = true;
+                try
+                {
+                    processDisposition = await processTask.ConfigureAwait(false);
+                }
+                finally
+                {
+                    processObserved = true;
+                }
+
                 collection = collector.Snapshot();
                 stopDisposition = session.Stop();
 
@@ -168,8 +175,15 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                 }
 
                 stopDisposition = session.Stop();
-                processDisposition = await processTask.ConfigureAwait(false);
-                processObserved = true;
+                try
+                {
+                    processDisposition = await processTask.ConfigureAwait(false);
+                }
+                finally
+                {
+                    processObserved = true;
+                }
+
                 collection = collector.Snapshot();
 
                 if (callerCancelled || cancellationToken.IsCancellationRequested)
@@ -210,7 +224,9 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                 : DiskIoCaptureLossState.NoneObserved;
             var unresolvedCount = collection.UnresolvedOwnerCounts.Values.Aggregate(
                 0L,
-                static (total, count) => Math.Min(long.MaxValue, total + count));
+                static (total, count) => total > long.MaxValue - count
+                    ? long.MaxValue
+                    : total + count);
             var detail =
                 $"Captured {collection.Observations.Count:N0} normalized DiskIo completions; " +
                 $"{unresolvedCount:N0} had unresolved process ownership; " +
@@ -230,19 +246,60 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
         }
         finally
         {
+            Exception? cleanupFailure = null;
             if (processTask is not null && !processObserved)
             {
                 if (!session.StopAttempted)
                 {
-                    session.Stop();
+                    try
+                    {
+                        session.Stop();
+                    }
+                    catch (Exception exception)
+                    {
+                        cleanupFailure ??= exception;
+                    }
                 }
 
-                await processTask.ConfigureAwait(false);
+                if (!processTask.IsCompleted)
+                {
+                    try
+                    {
+                        consumer.Close();
+                    }
+                    catch (Exception exception)
+                    {
+                        cleanupFailure ??= exception;
+                    }
+                }
+
+                try
+                {
+                    await processTask.ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    cleanupFailure ??= exception;
+                }
             }
 
             if (!session.StopAttempted)
             {
-                session.Stop();
+                try
+                {
+                    session.Stop();
+                }
+                catch (Exception exception)
+                {
+                    cleanupFailure ??= exception;
+                }
+            }
+
+            if (cleanupFailure is not null)
+            {
+                throw new InvalidOperationException(
+                    "DiskIo capture cleanup failed after FileOp attempted to stop its owned session, close its consumer, and drain ProcessTrace.",
+                    cleanupFailure);
             }
         }
     }
