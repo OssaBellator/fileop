@@ -20,6 +20,7 @@ public sealed class PerformanceProbeHistory
 
     private readonly int _sampleCapacity;
     private readonly Dictionary<ProbeKey, Queue<ProbeSample>> _samples = [];
+    private string? _activeSourceKey;
 
     public PerformanceProbeHistory(int sampleCapacity = DefaultSampleCapacity)
     {
@@ -38,15 +39,23 @@ public sealed class PerformanceProbeHistory
         PerformanceDiagnosticsSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        EnsureActiveSource(snapshot);
+        var seen = new HashSet<ProbeKey>();
 
         foreach (var probe in snapshot.Probes)
         {
-            if (probe.Kind is not (PerformanceProbeKind.Search or PerformanceProbeKind.Storage))
+            var kind = ResolveKind(probe);
+            if (kind is not (PerformanceProbeKind.Search or PerformanceProbeKind.Storage))
             {
                 continue;
             }
 
-            var key = new ProbeKey(probe.Kind, probe.Name, probe.Scope);
+            var key = new ProbeKey(kind, probe.Name, probe.Scope);
+            if (!seen.Add(key))
+            {
+                continue;
+            }
+
             if (!_samples.TryGetValue(key, out var samples))
             {
                 samples = new Queue<ProbeSample>(_sampleCapacity);
@@ -69,17 +78,26 @@ public sealed class PerformanceProbeHistory
         PerformanceDiagnosticsSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        if (!string.Equals(
+                _activeSourceKey,
+                CreateSourceKey(snapshot),
+                StringComparison.Ordinal))
+        {
+            return [];
+        }
+
         var result = new List<PerformanceProbeDistribution>(2);
         var seen = new HashSet<ProbeKey>();
 
         foreach (var probe in snapshot.Probes)
         {
-            if (probe.Kind is not (PerformanceProbeKind.Search or PerformanceProbeKind.Storage))
+            var kind = ResolveKind(probe);
+            if (kind is not (PerformanceProbeKind.Search or PerformanceProbeKind.Storage))
             {
                 continue;
             }
 
-            var key = new ProbeKey(probe.Kind, probe.Name, probe.Scope);
+            var key = new ProbeKey(kind, probe.Name, probe.Scope);
             if (!seen.Add(key) || !_samples.TryGetValue(key, out var samples) || samples.Count == 0)
             {
                 continue;
@@ -89,6 +107,18 @@ public sealed class PerformanceProbeHistory
         }
 
         return result;
+    }
+
+    private void EnsureActiveSource(PerformanceDiagnosticsSnapshot snapshot)
+    {
+        var sourceKey = CreateSourceKey(snapshot);
+        if (string.Equals(_activeSourceKey, sourceKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _samples.Clear();
+        _activeSourceKey = sourceKey;
     }
 
     private PerformanceProbeDistribution CreateDistribution(
@@ -125,6 +155,30 @@ public sealed class PerformanceProbeHistory
             ordered[^1],
             samples.Peek().CapturedAt,
             samples.Last().CapturedAt);
+    }
+
+    private static string CreateSourceKey(PerformanceDiagnosticsSnapshot snapshot)
+    {
+        var root = (snapshot.RootPath ?? string.Empty)
+            .TrimEnd('\\', '/')
+            .ToUpperInvariant();
+        return $"{snapshot.SourceMode.ToUpperInvariant()}:{root}";
+    }
+
+    private static PerformanceProbeKind ResolveKind(PerformanceProbeMeasurement probe)
+    {
+        if (probe.Kind != PerformanceProbeKind.Other)
+        {
+            return probe.Kind;
+        }
+
+        return probe.Name switch
+        {
+            "Indexed search probe" => PerformanceProbeKind.Search,
+            "Storage root probe" => PerformanceProbeKind.Storage,
+            "Timer baseline" => PerformanceProbeKind.TimerBaseline,
+            _ => PerformanceProbeKind.Other,
+        };
     }
 
     private static long Midpoint(long left, long right) =>
