@@ -54,6 +54,12 @@ public sealed class IndexingServiceDispatcher
                     request.RequestId,
                     await _backend.GetStatusAsync(cancellationToken).ConfigureAwait(false)),
 
+                IndexingServiceOperation.GetIndexDiagnostics => Success(
+                    request.RequestId,
+                    await _backend.GetIndexDiagnosticsAsync(
+                        DeserializeIndexDiagnostics(request.Payload),
+                        cancellationToken).ConfigureAwait(false)),
+
                 IndexingServiceOperation.RebuildVolume => Success(
                     request.RequestId,
                     await _backend.RebuildVolumeAsync(
@@ -147,6 +153,32 @@ public sealed class IndexingServiceDispatcher
         }
 
         return request;
+    }
+
+    private static IndexingIndexDiagnosticsRequest DeserializeIndexDiagnostics(JsonElement payload)
+    {
+        var request = Deserialize<IndexingIndexDiagnosticsRequest>(payload);
+        if (string.IsNullOrWhiteSpace(request.VolumeRootPath))
+        {
+            throw new JsonException("volumeRootPath is required.");
+        }
+
+        if (!Path.IsPathFullyQualified(request.VolumeRootPath))
+        {
+            throw new JsonException("volumeRootPath must be an absolute path.");
+        }
+
+        try
+        {
+            return request with { VolumeRootPath = Path.GetFullPath(request.VolumeRootPath) };
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or
+            NotSupportedException or
+            PathTooLongException)
+        {
+            throw new JsonException("volumeRootPath is invalid.", exception);
+        }
     }
 
     private static IndexingVolumeRequest DeserializeVolumeRequest(JsonElement payload)
