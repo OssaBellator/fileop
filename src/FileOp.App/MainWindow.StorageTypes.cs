@@ -209,6 +209,7 @@ public sealed partial class MainWindow
         {
             StorageViewMode.Types => _storageTypesSourceKey,
             StorageViewMode.History => _storageHistorySourceKey,
+            StorageViewMode.Optimize => _storageOptimizationSourceKey,
             _ => _storageSourceKey,
         };
         SearchBox.IsEnabled = false;
@@ -219,12 +220,18 @@ public sealed partial class MainWindow
             _storageHistoryButton.IsEnabled = false;
             _storageHistoryView.SetReadyForRefresh(false);
         }
+        if (_storageOptimizationInitialized)
+        {
+            _storageOptimizationButton.IsEnabled = false;
+            _storageOptimizationView.SetReadyForRefresh(false);
+        }
         EnableFastIndexButton.IsEnabled = false;
         SetSearchStatus(string.Empty);
         Interlocked.Increment(ref _searchGeneration);
         Interlocked.Increment(ref _storageGeneration);
         Interlocked.Increment(ref _storageTypeGeneration);
         Interlocked.Increment(ref _storageHistoryGeneration);
+        Interlocked.Increment(ref _storageOptimizationGeneration);
 
         try
         {
@@ -269,6 +276,12 @@ public sealed partial class MainWindow
         if (_storageViewMode == StorageViewMode.History)
         {
             await LoadStorageHistoryAsync(forceRefresh);
+            return;
+        }
+
+        if (_storageViewMode == StorageViewMode.Optimize)
+        {
+            await LoadStorageOptimizationAsync(forceRefresh);
             return;
         }
 
@@ -471,16 +484,28 @@ public sealed partial class MainWindow
 
     private void SetStorageViewMode(StorageViewMode mode)
     {
+        var leavingOptimization =
+            _storageViewMode == StorageViewMode.Optimize && mode != StorageViewMode.Optimize;
         _storageViewMode = mode;
+        if (leavingOptimization)
+        {
+            Interlocked.Increment(ref _storageOptimizationGeneration);
+        }
+
         var foldersVisible = mode == StorageViewMode.Folders;
         var typesVisible = mode == StorageViewMode.Types;
         var historyVisible = mode == StorageViewMode.History;
+        var optimizationVisible = mode == StorageViewMode.Optimize;
 
         StorageFolderPanel.Visibility = foldersVisible ? Visibility.Visible : Visibility.Collapsed;
         StorageTypesPanel.Visibility = typesVisible ? Visibility.Visible : Visibility.Collapsed;
         if (_storageHistoryInitialized)
         {
             _storageHistoryView.Visibility = historyVisible ? Visibility.Visible : Visibility.Collapsed;
+        }
+        if (_storageOptimizationInitialized)
+        {
+            _storageOptimizationView.Visibility = optimizationVisible ? Visibility.Visible : Visibility.Collapsed;
         }
 
         StorageUpButton.Visibility = foldersVisible ? Visibility.Visible : Visibility.Collapsed;
@@ -493,6 +518,13 @@ public sealed partial class MainWindow
         {
             _storageHistoryButton.IsEnabled = !historyVisible && _searchEngine.StorageHistoryAvailable;
             _storageHistoryView.SetReadyForRefresh(historyVisible && _searchEngine.StorageHistoryAvailable);
+        }
+        if (_storageOptimizationInitialized)
+        {
+            var optimizationAvailable =
+                _searchEngine.StorageOptimizationAvailable && !_searchEngine.State.IsBusy;
+            _storageOptimizationButton.IsEnabled = !optimizationVisible && optimizationAvailable;
+            _storageOptimizationView.SetReadyForRefresh(optimizationVisible && optimizationAvailable);
         }
 
         if (foldersVisible)
@@ -546,6 +578,7 @@ public sealed partial class MainWindow
         Folders,
         Types,
         History,
+        Optimize,
     }
 }
 
