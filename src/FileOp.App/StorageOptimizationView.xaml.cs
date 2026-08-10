@@ -23,10 +23,14 @@ public sealed partial class StorageOptimizationView : UserControl
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetLoading();
+        FileOpResourceFootprint.SetLoading();
     }
 
-    public void SetPerformanceLoading() =>
+    public void SetPerformanceLoading()
+    {
         PerformanceDiagnostics.SetLoading();
+        FileOpResourceFootprint.SetLoading();
+    }
 
     public void SetDiskIoLoading() =>
         PerformanceDiagnostics.SetDiskIoLoading();
