@@ -12,12 +12,21 @@ internal enum WindowsDiskIoOwnerResolutionStatus
     ThreadCacheLimitReached,
     ThreadUnavailable,
     ThreadTimeUnavailable,
+    ThreadStateUnavailable,
     ProcessCacheLimitReached,
     ProcessUnavailable,
     ProcessIdOutOfRange,
     ProcessTimeUnavailable,
+    ProcessStateUnavailable,
     ThreadStartedAfterEvent,
     ProcessStartedAfterEvent,
+}
+
+internal enum WindowsDiskIoObjectState
+{
+    Active,
+    Terminated,
+    Unavailable,
 }
 
 internal sealed record WindowsDiskIoOwnerResolution(
@@ -41,6 +50,8 @@ internal interface IWindowsDiskIoLifetimeApi
     bool TryGetProcessCreationFileTime(IntPtr processHandle, out long creationFileTime);
 
     string? TryGetProcessImageName(IntPtr processHandle);
+
+    WindowsDiskIoObjectState GetObjectState(IntPtr handle);
 
     void CloseHandle(IntPtr handle);
 }
@@ -105,7 +116,22 @@ internal sealed class WindowsDiskIoIssuingThreadResolver : IDisposable
 
             if (_threads.TryGetValue(issuingThreadId, out var cachedThread))
             {
-                return ValidateLifetime(cachedThread, observationTimestamp);
+                switch (_api.GetObjectState(cachedThread.Handle))
+                {
+                    case WindowsDiskIoObjectState.Active:
+                        return ValidateLifetime(cachedThread, observationTimestamp);
+                    case WindowsDiskIoObjectState.Unavailable:
+                        return Unresolved(
+                            WindowsDiskIoOwnerResolutionStatus.ThreadStateUnavailable,
+                            observationTimestamp);
+                    case WindowsDiskIoObjectState.Terminated:
+                        _api.CloseHandle(cachedThread.Handle);
+                        _threads.Remove(issuingThreadId);
+                        break;
+                    default:
+                        throw new InvalidDataException(
+                            "FileOp received an unsupported cached thread-object state.");
+                }
             }
 
             if (_threads.Count >= _maximumCachedThreads)
@@ -148,7 +174,10 @@ internal sealed class WindowsDiskIoIssuingThreadResolver : IDisposable
                         observationTimestamp);
                 }
 
-                var process = GetOrCreateProcess(processId, observationTimestamp, out var processFailure);
+                var process = GetOrCreateProcess(
+                    processId,
+                    observationTimestamp,
+                    out var processFailure);
                 if (process is null)
                 {
                     return Unresolved(processFailure, observationTimestamp);
@@ -180,8 +209,22 @@ internal sealed class WindowsDiskIoIssuingThreadResolver : IDisposable
     {
         if (_processes.TryGetValue(processId, out var cached))
         {
-            failure = default;
-            return cached;
+            switch (_api.GetObjectState(cached.Handle))
+            {
+                case WindowsDiskIoObjectState.Active:
+                    failure = default;
+                    return cached;
+                case WindowsDiskIoObjectState.Unavailable:
+                    failure = WindowsDiskIoOwnerResolutionStatus.ProcessStateUnavailable;
+                    return null;
+                case WindowsDiskIoObjectState.Terminated:
+                    _api.CloseHandle(cached.Handle);
+                    _processes.Remove(processId);
+                    break;
+                default:
+                    throw new InvalidDataException(
+                        "FileOp received an unsupported cached process-object state.");
+            }
         }
 
         if (_processes.Count >= _maximumCachedProcesses)
@@ -360,6 +403,10 @@ internal sealed class WindowsDiskIoNativeLifetimeApi : IWindowsDiskIoLifetimeApi
 
     internal const uint ThreadQueryLimitedInformation = 0x0800;
     internal const uint ProcessQueryLimitedInformation = 0x1000;
+    internal const uint Synchronize = 0x00100000;
+    internal const uint WaitObject0 = 0;
+    internal const uint WaitTimeout = 258;
+    internal const uint WaitFailed = uint.MaxValue;
     internal const int MaximumImagePathCharacters = 32_768;
 
     private const string Kernel32 = "kernel32.dll";
@@ -370,7 +417,7 @@ internal sealed class WindowsDiskIoNativeLifetimeApi : IWindowsDiskIoLifetimeApi
 
     public IntPtr OpenThread(uint threadId) =>
         OpenThreadNative(
-            ThreadQueryLimitedInformation,
+            ThreadQueryLimitedInformation | Synchronize,
             inheritHandle: false,
             threadId);
 
@@ -387,7 +434,7 @@ internal sealed class WindowsDiskIoNativeLifetimeApi : IWindowsDiskIoLifetimeApi
 
     public IntPtr OpenProcess(uint processId) =>
         OpenProcessNative(
-            ProcessQueryLimitedInformation,
+            ProcessQueryLimitedInformation | Synchronize,
             inheritHandle: false,
             processId);
 
@@ -413,6 +460,21 @@ internal sealed class WindowsDiskIoNativeLifetimeApi : IWindowsDiskIoLifetimeApi
         }
 
         return path.ToString();
+    }
+
+    public WindowsDiskIoObjectState GetObjectState(IntPtr handle)
+    {
+        if (handle == IntPtr.Zero)
+        {
+            return WindowsDiskIoObjectState.Unavailable;
+        }
+
+        return WaitForSingleObjectNative(handle, milliseconds: 0) switch
+        {
+            WaitObject0 => WindowsDiskIoObjectState.Terminated,
+            WaitTimeout => WindowsDiskIoObjectState.Active,
+            _ => WindowsDiskIoObjectState.Unavailable,
+        };
     }
 
     public void CloseHandle(IntPtr handle)
@@ -507,6 +569,11 @@ internal sealed class WindowsDiskIoNativeLifetimeApi : IWindowsDiskIoLifetimeApi
         uint flags,
         StringBuilder executableName,
         ref uint size);
+
+    [DllImport(Kernel32, EntryPoint = "WaitForSingleObject", SetLastError = true)]
+    private static extern uint WaitForSingleObjectNative(
+        IntPtr handle,
+        uint milliseconds);
 
     [DllImport(Kernel32, EntryPoint = "CloseHandle", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
