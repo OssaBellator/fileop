@@ -14,7 +14,7 @@ public sealed class WindowsDiskIoNativeTraceConsumerApiTests
             48,
             Marshal.SizeOf<WindowsDiskIoNativeTraceConsumerApi.EventTraceHeaderNative>());
         Assert.AreEqual(
-            IntPtr.Size == 8 ? 88 : 84,
+            88,
             Marshal.SizeOf<WindowsDiskIoNativeTraceConsumerApi.EventTraceNative>());
         Assert.AreEqual(
             172,
