@@ -8,8 +8,6 @@ namespace FileOp.App;
 
 public sealed partial class MainWindow
 {
-    private const StorageViewMode StorageOptimizationMode = (StorageViewMode)3;
-
     private StorageOptimizationView _storageOptimizationView = null!;
     private Button _storageOptimizationButton = null!;
     private StorageOptimizationAnalysis? _storageOptimizationAnalysis;
@@ -56,9 +54,6 @@ public sealed partial class MainWindow
             throw new InvalidOperationException("Storage content panels must be hosted by the Storage grid.");
         }
 
-        StorageFoldersButton.Click += HideStorageOptimizationView;
-        StorageTypesButton.Click += HideStorageOptimizationView;
-        _storageHistoryButton.Click += HideStorageOptimizationView;
         _searchEngine.StateChanged += StorageOptimizationEngine_StateChanged;
         Closed += StorageOptimizationWindow_Closed;
         HandleStorageOptimizationEngineState(_searchEngine.State);
@@ -67,24 +62,9 @@ public sealed partial class MainWindow
     private void StorageOptimizationWindow_Closed(object sender, WindowEventArgs args)
     {
         _searchEngine.StateChanged -= StorageOptimizationEngine_StateChanged;
-        StorageFoldersButton.Click -= HideStorageOptimizationView;
-        StorageTypesButton.Click -= HideStorageOptimizationView;
-        _storageHistoryButton.Click -= HideStorageOptimizationView;
         _storageOptimizationButton.Click -= StorageOptimizationButton_Click;
         _storageOptimizationView.RefreshRequested -= StorageOptimizationView_RefreshRequested;
         Closed -= StorageOptimizationWindow_Closed;
-    }
-
-    private void HideStorageOptimizationView(object sender, RoutedEventArgs e)
-    {
-        if (!_storageOptimizationInitialized)
-        {
-            return;
-        }
-
-        Interlocked.Increment(ref _storageOptimizationGeneration);
-        _storageOptimizationView.Visibility = Visibility.Collapsed;
-        _storageOptimizationView.SetReadyForRefresh(false);
     }
 
     private void StorageOptimizationEngine_StateChanged(DesktopSearchEngineState state)
@@ -119,14 +99,14 @@ public sealed partial class MainWindow
         var root = _searchEngine.StorageRootPath;
         var available = _searchEngine.StorageOptimizationAvailable && !state.IsBusy;
         _storageOptimizationButton.IsEnabled =
-            _storageViewMode != StorageOptimizationMode && available;
+            _storageViewMode != StorageViewMode.Optimize && available;
         _storageOptimizationView.SetReadyForRefresh(
-            _storageViewMode == StorageOptimizationMode && available);
+            _storageViewMode == StorageViewMode.Optimize && available);
 
         if (root is null)
         {
             _storageOptimizationLoadedForSource = false;
-            if (_storageViewMode == StorageOptimizationMode)
+            if (_storageViewMode == StorageViewMode.Optimize)
             {
                 _storageOptimizationView.SetUnavailable(
                     "Optimization analysis is unavailable until a native indexed NTFS volume is active.");
@@ -147,7 +127,7 @@ public sealed partial class MainWindow
             Interlocked.Increment(ref _storageOptimizationGeneration);
         }
 
-        if (_storageViewMode != StorageOptimizationMode)
+        if (_storageViewMode != StorageViewMode.Optimize)
         {
             return;
         }
@@ -183,8 +163,7 @@ public sealed partial class MainWindow
         Interlocked.Increment(ref _storageGeneration);
         Interlocked.Increment(ref _storageTypeGeneration);
         Interlocked.Increment(ref _storageHistoryGeneration);
-        SetStorageViewMode(StorageOptimizationMode);
-        _storageOptimizationView.Visibility = Visibility.Visible;
+        SetStorageViewMode(StorageViewMode.Optimize);
 
         if (!_searchEngine.StorageOptimizationAvailable)
         {
@@ -297,7 +276,7 @@ public sealed partial class MainWindow
             if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
             {
                 _storageOptimizationView.SetReadyForRefresh(
-                    _storageViewMode == StorageOptimizationMode &&
+                    _storageViewMode == StorageViewMode.Optimize &&
                     _searchEngine.StorageOptimizationAvailable &&
                     !_searchEngine.State.IsBusy);
             }
