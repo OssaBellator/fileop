@@ -96,12 +96,12 @@ public static class WindowsDiskIoEventDecoder
         return new WindowsDiskIoCompletion(
             BinaryPrimitives.ReadUInt32LittleEndian(userData.Slice(0, sizeof(uint))),
             DiskIoOperationKind.Flush,
-            TransferBytes: 0,
+            0,
             BinaryPrimitives.ReadUInt64LittleEndian(userData.Slice(8, sizeof(ulong))),
             BinaryPrimitives.ReadUInt32LittleEndian(
                 userData.Slice(issuingThreadOffset, sizeof(uint))),
             BinaryPrimitives.ReadUInt32LittleEndian(userData.Slice(4, sizeof(uint))),
-            ByteOffset: null);
+            null);
     }
 
     private static void ValidatePointerSize(int pointerSize)
