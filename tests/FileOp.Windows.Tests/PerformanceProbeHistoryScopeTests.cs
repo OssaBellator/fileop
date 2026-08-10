@@ -6,7 +6,7 @@ namespace FileOp.Windows.Tests;
 public sealed class PerformanceProbeHistoryScopeTests
 {
     [TestMethod]
-    public void HistoryDoesNotMixDifferentRootsWithSameDisplayScope()
+    public void SourceRootChangeStartsFreshBoundedWindow()
     {
         var history = new PerformanceProbeHistory();
         var firstRoot = Snapshot(@"C:\", 10);
@@ -19,17 +19,16 @@ public sealed class PerformanceProbeHistoryScopeTests
         Assert.AreEqual(1, firstRows.Count);
         Assert.AreEqual(10L, firstRows[0].MedianMicroseconds);
         Assert.AreEqual(1, secondRows.Count);
+        Assert.AreEqual(1, secondRows[0].SampleCount);
         Assert.AreEqual(90L, secondRows[0].MedianMicroseconds);
-        Assert.AreEqual(1, firstAgain.Count);
-        Assert.AreEqual(1, firstAgain[0].SampleCount);
-        Assert.AreEqual(10L, firstAgain[0].MedianMicroseconds);
+        Assert.AreEqual(0, firstAgain.Count);
     }
 
     [TestMethod]
-    public void RootIdentityIsCaseInsensitiveForWindowsScopeKeys()
+    public void RootIdentityIgnoresCaseAndTrailingSeparators()
     {
         var history = new PerformanceProbeHistory();
-        history.AddAndSummarize(Snapshot(@"C:\Data", 10));
+        history.AddAndSummarize(Snapshot(@"C:\Data\", 10));
         var rows = history.AddAndSummarize(Snapshot(@"c:\data", 30));
 
         Assert.AreEqual(1, rows.Count);
@@ -37,10 +36,25 @@ public sealed class PerformanceProbeHistoryScopeTests
         Assert.AreEqual(20L, rows[0].MedianMicroseconds);
     }
 
-    private static PerformanceDiagnosticsSnapshot Snapshot(string root, long elapsed) =>
+    [TestMethod]
+    public void SourceModeChangeStartsFreshBoundedWindow()
+    {
+        var history = new PerformanceProbeHistory();
+        history.AddAndSummarize(Snapshot(@"C:\", 10, "Native"));
+        var rows = history.AddAndSummarize(Snapshot(@"C:\", 70, "Fallback"));
+
+        Assert.AreEqual(1, rows.Count);
+        Assert.AreEqual(1, rows[0].SampleCount);
+        Assert.AreEqual(70L, rows[0].MedianMicroseconds);
+    }
+
+    private static PerformanceDiagnosticsSnapshot Snapshot(
+        string root,
+        long elapsed,
+        string sourceMode = "Native") =>
         new(
             DateTimeOffset.UtcNow,
-            "Native",
+            sourceMode,
             "Current",
             1,
             root,
