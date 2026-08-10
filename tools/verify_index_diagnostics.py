@@ -49,13 +49,15 @@ def derived_metrics(
 
 def run_model(cases: int) -> int:
     checks = 0
+    maximum = (1 << 63) - 1
     fixed = derived_metrics(1000, 200, 50, 4096, 100, 25, -2000)
     assert fixed == (1250, 409600, 102400, 307200, 25.0, 2048000)
     assert derived_metrics(-10, 20, -30, 4096, 0, 0, 0)[0] == 20
-    checks += 2
+    assert saturating_add(maximum, 1) == maximum
+    assert saturating_multiply(maximum, 2) == maximum
+    checks += 4
 
     rng = random.Random(20260810)
-    maximum = (1 << 63) - 1
     for _ in range(cases):
         database = rng.randint(0, 2**48)
         wal = rng.randint(0, 2**42)
