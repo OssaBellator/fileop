@@ -154,7 +154,7 @@ def check_repository(root: Path) -> int:
         "pointerSize is not (4 or 8)",
         "24 + (2 * pointerSize)",
         "16 + pointerSize",
-        "TransferBytes: 0",
+        "DiskIoOperationKind.Flush,\n            0,",
         "ReadUInt64LittleEndian",
         "ReadUInt32LittleEndian",
         "ReadInt64LittleEndian",
@@ -177,6 +177,9 @@ def check_repository(root: Path) -> int:
     ):
         assert needle in text["tests"], needle
         checks += 1
+
+    assert "DataTestMethod" not in text["tests"]
+    checks += 1
 
     for needle in (
         "HighResResponseTime` is a performance-counter tick count",
