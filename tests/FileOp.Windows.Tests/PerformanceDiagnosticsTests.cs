@@ -61,7 +61,7 @@ public sealed class PerformanceDiagnosticsTests
             WorkingSetBytes: 120_000_000,
             PeakWorkingSetBytes: 180_000_000,
             PrivateMemoryBytes: 150_000_000,
-            ManagedAllocatedBytes: 24_000_000,
+            ManagedMemoryBytes: 24_000_000,
             ThreadCount: 18);
         var snapshot = new PerformanceDiagnosticsSnapshot(
             startedAt.AddMinutes(15),
@@ -79,7 +79,7 @@ public sealed class PerformanceDiagnosticsTests
         Assert.AreEqual(TimeSpan.FromSeconds(12.5), snapshot.FileOpResources!.TotalProcessorTime);
         Assert.AreEqual(120_000_000L, snapshot.FileOpResources.WorkingSetBytes);
         Assert.AreEqual(150_000_000L, snapshot.FileOpResources.PrivateMemoryBytes);
-        Assert.AreEqual(24_000_000L, snapshot.FileOpResources.ManagedAllocatedBytes);
+        Assert.AreEqual(24_000_000L, snapshot.FileOpResources.ManagedMemoryBytes);
         Assert.AreEqual(18, snapshot.FileOpResources.ThreadCount);
     }
 
@@ -93,7 +93,7 @@ public sealed class PerformanceDiagnosticsTests
             WorkingSetBytes: -1,
             PeakWorkingSetBytes: 0,
             PrivateMemoryBytes: 0,
-            ManagedAllocatedBytes: 0,
+            ManagedMemoryBytes: 0,
             ThreadCount: 0);
 
         Assert.IsFalse(invalid.HasValidNonNegativeEvidence);
