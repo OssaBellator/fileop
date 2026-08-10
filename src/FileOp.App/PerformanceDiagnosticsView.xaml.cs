@@ -74,9 +74,9 @@ public sealed partial class PerformanceDiagnosticsView : UserControl
         IndexReusableText.Text = diagnostics.ReusableFreePagePercent is { } reusablePercent
             ? $"{ByteFormatter.Format(diagnostics.ReusableFreePageBytes)} · {reusablePercent:N1}%"
             : ByteFormatter.Format(diagnostics.ReusableFreePageBytes);
-        IndexCacheText.Text = diagnostics.ConfiguredCacheTargetBytes is { } cacheTarget
-            ? ByteFormatter.Format(cacheTarget)
-            : "Default/unknown";
+        IndexCacheText.Text = diagnostics.ReaderCacheDefaultTargetBytes is { } cacheDefault
+            ? ByteFormatter.Format(cacheDefault)
+            : "Unknown";
 
         var journalMode = string.IsNullOrWhiteSpace(diagnostics.JournalMode)
             ? "journal mode unknown"
@@ -85,7 +85,7 @@ public sealed partial class PerformanceDiagnosticsView : UserControl
             $"{journalMode} · {diagnostics.PageCount:N0} logical page(s) × {ByteFormatter.Format(diagnostics.PageSizeBytes)} · " +
             $"{diagnostics.FreePageCount:N0} reusable page(s) · {diagnostics.IndexedItemCount:N0} indexed row(s) · " +
             $"SHM {ByteFormatter.Format(diagnostics.SharedMemoryFileBytes)} · captured {diagnostics.CapturedAt.ToLocalTime():g}. " +
-            "Reusable pages can be reused by SQLite and are not automatically reclaimable disk space; cache target is not observed resident memory.";
+            "Reusable pages can be reused by SQLite and are not automatically reclaimable disk space; the reader cache default is not observed resident memory or live cache occupancy.";
     }
 
     private void ResetIndexMetrics()
