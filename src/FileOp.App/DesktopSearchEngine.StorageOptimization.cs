@@ -1,10 +1,13 @@
 using FileOp.Core.Indexing.Service;
 using FileOp.Core.Storage;
+using FileOp.Windows.Storage;
 
 namespace FileOp.App;
 
 internal sealed partial class DesktopSearchEngine
 {
+    private readonly WindowsSameSizeContentVerifier _sameSizeContentVerifier = new();
+
     public bool StorageOptimizationAvailable =>
         !_disposed &&
         _nativeSession is { Client.IsConnected: true } &&
@@ -55,5 +58,36 @@ internal sealed partial class DesktopSearchEngine
         {
             _searchOperationGate.Release();
         }
+    }
+
+    public ValueTask<StorageSameSizeContentVerification> VerifySameSizeContentAsync(
+        string analysisRootPath,
+        StorageSameSizeCandidateGroup group)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(analysisRootPath);
+        ArgumentNullException.ThrowIfNull(group);
+        ThrowIfDisposed();
+
+        var fullRoot = Path.GetFullPath(analysisRootPath);
+        var currentRoot = StorageRootPath;
+        if (string.IsNullOrWhiteSpace(currentRoot) ||
+            !string.Equals(
+                NormalizeRoot(currentRoot),
+                NormalizeRoot(fullRoot),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "The Storage source changed after these same-size candidates were collected. Refresh Optimize before verifying content.");
+        }
+
+        foreach (var file in group.SampleFiles)
+        {
+            EnsurePathWithinRoot(Path.GetFullPath(file.Path), fullRoot);
+        }
+
+        return _sameSizeContentVerifier.VerifyAsync(
+            group,
+            StorageSameSizeContentVerificationPolicy.Default,
+            _lifetimeCancellation.Token);
     }
 }
