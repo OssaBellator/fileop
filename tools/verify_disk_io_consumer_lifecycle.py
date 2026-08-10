@@ -201,7 +201,7 @@ def check_repository(root: Path) -> int:
         "LibraryImport",
         "OpenTraceW(",
         "ProcessTraceW(",
-        "CloseTrace(",
+        "CloseTraceW(",
         "DispatcherQueueTimer",
         "PeriodicTimer",
         "runas",
