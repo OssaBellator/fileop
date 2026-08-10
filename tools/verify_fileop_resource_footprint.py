@@ -136,7 +136,8 @@ def check_repository(root: Path) -> int:
 
     assert "<local:FileOpResourceFootprintView x:Name=\"FileOpResourceFootprint\" />" in storage_xaml
     assert "FileOpResourceFootprint.Apply(snapshot.FileOpResources, snapshot.FileOpResourcesStatus);" in storage
-    checks += 2
+    assert "this is not evidence of a process-counter failure" in storage
+    checks += 3
 
     for needle in (
         "FileOpResourceSnapshotKeepsMeasuredUnitsSeparate",
