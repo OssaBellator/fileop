@@ -8,7 +8,19 @@ internal sealed record WindowsDiskIoCaptureCollectionSnapshot(
     int IgnoredEventCount,
     bool ObservationLimitReached);
 
-internal sealed class WindowsDiskIoCaptureCollector : IWindowsDiskIoNativeTraceCallbackSink, IDisposable
+internal interface IWindowsDiskIoCaptureCollector :
+    IWindowsDiskIoNativeTraceCallbackSink,
+    IDisposable
+{
+    void Configure(
+        long performanceCounterFrequency,
+        DateTimeOffset windowStart,
+        DateTimeOffset windowEnd);
+
+    WindowsDiskIoCaptureCollectionSnapshot Snapshot();
+}
+
+internal sealed class WindowsDiskIoCaptureCollector : IWindowsDiskIoCaptureCollector
 {
     private readonly object _gate = new();
     private readonly int _maxObservations;
