@@ -34,6 +34,8 @@ public sealed partial class MainWindow
         _storageOptimizationInitialized = true;
         _storageOptimizationButton.Click += StorageOptimizationButton_Click;
         _storageOptimizationView.RefreshRequested += StorageOptimizationView_RefreshRequested;
+        _storageOptimizationView.PerformanceRefreshRequested +=
+            StorageOptimizationView_PerformanceRefreshRequested;
 
         if (StorageFoldersButton.Parent is StackPanel modePanel)
         {
@@ -64,6 +66,8 @@ public sealed partial class MainWindow
         _searchEngine.StateChanged -= StorageOptimizationEngine_StateChanged;
         _storageOptimizationButton.Click -= StorageOptimizationButton_Click;
         _storageOptimizationView.RefreshRequested -= StorageOptimizationView_RefreshRequested;
+        _storageOptimizationView.PerformanceRefreshRequested -=
+            StorageOptimizationView_PerformanceRefreshRequested;
         Closed -= StorageOptimizationWindow_Closed;
     }
 
@@ -179,6 +183,28 @@ public sealed partial class MainWindow
     private async void StorageOptimizationView_RefreshRequested(object? sender, EventArgs e)
     {
         await LoadStorageOptimizationAsync(forceRefresh: true);
+    }
+
+    private async void StorageOptimizationView_PerformanceRefreshRequested(
+        object? sender,
+        EventArgs e)
+    {
+        if (_closed ||
+            _storageViewMode != StorageViewMode.Optimize ||
+            !_searchEngine.StorageOptimizationAvailable ||
+            _searchEngine.State.IsBusy)
+        {
+            return;
+        }
+
+        var generation = Interlocked.Increment(ref _storageOptimizationGeneration);
+        _storageOptimizationView.SetPerformanceLoading();
+        await CapturePerformanceDiagnosticsAsync(generation);
+        if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
+        {
+            _storageOptimizationView.SetReadyForRefresh(
+                _searchEngine.StorageOptimizationAvailable && !_searchEngine.State.IsBusy);
+        }
     }
 
     private async Task LoadStorageOptimizationAsync(bool forceRefresh)
