@@ -26,8 +26,10 @@ The native functions are imported from `Sechost.dll`, which is the documented ET
 
 ```text
 EVENT_TRACE_PROPERTIES
-UTF-16 session name + NUL
+zeroed UTF-16 capacity for the session name + NUL
 ```
+
+The session-name region is deliberately left zeroed before `StartTraceW`. Microsoft's `EVENT_TRACE_PROPERTIES` contract requires the caller to reserve that capacity but says **not to copy the session name into it**; `StartTrace` copies the supplied `InstanceName` into `LoggerNameOffset` itself.
 
 The start buffer sets:
 
