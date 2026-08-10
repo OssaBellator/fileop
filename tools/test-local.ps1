@@ -75,6 +75,10 @@ Invoke-Step "Offline DiskIo ETW decoder verifier" {
     python tools/verify_disk_io_etw_decoder.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline DiskIo trace-metadata verifier" {
+    python tools/verify_disk_io_trace_metadata.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Storage history verifier" {
     python tools/verify_storage_history.py --repo-root $repoRoot --cases 1000
 }
