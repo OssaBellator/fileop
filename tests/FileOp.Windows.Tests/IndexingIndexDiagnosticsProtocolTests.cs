@@ -55,7 +55,7 @@ public sealed class IndexingIndexDiagnosticsProtocolTests
             Assert.AreEqual(42, response.Diagnostics.IndexedItemCount);
             Assert.AreEqual(1_250L, response.Diagnostics.FileFootprintBytes);
             Assert.AreEqual(102_400L, response.Diagnostics.ReusableFreePageBytes);
-            Assert.AreEqual(2_048_000L, response.Diagnostics.ConfiguredCacheTargetBytes);
+            Assert.AreEqual(2_048_000L, response.Diagnostics.ReaderCacheDefaultTargetBytes);
             Assert.AreEqual("wal", response.Diagnostics.JournalMode);
         }
 
