@@ -97,6 +97,8 @@ internal sealed partial class DesktopSearchEngine
         catch (Exception exception) when (
             exception is ArgumentException or
             IOException or
+            NotSupportedException or
+            PathTooLongException or
             UnauthorizedAccessException)
         {
             return (null, null);
