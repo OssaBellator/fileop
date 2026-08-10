@@ -18,7 +18,7 @@
             <StackPanel Spacing="4">
                 <TextBlock Text="Optimization advisor" FontSize="20" FontWeight="SemiBold" />
                 <TextBlock
-                    Text="Read-only storage and performance evidence. Same-size groups remain candidates until you explicitly verify sampled file contents."
+                    Text="Read-only storage and performance evidence. Same-size groups are candidates, not confirmed duplicates, until you explicitly verify sampled file contents."
                     TextWrapping="Wrap"
                     Opacity="0.72" />
             </StackPanel>
@@ -101,7 +101,7 @@
                 <StackPanel Spacing="8">
                     <TextBlock Text="Same-size duplicate candidates" FontSize="16" FontWeight="SemiBold" />
                     <TextBlock
-                        Text="Hard-link aliases are collapsed by the index first. Verify content fully SHA-256 hashes a bounded sample under your user account. Hash matches verify logical duplicate evidence for those sampled paths only; physical reclaimable space is still not verified."
+                        Text="Hard-link aliases are collapsed by the index first. Potential savings are a logical upper bound only until content is verified. Verify content fully SHA-256 hashes a bounded sample under your user account. Hash matches verify logical duplicate evidence for those sampled paths only; physical reclaimable space is still not verified."
                         TextWrapping="Wrap"
                         Opacity="0.7" />
                     <ListView x:Name="SameSizeGroupsList" SelectionMode="None">
