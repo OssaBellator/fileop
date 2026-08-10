@@ -10,7 +10,9 @@ internal interface IWindowsDiskIoNativeTraceCallbackSink
     bool OnBuffer(IntPtr logfile);
 }
 
-internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceConsumerApi
+internal sealed class WindowsDiskIoNativeTraceConsumerApi :
+    IWindowsDiskIoTraceConsumerApi,
+    IWindowsDiskIoTraceEvidenceSource
 {
     private const string NativeLibrary = "sechost.dll";
 
@@ -99,6 +101,26 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
             {
                 _openActive = false;
             }
+        }
+    }
+
+    public WindowsDiskIoTraceEvidence ReadTraceEvidence(ulong processingHandle)
+    {
+        lock (_gate)
+        {
+            EnsureOwnedHandle(processingHandle);
+            if (_openActive)
+            {
+                throw new InvalidOperationException(
+                    "ETW trace evidence cannot be read while OpenTraceW is still completing.");
+            }
+            if (_processActive)
+            {
+                throw new InvalidOperationException(
+                    "ETW trace evidence cannot be read while ProcessTrace is actively mutating the retained logfile state.");
+            }
+
+            return WindowsDiskIoTraceEvidenceReader.Read(_logfileBuffer!);
         }
     }
 
