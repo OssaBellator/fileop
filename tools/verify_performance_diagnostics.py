@@ -47,6 +47,8 @@ def check_repository(root: Path) -> int:
         "optimize_view": root / "src/FileOp.App/StorageOptimizationView.xaml",
         "optimize_code": root / "src/FileOp.App/StorageOptimizationView.xaml.cs",
         "main": root / "src/FileOp.App/MainWindow.StorageOptimization.cs",
+        "test": root / "tests/FileOp.Windows.Tests/PerformanceDiagnosticsTests.cs",
+        "doc": root / "docs/performance-diagnostics.md",
         "protocol": root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs",
         "gate": root / "tools/test-local.ps1",
     }
@@ -65,6 +67,7 @@ def check_repository(root: Path) -> int:
         "ElapsedMicroseconds",
         "VolumeFreePercent",
         "VolumeUsedBytes",
+        "Math.Clamp",
     ):
         assert needle in text["model"], needle
         checks += 1
@@ -77,7 +80,8 @@ def check_repository(root: Path) -> int:
         "for (var sample = 0; sample < 128; sample++)",
         "DriveInfo(volumeRoot)",
         "AvailableFreeSpace",
-        "if (!state.IsBusy && state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback)",
+        "!state.IsBusy",
+        "state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback",
     ):
         assert needle in text["engine"], needle
         checks += 1
@@ -96,8 +100,9 @@ def check_repository(root: Path) -> int:
 
     assert '<local:PerformanceDiagnosticsView x:Name="PerformanceDiagnostics" />' in text["optimize_view"]
     assert "PerformanceDiagnostics.RefreshRequested += PerformanceDiagnostics_RefreshRequested;" in text["optimize_code"]
+    assert "PerformanceDiagnostics.SetReadyForRefresh(ready);" in text["optimize_code"]
     assert "SetPerformanceUnavailable" in text["optimize_code"]
-    checks += 3
+    checks += 4
 
     for needle in (
         "await CapturePerformanceDiagnosticsAsync(generation);",
@@ -107,6 +112,23 @@ def check_repository(root: Path) -> int:
         "generation != Volatile.Read(ref _storageOptimizationGeneration)",
     ):
         assert needle in text["main"], needle
+        checks += 1
+
+    for needle in (
+        "SnapshotReportsCapacityWithoutHealthScoring",
+        "SnapshotKeepsUnknownAndOutOfRangeCapacityConservative",
+        "Assert.AreEqual(100d, raced.VolumeFreePercent);",
+    ):
+        assert needle in text["test"], needle
+        checks += 1
+
+    for needle in (
+        "There is no continuous performance poller",
+        "SearchAsync(string.Empty, limit: 1)",
+        "AnalyzeStorageAsync(root, maxEntries: 1)",
+        "does not turn those values into a green/yellow/red health grade",
+    ):
+        assert needle in text["doc"], needle
         checks += 1
 
     assert "public const int CurrentVersion = 7;" in text["protocol"]
