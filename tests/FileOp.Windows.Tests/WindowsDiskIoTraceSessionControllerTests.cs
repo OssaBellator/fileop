@@ -19,6 +19,9 @@ public sealed class WindowsDiskIoTraceSessionControllerTests
             IntPtr.Size == 8 ? 120 : 116,
             Marshal.SizeOf<WindowsDiskIoTracePropertiesBuffer.EventTracePropertiesNative>());
         Assert.AreEqual((uint)buffer.TotalSize, properties.Wnode.BufferSize);
+        Assert.AreEqual(
+            (WindowsDiskIoSystemSessionPolicy.SessionName.Length + 1) * sizeof(char),
+            buffer.LoggerNameCapacityBytes);
         Assert.AreEqual(WindowsDiskIoSystemSessionPolicy.SessionGuid, properties.Wnode.Guid);
         Assert.AreEqual(WindowsDiskIoSystemSessionPolicy.QueryPerformanceCounterClock, properties.Wnode.ClientContext);
         Assert.AreEqual(WindowsDiskIoTracePropertiesBuffer.WnodeFlagTracedGuid, properties.Wnode.Flags);
@@ -29,7 +32,7 @@ public sealed class WindowsDiskIoTraceSessionControllerTests
         Assert.AreEqual(WindowsDiskIoSystemSessionPolicy.EnableFlags, properties.EnableFlags);
         Assert.AreEqual(0u, properties.LogFileNameOffset);
         Assert.AreEqual((uint)buffer.StructureSize, properties.LoggerNameOffset);
-        Assert.AreEqual(WindowsDiskIoSystemSessionPolicy.SessionName, buffer.ReadLoggerName());
+        Assert.AreEqual(string.Empty, buffer.ReadLoggerName());
     }
 
     [TestMethod]
@@ -47,7 +50,7 @@ public sealed class WindowsDiskIoTraceSessionControllerTests
         Assert.AreEqual(0u, properties.EnableFlags);
         Assert.AreEqual(0u, properties.LogFileNameOffset);
         Assert.AreEqual((uint)buffer.StructureSize, properties.LoggerNameOffset);
-        Assert.AreEqual(WindowsDiskIoSystemSessionPolicy.SessionName, buffer.ReadLoggerName());
+        Assert.AreEqual(string.Empty, buffer.ReadLoggerName());
     }
 
     [TestMethod]
