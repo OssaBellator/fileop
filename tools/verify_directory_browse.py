@@ -212,8 +212,9 @@ def check_repository(repo_root: Path) -> int:
     tests = texts[tests_path]
 
     required = [
-        (protocol, "public const int CurrentVersion = 7;"),
+        (protocol, "public const int CurrentVersion = 8;"),
         (protocol, "BrowseDirectory,"),
+        (protocol, "GetIndexDiagnostics,"),
         (protocol, "IndexingDirectoryBrowseRequest"),
         (protocol, "FileDirectoryBrowseCursor? Cursor = null"),
         (protocol, "IndexingDirectoryBrowseResponse"),
@@ -227,6 +228,7 @@ def check_repository(repo_root: Path) -> int:
         (backend, "HasCheckpointAsync(sourceKey"),
         (backend, "DirectoryExistsAsync(request.DirectoryPath"),
         (backend, "SqliteFileDirectoryBrowser(databasePath)"),
+        (backend, "IndexDatabasePathResolver.CreatePath"),
         (outer_backend, "_inner = new PagedDirectoryIndexingServiceBackend(_databaseDirectory)"),
         (outer_backend, "_inner.BrowseDirectoryAsync(request, cancellationToken)"),
         (sqlite, "Mode = SqliteOpenMode.ReadOnly"),
