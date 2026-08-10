@@ -113,14 +113,15 @@ CacheSizeSetting
 JournalMode
 ```
 
-Derived domain values expose total helper-file footprint, logical page bytes, reusable freelist bytes, live page bytes, reusable-page percentage and a configured cache target.
+Derived domain values expose total helper-file footprint, logical page bytes, reusable freelist bytes, live page bytes, reusable-page percentage and a reader-connection cache-default target.
 
 The semantics are deliberately narrow:
 
 - `DatabaseFileBytes + WalFileBytes + SharedMemoryFileBytes` is the observed FileOp helper-file footprint at capture time;
 - `freelist_count × page_size` is space inside the SQLite database that SQLite can reuse. It is **not** automatically reclaimable disk space and is not a recommendation to run `VACUUM`;
-- positive `cache_size` values are interpreted as page targets; negative values are approximate KiB targets according to SQLite semantics;
-- the cache target is configuration, not measured process resident memory and not a cache-hit ratio;
+- FileOp currently does not set `PRAGMA cache_size` on its index connections; diagnostics report the default value observed on their own read-only connection;
+- positive reader `cache_size` values are interpreted as page targets; negative values are approximate KiB targets according to SQLite semantics;
+- that reader-connection default is not a FileOp tuning choice, measured process resident memory, live cache occupancy or a cache-hit ratio;
 - WAL size is an observation, not evidence that forcing a checkpoint would improve performance.
 
 The diagnostics operation does not run `VACUUM`, force a WAL checkpoint, modify cache settings or write any index state.
