@@ -154,8 +154,8 @@ public sealed class WindowsSameSizeContentVerifier
                 policy.MaxTotalBytesRead,
                 matchingSets,
                 Detail:
-                    $"Fully SHA-256 hashed {fullyHashed:N0} sampled file(s) under read-only handles; {matchingFileCount:N0} file(s) belong to {matchingSets.Length:N0} matching set(s). " +
-                    $"Read {bytesRead:N0} byte(s). Hash matches are verified logical duplicate evidence only for the selected sampled paths; physical reclaimable space is not verified here.");
+                    $"Fully SHA-256 hashed {fullyHashed:N0} sampled file(s) under read-only handles that share read access only; {matchingFileCount:N0} file(s) belong to {matchingSets.Length:N0} matching set(s). " +
+                    $"Processed {bytesRead:N0} content byte(s) through SHA-256. Hash matches are verified logical duplicate evidence only for the selected sampled paths; physical reclaimable space is not verified here.");
         }
         catch (OperationCanceledException)
         {
@@ -178,7 +178,7 @@ public sealed class WindowsSameSizeContentVerifier
                 policy.MaxTotalBytesRead,
                 MatchingSets: Array.Empty<StorageVerifiedContentMatchSet>(),
                 Detail:
-                    $"Content verification could not keep the selected files readable and stable: {exception.Message}. Partial hash evidence was discarded.");
+                    $"Content verification could not keep all selected files open with the required read-only/share-read access: {exception.Message}. Partial hash evidence was discarded.");
         }
         finally
         {
