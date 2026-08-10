@@ -249,8 +249,7 @@ public sealed class WindowsSameSizeContentVerifier
             IOException or
             UnauthorizedAccessException or
             InvalidDataException or
-            NotSupportedException or
-            PlatformNotSupportedException)
+            NotSupportedException)
         {
             return StoragePhysicalReclaimVerification.Unavailable(
                 $"SHA-256 content evidence is valid, but current physical identity/allocation evidence is unavailable: {exception.Message}");
