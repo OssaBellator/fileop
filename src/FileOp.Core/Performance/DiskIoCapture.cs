@@ -87,6 +87,29 @@ public sealed record DiskIoCaptureResult
         long? lostEventCount,
         TimeSpan? providerOverheadDuration,
         string detail)
+        : this(
+            budget,
+            status,
+            report,
+            stopReason,
+            lossState,
+            lostEventCount,
+            lossState == DiskIoCaptureLossState.Unknown ? null : 0,
+            providerOverheadDuration,
+            detail)
+    {
+    }
+
+    public DiskIoCaptureResult(
+        DiskIoCaptureBudget budget,
+        DiskIoCaptureStatus status,
+        DiskIoAttributionReport? report,
+        DiskIoCaptureStopReason? stopReason,
+        DiskIoCaptureLossState lossState,
+        long? lostEventCount,
+        long? lostBufferCount,
+        TimeSpan? providerOverheadDuration,
+        string detail)
     {
         ArgumentNullException.ThrowIfNull(budget);
         ArgumentException.ThrowIfNullOrWhiteSpace(detail);
@@ -97,7 +120,7 @@ public sealed record DiskIoCaptureResult
 
         if (!Enum.IsDefined(lossState))
         {
-            throw new ArgumentOutOfRangeException(nameof(lossState), lossState, "Unsupported disk-I/O event-loss state.");
+            throw new ArgumentOutOfRangeException(nameof(lossState), lossState, "Unsupported disk-I/O trace-loss state.");
         }
 
         if (stopReason is { } reason && !Enum.IsDefined(reason))
@@ -121,6 +144,14 @@ public sealed record DiskIoCaptureResult
                 "Disk-I/O lost-event count cannot be negative.");
         }
 
+        if (lostBufferCount is < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(lostBufferCount),
+                lostBufferCount,
+                "Disk-I/O lost-buffer count cannot be negative.");
+        }
+
         if (status == DiskIoCaptureStatus.Completed)
         {
             ValidateCompleted(
@@ -128,11 +159,17 @@ public sealed record DiskIoCaptureResult
                 report,
                 stopReason,
                 lossState,
-                lostEventCount);
+                lostEventCount,
+                lostBufferCount);
         }
         else
         {
-            ValidateUnavailable(report, stopReason, lossState, lostEventCount);
+            ValidateUnavailable(
+                report,
+                stopReason,
+                lossState,
+                lostEventCount,
+                lostBufferCount);
         }
 
         Budget = budget;
@@ -141,6 +178,7 @@ public sealed record DiskIoCaptureResult
         StopReason = stopReason;
         LossState = lossState;
         LostEventCount = lostEventCount;
+        LostBufferCount = lostBufferCount;
         ProviderOverheadDuration = providerOverheadDuration;
         Detail = detail;
     }
@@ -156,6 +194,8 @@ public sealed record DiskIoCaptureResult
     public DiskIoCaptureLossState LossState { get; }
 
     public long? LostEventCount { get; }
+
+    public long? LostBufferCount { get; }
 
     public TimeSpan? ProviderOverheadDuration { get; }
 
@@ -174,6 +214,25 @@ public sealed record DiskIoCaptureResult
         long? lostEventCount,
         TimeSpan? providerOverheadDuration,
         string detail) =>
+        Completed(
+            budget,
+            report,
+            stopReason,
+            lossState,
+            lostEventCount,
+            lossState == DiskIoCaptureLossState.Unknown ? null : 0,
+            providerOverheadDuration,
+            detail);
+
+    public static DiskIoCaptureResult Completed(
+        DiskIoCaptureBudget budget,
+        DiskIoAttributionReport report,
+        DiskIoCaptureStopReason stopReason,
+        DiskIoCaptureLossState lossState,
+        long? lostEventCount,
+        long? lostBufferCount,
+        TimeSpan? providerOverheadDuration,
+        string detail) =>
         new(
             budget,
             DiskIoCaptureStatus.Completed,
@@ -181,6 +240,7 @@ public sealed record DiskIoCaptureResult
             stopReason,
             lossState,
             lostEventCount,
+            lostBufferCount,
             providerOverheadDuration,
             detail);
 
@@ -205,6 +265,7 @@ public sealed record DiskIoCaptureResult
             stopReason: null,
             DiskIoCaptureLossState.Unknown,
             lostEventCount: null,
+            lostBufferCount: null,
             providerOverheadDuration,
             detail);
     }
@@ -214,7 +275,8 @@ public sealed record DiskIoCaptureResult
         DiskIoAttributionReport? report,
         DiskIoCaptureStopReason? stopReason,
         DiskIoCaptureLossState lossState,
-        long? lostEventCount)
+        long? lostEventCount,
+        long? lostBufferCount)
     {
         if (report is null)
         {
@@ -283,18 +345,18 @@ public sealed record DiskIoCaptureResult
 
         switch (lossState)
         {
-            case DiskIoCaptureLossState.NoneObserved when lostEventCount != 0:
+            case DiskIoCaptureLossState.NoneObserved
+                when lostEventCount != 0 || lostBufferCount != 0:
                 throw new ArgumentException(
-                    "No-loss disk-I/O capture results must report a lost-event count of zero.",
-                    nameof(lostEventCount));
-            case DiskIoCaptureLossState.Observed when lostEventCount is not > 0:
+                    "No-loss disk-I/O capture results must report zero lost events and zero lost buffers.");
+            case DiskIoCaptureLossState.Observed
+                when lostEventCount is not > 0 && lostBufferCount is not > 0:
                 throw new ArgumentException(
-                    "Observed disk-I/O event loss requires a positive lost-event count.",
-                    nameof(lostEventCount));
-            case DiskIoCaptureLossState.Unknown when lostEventCount is not null:
+                    "Observed disk-I/O trace loss requires a positive lost-event or lost-buffer count.");
+            case DiskIoCaptureLossState.Unknown
+                when lostEventCount is not null || lostBufferCount is not null:
                 throw new ArgumentException(
-                    "Unknown disk-I/O event loss must not invent a lost-event count.",
-                    nameof(lostEventCount));
+                    "Unknown disk-I/O trace loss must not invent event or buffer loss counts.");
         }
     }
 
@@ -302,7 +364,8 @@ public sealed record DiskIoCaptureResult
         DiskIoAttributionReport? report,
         DiskIoCaptureStopReason? stopReason,
         DiskIoCaptureLossState lossState,
-        long? lostEventCount)
+        long? lostEventCount,
+        long? lostBufferCount)
     {
         if (report is not null || stopReason is not null)
         {
@@ -310,10 +373,12 @@ public sealed record DiskIoCaptureResult
                 "Unavailable disk-I/O capture results cannot carry an attribution report or stop reason.");
         }
 
-        if (lossState != DiskIoCaptureLossState.Unknown || lostEventCount is not null)
+        if (lossState != DiskIoCaptureLossState.Unknown ||
+            lostEventCount is not null ||
+            lostBufferCount is not null)
         {
             throw new ArgumentException(
-                "Unavailable disk-I/O capture results must leave event-loss evidence unknown.");
+                "Unavailable disk-I/O capture results must leave trace-loss evidence unknown.");
         }
     }
 }
