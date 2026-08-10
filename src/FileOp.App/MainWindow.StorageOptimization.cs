@@ -13,6 +13,8 @@ public sealed partial class MainWindow
     private StorageOptimizationAnalysis? _storageOptimizationAnalysis;
     private string? _storageOptimizationSourceKey;
     private int _storageOptimizationGeneration;
+    private int _performanceDiskIoGeneration;
+    private bool _performanceDiskIoCaptureActive;
     private bool _storageOptimizationInitialized;
     private bool _storageOptimizationLoadedForSource;
 
@@ -36,6 +38,8 @@ public sealed partial class MainWindow
         _storageOptimizationView.RefreshRequested += StorageOptimizationView_RefreshRequested;
         _storageOptimizationView.PerformanceRefreshRequested +=
             StorageOptimizationView_PerformanceRefreshRequested;
+        _storageOptimizationView.PerformanceDiskIoCaptureRequested +=
+            StorageOptimizationView_PerformanceDiskIoCaptureRequested;
 
         if (StorageFoldersButton.Parent is StackPanel modePanel)
         {
@@ -63,11 +67,15 @@ public sealed partial class MainWindow
 
     private void StorageOptimizationWindow_Closed(object sender, WindowEventArgs args)
     {
+        Interlocked.Increment(ref _performanceDiskIoGeneration);
+        _performanceDiskIoCaptureActive = false;
         _searchEngine.StateChanged -= StorageOptimizationEngine_StateChanged;
         _storageOptimizationButton.Click -= StorageOptimizationButton_Click;
         _storageOptimizationView.RefreshRequested -= StorageOptimizationView_RefreshRequested;
         _storageOptimizationView.PerformanceRefreshRequested -=
             StorageOptimizationView_PerformanceRefreshRequested;
+        _storageOptimizationView.PerformanceDiskIoCaptureRequested -=
+            StorageOptimizationView_PerformanceDiskIoCaptureRequested;
         Closed -= StorageOptimizationWindow_Closed;
     }
 
@@ -101,11 +109,12 @@ public sealed partial class MainWindow
         }
 
         var root = _searchEngine.StorageRootPath;
-        var available = _searchEngine.StorageOptimizationAvailable && !state.IsBusy;
-        _storageOptimizationButton.IsEnabled =
-            _storageViewMode != StorageViewMode.Optimize && available;
+        var storageAvailable = _searchEngine.StorageOptimizationAvailable && !state.IsBusy;
+        _storageOptimizationButton.IsEnabled = _storageViewMode != StorageViewMode.Optimize;
         _storageOptimizationView.SetReadyForRefresh(
-            _storageViewMode == StorageViewMode.Optimize && available);
+            _storageViewMode == StorageViewMode.Optimize && storageAvailable);
+        _storageOptimizationView.SetDiskIoReadyForCapture(
+            _storageViewMode == StorageViewMode.Optimize && !_performanceDiskIoCaptureActive);
 
         if (root is null)
         {
@@ -113,7 +122,7 @@ public sealed partial class MainWindow
             if (_storageViewMode == StorageViewMode.Optimize)
             {
                 _storageOptimizationView.SetUnavailable(
-                    "Optimization analysis is unavailable until a native indexed NTFS volume is active.");
+                    "Optimization analysis is unavailable until a native indexed NTFS volume is active. Disk I/O attribution remains available as a separate system-wide capture.");
             }
             return;
         }
@@ -146,12 +155,12 @@ public sealed partial class MainWindow
             Interlocked.Increment(ref _storageGeneration);
         }
 
-        if (!available)
+        if (!storageAvailable)
         {
             _storageOptimizationView.SetUnavailable(
                 state.Mode == DesktopSearchMode.Fallback
-                    ? "Optimization recommendations currently require the native NTFS index; fallback snapshots are not presented as complete reclaim analysis."
-                    : "Optimization analysis is unavailable while the native index is busy or disconnected.");
+                    ? "Optimization recommendations currently require the native NTFS index; fallback snapshots are not presented as complete reclaim analysis. Disk I/O attribution remains independently available."
+                    : "Optimization analysis is unavailable while the native index is busy or disconnected. Disk I/O attribution remains independently available.");
             SetStorageStatus("Storage optimization is currently unavailable for this indexing source.");
             return;
         }
@@ -168,11 +177,12 @@ public sealed partial class MainWindow
         Interlocked.Increment(ref _storageTypeGeneration);
         Interlocked.Increment(ref _storageHistoryGeneration);
         SetStorageViewMode(StorageViewMode.Optimize);
+        _storageOptimizationView.SetDiskIoReadyForCapture(!_performanceDiskIoCaptureActive);
 
-        if (!_searchEngine.StorageOptimizationAvailable)
+        if (!_searchEngine.StorageOptimizationAvailable || _searchEngine.State.IsBusy)
         {
             _storageOptimizationView.SetUnavailable(
-                "Optimization recommendations currently require the native NTFS index.");
+                "Native reclaim analysis is not currently available. Disk I/O attribution remains available as a separate system-wide capture.");
             SetStorageStatus("Native storage optimization is not currently available.");
             return;
         }
@@ -207,6 +217,52 @@ public sealed partial class MainWindow
         }
     }
 
+    private async void StorageOptimizationView_PerformanceDiskIoCaptureRequested(
+        object? sender,
+        EventArgs e)
+    {
+        if (_closed ||
+            _storageViewMode != StorageViewMode.Optimize ||
+            _performanceDiskIoCaptureActive)
+        {
+            return;
+        }
+
+        var generation = Interlocked.Increment(ref _performanceDiskIoGeneration);
+        _performanceDiskIoCaptureActive = true;
+        _storageOptimizationView.SetDiskIoLoading();
+        try
+        {
+            var result = await _searchEngine.CaptureDiskIoAttributionAsync();
+            if (_closed || generation != Volatile.Read(ref _performanceDiskIoGeneration))
+            {
+                return;
+            }
+
+            _storageOptimizationView.ApplyDiskIoCapture(result);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!_closed && generation == Volatile.Read(ref _performanceDiskIoGeneration))
+            {
+                _storageOptimizationView.SetDiskIoUnavailable(
+                    $"Disk I/O attribution capture failed: {exception.Message}");
+            }
+        }
+        finally
+        {
+            _performanceDiskIoCaptureActive = false;
+            if (!_closed && generation == Volatile.Read(ref _performanceDiskIoGeneration))
+            {
+                _storageOptimizationView.SetDiskIoReadyForCapture(
+                    _storageViewMode == StorageViewMode.Optimize);
+            }
+        }
+    }
+
     private async Task LoadStorageOptimizationAsync(bool forceRefresh)
     {
         if (_closed)
@@ -218,7 +274,7 @@ public sealed partial class MainWindow
         if (root is null || !_searchEngine.StorageOptimizationAvailable)
         {
             _storageOptimizationView.SetUnavailable(
-                "Native storage optimization is not currently available.");
+                "Native storage optimization is not currently available. Disk I/O attribution remains independently available.");
             SetStorageStatus("Native storage optimization is not currently available.");
             return;
         }
@@ -288,7 +344,7 @@ public sealed partial class MainWindow
             if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
             {
                 _storageOptimizationView.SetUnavailable(
-                    "The native snapshot must be refreshed before optimization analysis can continue.");
+                    "The native snapshot must be refreshed before optimization analysis can continue. Disk I/O attribution remains independently available.");
                 SetStorageStatus("Storage optimization is waiting for a fresh native index snapshot.");
             }
         }

@@ -11,10 +11,12 @@ public sealed partial class StorageOptimizationView : UserControl
     {
         InitializeComponent();
         PerformanceDiagnostics.RefreshRequested += PerformanceDiagnostics_RefreshRequested;
+        PerformanceDiagnostics.DiskIoCaptureRequested += PerformanceDiagnostics_DiskIoCaptureRequested;
     }
 
     public event EventHandler? RefreshRequested;
     public event EventHandler? PerformanceRefreshRequested;
+    public event EventHandler? PerformanceDiskIoCaptureRequested;
 
     public void SetLoading(string message)
     {
@@ -25,6 +27,9 @@ public sealed partial class StorageOptimizationView : UserControl
 
     public void SetPerformanceLoading() =>
         PerformanceDiagnostics.SetLoading();
+
+    public void SetDiskIoLoading() =>
+        PerformanceDiagnostics.SetDiskIoLoading();
 
     public void SetUnavailable(string message)
     {
@@ -44,6 +49,15 @@ public sealed partial class StorageOptimizationView : UserControl
 
     public void SetPerformanceUnavailable(string message) =>
         PerformanceDiagnostics.SetUnavailable(message);
+
+    public void SetDiskIoUnavailable(string message) =>
+        PerformanceDiagnostics.SetDiskIoUnavailable(message);
+
+    public void SetDiskIoReadyForCapture(bool ready) =>
+        PerformanceDiagnostics.SetDiskIoReadyForCapture(ready);
+
+    public void ResetDiskIoCapture() =>
+        PerformanceDiagnostics.ResetDiskIoCapture();
 
     public void Apply(StorageOptimizationAnalysis analysis)
     {
@@ -70,11 +84,17 @@ public sealed partial class StorageOptimizationView : UserControl
     public void ApplyPerformanceDiagnostics(PerformanceDiagnosticsSnapshot snapshot) =>
         PerformanceDiagnostics.Apply(snapshot);
 
+    public void ApplyDiskIoCapture(DiskIoCaptureResult result) =>
+        PerformanceDiagnostics.ApplyDiskIoCapture(result);
+
     private void RefreshButton_Click(object sender, RoutedEventArgs e) =>
         RefreshRequested?.Invoke(this, EventArgs.Empty);
 
     private void PerformanceDiagnostics_RefreshRequested(object? sender, EventArgs e) =>
         PerformanceRefreshRequested?.Invoke(this, EventArgs.Empty);
+
+    private void PerformanceDiagnostics_DiskIoCaptureRequested(object? sender, EventArgs e) =>
+        PerformanceDiskIoCaptureRequested?.Invoke(this, EventArgs.Empty);
 }
 
 public sealed record StorageOptimizationFileRow(

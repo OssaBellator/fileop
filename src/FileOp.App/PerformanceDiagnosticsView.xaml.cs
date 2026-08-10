@@ -7,13 +7,25 @@ namespace FileOp.App;
 public sealed partial class PerformanceDiagnosticsView : UserControl
 {
     private readonly PerformanceProbeHistory _probeHistory = new();
+    private readonly DiskIoAttributionView _diskIoAttributionView;
 
     public PerformanceDiagnosticsView()
     {
         InitializeComponent();
+        _diskIoAttributionView = new DiskIoAttributionView();
+        _diskIoAttributionView.CaptureRequested += DiskIoAttributionView_CaptureRequested;
+        if (Content is not Grid rootGrid)
+        {
+            throw new InvalidOperationException("Performance diagnostics content must be hosted by a Grid.");
+        }
+
+        rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(_diskIoAttributionView, rootGrid.RowDefinitions.Count - 1);
+        rootGrid.Children.Add(_diskIoAttributionView);
     }
 
     public event EventHandler? RefreshRequested;
+    public event EventHandler? DiskIoCaptureRequested;
 
     public void SetLoading()
     {
@@ -38,6 +50,21 @@ public sealed partial class PerformanceDiagnosticsView : UserControl
     {
         RefreshButton.IsEnabled = ready;
     }
+
+    public void SetDiskIoLoading() =>
+        _diskIoAttributionView.SetLoading();
+
+    public void SetDiskIoReadyForCapture(bool ready) =>
+        _diskIoAttributionView.SetReady(ready);
+
+    public void SetDiskIoUnavailable(string message) =>
+        _diskIoAttributionView.SetUnavailable(message);
+
+    public void ResetDiskIoCapture() =>
+        _diskIoAttributionView.Reset();
+
+    public void ApplyDiskIoCapture(DiskIoCaptureResult result) =>
+        _diskIoAttributionView.Apply(result);
 
     public void Apply(PerformanceDiagnosticsSnapshot snapshot)
     {
@@ -221,6 +248,9 @@ public sealed partial class PerformanceDiagnosticsView : UserControl
 
     private void RefreshButton_Click(object sender, RoutedEventArgs e) =>
         RefreshRequested?.Invoke(this, EventArgs.Empty);
+
+    private void DiskIoAttributionView_CaptureRequested(object? sender, EventArgs e) =>
+        DiskIoCaptureRequested?.Invoke(this, EventArgs.Empty);
 }
 
 public sealed record PerformanceProbeRow(
