@@ -7,6 +7,22 @@ namespace FileOp.Windows.Tests;
 public sealed class WindowsDiskIoNativeTraceConsumerLifecycleGuardsTests
 {
     [TestMethod]
+    public void ConcurrentOpenIsRejectedWhileOpenTraceIsInFlight()
+    {
+        var api = new WindowsDiskIoNativeTraceConsumerApi(new NoOpSink());
+        typeof(WindowsDiskIoNativeTraceConsumerApi)
+            .GetField("_openActive", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(api, true);
+
+        var exception = Assert.ThrowsException<InvalidOperationException>(() =>
+            api.OpenRealtime(
+                WindowsDiskIoSystemSessionPolicy.SessionName,
+                WindowsDiskIoTraceConsumerPolicy.ProcessTraceMode));
+
+        StringAssert.Contains(exception.Message, "opening");
+    }
+
+    [TestMethod]
     public void ReopenIsRejectedWhilePriorProcessTraceIsStillDraining()
     {
         var api = new WindowsDiskIoNativeTraceConsumerApi(new NoOpSink());
