@@ -58,7 +58,7 @@ The same explicit layout records future evidence offsets:
 
 Those fields will be useful to the later evidence layer, but this transport slice does not yet publish or interpret them.
 
-## Function imports
+## Function imports and open ownership
 
 FileOp targets Windows 10 1809 or later, so the consumer imports are from `sechost.dll`:
 
@@ -67,6 +67,8 @@ FileOp targets Windows 10 1809 or later, so the consumer imports are from `secho
 - `CloseTrace`.
 
 `OpenTraceW` receives the explicit unmanaged buffer as `IntPtr`, avoiding runtime structure marshalling. Failure is detected through `INVALID_PROCESSTRACE_HANDLE`; the adapter captures the Win32 error immediately with `Marshal.GetLastPInvokeError()` and returns it to #75's existing open-failure classifier.
+
+One adapter instance is allowed at most one open operation at a time. `_openActive` is claimed before allocation and `OpenTraceW`, so two callers cannot simultaneously open two consumer handles and overwrite ownership. The flag is cleared in `finally`, including allocation or native-call failure paths.
 
 `ProcessTrace` is called for exactly one real-time processing handle and receives that 64-bit handle by reference. No temporary handle array or mixed-session processing is used.
 
@@ -95,6 +97,8 @@ For an event callback, FileOp records cancellation and suppresses subsequent eve
 
 For a buffer callback, FileOp returns `FALSE` immediately.
 
+Both callback entry points fail closed on a null native pointer: the adapter records an `InvalidDataException`, requests callback cancellation and does not invoke the managed sink with invalid ETW memory.
+
 #75 still provides the independent prompt `CloseTrace` path for cancellation from another thread while `ProcessTrace` is blocked. The callback cancellation path is complementary; it does not add polling or a background timer.
 
 A successful `CloseTrace`, including `ERROR_CTX_CLOSE_PENDING`, may release the processing handle while the blocking `ProcessTrace` call is still draining previously queued events. The native adapter tracks that separately with `_processActive`: it cannot be reopened and cannot reset callback state until the prior `ProcessTrace` invocation has actually returned.
@@ -112,7 +116,7 @@ The adapter therefore:
 5. returns `FALSE` from the buffer callback;
 6. after native `ProcessTrace` exits, rethrows the original captured exception with its identity/stack information preserved.
 
-A null `EVENT_RECORD` pointer is treated as a contained `InvalidDataException` and follows the same shutdown path.
+A null `EVENT_RECORD` or buffer pointer follows that same contained shutdown path.
 
 This keeps Microsoft’s `ERROR_NOACCESS` callback-exception status from becoming FileOp’s normal control flow. If native ETW itself returns `ERROR_NOACCESS` without a captured managed fault, #75 continues to report it as a native failure.
 
@@ -135,8 +139,8 @@ Those boundaries remain separate so FileOp can distinguish transport correctness
 
 ## Validation without GitHub Actions
 
-`tools/verify_disk_io_native_consumer.py` checks x86/x64 ABI arithmetic, explicit pointer-width offsets, callback-state behavior, native imports, rooted delegate setup, callback-fault containment, drain/reopen ownership, focused tests and scope guards. It is wired into `tools/test-local.ps1 -OfflineOnly`.
+`tools/verify_disk_io_native_consumer.py` checks x86/x64 ABI arithmetic, explicit pointer-width offsets, callback-state behavior, native imports, rooted delegate setup, callback-fault containment, concurrent-open/drain ownership, focused tests and scope guards. It is wired into `tools/test-local.ps1 -OfflineOnly`.
 
-Focused .NET tests validate the actual zeroed unmanaged buffer and the exact values written at the documented offsets, then directly exercise managed callback containment and the close-pending drain guard without opening a live ETW session.
+Focused .NET tests validate the actual zeroed unmanaged buffer and the exact values written at the documented offsets, then directly exercise managed callback containment, null-pointer handling, concurrent-open ownership and the close-pending drain guard without opening a live ETW session.
 
 A real `OpenTraceW`/`ProcessTrace` smoke test still requires the Windows/.NET/native test environment and the later provider integration. No live ETW execution is claimed by this slice.
