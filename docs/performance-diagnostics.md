@@ -19,7 +19,9 @@ A diagnostics refresh records:
 - a bounded end-to-end Search probe;
 - a bounded end-to-end Storage root probe;
 - a local `Stopwatch` baseline that makes timing overhead visible;
-- when the native helper/index is valid, helper-owned SQLite file/page/cache evidence.
+- when the native helper/index is valid, helper-owned SQLite file/page/cache evidence;
+- the durable native checkpoint and, when accessible, one live USN-journal metadata observation;
+- a bounded in-memory session distribution for the exact Search/Storage probes.
 
 The UI displays raw units directly. It does not turn them into a green/yellow/red health grade.
 
@@ -34,9 +36,11 @@ The recorded detail string states those exact limits and the observed result cou
 
 The timer baseline is the minimum `Stopwatch` start/stop interval across 128 local samples. It is not subtracted from the Search/Storage timings; it is exposed only to bound measurement overhead.
 
+The producer assigns typed `PerformanceProbeKind` values to these known probes. The session-history layer also recognizes the historical exact probe names so older in-process snapshots remain compatible.
+
 ## Helper-owned index database evidence
 
-Protocol v8 adds `GetIndexDiagnostics` for the current native volume/root. The desktop never passes a database filename. The helper resolves the same deterministic database identity used by native indexing, Browse, History and Optimize.
+Protocol v8 uses `GetIndexDiagnostics` for the current native volume/root. The desktop never passes a database filename. The helper resolves the same deterministic database identity used by native indexing, Browse, History and Optimize.
 
 The operation requires:
 
@@ -86,11 +90,47 @@ Index-database evidence is native-only. Fallback mode explicitly reports that it
 
 A Busy, SnapshotRequired or detached-volume response from the index-diagnostics provider is isolated from other already-valid evidence. Search latency, Storage latency and free-space capacity can still be displayed when the SQLite detail provider is temporarily unavailable.
 
+## USN/checkpoint freshness
+
+The same protocol-v8 index-diagnostics response can include optional durable/live journal evidence. The helper reads the durable checkpoint through the same read-only SQLite connection and then performs at most one `NtfsUsnJournal.Query(volume)` metadata observation.
+
+FileOp exposes:
+
+- checkpoint age from its durable timestamp;
+- durable and live journal identity continuity;
+- whether the durable `NextUsn` lies inside the current readable journal window;
+- USN backlog distance (`live NextUsn - durable NextUsn`) only when continuity is valid;
+- retention headroom (`durable NextUsn - LowestValidUsn`) only when continuity is valid.
+
+These values are **USN sequence-position differences**. They are not file/event counts, byte counts, elapsed time, synchronization-duration estimates or health grades.
+
+The UI distinguishes changed journal identity, checkpoint below the retention floor, checkpoint ahead of the live head and a readable continuous window. Invalid continuity never produces a made-up backlog value.
+
+Live-journal access failure is isolated: the already-valid durable checkpoint and SQLite evidence remain visible. Older protocol-v8 helpers may omit the optional freshness fields.
+
+Diagnostics do not read journal records, advance/delete a checkpoint, trigger synchronization or rebuild the index.
+
+See `docs/usn-freshness.md` for the detailed continuity contract.
+
+## Session latency distributions
+
+The current measurement stays visible separately from a bounded session history. Each explicit diagnostics refresh contributes at most one Search sample and one Storage sample.
+
+For the one active source/root window FileOp retains the most recent **20 samples per probe**. With the current two probes, at most **40 elapsed-time samples** are held. A native/fallback mode change or root/volume change clears the old window rather than mixing unlike sources or retaining unbounded per-root history.
+
+Duplicate rows for one exact probe in a single snapshot count once. Timer-baseline and other probes never enter the Search/Storage distribution.
+
+The UI shows sample count/capacity, minimum, integer-midpoint median, maximum and nearest-rank p95 only after five explicit samples. The p95 is a small-sample descriptive statistic, not an SLA, health grade, benchmark or prediction of future latency.
+
+The history is process-memory only. It is not persisted and has no timer, scheduler, background sampler or telemetry path.
+
+See `docs/latency-distributions.md` for the statistical contract.
+
 ## Foreground and polling policy
 
 There is no continuous performance poller. Diagnostics do not use a periodic timer, filesystem watcher or background scan.
 
-The bounded probes call the existing Search and Storage APIs and therefore obey the same foreground coordination and native-service rules as normal user work. The helper-owned database probe also goes through the desktop foreground/native gates. A refresh is user-visible work, not hidden maintenance.
+The bounded probes call the existing Search and Storage APIs and therefore obey the same foreground coordination and native-service rules as normal user work. The helper-owned database/journal probe also goes through the desktop foreground/native gates. A refresh is user-visible work, not hidden maintenance.
 
 A performance-probe failure is isolated from Storage reclaim analysis. FileOp may still show largest/old/same-size storage evidence when the diagnostics panel cannot complete.
 
@@ -121,35 +161,27 @@ The current diagnostics surface does **not**:
 - continuously poll CPU/disk/memory counters;
 - produce an opaque performance or health score.
 
-Those actions are not implied by latency, capacity or index-database measurements.
+Those actions are not implied by latency, capacity, journal or index-database measurements.
 
 ## Next evidence layers
 
 Useful follow-ups should remain separately reviewable:
 
-1. explicit USN/checkpoint freshness and catch-up backlog;
-2. latency distributions rather than one on-demand sample, with a strict low-frequency/foreground budget;
-3. Storage history + current free-space pressure correlation;
-4. Windows storage-I/O attribution with identified owners;
-5. startup/background activity diagnostics based on measured resource impact;
-6. SMART/media health and TRIM/defrag applicability where Windows exposes reliable evidence;
-7. CPU/memory pressure only when FileOp can identify an actionable owner/workload and measure its own observation overhead.
+1. Storage history + current free-space pressure correlation, without treating correlation as causation or projecting a disk-full date from sparse observations;
+2. Windows storage-I/O attribution with identified owners;
+3. startup/background activity diagnostics based on measured resource impact;
+4. SMART/media health and TRIM/defrag applicability where Windows exposes reliable evidence;
+5. CPU/memory pressure only when FileOp can identify an actionable owner/workload and measure its own observation overhead.
 
 Administrative tuning remains outside `FileOp.Indexer` unless a separately reviewed privilege boundary earns it.
 
 ## Validation without GitHub Actions
 
-`tools/verify_performance_diagnostics.py` performs randomized capacity arithmetic checks and repository guards that require:
+`tools/test-local.ps1 -OfflineOnly` includes the performance, latency-distribution, index-database and USN/checkpoint verifiers.
 
-- exact bounded Search/Storage probe arguments;
-- helper-owned index diagnostics integration;
-- timer-overhead disclosure;
-- no periodic timer/watcher;
-- no registry/service/working-set/defrag tuning APIs;
-- protocol-v8 stability while preserving earlier operations;
-- Optimize integration and independent diagnostics failure handling;
-- explicit user-facing no-fake-optimiser wording.
+- `tools/verify_performance_diagnostics.py` guards the exact bounded foreground probes, volume-capacity semantics and no-fake-optimiser boundary.
+- `tools/verify_latency_distributions.py` models bounded retention, median/p95 semantics and active-source isolation and requires the Core/UI/test integration to be present.
+- `tools/verify_index_diagnostics.py` models footprint/page/freelist/cache arithmetic and guards read-only SQLite access.
+- `tools/verify_usn_freshness.py` models journal continuity and requires checkpoint loading, one live metadata query, UI state handling and additive protocol-v8 transport coverage.
 
-`tools/verify_index_diagnostics.py` separately performs randomized footprint/page/freelist/cache arithmetic, a standard-library SQLite WAL fixture and repository guards requiring read-only/query-only access, shared database identity, protocol-v8 request/response wiring, explicit reader-cache/freelist wording and absence of `VACUUM`, forced WAL checkpointing or mutation APIs.
-
-Both verifiers are included in `tools/test-local.ps1 -OfflineOnly`. `PerformanceDiagnosticsTests`, `IndexDatabaseDiagnosticsTests` and `IndexingIndexDiagnosticsProtocolTests` add .NET/native regression coverage when the Windows local gate is available.
+The Windows/.NET gate adds the focused Core/SQLite/named-pipe regression tests when a suitable Windows toolchain is available. Native/WinUI execution is not implied by the portable verifier results.
