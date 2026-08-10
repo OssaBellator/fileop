@@ -99,6 +99,10 @@ Invoke-Step "Offline ETW event-record snapshot verifier" {
     python tools/verify_etw_event_record_snapshot.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline DiskIo event-record bridge verifier" {
+    python tools/verify_disk_io_event_record_bridge.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Storage history verifier" {
     python tools/verify_storage_history.py --repo-root $repoRoot --cases 1000
 }
