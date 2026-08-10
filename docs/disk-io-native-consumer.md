@@ -4,7 +4,7 @@
 
 #75 defined the ownership/cancellation contract for an ETW processing handle without declaring the large native consumer structure. This slice implements that native boundary behind the existing lifecycle:
 
-- `EVENT_TRACE_LOGFILEW` and its nested ABI layout;
+- explicit `EVENT_TRACE_LOGFILEW` ABI sizing/offsets;
 - `OpenTraceW`;
 - `ProcessTrace`;
 - `CloseTrace`;
@@ -28,9 +28,9 @@ For a real-time `EventRecordCallback` consumer, Microsoft documents the followin
 
 #75 already pins the process-mode bits and keeps the processing handle distinct from #74's `CONTROLTRACE_ID`.
 
-## Native layout
+## Explicit native layout
 
-`WindowsDiskIoNativeTraceConsumerApi` mirrors the SDK field order using blittable managed structures and `IntPtr` for native pointers/handles.
+The native call deliberately does **not** depend on CLR sequential-struct alignment. `WindowsDiskIoTraceLogfileBuffer` allocates one zero-filled unmanaged block and writes only the required `EVENT_TRACE_LOGFILEW` inputs at explicit pointer-width offsets.
 
 Important sizes under the Windows default eight-byte packing are:
 
@@ -44,12 +44,19 @@ Important sizes under the Windows default eight-byte packing are:
 
 The x86 `EVENT_TRACE` fields end at byte 84 but the structure is padded to its eight-byte alignment, so its native size is 88 bytes.
 
-The `EVENT_TRACE_LOGFILEW` callback/context offsets are also pinned by tests:
+The explicit `EVENT_TRACE_LOGFILEW` input offsets are:
 
-- x86: `BufferCallback=384`, `EventRecordCallback=400`, `Context=408`;
-- x64/arm64: `BufferCallback=400`, `EventRecordCallback=424`, `Context=440`.
+- x86: `LoggerName=4`, `ProcessTraceMode=20`, `BufferCallback=384`, `EventRecordCallback=400`, `Context=408`;
+- x64/arm64: `LoggerName=8`, `ProcessTraceMode=28`, `BufferCallback=400`, `EventRecordCallback=424`, `Context=440`.
 
-`TRACE_LOGFILE_HEADER.PerfFreq` is at offset 248 on x86 and 256 on x64/arm64. `BuffersLost` is at 268 / 276. These fields will be useful to the later evidence layer, but this transport slice does not yet publish or interpret them.
+The buffer starts fully zeroed, so `LogFileName`, output fields and reserved/native state remain zero unless ETW fills them during `OpenTraceW`.
+
+The same explicit layout records future evidence offsets:
+
+- `TRACE_LOGFILE_HEADER.PerfFreq`: overall `EVENT_TRACE_LOGFILEW` offset 360 on x86 / 376 on x64/arm64;
+- `TRACE_LOGFILE_HEADER.BuffersLost`: overall offset 380 / 396.
+
+Those fields will be useful to the later evidence layer, but this transport slice does not yet publish or interpret them.
 
 ## Function imports
 
@@ -59,7 +66,9 @@ FileOp targets Windows 10 1809 or later, so the consumer imports are from `secho
 - `ProcessTrace`;
 - `CloseTrace`.
 
-`OpenTraceW` failure is detected through `INVALID_PROCESSTRACE_HANDLE`; the adapter captures the Win32 error immediately with `Marshal.GetLastPInvokeError()` and returns it to #75's existing open-failure classifier.
+`OpenTraceW` receives the explicit unmanaged buffer as `IntPtr`, avoiding runtime structure marshalling. Failure is detected through `INVALID_PROCESSTRACE_HANDLE`; the adapter captures the Win32 error immediately with `Marshal.GetLastPInvokeError()` and returns it to #75's existing open-failure classifier.
+
+`ProcessTrace` is called for exactly one real-time processing handle and receives that 64-bit handle by reference. No temporary handle array or mixed-session processing is used.
 
 The logger-name string is unmanaged only for the duration of `OpenTraceW`. After `OpenTraceW` returns, subsequent processing uses the returned processing handle; FileOp does not retain the input string allocation.
 
@@ -90,7 +99,7 @@ For a buffer callback, FileOp returns `FALSE` immediately.
 
 ## Callback exceptions
 
-Managed exceptions must never cross an unmanaged ETW callback boundary.
+Managed callback exceptions must never cross an unmanaged ETW callback boundary.
 
 The adapter therefore:
 
@@ -124,8 +133,8 @@ Those boundaries remain separate so FileOp can distinguish transport correctness
 
 ## Validation without GitHub Actions
 
-`tools/verify_disk_io_native_consumer.py` checks the x86/x64 ABI arithmetic, callback-state behavior, native imports, rooted delegate setup, callback-fault containment, focused tests and scope guards. It is wired into `tools/test-local.ps1 -OfflineOnly`.
+`tools/verify_disk_io_native_consumer.py` checks x86/x64 ABI arithmetic, explicit pointer-width offsets, callback-state behavior, native imports, rooted delegate setup, callback-fault containment, focused tests and scope guards. It is wired into `tools/test-local.ps1 -OfflineOnly`.
 
-Focused .NET tests pin `Marshal.SizeOf` and `Marshal.OffsetOf` against the expected Windows ABI and directly exercise the managed callback containment without opening a live ETW session.
+Focused .NET tests validate the actual zeroed unmanaged buffer and the exact values written at the documented offsets, then directly exercise managed callback containment without opening a live ETW session.
 
 A real `OpenTraceW`/`ProcessTrace` smoke test still requires the Windows/.NET/native test environment and the later provider integration. No live ETW execution is claimed by this slice.
