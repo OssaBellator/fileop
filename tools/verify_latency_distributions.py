@@ -70,21 +70,22 @@ def run_scope_model(cases: int) -> int:
     rng = random.Random(20260810 ^ 0x5A5A)
     checks = 0
     for _ in range(cases):
-        histories: dict[tuple[str, str], deque[int]] = {}
-        current_scope = rng.choice(["native index", "profile fallback"])
-        for _sample in range(rng.randint(1, 60)):
+        active_source = None
+        histories: dict[str, deque[int]] = {}
+        for _sample in range(rng.randint(2, 60)):
+            source = rng.choice(["NATIVE:C:", "FALLBACK:C:\\USERS\\EXAMPLE", "NATIVE:D:"])
+            if source != active_source:
+                histories.clear()
+                active_source = source
             kind = rng.choice(["search", "storage", "timer"])
-            scope = rng.choice(["native index", "profile fallback", "local process"])
             if kind == "timer":
                 continue
-            key = (kind, scope)
-            queue = histories.setdefault(key, deque(maxlen=20))
+            queue = histories.setdefault(kind, deque(maxlen=20))
             queue.append(rng.randint(0, 1_000_000))
 
-        visible = [key for key in histories if key[1] == current_scope]
-        assert all(scope == current_scope for _, scope in visible)
-        assert all(len(histories[key]) <= 20 for key in histories)
-        assert all(kind in {"search", "storage"} for kind, _ in histories)
+        assert set(histories).issubset({"search", "storage"})
+        assert all(len(queue) <= 20 for queue in histories.values())
+        assert len(histories) <= 2
         checks += 3
     return checks
 
@@ -96,8 +97,10 @@ def check_repository(root: Path) -> int:
         "view": root / "src/FileOp.App/PerformanceDiagnosticsView.xaml",
         "view_code": root / "src/FileOp.App/PerformanceDiagnosticsView.xaml.cs",
         "tests": root / "tests/FileOp.Windows.Tests/PerformanceProbeHistoryTests.cs",
+        "scope_tests": root / "tests/FileOp.Windows.Tests/PerformanceProbeHistoryScopeTests.cs",
+        "duplicate_tests": root / "tests/FileOp.Windows.Tests/PerformanceProbeHistoryDuplicateTests.cs",
         "gate": root / "tools/test-local.ps1",
-        "performance_doc": root / "docs/performance-diagnostics.md",
+        "latency_doc": root / "docs/latency-distributions.md",
     }
     text: dict[str, str] = {}
     for name, path in paths.items():
@@ -109,7 +112,7 @@ def check_repository(root: Path) -> int:
     checks = 1
 
     for needle in (
-        "PerformanceProbeKind",
+        "public enum PerformanceProbeKind",
         "TimerBaseline",
         "Search",
         "Storage",
@@ -123,9 +126,15 @@ def check_repository(root: Path) -> int:
         "public const int DefaultSampleCapacity = 20;",
         "public const int MinimumSamplesForP95 = 5;",
         "Dictionary<ProbeKey, Queue<ProbeSample>>",
+        "EnsureActiveSource(snapshot);",
+        "_samples.Clear();",
+        "CreateSourceKey(snapshot)",
+        ".TrimEnd('\\\\', '/')",
+        "var seen = new HashSet<ProbeKey>();",
+        "if (!seen.Add(key))",
         "while (samples.Count > _sampleCapacity)",
         "samples.Dequeue();",
-        "probe.Kind is not (PerformanceProbeKind.Search or PerformanceProbeKind.Storage)",
+        "kind is not (PerformanceProbeKind.Search or PerformanceProbeKind.Storage)",
         '"Indexed search probe" => PerformanceProbeKind.Search',
         '"Storage root probe" => PerformanceProbeKind.Storage',
         '"Timer baseline" => PerformanceProbeKind.TimerBaseline',
@@ -151,13 +160,12 @@ def check_repository(root: Path) -> int:
 
     for needle in (
         "private readonly PerformanceProbeHistory _probeHistory = new();",
-        "_probeHistory",
         ".AddAndSummarize(snapshot)",
         "PerformanceProbeDistributionRow.FromDistribution",
         "LatencyDistributionList.ItemsSource = null;",
         '$"{distribution.SampleCount:N0}/{distribution.SampleCapacity:N0}"',
         "PerformanceProbeHistory.MinimumSamplesForP95",
-        '"Collect {PerformanceProbeHistory.MinimumSamplesForP95}+"',
+        '$"Collect {PerformanceProbeHistory.MinimumSamplesForP95}+"',
     ):
         assert needle in text["view_code"], needle
         checks += 1
@@ -174,13 +182,32 @@ def check_repository(root: Path) -> int:
         checks += 1
 
     for needle in (
-        "Session latency",
-        "20",
-        "p95",
-        "explicit",
-        "not persisted",
+        "SourceRootChangeStartsFreshBoundedWindow",
+        "RootIdentityIgnoresCaseAndTrailingSeparators",
+        "SourceModeChangeStartsFreshBoundedWindow",
+        "Assert.AreEqual(0, firstAgain.Count)",
     ):
-        assert needle.casefold() in text["performance_doc"].casefold(), needle
+        assert needle in text["scope_tests"], needle
+        checks += 1
+
+    for needle in (
+        "DuplicateProbeRowsInOneSnapshotCountOnce",
+        "Assert.AreEqual(1, rows[0].SampleCount)",
+        "Assert.AreEqual(10L, rows[0].MedianMicroseconds)",
+    ):
+        assert needle in text["duplicate_tests"], needle
+        checks += 1
+
+    for needle in (
+        "20 explicit diagnostics samples",
+        "nearest-rank p95",
+        "not persisted",
+        "not populated by a timer or background polling loop",
+        "starts a fresh window",
+        "at most 40 elapsed-time samples",
+        "does not present it as an SLA",
+    ):
+        assert needle.casefold() in text["latency_doc"].casefold(), needle
         checks += 1
 
     latency_source = "\n".join(text[name] for name in ("history", "view", "view_code"))
@@ -219,7 +246,7 @@ def main() -> int:
     repository_checks = 0
     if args.repo_root is not None:
         repository_checks = check_repository(args.repo_root.resolve())
-    suffix = f", {scope_checks:,} scope/capacity checks"
+    suffix = f", {scope_checks:,} active-source/capacity checks"
     if args.repo_root is not None:
         suffix += f" and {repository_checks:,} source/UI checks"
     print(

@@ -58,6 +58,90 @@ public sealed class IndexDatabaseDiagnosticsTests
     }
 
     [TestMethod]
+    public async Task ReaderPreservesDurableCheckpointIdentityPositionAndTimestamp()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"fileop-index-checkpoint-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var databasePath = Path.Combine(directory, "index.sqlite");
+        const string sourceKey = "ntfs:checkpoint-test";
+        const ulong journalId = 0xFEDCBA9876543210UL;
+        const long nextUsn = 987_654_321;
+        var updatedAt = new DateTimeOffset(2026, 8, 10, 2, 3, 4, TimeSpan.Zero);
+        var capturedAt = updatedAt.AddMinutes(30);
+
+        try
+        {
+            using (var index = new SqliteFileIndex(databasePath))
+            {
+                await index.SaveCheckpointAsync(new IndexSourceCheckpoint(
+                    sourceKey,
+                    journalId,
+                    nextUsn,
+                    updatedAt));
+            }
+
+            var diagnostics = await new SqliteIndexDatabaseDiagnosticsReader(databasePath)
+                .ReadWithCheckpointAsync(sourceKey, capturedAt);
+
+            Assert.IsNotNull(diagnostics.DurableCheckpoint);
+            Assert.AreEqual(journalId, diagnostics.DurableCheckpoint.JournalId);
+            Assert.AreEqual(nextUsn, diagnostics.DurableCheckpoint.NextUsn);
+            Assert.AreEqual(updatedAt, diagnostics.DurableCheckpoint.UpdatedAt);
+            Assert.AreEqual(capturedAt, diagnostics.CapturedAt);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void FreshnessReportsReadableWindowAsUsnDistances()
+    {
+        var updatedAt = new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero);
+        var freshness = new IndexJournalFreshnessDiagnostics(
+            7,
+            900,
+            updatedAt,
+            7,
+            500,
+            1_000);
+
+        Assert.IsTrue(freshness.JournalIdentityMatches);
+        Assert.IsTrue(freshness.CheckpointWithinReadableWindow);
+        Assert.IsFalse(freshness.CheckpointBelowRetentionFloor);
+        Assert.IsFalse(freshness.CheckpointAheadOfJournal);
+        Assert.AreEqual(100L, freshness.BacklogUsnDistance);
+        Assert.AreEqual(400L, freshness.RetentionHeadroomUsnDistance);
+        Assert.AreEqual(TimeSpan.FromMinutes(30), freshness.AgeAt(updatedAt.AddMinutes(30)));
+    }
+
+    [TestMethod]
+    public void FreshnessDoesNotInventBacklogForInvalidJournalContinuity()
+    {
+        var updatedAt = DateTimeOffset.UnixEpoch;
+        var changed = new IndexJournalFreshnessDiagnostics(1, 900, updatedAt, 2, 500, 1_000);
+        var expired = new IndexJournalFreshnessDiagnostics(1, 400, updatedAt, 1, 500, 1_000);
+        var ahead = new IndexJournalFreshnessDiagnostics(1, 1_100, updatedAt, 1, 500, 1_000);
+
+        Assert.IsFalse(changed.JournalIdentityMatches);
+        Assert.IsNull(changed.BacklogUsnDistance);
+        Assert.IsNull(changed.RetentionHeadroomUsnDistance);
+
+        Assert.IsTrue(expired.CheckpointBelowRetentionFloor);
+        Assert.IsNull(expired.BacklogUsnDistance);
+        Assert.IsNull(expired.RetentionHeadroomUsnDistance);
+
+        Assert.IsTrue(ahead.CheckpointAheadOfJournal);
+        Assert.IsNull(ahead.BacklogUsnDistance);
+        Assert.IsNull(ahead.RetentionHeadroomUsnDistance);
+    }
+
+    [TestMethod]
     public void DerivedMetricsStayConservativeAndDoNotClaimResidentCache()
     {
         var diagnostics = new IndexDatabaseDiagnostics(

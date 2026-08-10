@@ -20,7 +20,8 @@ internal sealed partial class DesktopSearchEngine
             "Timer baseline",
             "local process",
             timerOverhead,
-            "Minimum Stopwatch start/stop cost across 128 samples; shown to bound measurement overhead."));
+            "Minimum Stopwatch start/stop cost across 128 samples; shown to bound measurement overhead.",
+            PerformanceProbeKind.TimerBaseline));
 
         if (!state.IsBusy &&
             (state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback))
@@ -31,7 +32,8 @@ internal sealed partial class DesktopSearchEngine
                 "Indexed search probe",
                 state.Mode == DesktopSearchMode.Native ? "native index" : "profile fallback",
                 ToMicroseconds(Stopwatch.GetElapsedTime(searchStart)),
-                $"Exact probe: empty query, limit 1; returned {search.Count:N0} item(s)."));
+                $"Exact probe: empty query, limit 1; returned {search.Count:N0} item(s).",
+                PerformanceProbeKind.Search));
 
             if (root is not null)
             {
@@ -41,7 +43,8 @@ internal sealed partial class DesktopSearchEngine
                     "Storage root probe",
                     state.Mode == DesktopSearchMode.Native ? "native index" : "profile fallback",
                     ToMicroseconds(Stopwatch.GetElapsedTime(storageStart)),
-                    $"Exact probe: root analysis, maxEntries 1; {analysis.UniqueFileCount:N0} unique file(s) in scope."));
+                    $"Exact probe: root analysis, maxEntries 1; {analysis.UniqueFileCount:N0} unique file(s) in scope.",
+                    PerformanceProbeKind.Storage));
             }
         }
 

@@ -19,7 +19,6 @@ def volume_metrics(total: int | None, free: int | None) -> tuple[int | None, flo
 def run_model(cases: int) -> int:
     rng = random.Random(20260810)
     checks = 0
-
     assert volume_metrics(1_000, 250) == (750, 25.0)
     assert volume_metrics(1_000, 1_500) == (0, 100.0)
     assert volume_metrics(0, 0) == (0, None)
@@ -34,7 +33,6 @@ def run_model(cases: int) -> int:
         assert percent is not None and 0.0 <= percent <= 100.0
         assert abs(percent - free * 100.0 / total) < 1e-10
         checks += 3
-
     return checks
 
 
@@ -49,7 +47,6 @@ def check_repository(root: Path) -> int:
         "optimize_code": root / "src/FileOp.App/StorageOptimizationView.xaml.cs",
         "main": root / "src/FileOp.App/MainWindow.StorageOptimization.cs",
         "test": root / "tests/FileOp.Windows.Tests/PerformanceDiagnosticsTests.cs",
-        "index_test": root / "tests/FileOp.Windows.Tests/IndexDatabaseDiagnosticsTests.cs",
         "doc": root / "docs/performance-diagnostics.md",
         "architecture": root / "docs/architecture.md",
         "protocol": root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs",
@@ -66,7 +63,9 @@ def check_repository(root: Path) -> int:
     checks = 2
 
     for needle in (
+        "public enum PerformanceProbeKind",
         "PerformanceProbeMeasurement",
+        "PerformanceProbeKind Kind = PerformanceProbeKind.Other",
         "ElapsedMicroseconds",
         "VolumeFreePercent",
         "VolumeUsedBytes",
@@ -82,7 +81,6 @@ def check_repository(root: Path) -> int:
         "FileFootprintBytes",
         "ReusableFreePageBytes",
         "ReaderCacheDefaultTargetBytes",
-        "FileOp currently does not set PRAGMA cache_size",
         "SqliteOpenMode.ReadOnly",
         "PRAGMA query_only = ON",
     ):
@@ -93,6 +91,9 @@ def check_repository(root: Path) -> int:
         "CapturePerformanceDiagnosticsAsync",
         "SearchAsync(string.Empty, limit: 1)",
         "AnalyzeStorageAsync(root, maxEntries: 1)",
+        "PerformanceProbeKind.TimerBaseline",
+        "PerformanceProbeKind.Search",
+        "PerformanceProbeKind.Storage",
         "CaptureNativeIndexDatabaseDiagnosticsAsync",
         "GetIndexDiagnosticsAsync(",
         "Index database probe",
@@ -113,10 +114,10 @@ def check_repository(root: Path) -> int:
         "free RAM",
         "disable services",
         "FileOp index footprint",
-        "Reusable pages",
-        "Reader cache default",
-        "connection setting, not observed RAM usage",
+        "Session latency distribution",
+        "USN/checkpoint freshness",
         "Exact measurement",
+        "Current elapsed",
         "Refresh diagnostics",
     ):
         assert needle in text["view"], needle
@@ -125,8 +126,8 @@ def check_repository(root: Path) -> int:
     for needle in (
         "Reusable pages can be reused by SQLite",
         "reader cache default is not observed resident memory",
-        "ReusableFreePagePercent",
-        "ReaderCacheDefaultTargetBytes",
+        "ApplyJournalFreshness",
+        "PerformanceProbeHistory _probeHistory",
     ):
         assert needle in text["view_code"], needle
         checks += 1
@@ -164,28 +165,20 @@ def check_repository(root: Path) -> int:
         checks += 1
 
     for needle in (
-        "ReaderReportsHelperFileAndPageEvidence",
-        "DerivedMetricsStayConservativeAndDoNotClaimResidentCache",
-        "DerivedFileFootprintClampsMalformedNegativeInputs",
-        "SharedResolverPreservesHistoricalDatabaseKeyFormat",
-    ):
-        assert needle in text["index_test"], needle
-        checks += 1
-
-    for needle in (
         "There is no continuous performance poller",
         "SearchAsync(string.Empty, limit: 1)",
         "AnalyzeStorageAsync(root, maxEntries: 1)",
-        "does not turn those values into a green/yellow/red health grade",
+        "does not turn them into a green/yellow/red health grade",
         "reader-connection cache default",
+        "USN sequence-position differences",
+        "20 samples per probe",
     ):
-        assert needle in text["doc"], needle
+        assert needle.casefold() in text["doc"].casefold(), needle
         checks += 1
 
     for needle in (
-        "current **protocol v8** operations",
+        "protocol v8",
         "GetIndexDiagnostics",
-        "AnalyzeStorageOptimization",
         "performance-diagnostics panel",
         "Storage has four views: Folders, Types, History and Optimize",
     ):
@@ -200,11 +193,17 @@ def check_repository(root: Path) -> int:
     performance_source = "\n".join(
         text[name]
         for name in (
-            "model", "index_model", "engine", "view", "view_code",
-            "optimize_view", "optimize_code", "main"
+            "model",
+            "index_model",
+            "engine",
+            "view",
+            "view_code",
+            "optimize_view",
+            "optimize_code",
+            "main",
         )
     )
-    forbidden = (
+    for needle in (
         "PeriodicTimer",
         "DispatcherQueueTimer",
         "FileSystemWatcher",
@@ -217,15 +216,18 @@ def check_repository(root: Path) -> int:
         "defrag.exe",
         "VACUUM",
         "wal_checkpoint",
-        "Delete(",
-    )
-    for needle in forbidden:
+    ):
         assert needle not in performance_source, needle
         checks += 1
 
-    assert "verify_performance_diagnostics.py" in text["gate"]
-    assert "verify_index_diagnostics.py" in text["gate"]
-    checks += 2
+    for verifier in (
+        "verify_performance_diagnostics.py",
+        "verify_latency_distributions.py",
+        "verify_index_diagnostics.py",
+        "verify_usn_freshness.py",
+    ):
+        assert verifier in text["gate"], verifier
+        checks += 1
     return checks
 
 

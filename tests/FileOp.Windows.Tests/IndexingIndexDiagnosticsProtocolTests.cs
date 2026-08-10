@@ -30,7 +30,7 @@ public sealed class IndexingIndexDiagnosticsProtocolTests
     }
 
     [TestMethod]
-    public async Task NamedPipeRoundTripPreservesIndexDatabaseEvidence()
+    public async Task NamedPipeRoundTripPreservesIndexDatabaseAndJournalEvidence()
     {
         var diagnostics = Diagnostics();
         using var backend = new FakeBackend
@@ -57,15 +57,24 @@ public sealed class IndexingIndexDiagnosticsProtocolTests
             Assert.AreEqual(102_400L, response.Diagnostics.ReusableFreePageBytes);
             Assert.AreEqual(2_048_000L, response.Diagnostics.ReaderCacheDefaultTargetBytes);
             Assert.AreEqual("wal", response.Diagnostics.JournalMode);
+            Assert.IsNotNull(response.Diagnostics.DurableCheckpoint);
+            Assert.AreEqual(7UL, response.Diagnostics.DurableCheckpoint.JournalId);
+            Assert.AreEqual(900L, response.Diagnostics.DurableCheckpoint.NextUsn);
+            Assert.IsNotNull(response.Diagnostics.JournalFreshness);
+            Assert.IsTrue(response.Diagnostics.JournalFreshness.JournalIdentityMatches);
+            Assert.AreEqual(100L, response.Diagnostics.JournalFreshness.BacklogUsnDistance);
+            Assert.AreEqual(400L, response.Diagnostics.JournalFreshness.RetentionHeadroomUsnDistance);
         }
 
         await serverTask.WaitAsync(cancellation.Token);
         Assert.AreEqual(1, backend.Calls);
     }
 
-    private static IndexDatabaseDiagnostics Diagnostics() =>
-        new(
-            new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero),
+    private static IndexDatabaseDiagnostics Diagnostics()
+    {
+        var updatedAt = new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero);
+        return new IndexDatabaseDiagnostics(
+            updatedAt.AddMinutes(30),
             42,
             DatabaseFileBytes: 1_000,
             WalFileBytes: 200,
@@ -74,7 +83,16 @@ public sealed class IndexingIndexDiagnosticsProtocolTests
             PageCount: 100,
             FreePageCount: 25,
             CacheSizeSetting: -2_000,
-            JournalMode: "wal");
+            JournalMode: "wal",
+            DurableCheckpoint: new IndexJournalCheckpointDiagnostics(7, 900, updatedAt),
+            JournalFreshness: new IndexJournalFreshnessDiagnostics(
+                7,
+                900,
+                updatedAt,
+                7,
+                500,
+                1_000));
+    }
 
     private sealed class FakeBackend : IIndexingServiceBackend
     {
