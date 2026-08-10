@@ -77,9 +77,9 @@ public sealed class WindowsDiskIoNativeTraceConsumerApiTests
         InvokeEventCallback(api, new IntPtr(123));
 
         Assert.AreEqual(0u, InvokeBufferCallback(api, new IntPtr(789)));
-        var actual = Assert.ThrowsException<TargetInvocationException>(() =>
+        var actual = Assert.ThrowsException<InvalidOperationException>(() =>
             InvokeThrowCallbackFault(api));
-        Assert.AreSame(expected, actual.InnerException);
+        Assert.AreSame(expected, actual);
     }
 
     [TestMethod]
@@ -92,7 +92,7 @@ public sealed class WindowsDiskIoNativeTraceConsumerApiTests
 
         Assert.AreEqual(0, sink.EventCalls);
         Assert.AreEqual(0u, InvokeBufferCallback(api, new IntPtr(789)));
-        Assert.ThrowsException<TargetInvocationException>(() =>
+        Assert.ThrowsException<InvalidDataException>(() =>
             InvokeThrowCallbackFault(api));
     }
 
@@ -104,9 +104,9 @@ public sealed class WindowsDiskIoNativeTraceConsumerApiTests
         var api = new WindowsDiskIoNativeTraceConsumerApi(sink);
 
         Assert.AreEqual(0u, InvokeBufferCallback(api, new IntPtr(789)));
-        var actual = Assert.ThrowsException<TargetInvocationException>(() =>
+        var actual = Assert.ThrowsException<IOException>(() =>
             InvokeThrowCallbackFault(api));
-        Assert.AreSame(expected, actual.InnerException);
+        Assert.AreSame(expected, actual);
     }
 
     [TestMethod]
