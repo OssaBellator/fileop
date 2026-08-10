@@ -49,6 +49,7 @@ def check_repository(root: Path) -> int:
         "main": root / "src/FileOp.App/MainWindow.StorageOptimization.cs",
         "test": root / "tests/FileOp.Windows.Tests/PerformanceDiagnosticsTests.cs",
         "doc": root / "docs/performance-diagnostics.md",
+        "architecture": root / "docs/architecture.md",
         "protocol": root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs",
         "gate": root / "tools/test-local.ps1",
     }
@@ -99,12 +100,20 @@ def check_repository(root: Path) -> int:
         checks += 1
 
     assert '<local:PerformanceDiagnosticsView x:Name="PerformanceDiagnostics" />' in text["optimize_view"]
-    assert "PerformanceDiagnostics.RefreshRequested += PerformanceDiagnostics_RefreshRequested;" in text["optimize_code"]
-    assert "PerformanceDiagnostics.SetReadyForRefresh(ready);" in text["optimize_code"]
-    assert "SetPerformanceUnavailable" in text["optimize_code"]
-    checks += 4
+    for needle in (
+        "PerformanceDiagnostics.RefreshRequested += PerformanceDiagnostics_RefreshRequested;",
+        "public event EventHandler? PerformanceRefreshRequested;",
+        "PerformanceRefreshRequested?.Invoke(this, EventArgs.Empty);",
+        "PerformanceDiagnostics.SetReadyForRefresh(ready);",
+        "SetPerformanceUnavailable",
+    ):
+        assert needle in text["optimize_code"], needle
+        checks += 1
 
     for needle in (
+        "StorageOptimizationView_PerformanceRefreshRequested",
+        "_storageOptimizationView.PerformanceRefreshRequested +=",
+        "_storageOptimizationView.SetPerformanceLoading();",
         "await CapturePerformanceDiagnosticsAsync(generation);",
         "private async Task CapturePerformanceDiagnosticsAsync(int generation)",
         "_searchEngine.CapturePerformanceDiagnosticsAsync()",
@@ -129,6 +138,15 @@ def check_repository(root: Path) -> int:
         "does not turn those values into a green/yellow/red health grade",
     ):
         assert needle in text["doc"], needle
+        checks += 1
+
+    for needle in (
+        "current **protocol v7** operations",
+        "AnalyzeStorageOptimization",
+        "performance-diagnostics panel",
+        "Storage has four views: Folders, Types, History and Optimize",
+    ):
+        assert needle.casefold() in text["architecture"].casefold(), needle
         checks += 1
 
     assert "public const int CurrentVersion = 7;" in text["protocol"]
