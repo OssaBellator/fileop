@@ -15,8 +15,8 @@ public sealed record IndexDatabaseDiagnostics(
     string JournalMode)
 {
     public long FileFootprintBytes => SaturatingAdd(
-        SaturatingAdd(DatabaseFileBytes, WalFileBytes),
-        SharedMemoryFileBytes);
+        SaturatingAdd(Math.Max(0, DatabaseFileBytes), Math.Max(0, WalFileBytes)),
+        Math.Max(0, SharedMemoryFileBytes));
 
     public long LogicalDatabasePageBytes => SaturatingMultiply(PageSizeBytes, PageCount);
 
@@ -28,9 +28,10 @@ public sealed record IndexDatabaseDiagnostics(
         ? Math.Clamp(FreePageCount * 100d / PageCount, 0d, 100d)
         : null;
 
-    // SQLite PRAGMA cache_size is a suggested maximum. Positive values are pages;
-    // negative values are an approximate KiB target. This is not observed resident memory.
-    public long? ConfiguredCacheTargetBytes
+    // FileOp currently does not set PRAGMA cache_size. This value therefore describes
+    // the default target observed on the diagnostics reader connection. Positive values
+    // are pages; negative values are an approximate KiB target. It is not resident RAM.
+    public long? ReaderCacheDefaultTargetBytes
     {
         get
         {
