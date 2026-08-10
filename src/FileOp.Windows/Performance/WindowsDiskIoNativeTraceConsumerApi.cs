@@ -25,6 +25,8 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
     private bool _processActive;
     private bool _callbackCancellationRequested;
     private ExceptionDispatchInfo? _callbackFault;
+    private WindowsDiskIoTraceLogfileBuffer? _logfileBuffer;
+    private IntPtr _loggerNameMemory;
 
     public WindowsDiskIoNativeTraceConsumerApi(IWindowsDiskIoNativeTraceCallbackSink sink)
     {
@@ -40,7 +42,7 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionName);
         lock (_gate)
         {
-            if (_openedHandle != 0 || _openActive || _processActive)
+            if (_openedHandle != 0 || _openActive || _processActive || _logfileBuffer is not null)
             {
                 throw new InvalidOperationException(
                     "This native ETW consumer adapter is already opening, owns, or is draining a processing handle.");
@@ -53,10 +55,11 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
         }
 
         var loggerName = IntPtr.Zero;
+        WindowsDiskIoTraceLogfileBuffer? logfile = null;
         try
         {
             loggerName = Marshal.StringToHGlobalUni(sessionName);
-            using var logfile = WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
+            logfile = WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
                 loggerName,
                 processTraceMode,
                 Marshal.GetFunctionPointerForDelegate(_bufferCallback),
@@ -74,6 +77,10 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
             lock (_gate)
             {
                 _openedHandle = handle;
+                _loggerNameMemory = loggerName;
+                _logfileBuffer = logfile;
+                loggerName = IntPtr.Zero;
+                logfile = null;
             }
 
             return new WindowsDiskIoNativeOpenResult(
@@ -82,6 +89,7 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
         }
         finally
         {
+            logfile?.Dispose();
             if (loggerName != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(loggerName);
@@ -132,6 +140,7 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
             lock (_gate)
             {
                 _processActive = false;
+                ReleaseNativeOpenStateIfSafe();
             }
         }
     }
@@ -154,17 +163,38 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
                 {
                     _openedHandle = 0;
                 }
+
+                ReleaseNativeOpenStateIfSafe();
             }
         }
 
         return status;
     }
 
+    private void ReleaseNativeOpenStateIfSafe()
+    {
+        if (_openedHandle != 0 || _openActive || _processActive)
+        {
+            return;
+        }
+
+        _logfileBuffer?.Dispose();
+        _logfileBuffer = null;
+
+        if (_loggerNameMemory != IntPtr.Zero)
+        {
+            Marshal.FreeHGlobal(_loggerNameMemory);
+            _loggerNameMemory = IntPtr.Zero;
+        }
+    }
+
     private void EnsureOwnedHandle(ulong processingHandle)
     {
         if (processingHandle == 0 ||
             WindowsDiskIoTraceConsumerPolicy.IsInvalidProcessingHandle(processingHandle) ||
-            _openedHandle != processingHandle)
+            _openedHandle != processingHandle ||
+            _logfileBuffer is null ||
+            _loggerNameMemory == IntPtr.Zero)
         {
             throw new InvalidOperationException(
                 "The supplied ETW processing handle is not owned by this FileOp consumer adapter.");
