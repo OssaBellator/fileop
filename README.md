@@ -80,10 +80,10 @@ Optimize also contains **measured performance evidence**. On demand it records b
 - main database, WAL and shared-memory file footprint;
 - SQLite page size and page count;
 - freelist page count and reusable-page bytes;
-- configured SQLite cache target;
+- the default `cache_size` target observed on the diagnostics reader connection;
 - journal mode and indexed-row count.
 
-Reusable freelist pages are described as internal database space SQLite can reuse, not automatic reclaimable space. `PRAGMA cache_size` is shown as a configuration target, not observed resident RAM or cache-hit evidence. The helper takes the same shared read lease and requires a valid durable checkpoint before reporting these numbers. No `VACUUM`, WAL checkpoint forcing or other database mutation is performed by diagnostics.
+Reusable freelist pages are described as internal database space SQLite can reuse, not automatic reclaimable space. FileOp currently does not set `PRAGMA cache_size`, so the displayed reader-connection cache default is not a FileOp tuning choice, observed resident RAM, live cache occupancy or cache-hit evidence. The helper takes the same shared read lease and requires a valid durable checkpoint before reporting these numbers. No `VACUUM`, WAL checkpoint forcing or other database mutation is performed by diagnostics.
 
 Storage therefore has **Folders, Types, History and Optimize** modes: Folders explains where space is used, Types explains what uses it, History explains what changed, and Optimize identifies evidence-backed reclaim candidates plus measurable performance state.
 
@@ -93,7 +93,7 @@ The desktop process always remains non-elevated. Native indexing starts with the
 
 The per-session pipe is restricted to the current Windows user and exact desktop PID. Requests are versioned, framed and capped at 8 MiB. Oversized responses return retryable `ResponseTooLarge` without destroying an otherwise healthy session.
 
-The app build places the reviewed `FileOp.Indexer` host beside `FileOp.App`. Runtime resolution accepts only that exact adjacent non-reparse executable. This is a deterministic location rule, not an Authenticode trust claim; signed packaging still needs publisher/signature verification before elevation is offered.
+The app build places the reviewed `FileOp.Indexer` host beside `FileOp.App`. Runtime resolution accepts only the exact adjacent non-reparse executable. This is a deterministic location rule, not an Authenticode trust claim; signed packaging still needs publisher/signature verification before elevation is offered.
 
 ## Query examples
 
@@ -149,7 +149,7 @@ python tools/verify_files_ui.py --self-test-only --cases 10000
 python tools/verify_directory_browse.py --self-test-only --cases 10000
 ```
 
-Repository-mode variants validate source wiring as well. The Optimize verifier checks hard-link collapse, measured-size ranking, stale-age filtering, same-size upper-bound semantics, read-only service wiring, WinUI disclaimers and stale-load invalidation. The performance/index verifiers check exact bounded probe arguments, helper-owned read-only SQLite evidence, protocol-v8 wiring, shared database identity, cache/freelist semantics and the no-polling/no-fake-optimiser boundary. The Files verifier checks exact page accumulation, Load-more/cursor lifecycle and active-load supersession; the paged-browse verifier separately exercises SQLite keyset pagination over randomized fixtures and guards read-only database access, cross-process lease/checkpoint wiring, native/fallback routing and the no-rescan rule.
+Repository-mode variants validate source wiring as well. The Optimize verifier checks hard-link collapse, measured-size ranking, stale-age filtering, same-size upper-bound semantics, read-only service wiring, WinUI disclaimers and stale-load invalidation. The performance/index verifiers check exact bounded probe arguments, helper-owned read-only SQLite evidence, protocol-v8 wiring, shared database identity, reader-cache/freelist semantics and the no-polling/no-fake-optimiser boundary. The Files verifier checks exact page accumulation, Load-more/cursor lifecycle and active-load supersession; the paged-browse verifier separately exercises SQLite keyset pagination over randomized fixtures and guards read-only database access, cross-process lease/checkpoint wiring, native/fallback routing and the no-rescan rule.
 
 Run all standard-library verifiers without requiring the .NET SDK:
 
