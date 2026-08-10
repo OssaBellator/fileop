@@ -99,28 +99,23 @@ internal sealed class WindowsDiskIoCaptureCollector : IWindowsDiskIoNativeTraceC
             performanceCounterFrequency,
             out var decoded) || decoded is null)
         {
-            lock (_gate)
-            {
-                _ignoredEventCount = SaturatingIncrement(_ignoredEventCount);
-            }
+            IncrementIgnored();
+            return true;
+        }
+
+        var observationTimestamp = WindowsDiskIoIssuingThreadResolver.ConvertEventTimestamp(
+            decoded.EventTimestamp);
+        if (observationTimestamp < windowStart || observationTimestamp > windowEnd)
+        {
+            IncrementIgnored();
             return true;
         }
 
         var ownerResolution = _ownerResolver.Resolve(
             decoded.Completion.IssuingThreadId,
             decoded.EventTimestamp);
-        if (ownerResolution.ObservationTimestamp < windowStart ||
-            ownerResolution.ObservationTimestamp > windowEnd)
-        {
-            lock (_gate)
-            {
-                _ignoredEventCount = SaturatingIncrement(_ignoredEventCount);
-            }
-            return true;
-        }
-
         var observation = new DiskIoEventObservation(
-            ownerResolution.ObservationTimestamp,
+            observationTimestamp,
             decoded.Completion.PhysicalDiskNumber,
             decoded.Completion.Operation,
             decoded.Completion.TransferBytes,
@@ -187,6 +182,14 @@ internal sealed class WindowsDiskIoCaptureCollector : IWindowsDiskIoNativeTraceC
         }
 
         _ownerResolver.Dispose();
+    }
+
+    private void IncrementIgnored()
+    {
+        lock (_gate)
+        {
+            _ignoredEventCount = SaturatingIncrement(_ignoredEventCount);
+        }
     }
 
     private void EnsureConfigured()
