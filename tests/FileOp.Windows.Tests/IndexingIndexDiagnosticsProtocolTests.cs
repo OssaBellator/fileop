@@ -20,13 +20,13 @@ public sealed class IndexingIndexDiagnosticsProtocolTests
             Guid.NewGuid(),
             IndexingServiceOperation.GetIndexDiagnostics,
             System.Text.Json.JsonSerializer.SerializeToElement(
-                new IndexingIndexDiagnosticsRequest(0x1234, @"C:\\.")));
+                new IndexingIndexDiagnosticsRequest(0x1234, @"C:\.")));
 
         var response = await dispatcher.DispatchAsync(request);
 
         Assert.IsTrue(response.Success);
         Assert.AreEqual(1, backend.Calls);
-        Assert.AreEqual(Path.GetFullPath(@"C:\\."), backend.LastRequest?.VolumeRootPath);
+        Assert.AreEqual(Path.GetFullPath(@"C:\."), backend.LastRequest?.VolumeRootPath);
     }
 
     [TestMethod]
