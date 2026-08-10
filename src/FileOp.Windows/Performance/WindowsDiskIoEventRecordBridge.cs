@@ -9,8 +9,6 @@ internal sealed record WindowsDiskIoDecodedEvent(
 
 internal static class WindowsDiskIoEventRecordBridge
 {
-    internal const ushort EventHeaderFlag32Bit = 0x0020;
-    internal const ushort EventHeaderFlag64Bit = 0x0040;
     internal const ushort EventHeaderFlagClassic = 0x0100;
 
     public static bool TryDecodeCompletion(
@@ -38,8 +36,7 @@ internal static class WindowsDiskIoEventRecordBridge
         }
 
         var metadata = WindowsDiskIoTraceMetadata.FromEventHeaderFlags(
-            has32BitHeaderFlag: (record.Flags & EventHeaderFlag32Bit) != 0,
-            has64BitHeaderFlag: (record.Flags & EventHeaderFlag64Bit) != 0,
+            record.Flags,
             performanceCounterFrequency);
 
         if (!WindowsDiskIoEventDecoder.TryDecodeCompletion(
