@@ -6,6 +6,8 @@ namespace FileOp.App;
 
 public sealed partial class PerformanceDiagnosticsView : UserControl
 {
+    private readonly PerformanceProbeHistory _probeHistory = new();
+
     public PerformanceDiagnosticsView()
     {
         InitializeComponent();
@@ -24,6 +26,7 @@ public sealed partial class PerformanceDiagnosticsView : UserControl
     {
         StatusText.Text = message;
         ProbeList.ItemsSource = null;
+        LatencyDistributionList.ItemsSource = null;
         ResetIndexMetrics();
         IndexStatusText.Text = message;
         RefreshButton.IsEnabled = false;
@@ -49,6 +52,10 @@ public sealed partial class PerformanceDiagnosticsView : UserControl
         CapturedText.Text = snapshot.CapturedAt.ToLocalTime().ToString("g");
         ProbeList.ItemsSource = snapshot.Probes
             .Select(PerformanceProbeRow.FromMeasurement)
+            .ToArray();
+        LatencyDistributionList.ItemsSource = _probeHistory
+            .AddAndSummarize(snapshot)
+            .Select(PerformanceProbeDistributionRow.FromDistribution)
             .ToArray();
         StatusText.Text = snapshot.RootPath is { } root
             ? $"{snapshot.IndexState} · scope {root}"
@@ -113,6 +120,34 @@ public sealed record PerformanceProbeRow(
             measurement.Scope,
             FormatElapsed(measurement.ElapsedMicroseconds),
             measurement.Detail);
+
+    private static string FormatElapsed(long microseconds) =>
+        microseconds >= 1_000
+            ? $"{microseconds / 1_000d:N2} ms"
+            : $"{microseconds:N0} µs";
+}
+
+public sealed record PerformanceProbeDistributionRow(
+    string Name,
+    string Scope,
+    string SamplesText,
+    string MinimumText,
+    string MedianText,
+    string P95Text,
+    string MaximumText)
+{
+    public static PerformanceProbeDistributionRow FromDistribution(
+        PerformanceProbeDistribution distribution) =>
+        new(
+            distribution.Name,
+            distribution.Scope,
+            $"{distribution.SampleCount:N0}/{distribution.SampleCapacity:N0}",
+            FormatElapsed(distribution.MinimumMicroseconds),
+            FormatElapsed(distribution.MedianMicroseconds),
+            distribution.P95Microseconds is { } p95
+                ? FormatElapsed(p95)
+                : $"Collect {PerformanceProbeHistory.MinimumSamplesForP95}+",
+            FormatElapsed(distribution.MaximumMicroseconds));
 
     private static string FormatElapsed(long microseconds) =>
         microseconds >= 1_000
