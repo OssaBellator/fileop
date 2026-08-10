@@ -2,73 +2,75 @@
 
 ## Purpose
 
-#78 decodes a classic DiskIo completion into physical disk, operation, bytes, response time and the **issuing thread ID**. This slice resolves that issuing thread to a stable #69 process identity without treating a reusable PID or TID as durable identity by itself.
+#78 decodes classic DiskIo completions into physical-disk and issuing-thread evidence. This resolver maps the issuing TID to #69's stable process identity without treating a reusable numeric TID/PID as durable ownership by itself.
 
-The resolver is scoped to one short DiskIo capture session. It opens only thread IDs observed in decoded completions; it does not enumerate processes or threads.
+The resolver belongs to one short DiskIo capture. It opens only thread IDs observed in decoded completions; it does not enumerate processes or threads.
 
-## Stable identity rule
+## Stable process identity
 
-#69 defines process ownership as:
+#69 identifies a process instance by:
 
 ```text
 PID + process creation time + optional image name
 ```
 
-The Windows resolver preserves that boundary. A PID without a process creation time is not returned as an owner.
+A PID without a process creation time is not returned as an owner. Image-name lookup is optional enrichment; PID + process start time remain sufficient stable identity when the path/name cannot be queried.
 
-Image-name lookup is optional enrichment. If `QueryFullProcessImageNameW` fails after PID + process creation time are proven, FileOp may still return a stable owner with `ImageName = null`.
+## Numeric IDs are reusable
 
-## Why the resolver pins handles
+Windows thread and process identifiers may be reused after the previous object terminates. Retaining an old handle does **not** make the numeric ID permanently unique.
 
-Windows thread and process identifiers can be reused after the corresponding object has terminated and been released. During a FileOp capture the resolver therefore retains limited-query handles for successfully resolved thread/process objects.
+FileOp therefore retains limited-query handles as **reuse detectors**. When a cached numeric ID appears again, FileOp performs a zero-time `WaitForSingleObject` on the cached object:
 
-Holding the object handle through the short capture gives the cache a stable object lifetime instead of repeatedly asking whether the same numeric ID still refers to the same object.
+- `WAIT_TIMEOUT` — the cached object is still active, so its cached lifetime metadata may be reused;
+- `WAIT_OBJECT_0` — the cached object terminated; FileOp closes and removes that entry before reopening the numeric ID;
+- any other result — object state is indeterminate and the event remains unattributed.
 
-The resolver has hard cache bounds:
+The zero-time wait is synchronous and only occurs when a cached ID is reused by the incoming evidence. There is no polling loop or background timer.
 
-- default maximum cached threads: **2,048**;
-- default maximum cached processes: **1,024**.
+## Access rights
 
-When a cap is reached, a new identity is reported as unresolved. FileOp does not evict a pinned identity and silently replace it with a newer object that reused the same numeric ID during the same capture.
+Thread handles use:
 
-The cache belongs to the capture session and is disposed when that capture ends.
+```text
+THREAD_QUERY_LIMITED_INFORMATION | SYNCHRONIZE
+```
 
-## Event and creation-time comparison
+Process handles use:
 
-#75 does not request `PROCESS_TRACE_MODE_RAW_TIMESTAMP`. On FileOp's supported Windows versions, `ProcessTrace` supplies `EVENT_HEADER.TimeStamp` as system time in FILETIME units: 100-nanosecond intervals since January 1, 1601 UTC.
+```text
+PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE
+```
 
-`GetThreadTimes` and `GetProcessTimes` return their creation times as FILETIME values on the same epoch. FileOp converts all three through UTC FILETIME conversion before comparing lifetimes.
+`SYNCHRONIZE` exists only to perform the zero-time object-state check. FileOp does not request all-access rights, tokens, process memory, suspension, termination, or other control rights.
 
-A lookup is rejected if:
+## Event-time validation
 
-- the thread creation time is later than the I/O event time; or
-- the process creation time is later than the I/O event time.
+#75 does not request `PROCESS_TRACE_MODE_RAW_TIMESTAMP`, so `ProcessTrace` converts ETW event timestamps to system FILETIME values. `GetThreadTimes` and `GetProcessTimes` return creation FILETIMEs on the same epoch.
 
-Those states are explicit evidence of an ID/lifetime mismatch. The event remains unattributed instead of being assigned to the current owner of a reused ID.
+After resolving the current Windows objects, FileOp rejects attribution if:
 
-A thread that is already opened and found to start after an older event remains pinned. A later event from that same current thread can then resolve without reopening the numeric TID.
+- the current thread was created after the I/O event; or
+- the current process was created after the I/O event.
 
-A process found to start after an event is **not cached** for that failed attempt. The temporary process/thread handles are released so a later event can retry and establish a valid lifetime relationship.
+This protects delayed queued ETW records after ID reuse. If an old TID terminated and Windows already assigned that number to a newer thread, the old cached handle becomes signaled, FileOp reopens the current TID, and the newer creation time prevents the old event from being assigned to the new owner.
 
-## Lookup sequence
+## Bounded caches
 
-For a previously unseen issuing thread ID, FileOp performs:
+Defaults remain:
 
-1. `OpenThread(THREAD_QUERY_LIMITED_INFORMATION)`;
-2. `GetThreadTimes` for thread creation FILETIME;
-3. `GetProcessIdOfThread`;
-4. reject PID `0` or a native PID outside Core's signed process-ID range;
-5. reuse an already pinned process entry when available, otherwise:
-   - `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`;
-   - `GetProcessTimes` for process creation FILETIME;
-   - verify process creation is not later than the event;
-   - best-effort `QueryFullProcessImageNameW`;
-   - pin the process handle;
-6. pin the thread handle;
-7. verify both cached creation times against the observation time;
-8. return #69 `DiskIoProcessIdentity` only when the stable lifetime checks succeed.
+- **2,048** cached thread objects;
+- **1,024** cached process objects.
 
-The resolver asks only for limited query rights. It does not request all-access thread/process handles.
+Active entries are not evicted just to make room. Positively terminated entries may be evicted because their handles prove they no longer describe a running object for that numeric ID.
+
+The cache belongs to a single short capture and is disposed when capture ends.
+
+## Close-before-remove rule
+
+When a terminated cached object is evicted, FileOp closes its handle **before** removing the dictionary entry. If `CloseHandle` fails, the old cache entry remains present so cleanup can be retried; FileOp does not lose its last managed reference to the handle.
+
+Resolver disposal attempts every remaining cached handle even if one close reports an error, then surfaces the first cleanup failure.
 
 ## Explicit unresolved states
 
@@ -78,57 +80,54 @@ The resolver asks only for limited query rights. It does not request all-access 
 - thread cache limit reached;
 - thread unavailable;
 - thread creation time unavailable;
+- cached thread state unavailable;
 - process cache limit reached;
 - process unavailable;
-- native PID outside Core's identity range;
+- native PID outside Core's signed process-ID range;
 - process creation time unavailable;
+- cached process state unavailable;
 - thread created after the event;
 - process created after the event;
 - resolved.
 
-The later capture report can aggregate these reasons as attribution coverage evidence instead of hiding unresolved I/O inside an arbitrary “System” bucket.
+A later provider can expose these reason counts as attribution-coverage evidence instead of hiding unresolved I/O inside an arbitrary process bucket.
 
-## Cleanup
+## Lookup sequence
 
-Temporary handles are released on every failed path.
+For a previously unseen/current issuing TID FileOp:
 
-Pinned thread/process handles are closed when the resolver is disposed. Cleanup attempts **every** cached handle even if one close reports an error; after all attempts, the first cleanup failure is surfaced.
-
-This makes resource release best-effort-complete without presenting a partial cleanup as success.
+1. checks a cached TID handle if present;
+2. if terminated, closes/removes it; if indeterminate, leaves the event unattributed;
+3. opens the current TID with limited-query + synchronize rights;
+4. reads thread creation time and current PID;
+5. rejects PID `0` or a native PID outside Core's signed process-ID range;
+6. checks a cached PID handle if present;
+7. if terminated, closes/removes it; if indeterminate, leaves the event unattributed;
+8. opens the current PID when necessary and reads process creation time;
+9. validates process/thread creation times against the ETW event FILETIME;
+10. returns #69 `DiskIoProcessIdentity` only for a lifetime-consistent process instance.
 
 ## Deliberate non-goals
 
 This resolver does not:
 
-- use `Process.GetProcessById` as a PID-only identity shortcut;
-- use WMI or Toolhelp process/thread enumeration;
-- poll processes or threads;
-- request elevation;
-- modify privileges, ACLs or group membership;
-- request `PROCESS_ALL_ACCESS` or `THREAD_ALL_ACCESS`;
-- open process tokens;
-- suspend, terminate or otherwise control a process/thread;
+- use PID-only `Process.GetProcessById` attribution;
+- enumerate processes or threads with WMI or Toolhelp;
+- poll process/thread state;
+- request elevation or modify privileges;
+- request all-access handles;
 - read process memory;
-- create `DiskIoEventObservation` values;
-- aggregate attribution;
+- suspend, terminate or otherwise control a process/thread;
+- create or aggregate DiskIo observations;
 - add protocol/UI behavior;
-- calculate a bottleneck or health score.
-
-## Next boundary
-
-After this resolver is reviewed, the capture provider can combine:
-
-- #76 native consumer transport;
-- #77 immutable event snapshots;
-- #78 DiskIo completion decoding;
-- this lifetime-aware owner resolver;
-- #69 attribution aggregation;
-- #70 capture duration/event caps and cancellation.
-
-That provider should also report attribution coverage, unresolved-reason counts and ETW event/buffer loss before the UI makes any storage-performance recommendation.
+- calculate a performance-health score.
 
 ## Validation without GitHub Actions
 
-`tools/verify_disk_io_thread_process_resolver.py` models bounded thread/process caches, lifetime comparisons, retry behavior and PID/TID reuse across randomized events. Repository guards pin limited-query native APIs and forbid process enumeration, privilege escalation, process control and PID-only attribution shortcuts.
+`tools/verify_disk_io_thread_process_resolver.py` models active, terminated/reused and indeterminate cached objects, creation-time validation, cache bounds and retryable close ordering. Repository guards require `WaitForSingleObject(..., 0)`, `SYNCHRONIZE`, close-before-remove, and the no-enumeration/no-escalation boundary.
 
-Focused .NET tests use an injected fake lifetime API to cover stable resolution, cache reuse, both lifetime-mismatch directions, lookup failures, cache ceilings, out-of-range PIDs and cleanup semantics without opening real Windows processes or threads.
+Focused .NET tests use distinct fake handles for different Windows objects that reuse the same numeric ID. They cover TID/PID reuse, delayed old ETW records, indeterminate state, close-failure retry, normal lifetime validation, cache limits and cleanup.
+
+## Next boundary
+
+Once this resolver matches its regression suite, the Windows capture provider can safely compose #70, #76–#82 and #69 without building process attribution on a stale numeric-ID cache.
