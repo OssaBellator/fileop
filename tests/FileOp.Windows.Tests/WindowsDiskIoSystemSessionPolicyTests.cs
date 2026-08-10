@@ -11,6 +11,9 @@ public sealed class WindowsDiskIoSystemSessionPolicyTests
     {
         Assert.AreEqual("FileOp Disk I/O Diagnostics", WindowsDiskIoSystemSessionPolicy.SessionName);
         Assert.AreEqual(
+            new Guid("6def68d0-e21a-403d-9ba5-0dc373e02eb8"),
+            WindowsDiskIoSystemSessionPolicy.SessionGuid);
+        Assert.AreEqual(
             WindowsDiskIoSystemSessionPolicy.EventTraceRealTimeMode |
             WindowsDiskIoSystemSessionPolicy.EventTraceSystemLoggerMode,
             WindowsDiskIoSystemSessionPolicy.LogFileMode);
@@ -19,7 +22,6 @@ public sealed class WindowsDiskIoSystemSessionPolicyTests
             WindowsDiskIoSystemSessionPolicy.EventTraceFlagNoSysConfig,
             WindowsDiskIoSystemSessionPolicy.EnableFlags);
         Assert.AreEqual(1u, WindowsDiskIoSystemSessionPolicy.QueryPerformanceCounterClock);
-        Assert.AreEqual(Guid.Empty, WindowsDiskIoSystemSessionPolicy.RequestedSessionGuid);
         Assert.IsFalse(WindowsDiskIoSystemSessionPolicy.UsesLegacyNtKernelLoggerIdentity);
     }
 
