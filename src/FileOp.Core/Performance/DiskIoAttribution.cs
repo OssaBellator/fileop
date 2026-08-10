@@ -185,6 +185,12 @@ public static class DiskIoAttributionAnalyzer
                     $"Disk-I/O owner process ID {owner.ProcessId} is invalid.");
             }
 
+            if (owner.StartedAt is { } processStart && processStart > observation.Timestamp)
+            {
+                throw new InvalidDataException(
+                    $"Disk-I/O owner process {owner.ProcessId} starts after its attributed event timestamp.");
+            }
+
             if (owner.ImageName is { Length: > 0 } imageName && string.IsNullOrWhiteSpace(imageName))
             {
                 throw new InvalidDataException(
@@ -236,7 +242,7 @@ public static class DiskIoAttributionAnalyzer
             var other = new TransferAccumulator();
             foreach (var owner in hidden)
             {
-                other.Add(owner);
+                owner.AddTo(other);
             }
 
             var totalBytes = _totals.TotalBytes;
@@ -281,6 +287,8 @@ public static class DiskIoAttributionAnalyzer
 
         public void Add(DiskIoOperationKind operation, long transferBytes) =>
             _transfer.Add(operation, transferBytes);
+
+        public void AddTo(TransferAccumulator target) => target.Add(_transfer);
 
         public DiskIoProcessAttribution Build(double observedByteSharePercent) =>
             new(
@@ -327,13 +335,13 @@ public static class DiskIoAttributionAnalyzer
             }
         }
 
-        public void Add(OwnerAccumulator owner)
+        public void Add(TransferAccumulator other)
         {
-            ReadBytes = SaturatingAdd(ReadBytes, owner._transfer.ReadBytes);
-            WriteBytes = SaturatingAdd(WriteBytes, owner._transfer.WriteBytes);
-            ReadOperations = SaturatingAdd(ReadOperations, owner._transfer.ReadOperations);
-            WriteOperations = SaturatingAdd(WriteOperations, owner._transfer.WriteOperations);
-            FlushOperations = SaturatingAdd(FlushOperations, owner._transfer.FlushOperations);
+            ReadBytes = SaturatingAdd(ReadBytes, other.ReadBytes);
+            WriteBytes = SaturatingAdd(WriteBytes, other.WriteBytes);
+            ReadOperations = SaturatingAdd(ReadOperations, other.ReadOperations);
+            WriteOperations = SaturatingAdd(WriteOperations, other.WriteOperations);
+            FlushOperations = SaturatingAdd(FlushOperations, other.FlushOperations);
         }
 
         private static long SaturatingAdd(long left, long right) =>
