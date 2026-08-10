@@ -23,7 +23,12 @@ public sealed partial class PerformanceDiagnosticsView : UserControl
     {
         StatusText.Text = message;
         ProbeList.ItemsSource = null;
-        RefreshButton.IsEnabled = true;
+        RefreshButton.IsEnabled = false;
+    }
+
+    public void SetReadyForRefresh(bool ready)
+    {
+        RefreshButton.IsEnabled = ready;
     }
 
     public void Apply(PerformanceDiagnosticsSnapshot snapshot)
