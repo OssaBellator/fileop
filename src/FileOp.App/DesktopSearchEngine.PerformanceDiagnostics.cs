@@ -147,38 +147,4 @@ internal sealed partial class DesktopSearchEngine
 
     private static long ToMicroseconds(TimeSpan elapsed) =>
         Math.Max(0, checked((long)Math.Ceiling(elapsed.TotalMicroseconds)));
-
-    private static (long? TotalBytes, long? FreeBytes) ReadVolumeCapacity(string? rootPath)
-    {
-        if (string.IsNullOrWhiteSpace(rootPath))
-        {
-            return (null, null);
-        }
-
-        try
-        {
-            var volumeRoot = Path.GetPathRoot(Path.GetFullPath(rootPath));
-            if (string.IsNullOrWhiteSpace(volumeRoot))
-            {
-                return (null, null);
-            }
-
-            var drive = new DriveInfo(volumeRoot);
-            if (!drive.IsReady)
-            {
-                return (null, null);
-            }
-
-            return (drive.TotalSize, drive.AvailableFreeSpace);
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException or
-            IOException or
-            NotSupportedException or
-            PathTooLongException or
-            UnauthorizedAccessException)
-        {
-            return (null, null);
-        }
-    }
 }

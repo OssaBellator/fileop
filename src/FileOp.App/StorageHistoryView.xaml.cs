@@ -24,6 +24,7 @@ public sealed partial class StorageHistoryView : UserControl
         HistoryProgressRing.IsActive = true;
         RefreshButton.IsEnabled = false;
         HistoryStatusText.Text = message;
+        PressureStatusText.Text = "Refreshing current capacity and native aggregate history…";
     }
 
     public void SetUnavailable(string message)
@@ -32,6 +33,11 @@ public sealed partial class StorageHistoryView : UserControl
         RefreshButton.IsEnabled = false;
         HistoryStatusText.Text = message;
         GrowthStatusText.Text = "Native indexed history is not currently available.";
+        PressureFreeText.Text = "—";
+        PressureLatestText.Text = "—";
+        PressureDeltaText.Text = "—";
+        PressureMultipleText.Text = "—";
+        PressureStatusText.Text = message;
         _timeline.Clear();
         _growth.Clear();
         TimelineEmptyText.Visibility = Visibility.Visible;
@@ -44,13 +50,29 @@ public sealed partial class StorageHistoryView : UserControl
         RefreshButton.IsEnabled = enabled;
     }
 
-    public void Apply(IReadOnlyList<StorageHistorySnapshot> snapshots)
+    public void Apply(
+        IReadOnlyList<StorageHistorySnapshot> snapshots,
+        long? volumeTotalBytes = null,
+        long? volumeFreeBytes = null)
     {
         ArgumentNullException.ThrowIfNull(snapshots);
         HistoryProgressRing.IsActive = false;
         RefreshButton.IsEnabled = true;
         _timeline.Clear();
         _growth.Clear();
+
+        if (volumeTotalBytes is null &&
+            volumeFreeBytes is null &&
+            snapshots.FirstOrDefault() is { } capacityRootSnapshot)
+        {
+            (volumeTotalBytes, volumeFreeBytes) =
+                DesktopSearchEngine.ReadVolumeCapacity(capacityRootSnapshot.RootPath);
+        }
+
+        ApplyPressureEvidence(StorageHistoryPressureEvidence.Analyze(
+            snapshots,
+            volumeTotalBytes,
+            volumeFreeBytes));
 
         if (snapshots.Count == 0)
         {
@@ -125,6 +147,90 @@ public sealed partial class StorageHistoryView : UserControl
             : Visibility.Collapsed;
     }
 
+    private void ApplyPressureEvidence(StorageHistoryPressureEvidence evidence)
+    {
+        PressureFreeText.Text = evidence.VolumeFreeBytes is { } free
+            ? evidence.VolumeFreePercent is { } freePercent
+                ? $"{ByteFormatter.Format(free)} · {freePercent:N1}%"
+                : ByteFormatter.Format(free)
+            : "Unknown";
+
+        PressureLatestText.Text = evidence.LatestStorageBytes is { } latest
+            ? $"{ByteFormatter.Format(latest)} · " +
+              (evidence.LatestStorageUsesPhysicalAllocation ? "physical" : "logical")
+            : "No observation";
+
+        PressureDeltaText.Text = evidence.StorageDeltaBytes is { } delta
+            ? $"{FormatSignedBytes(delta)} · " +
+              (evidence.DeltaUsesPhysicalAllocation ? "physical" : "logical") +
+              (evidence.ObservationInterval is { } interval
+                  ? $" / {FormatInterval(interval)} interval"
+                  : string.Empty)
+            : "Need 2 observations";
+
+        if (evidence.FreeSpaceToLastPositivePhysicalGrowthMultiple is { } multiple)
+        {
+            PressureMultipleText.Text = $"{multiple:N1}× last growth";
+        }
+        else if (evidence.StorageDeltaBytes is null)
+        {
+            PressureMultipleText.Text = "Need 2 observations";
+        }
+        else if (!evidence.DeltaUsesPhysicalAllocation)
+        {
+            PressureMultipleText.Text = "Not comparable";
+        }
+        else if (evidence.StorageDeltaBytes <= 0)
+        {
+            PressureMultipleText.Text = "No positive growth";
+        }
+        else
+        {
+            PressureMultipleText.Text = "Free space unknown";
+        }
+
+        if (evidence.NewerCapturedAt is null)
+        {
+            PressureStatusText.Text =
+                "No native aggregate history observation exists yet, so current free space is not correlated with a history change.";
+            return;
+        }
+
+        if (evidence.StorageDeltaBytes is null)
+        {
+            PressureStatusText.Text =
+                "One trustworthy aggregate observation exists. A second observation is required before FileOp describes a change.";
+            return;
+        }
+
+        if (!evidence.DeltaUsesPhysicalAllocation)
+        {
+            PressureStatusText.Text =
+                "The last history change uses logical size because physical allocation was incomplete. Logical-size growth is not compared with physical free-space bytes.";
+            return;
+        }
+
+        if (evidence.StorageDeltaBytes <= 0)
+        {
+            PressureStatusText.Text =
+                "The latest physical-allocation observation did not increase. FileOp does not manufacture a growth-pressure ratio from a flat or shrinking interval.";
+            return;
+        }
+
+        if (evidence.FreeSpaceToLastPositivePhysicalGrowthMultiple is { } ratio &&
+            evidence.OlderCapturedAt is { } older &&
+            evidence.NewerCapturedAt is { } newer)
+        {
+            PressureStatusText.Text =
+                $"Current free space equals {ratio:N1}× the physical-allocation increase observed from " +
+                $"{older.ToLocalTime():g} to {newer.ToLocalTime():g}. This is a descriptive comparison of one interval, not a forecast, trend guarantee, cause attribution, or disk-full date.";
+            return;
+        }
+
+        PressureStatusText.Text =
+            "Physical growth is available, but current volume free space could not be measured, so FileOp does not infer headroom.";
+    }
+
     private void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
         RefreshRequested?.Invoke(this, EventArgs.Empty);
@@ -166,6 +272,26 @@ public sealed partial class StorageHistoryView : UserControl
 
         var formatted = suffix == 0 ? $"{magnitude:N0}" : $"{magnitude:N1}";
         return $"{sign}{formatted} {suffixes[suffix]}";
+    }
+
+    private static string FormatInterval(TimeSpan interval)
+    {
+        if (interval.TotalDays >= 1)
+        {
+            return $"{interval.TotalDays:N1} d";
+        }
+
+        if (interval.TotalHours >= 1)
+        {
+            return $"{interval.TotalHours:N1} h";
+        }
+
+        if (interval.TotalMinutes >= 1)
+        {
+            return $"{interval.TotalMinutes:N0} min";
+        }
+
+        return $"{Math.Max(0, interval.TotalSeconds):N0} s";
     }
 
     private static ulong Magnitude(long value) =>
