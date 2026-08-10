@@ -268,7 +268,7 @@ internal sealed class WindowsDiskIoIssuingThreadResolver : IDisposable
     {
         try
         {
-            return DateTimeOffset.FromFileTime(fileTime).ToUniversalTime();
+            return new DateTimeOffset(DateTime.FromFileTimeUtc(fileTime));
         }
         catch (ArgumentOutOfRangeException exception)
         {
@@ -299,16 +299,38 @@ internal sealed class WindowsDiskIoIssuingThreadResolver : IDisposable
             }
 
             _disposed = true;
+            Exception? firstFailure = null;
             foreach (var thread in _threads.Values)
             {
-                _api.CloseHandle(thread.Handle);
+                try
+                {
+                    _api.CloseHandle(thread.Handle);
+                }
+                catch (Exception exception)
+                {
+                    firstFailure ??= exception;
+                }
             }
             foreach (var process in _processes.Values)
             {
-                _api.CloseHandle(process.Handle);
+                try
+                {
+                    _api.CloseHandle(process.Handle);
+                }
+                catch (Exception exception)
+                {
+                    firstFailure ??= exception;
+                }
             }
             _threads.Clear();
             _processes.Clear();
+
+            if (firstFailure is not null)
+            {
+                throw new InvalidOperationException(
+                    "One or more DiskIo lifetime handles could not be closed; FileOp attempted cleanup for every cached handle.",
+                    firstFailure);
+            }
         }
     }
 
@@ -425,12 +447,12 @@ internal sealed class WindowsDiskIoNativeLifetimeApi : IWindowsDiskIoLifetimeApi
         out FileTimeNative userTime);
 
     [StructLayout(LayoutKind.Sequential)]
-    internal readonly struct FileTimeNative
+    internal struct FileTimeNative
     {
-        public readonly uint LowDateTime;
-        public readonly uint HighDateTime;
+        public uint LowDateTime;
+        public uint HighDateTime;
 
-        public long ToInt64() =>
+        public readonly long ToInt64() =>
             unchecked((long)(((ulong)HighDateTime << 32) | LowDateTime));
     }
 
