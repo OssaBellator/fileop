@@ -90,6 +90,12 @@ public sealed class IndexingServiceDispatcher
                         DeserializeStorageFileTypes(request.Payload),
                         cancellationToken).ConfigureAwait(false)),
 
+                IndexingServiceOperation.AnalyzeStorageOptimization => Success(
+                    request.RequestId,
+                    await _backend.AnalyzeStorageOptimizationAsync(
+                        DeserializeStorageOptimization(request.Payload),
+                        cancellationToken).ConfigureAwait(false)),
+
                 IndexingServiceOperation.CaptureStorageHistory => Success(
                     request.RequestId,
                     await _backend.CaptureStorageHistoryAsync(
@@ -191,7 +197,7 @@ public sealed class IndexingServiceDispatcher
 
             if (!Path.IsPathFullyQualified(cursor.Path))
             {
-                throw new JsonException("Directory browse cursor paths must be absolute.");
+                throw new JsonException("Directory browse cursor paths must be absolute paths.");
             }
 
             try
@@ -262,6 +268,19 @@ public sealed class IndexingServiceDispatcher
             throw new JsonException("maxTypes must be between 1 and 4096.");
         }
 
+        return request with
+        {
+            VolumeRootPath = volumeRootPath,
+            DirectoryPath = directoryPath,
+        };
+    }
+
+    private static IndexingStorageOptimizationRequest DeserializeStorageOptimization(JsonElement payload)
+    {
+        var request = Deserialize<IndexingStorageOptimizationRequest>(payload);
+        var (volumeRootPath, directoryPath) = NormalizeStoragePaths(
+            request.VolumeRootPath,
+            request.DirectoryPath);
         return request with
         {
             VolumeRootPath = volumeRootPath,
