@@ -230,10 +230,24 @@ public sealed record DiskIoCaptureResult
                 nameof(stopReason));
         }
 
+        if (report.ObservationDuration < TimeSpan.Zero)
+        {
+            throw new ArgumentException(
+                "Disk-I/O attribution report cannot have a negative observation duration.",
+                nameof(report));
+        }
+
         if (report.ObservationDuration > budget.Duration)
         {
             throw new ArgumentException(
                 "Disk-I/O attribution report exceeds the requested capture duration.",
+                nameof(report));
+        }
+
+        if (report.AcceptedEventCount < 0)
+        {
+            throw new ArgumentException(
+                "Disk-I/O attribution report cannot have a negative accepted-event count.",
                 nameof(report));
         }
 
@@ -248,6 +262,14 @@ public sealed record DiskIoCaptureResult
         {
             throw new ArgumentException(
                 "Disk-I/O attribution report owner-row limit does not match the capture budget.",
+                nameof(report));
+        }
+
+        if (stopReason == DiskIoCaptureStopReason.DurationElapsed &&
+            report.ObservationDuration != budget.Duration)
+        {
+            throw new ArgumentException(
+                "Duration-elapsed stop reason requires the report to cover the full requested capture duration.",
                 nameof(report));
         }
 
