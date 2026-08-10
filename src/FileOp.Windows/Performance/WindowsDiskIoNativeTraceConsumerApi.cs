@@ -52,17 +52,14 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
         var loggerName = Marshal.StringToHGlobalUni(sessionName);
         try
         {
-            var logfile = new EventTraceLogfileWNative
-            {
-                LogFileName = IntPtr.Zero,
-                LoggerName = loggerName,
-                ProcessTraceMode = processTraceMode,
-                BufferCallback = Marshal.GetFunctionPointerForDelegate(_bufferCallback),
-                EventRecordCallback = Marshal.GetFunctionPointerForDelegate(_eventRecordCallback),
-                Context = IntPtr.Zero,
-            };
+            using var logfile = WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
+                loggerName,
+                processTraceMode,
+                Marshal.GetFunctionPointerForDelegate(_bufferCallback),
+                Marshal.GetFunctionPointerForDelegate(_eventRecordCallback),
+                context: IntPtr.Zero);
 
-            var handle = OpenTraceW(ref logfile);
+            var handle = OpenTraceW(logfile.Pointer);
             if (WindowsDiskIoTraceConsumerPolicy.IsInvalidProcessingHandle(handle))
             {
                 return new WindowsDiskIoNativeOpenResult(
@@ -99,10 +96,10 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
             _processStarted = true;
         }
 
-        var handles = new[] { processingHandle };
+        var handle = processingHandle;
         var status = ProcessTraceNative(
-            handles,
-            checked((uint)handles.Length),
+            ref handle,
+            handleCount: 1,
             IntPtr.Zero,
             IntPtr.Zero);
 
@@ -235,14 +232,14 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
         CharSet = CharSet.Unicode,
         ExactSpelling = true,
         SetLastError = true)]
-    private static extern ulong OpenTraceW(ref EventTraceLogfileWNative logfile);
+    private static extern ulong OpenTraceW(IntPtr logfile);
 
     [DllImport(
         NativeLibrary,
         EntryPoint = "ProcessTrace",
         ExactSpelling = true)]
     private static extern uint ProcessTraceNative(
-        [In] ulong[] handleArray,
+        ref ulong handleArray,
         uint handleCount,
         IntPtr startTime,
         IntPtr endTime);
@@ -252,101 +249,4 @@ internal sealed class WindowsDiskIoNativeTraceConsumerApi : IWindowsDiskIoTraceC
         EntryPoint = "CloseTrace",
         ExactSpelling = true)]
     private static extern uint CloseTraceNative(ulong traceHandle);
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct EventTraceLogfileWNative
-    {
-        public IntPtr LogFileName;
-        public IntPtr LoggerName;
-        public long CurrentTime;
-        public uint BuffersRead;
-        public uint ProcessTraceMode;
-        public EventTraceNative CurrentEvent;
-        public TraceLogfileHeaderNative LogfileHeader;
-        public IntPtr BufferCallback;
-        public uint BufferSize;
-        public uint Filled;
-        public uint EventsLost;
-        public IntPtr EventRecordCallback;
-        public uint IsKernelTrace;
-        public IntPtr Context;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct EventTraceNative
-    {
-        public EventTraceHeaderNative Header;
-        public uint InstanceId;
-        public uint ParentInstanceId;
-        public Guid ParentGuid;
-        public IntPtr MofData;
-        public uint MofLength;
-        public uint ClientContext;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct EventTraceHeaderNative
-    {
-        public ushort Size;
-        public ushort FieldTypeFlags;
-        public uint Version;
-        public uint ThreadId;
-        public uint ProcessId;
-        public long TimeStamp;
-        public Guid EventGuid;
-        public ulong ProcessorTime;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct TraceLogfileHeaderNative
-    {
-        public uint BufferSize;
-        public uint Version;
-        public uint ProviderVersion;
-        public uint NumberOfProcessors;
-        public long EndTime;
-        public uint TimerResolution;
-        public uint MaximumFileSize;
-        public uint LogFileMode;
-        public uint BuffersWritten;
-        public Guid LogInstanceGuid;
-        public IntPtr LoggerName;
-        public IntPtr LogFileName;
-        public TimeZoneInformationNative TimeZone;
-        public long BootTime;
-        public long PerfFreq;
-        public long StartTime;
-        public uint ReservedFlags;
-        public uint BuffersLost;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct TimeZoneInformationNative
-    {
-        public int Bias;
-        public Utf16Name32Native StandardName;
-        public SystemTimeNative StandardDate;
-        public int StandardBias;
-        public Utf16Name32Native DaylightName;
-        public SystemTimeNative DaylightDate;
-        public int DaylightBias;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Size = 64)]
-    internal struct Utf16Name32Native
-    {
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct SystemTimeNative
-    {
-        public ushort Year;
-        public ushort Month;
-        public ushort DayOfWeek;
-        public ushort Day;
-        public ushort Hour;
-        public ushort Minute;
-        public ushort Second;
-        public ushort Milliseconds;
-    }
 }
