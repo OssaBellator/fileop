@@ -16,12 +16,21 @@ public sealed record StorageHistoryPressureEvidence(
             ? Math.Clamp(free * 100d / total, 0d, 100d)
             : null;
 
-    public double? FreeSpaceToLastPositivePhysicalGrowthMultiple =>
-        DeltaUsesPhysicalAllocation &&
-        StorageDeltaBytes is > 0 and var growth &&
-        VolumeFreeBytes is { } free
-            ? free / (double)growth
-            : null;
+    public double? FreeSpaceToLastPositivePhysicalGrowthMultiple
+    {
+        get
+        {
+            if (!DeltaUsesPhysicalAllocation ||
+                StorageDeltaBytes is not { } growth ||
+                growth <= 0 ||
+                VolumeFreeBytes is not { } free)
+            {
+                return null;
+            }
+
+            return free / (double)growth;
+        }
+    }
 
     public static StorageHistoryPressureEvidence Analyze(
         IReadOnlyList<StorageHistorySnapshot> snapshots,
