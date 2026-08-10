@@ -285,11 +285,11 @@ public sealed record StorageSameSizeGroupRow(
             : string.Empty;
 
         var verificationText = isActive
-            ? $"Verifying under stable read-only handles. FileOp will fully SHA-256 hash only whole sampled files that fit within the {ByteFormatter.Format(StorageSameSizeContentVerificationPolicy.Default.MaxTotalBytesRead)} read budget."
+            ? $"Verifying with read-only handles that share read access only. FileOp will fully SHA-256 hash only whole sampled files that fit within the {ByteFormatter.Format(StorageSameSizeContentVerificationPolicy.Default.MaxTotalBytesRead)} content-byte budget."
             : !string.IsNullOrWhiteSpace(message)
                 ? message
                 : verification is null
-                    ? $"Not content-verified. Explicit verification reads at most {ByteFormatter.Format(StorageSameSizeContentVerificationPolicy.Default.MaxTotalBytesRead)} and never uses the elevated indexer to read file contents."
+                    ? $"Not content-verified. Explicit verification processes at most {ByteFormatter.Format(StorageSameSizeContentVerificationPolicy.Default.MaxTotalBytesRead)} of file content and never uses the elevated indexer to read file contents."
                     : FormatVerification(verification);
 
         return new StorageSameSizeGroupRow(
@@ -310,7 +310,7 @@ public sealed record StorageSameSizeGroupRow(
 
         var scope =
             $"Fully hashed {verification.FullyHashedFileCount:N0} of {verification.SampleFileCount:N0} listed sample(s) " +
-            $"({verification.SelectedFileCount:N0} selected) and read {ByteFormatter.Format(verification.BytesRead)}.";
+            $"({verification.SelectedFileCount:N0} selected) and processed {ByteFormatter.Format(verification.BytesRead)} of file content.";
         if (!verification.HasVerifiedDuplicateEvidence)
         {
             return scope +
