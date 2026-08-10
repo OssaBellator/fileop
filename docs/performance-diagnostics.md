@@ -24,7 +24,7 @@ The UI displays free bytes and free percentage directly. It does not turn those 
 
 ## Exact probes
 
-Diagnostics are **on demand**. Entering/refeshing Optimize runs at most these public application probes when the current source is ready:
+Diagnostics are **on demand**. Entering or refreshing Optimize runs at most these public application probes when the current source is ready:
 
 1. `SearchAsync(string.Empty, limit: 1)`;
 2. `AnalyzeStorageAsync(root, maxEntries: 1)`.
