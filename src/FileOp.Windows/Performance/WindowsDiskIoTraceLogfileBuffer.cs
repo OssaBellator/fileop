@@ -11,6 +11,7 @@ internal sealed class WindowsDiskIoTraceLogfileBuffer : IDisposable
     internal const int TraceLogfileHeaderSize64 = 280;
     internal const int EventTraceLogfileSize32 = 416;
     internal const int EventTraceLogfileSize64 = 448;
+    internal const int TraceLogfileEventsLostRelativeOffset = 48;
 
     private IntPtr _memory;
 
@@ -39,6 +40,9 @@ internal sealed class WindowsDiskIoTraceLogfileBuffer : IDisposable
     public static int ProcessTraceModeOffset => IntPtr.Size == 8 ? 28 : 20;
 
     public static int TraceLogfileHeaderOffset => IntPtr.Size == 8 ? 120 : 112;
+
+    public static int TraceLogfileEventsLostOffset =>
+        TraceLogfileHeaderOffset + TraceLogfileEventsLostRelativeOffset;
 
     public static int TraceLogfilePerfFreqOffset =>
         TraceLogfileHeaderOffset + (IntPtr.Size == 8 ? 256 : 248);
