@@ -22,7 +22,7 @@ public sealed record FileOpProcessResourceSnapshot(
     long WorkingSetBytes,
     long PeakWorkingSetBytes,
     long PrivateMemoryBytes,
-    long ManagedAllocatedBytes,
+    long ManagedMemoryBytes,
     int ThreadCount)
 {
     public bool HasValidNonNegativeEvidence =>
@@ -31,7 +31,7 @@ public sealed record FileOpProcessResourceSnapshot(
         WorkingSetBytes >= 0 &&
         PeakWorkingSetBytes >= 0 &&
         PrivateMemoryBytes >= 0 &&
-        ManagedAllocatedBytes >= 0 &&
+        ManagedMemoryBytes >= 0 &&
         ThreadCount >= 0;
 }
 
