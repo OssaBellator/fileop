@@ -7,6 +7,9 @@ namespace FileOp.App;
 
 public sealed partial class StorageOptimizationView : UserControl
 {
+    private const string FileOpResourceRefreshUnavailableMessage =
+        "FileOp process counters have not been refreshed because the foreground Performance diagnostics path is currently unavailable; this is not evidence of a process-counter failure.";
+
     public StorageOptimizationView()
     {
         InitializeComponent();
@@ -43,7 +46,7 @@ public sealed partial class StorageOptimizationView : UserControl
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetUnavailable(message);
-        FileOpResourceFootprint.Apply(null, message);
+        FileOpResourceFootprint.Apply(null, FileOpResourceRefreshUnavailableMessage);
     }
 
     public void SetReadyForRefresh(bool ready)
@@ -55,7 +58,7 @@ public sealed partial class StorageOptimizationView : UserControl
     public void SetPerformanceUnavailable(string message)
     {
         PerformanceDiagnostics.SetUnavailable(message);
-        FileOpResourceFootprint.Apply(null, message);
+        FileOpResourceFootprint.Apply(null, FileOpResourceRefreshUnavailableMessage);
     }
 
     public void SetDiskIoUnavailable(string message) =>
