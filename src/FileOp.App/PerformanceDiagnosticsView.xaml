@@ -80,7 +80,7 @@
                 <StackPanel Spacing="3">
                     <TextBlock Text="FileOp index footprint" FontSize="16" FontWeight="SemiBold" />
                     <TextBlock
-                        Text="Helper-owned read-only SQLite evidence. Reusable pages are internal database free pages; the cache target is configuration, not observed RAM usage."
+                        Text="Helper-owned read-only SQLite evidence. Reusable pages are internal database free pages; the reader cache default is a connection setting, not observed RAM usage."
                         Opacity="0.68"
                         TextWrapping="Wrap" />
                 </StackPanel>
@@ -109,7 +109,7 @@
                         <TextBlock x:Name="IndexReusableText" Text="—" FontSize="18" FontWeight="SemiBold" />
                     </StackPanel>
                     <StackPanel Grid.Column="4" Spacing="3">
-                        <TextBlock Text="Cache target" Opacity="0.62" />
+                        <TextBlock Text="Reader cache default" Opacity="0.62" />
                         <TextBlock x:Name="IndexCacheText" Text="—" FontSize="18" FontWeight="SemiBold" />
                     </StackPanel>
                 </Grid>
