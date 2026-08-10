@@ -14,6 +14,11 @@ internal sealed record WindowsDiskIoTraceEvidence(
         EventsLost != 0 || BuffersLost != 0;
 }
 
+internal interface IWindowsDiskIoTraceEvidenceSource
+{
+    WindowsDiskIoTraceEvidence ReadTraceEvidence(ulong processingHandle);
+}
+
 internal static class WindowsDiskIoTraceEvidenceReader
 {
     internal const int ConsumerEventsLostOffset32 = 396;
