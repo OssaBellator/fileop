@@ -53,7 +53,7 @@ The response captures:
 - SQLite `page_size`;
 - SQLite `page_count`;
 - SQLite `freelist_count`;
-- SQLite `cache_size` setting;
+- SQLite `cache_size` observed on the diagnostics reader connection;
 - SQLite `journal_mode`;
 - persisted indexed-item count.
 
@@ -67,12 +67,14 @@ This number is not equivalent to immediately reclaimable disk space. The databas
 
 ### Cache semantics
 
-SQLite `PRAGMA cache_size` is a configuration target. FileOp follows SQLite's sign convention:
+FileOp currently does not set `PRAGMA cache_size` on its index connections. The **reader-connection cache default** shown by diagnostics is therefore the default target observed on the read-only diagnostics connection, not a FileOp-selected tuning value.
+
+FileOp follows SQLite's sign convention when formatting that observation:
 
 - positive values are page counts and are converted with the current page size;
 - negative values are interpreted as approximate KiB targets.
 
-The resulting **cache target** is not observed resident memory, committed memory, a cache-hit ratio, or evidence that RAM should be freed. FileOp does not trim working sets in response to it.
+The reader-connection cache default is not observed resident memory, committed memory, live cache occupancy, a cache-hit ratio, or evidence that RAM should be freed. FileOp does not trim working sets in response to it.
 
 ### WAL semantics
 
@@ -148,6 +150,6 @@ Administrative tuning remains outside `FileOp.Indexer` unless a separately revie
 - Optimize integration and independent diagnostics failure handling;
 - explicit user-facing no-fake-optimiser wording.
 
-`tools/verify_index_diagnostics.py` separately performs randomized footprint/page/freelist/cache arithmetic, a standard-library SQLite WAL fixture and repository guards requiring read-only/query-only access, shared database identity, protocol-v8 request/response wiring, explicit cache/freelist wording and absence of `VACUUM`, forced WAL checkpointing or mutation APIs.
+`tools/verify_index_diagnostics.py` separately performs randomized footprint/page/freelist/cache arithmetic, a standard-library SQLite WAL fixture and repository guards requiring read-only/query-only access, shared database identity, protocol-v8 request/response wiring, explicit reader-cache/freelist wording and absence of `VACUUM`, forced WAL checkpointing or mutation APIs.
 
 Both verifiers are included in `tools/test-local.ps1 -OfflineOnly`. `PerformanceDiagnosticsTests`, `IndexDatabaseDiagnosticsTests` and `IndexingIndexDiagnosticsProtocolTests` add .NET/native regression coverage when the Windows local gate is available.
