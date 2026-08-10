@@ -68,11 +68,12 @@ def check_repository(root: Path) -> int:
         "IWindowsDiskIoNativeTraceCallbackSink",
         "WindowsEtwEventRecordSnapshot.CopyFrom(eventRecord)",
         "WindowsDiskIoEventRecordBridge.TryDecodeCompletion",
+        "WindowsDiskIoIssuingThreadResolver.ConvertEventTimestamp(",
+        "observationTimestamp < windowStart",
+        "observationTimestamp > windowEnd",
         "_ownerResolver.Resolve(",
         "new DiskIoEventObservation(",
         "ownerResolution.Owner",
-        "ownerResolution.ObservationTimestamp < windowStart",
-        "ownerResolution.ObservationTimestamp > windowEnd",
         "_observations.Count >= _maxObservations",
         "_observationLimitReached = true",
         "return false;",
@@ -82,6 +83,10 @@ def check_repository(root: Path) -> int:
     ):
         assert needle in collector, needle
         checks += 1
+
+    # Window filtering must happen before any thread/process lookup work.
+    assert collector.index("observationTimestamp < windowStart") < collector.index("_ownerResolver.Resolve(")
+    checks += 1
 
     for forbidden in (
         "StartTrace",
@@ -101,7 +106,8 @@ def check_repository(root: Path) -> int:
     for needle in (
         "TargetCompletionBecomesResolvedObservation",
         "UnresolvedOwnerRemainsVisibleAndReasonIsCounted",
-        "UnrelatedAndOutOfWindowEventsAreIgnored",
+        "UnrelatedAndOutOfWindowEventsAreIgnoredBeforeOwnerLookup",
+        "lifetime.OpenThreadCalls",
         "ExactObservationLimitStopsFurtherCallbacks",
         "ConfigurationIsRequiredAndSingleShot",
     ):
@@ -109,6 +115,8 @@ def check_repository(root: Path) -> int:
         checks += 1
 
     for verifier in (
+        "verify_disk_io_thread_process_resolver.py",
+        "verify_disk_io_trace_evidence.py",
         "verify_disk_io_trace_evidence_source.py",
         "verify_disk_io_loss_evidence.py",
         "verify_disk_io_capture_collector.py",
