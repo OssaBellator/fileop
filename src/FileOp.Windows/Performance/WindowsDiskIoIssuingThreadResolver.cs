@@ -14,6 +14,7 @@ internal enum WindowsDiskIoOwnerResolutionStatus
     ThreadTimeUnavailable,
     ProcessCacheLimitReached,
     ProcessUnavailable,
+    ProcessIdOutOfRange,
     ProcessTimeUnavailable,
     ThreadStartedAfterEvent,
     ProcessStartedAfterEvent,
@@ -140,6 +141,12 @@ internal sealed class WindowsDiskIoIssuingThreadResolver : IDisposable
                         WindowsDiskIoOwnerResolutionStatus.ProcessUnavailable,
                         observationTimestamp);
                 }
+                if (processId > int.MaxValue)
+                {
+                    return Unresolved(
+                        WindowsDiskIoOwnerResolutionStatus.ProcessIdOutOfRange,
+                        observationTimestamp);
+                }
 
                 var process = GetOrCreateProcess(processId, observationTimestamp, out var processFailure);
                 if (process is null)
@@ -251,7 +258,7 @@ internal sealed class WindowsDiskIoIssuingThreadResolver : IDisposable
             WindowsDiskIoOwnerResolutionStatus.Resolved,
             observationTimestamp,
             new DiskIoProcessIdentity(
-                checked((int)thread.Process.ProcessId),
+                (int)thread.Process.ProcessId,
                 thread.Process.StartedAt,
                 thread.Process.ImageName));
     }
