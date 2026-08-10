@@ -21,14 +21,6 @@ internal interface IWindowsDiskIoTraceEvidenceSource
 
 internal static class WindowsDiskIoTraceEvidenceReader
 {
-    internal const int ConsumerEventsLostOffset32 = 396;
-    internal const int ConsumerEventsLostOffset64 = 416;
-
-    internal static int ConsumerEventsLostOffset =>
-        IntPtr.Size == 8
-            ? ConsumerEventsLostOffset64
-            : ConsumerEventsLostOffset32;
-
     public static WindowsDiskIoTraceEvidence Read(
         WindowsDiskIoTraceLogfileBuffer logfile)
     {
@@ -40,7 +32,7 @@ internal static class WindowsDiskIoTraceEvidenceReader
                 WindowsDiskIoTraceLogfileBuffer.TraceLogfilePerfFreqOffset),
             EventsLost: unchecked((uint)Marshal.ReadInt32(
                 logfile.Pointer,
-                ConsumerEventsLostOffset)),
+                WindowsDiskIoTraceLogfileBuffer.TraceLogfileEventsLostOffset)),
             BuffersLost: unchecked((uint)Marshal.ReadInt32(
                 logfile.Pointer,
                 WindowsDiskIoTraceLogfileBuffer.TraceLogfileBuffersLostOffset)));

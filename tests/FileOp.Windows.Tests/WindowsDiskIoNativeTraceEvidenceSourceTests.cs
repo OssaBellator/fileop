@@ -17,7 +17,7 @@ public sealed class WindowsDiskIoNativeTraceEvidenceSourceTests
             10_000_000);
         Marshal.WriteInt32(
             fixture.Logfile.Pointer,
-            WindowsDiskIoTraceEvidenceReader.ConsumerEventsLostOffset,
+            WindowsDiskIoTraceLogfileBuffer.TraceLogfileEventsLostOffset,
             8);
         Marshal.WriteInt32(
             fixture.Logfile.Pointer,

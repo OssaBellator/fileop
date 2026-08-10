@@ -6,18 +6,20 @@ namespace FileOp.Windows.Tests;
 [TestClass]
 public sealed class WindowsDiskIoTraceEvidenceTests
 {
+    private const int UnusedConsumerEventsLostOffset32 = 396;
+    private const int UnusedConsumerEventsLostOffset64 = 416;
+
     [TestMethod]
-    public void ConsumerEventsLostOffsetMatchesExplicitLogfileLayout()
+    public void TraceHeaderEventsLostOffsetMatchesExplicitLogfileLayout()
     {
+        Assert.AreEqual(48, WindowsDiskIoTraceLogfileBuffer.TraceLogfileEventsLostRelativeOffset);
         Assert.AreEqual(
-            IntPtr.Size == 8 ? 416 : 396,
-            WindowsDiskIoTraceEvidenceReader.ConsumerEventsLostOffset);
-        Assert.AreEqual(396, WindowsDiskIoTraceEvidenceReader.ConsumerEventsLostOffset32);
-        Assert.AreEqual(416, WindowsDiskIoTraceEvidenceReader.ConsumerEventsLostOffset64);
+            IntPtr.Size == 8 ? 168 : 160,
+            WindowsDiskIoTraceLogfileBuffer.TraceLogfileEventsLostOffset);
     }
 
     [TestMethod]
-    public void ReadsFrequencyAndLossCountersFromRetainedLogfileState()
+    public void ReadsFrequencyAndLossCountersFromTraceLogfileHeader()
     {
         using var fixture = TraceLogfileFixture.Create();
         Marshal.WriteInt64(
@@ -26,7 +28,7 @@ public sealed class WindowsDiskIoTraceEvidenceTests
             10_000_000);
         Marshal.WriteInt32(
             fixture.Buffer.Pointer,
-            WindowsDiskIoTraceEvidenceReader.ConsumerEventsLostOffset,
+            WindowsDiskIoTraceLogfileBuffer.TraceLogfileEventsLostOffset,
             7);
         Marshal.WriteInt32(
             fixture.Buffer.Pointer,
@@ -40,6 +42,26 @@ public sealed class WindowsDiskIoTraceEvidenceTests
         Assert.AreEqual(3u, evidence.BuffersLost);
         Assert.IsTrue(evidence.HasValidPerformanceCounterFrequency);
         Assert.IsTrue(evidence.HasReportedLoss);
+    }
+
+    [TestMethod]
+    public void UnusedConsumerEventsLostFieldDoesNotBecomeEvidence()
+    {
+        using var fixture = TraceLogfileFixture.Create();
+        var unusedConsumerOffset = IntPtr.Size == 8
+            ? UnusedConsumerEventsLostOffset64
+            : UnusedConsumerEventsLostOffset32;
+        Marshal.WriteInt64(
+            fixture.Buffer.Pointer,
+            WindowsDiskIoTraceLogfileBuffer.TraceLogfilePerfFreqOffset,
+            10_000_000);
+        Marshal.WriteInt32(fixture.Buffer.Pointer, unusedConsumerOffset, 99);
+
+        var evidence = WindowsDiskIoTraceEvidenceReader.Read(fixture.Buffer);
+
+        Assert.AreEqual(0u, evidence.EventsLost);
+        Assert.AreEqual(0u, evidence.BuffersLost);
+        Assert.IsFalse(evidence.HasReportedLoss);
     }
 
     [TestMethod]
@@ -64,7 +86,7 @@ public sealed class WindowsDiskIoTraceEvidenceTests
             1);
         Marshal.WriteInt32(
             fixture.Buffer.Pointer,
-            WindowsDiskIoTraceEvidenceReader.ConsumerEventsLostOffset,
+            WindowsDiskIoTraceLogfileBuffer.TraceLogfileEventsLostOffset,
             -1);
         Marshal.WriteInt32(
             fixture.Buffer.Pointer,
