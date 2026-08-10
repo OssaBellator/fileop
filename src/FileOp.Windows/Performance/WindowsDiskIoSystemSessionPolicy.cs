@@ -5,6 +5,7 @@ namespace FileOp.Windows.Performance;
 public enum WindowsDiskIoSessionStopDisposition
 {
     Stopped,
+    StoppedWithTruncatedStatistics,
     AlreadyStopped,
     StopInProgress,
 }
@@ -37,6 +38,7 @@ public static class WindowsDiskIoSystemSessionPolicy
     public const uint ErrorSuccess = 0;
     public const uint ErrorAccessDenied = 5;
     public const uint ErrorAlreadyExists = 183;
+    public const uint ErrorMoreData = 234;
     public const uint ErrorNoSystemResources = 1450;
     public const uint ErrorActiveConnections = 2402;
     public const uint ErrorWmiInstanceNotFound = 4201;
@@ -78,6 +80,9 @@ public static class WindowsDiskIoSystemSessionPolicy
         {
             case ErrorSuccess:
                 disposition = WindowsDiskIoSessionStopDisposition.Stopped;
+                return true;
+            case ErrorMoreData:
+                disposition = WindowsDiskIoSessionStopDisposition.StoppedWithTruncatedStatistics;
                 return true;
             case ErrorWmiInstanceNotFound:
                 disposition = WindowsDiskIoSessionStopDisposition.AlreadyStopped;
