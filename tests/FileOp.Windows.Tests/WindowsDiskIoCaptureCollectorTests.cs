@@ -66,7 +66,7 @@ public sealed class WindowsDiskIoCaptureCollectorTests
     }
 
     [TestMethod]
-    public void UnrelatedAndOutOfWindowEventsAreIgnored()
+    public void UnrelatedAndOutOfWindowEventsAreIgnoredBeforeOwnerLookup()
     {
         var lifetime = new WindowsDiskIoLifetimeFake();
         lifetime.AddProcess(50, WindowStart.AddMinutes(-10), @"C:\worker.exe");
@@ -92,6 +92,7 @@ public sealed class WindowsDiskIoCaptureCollectorTests
 
         Assert.AreEqual(0, snapshot.Observations.Count);
         Assert.AreEqual(2, snapshot.IgnoredEventCount);
+        Assert.AreEqual(0, lifetime.OpenThreadCalls);
         Assert.IsFalse(snapshot.ObservationLimitReached);
     }
 
