@@ -14,6 +14,14 @@ public interface IIndexingServiceBackend : IDisposable
     ValueTask<IndexingServiceStatusResponse> GetStatusAsync(
         CancellationToken cancellationToken = default);
 
+    ValueTask<IndexingIndexDiagnosticsResponse> GetIndexDiagnosticsAsync(
+        IndexingIndexDiagnosticsRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromException<IndexingIndexDiagnosticsResponse>(
+            new IndexingServiceException(
+                IndexingServiceErrorCode.InvalidRequest,
+                "This indexing backend does not support index diagnostics."));
+
     ValueTask<IndexingVolumeOperationResponse> RebuildVolumeAsync(
         IndexingVolumeRequest request,
         CancellationToken cancellationToken = default);

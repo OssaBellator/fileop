@@ -15,7 +15,8 @@ public sealed partial class PerformanceDiagnosticsView : UserControl
 
     public void SetLoading()
     {
-        StatusText.Text = "Running bounded Search and Storage probes through the current FileOp source…";
+        StatusText.Text = "Running bounded Search, Storage and index-database probes through the current FileOp source…";
+        IndexStatusText.Text = "Refreshing helper-owned index database metrics…";
         RefreshButton.IsEnabled = false;
     }
 
@@ -23,6 +24,8 @@ public sealed partial class PerformanceDiagnosticsView : UserControl
     {
         StatusText.Text = message;
         ProbeList.ItemsSource = null;
+        ResetIndexMetrics();
+        IndexStatusText.Text = message;
         RefreshButton.IsEnabled = false;
     }
 
@@ -50,7 +53,48 @@ public sealed partial class PerformanceDiagnosticsView : UserControl
         StatusText.Text = snapshot.RootPath is { } root
             ? $"{snapshot.IndexState} · scope {root}"
             : snapshot.IndexState;
+        ApplyIndexDatabase(snapshot.IndexDatabase, snapshot.IndexDatabaseStatus);
         RefreshButton.IsEnabled = true;
+    }
+
+    private void ApplyIndexDatabase(IndexDatabaseDiagnostics? diagnostics, string? status)
+    {
+        if (diagnostics is null)
+        {
+            ResetIndexMetrics();
+            IndexStatusText.Text = string.IsNullOrWhiteSpace(status)
+                ? "Native helper index database metrics are unavailable for this source."
+                : status;
+            return;
+        }
+
+        IndexFootprintText.Text = ByteFormatter.Format(diagnostics.FileFootprintBytes);
+        IndexDatabaseText.Text = ByteFormatter.Format(diagnostics.DatabaseFileBytes);
+        IndexWalText.Text = ByteFormatter.Format(diagnostics.WalFileBytes);
+        IndexReusableText.Text = diagnostics.ReusableFreePagePercent is { } reusablePercent
+            ? $"{ByteFormatter.Format(diagnostics.ReusableFreePageBytes)} · {reusablePercent:N1}%"
+            : ByteFormatter.Format(diagnostics.ReusableFreePageBytes);
+        IndexCacheText.Text = diagnostics.ReaderCacheDefaultTargetBytes is { } cacheDefault
+            ? ByteFormatter.Format(cacheDefault)
+            : "Unknown";
+
+        var journalMode = string.IsNullOrWhiteSpace(diagnostics.JournalMode)
+            ? "journal mode unknown"
+            : diagnostics.JournalMode.ToUpperInvariant();
+        IndexStatusText.Text =
+            $"{journalMode} · {diagnostics.PageCount:N0} logical page(s) × {ByteFormatter.Format(diagnostics.PageSizeBytes)} · " +
+            $"{diagnostics.FreePageCount:N0} reusable page(s) · {diagnostics.IndexedItemCount:N0} indexed row(s) · " +
+            $"SHM {ByteFormatter.Format(diagnostics.SharedMemoryFileBytes)} · captured {diagnostics.CapturedAt.ToLocalTime():g}. " +
+            "Reusable pages can be reused by SQLite and are not automatically reclaimable disk space; the reader cache default is not observed resident memory or live cache occupancy.";
+    }
+
+    private void ResetIndexMetrics()
+    {
+        IndexFootprintText.Text = "—";
+        IndexDatabaseText.Text = "—";
+        IndexWalText.Text = "—";
+        IndexReusableText.Text = "—";
+        IndexCacheText.Text = "—";
     }
 
     private void RefreshButton_Click(object sender, RoutedEventArgs e) =>

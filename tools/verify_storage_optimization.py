@@ -159,10 +159,11 @@ def check_repository(root: Path) -> int:
     ET.fromstring(text["view_xaml"])
     checks = 1
     for needle in (
-        "public const int CurrentVersion = 7;",
+        "public const int CurrentVersion = 8;",
         "AnalyzeStorageOptimization",
         "IndexingStorageOptimizationRequest",
         "IndexingStorageOptimizationResponse",
+        "GetIndexDiagnostics",
     ):
         assert needle in text["protocol"], needle
         checks += 1
@@ -209,7 +210,7 @@ def check_repository(root: Path) -> int:
         checks += 1
 
     for needle in (
-        "Read-only index analysis",
+        "Read-only storage and performance evidence",
         "not confirmed duplicates",
         "Potential savings are a logical upper bound only",
         "Age is based only on last-write metadata",

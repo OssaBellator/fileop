@@ -53,6 +53,14 @@ public sealed class IndexingServiceClient : IAsyncDisposable, IDisposable
             new { },
             cancellationToken);
 
+    public ValueTask<IndexingIndexDiagnosticsResponse> GetIndexDiagnosticsAsync(
+        IndexingIndexDiagnosticsRequest request,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IndexingIndexDiagnosticsRequest, IndexingIndexDiagnosticsResponse>(
+            IndexingServiceOperation.GetIndexDiagnostics,
+            request,
+            cancellationToken);
+
     public ValueTask<IndexingVolumeOperationResponse> RebuildVolumeAsync(
         IndexingVolumeRequest request,
         CancellationToken cancellationToken = default) =>

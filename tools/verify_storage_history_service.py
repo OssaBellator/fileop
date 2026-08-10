@@ -53,10 +53,12 @@ def check_repository(repo_root: Path) -> int:
     paged_backend_path = repo_root / "src/FileOp.Windows/IndexingService/PagedDirectoryIndexingServiceBackend.cs"
     outer_backend_path = repo_root / "src/FileOp.Windows/IndexingService/StorageOptimizationIndexingServiceBackend.cs"
     native_backend_path = repo_root / "src/FileOp.Windows/IndexingService/NtfsIndexingServiceBackend.cs"
+    resolver_path = repo_root / "src/FileOp.Windows/IndexingService/IndexDatabasePathResolver.cs"
     client_path = repo_root / "src/FileOp.Windows/IndexingService/IndexingServiceClient.cs"
     dispatcher_path = repo_root / "src/FileOp.Windows/IndexingService/IndexingServiceDispatcher.cs"
     program_path = repo_root / "src/FileOp.Indexer/Program.cs"
     tests_path = repo_root / "tests/FileOp.Windows.Tests/IndexingStorageHistoryProtocolTests.cs"
+    resolver_tests_path = repo_root / "tests/FileOp.Windows.Tests/IndexDatabaseDiagnosticsTests.cs"
     paths = [
         protocol_path,
         policy_path,
@@ -64,10 +66,12 @@ def check_repository(repo_root: Path) -> int:
         paged_backend_path,
         outer_backend_path,
         native_backend_path,
+        resolver_path,
         client_path,
         dispatcher_path,
         program_path,
         tests_path,
+        resolver_tests_path,
     ]
     missing = [str(path) for path in paths if not path.is_file()]
     if missing:
@@ -79,15 +83,18 @@ def check_repository(repo_root: Path) -> int:
     paged_backend = paged_backend_path.read_text(encoding="utf-8")
     outer_backend = outer_backend_path.read_text(encoding="utf-8")
     native_backend = native_backend_path.read_text(encoding="utf-8")
+    resolver = resolver_path.read_text(encoding="utf-8")
     client = client_path.read_text(encoding="utf-8")
     dispatcher = dispatcher_path.read_text(encoding="utf-8")
     program = program_path.read_text(encoding="utf-8")
     tests = tests_path.read_text(encoding="utf-8")
+    resolver_tests = resolver_tests_path.read_text(encoding="utf-8")
 
     required = [
-        (protocol, "public const int CurrentVersion = 7;"),
+        (protocol, "public const int CurrentVersion = 8;"),
         (protocol, "CaptureStorageHistory,"),
         (protocol, "GetStorageHistory,"),
+        (protocol, "GetIndexDiagnostics,"),
         (protocol, "IndexingStorageHistoryCaptureRequest"),
         (protocol, "IndexingStorageHistoryQueryRequest"),
         (policy, "GetHourlyBucket"),
@@ -108,6 +115,7 @@ def check_repository(repo_root: Path) -> int:
         (paged_backend, "_inner = new StorageHistoryIndexingServiceBackend(_databaseDirectory)"),
         (tests, "NamedPipeRoundTripPreservesCaptureAndHistoryPayloads"),
         (tests, "CapturePolicyUsesUtcHourlyBuckets"),
+        (resolver_tests, "SharedResolverPreservesHistoricalDatabaseKeyFormat"),
     ]
     for text, needle in required:
         assert needle in text, f"required service invariant missing: {needle}"
@@ -148,16 +156,21 @@ def check_repository(repo_root: Path) -> int:
     assert "IndexingServiceErrorCode.Busy" in backend
     assert "canRetry: true" in backend
 
-    # Keep every wrapper's database-key formula aligned with the reviewed native backend.
-    for needle in [
-        'new string(root.Where(static character => char.IsLetterOrDigit(character)).ToArray())',
-        'rootToken = "root";',
-        'ntfs-{volumeIdentity:X16}-{rootToken.ToLowerInvariant()}',
-    ]:
-        assert needle in backend, f"history database-key formula missing: {needle}"
-        assert needle in paged_backend, f"paged-browse database-key formula missing: {needle}"
-        assert needle in outer_backend, f"optimization database-key formula missing: {needle}"
-    assert 'ntfs-{volume.VolumeIdentity:X16}-{rootToken.ToLowerInvariant()}' in native_backend
+    # One resolver now owns the reviewed historical database filename formula.
+    for source, name in (
+        (backend, "history"),
+        (paged_backend, "paged browse"),
+        (outer_backend, "Optimize/index diagnostics"),
+        (native_backend, "native index"),
+    ):
+        assert "IndexDatabasePathResolver" in source, f"{name} must use the shared database resolver"
+
+    for needle in (
+        'return $"ntfs-{volumeIdentity:X16}-{rootToken.ToLowerInvariant()}";',
+        'return Path.Combine(directory, $"{CreateKey(volumeIdentity, volumeRootPath)}.sqlite");',
+    ):
+        assert needle in resolver, f"shared database resolver drifted: {needle}"
+    assert '"ntfs-0000000000001234-c"' in resolver_tests
 
     assert "CaptureStorageHistoryAsync" not in native_backend, (
         "history integration should remain in the wrapper, not alter reviewed NTFS lifecycle code"

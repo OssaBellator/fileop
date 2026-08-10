@@ -44,7 +44,7 @@ FileOp must not present those bytes as guaranteed reclaimable space. A later dup
 
 ## Native-only first slice
 
-The initial Optimize view is available only while the native NTFS index is active. The fallback crawler is intentionally not used for reclaim recommendations yet because a profile-scoped snapshot must not be presented as a complete volume optimization analysis.
+The initial Optimize reclaim view is available only while the native NTFS index is active. The fallback crawler is intentionally not used for reclaim recommendations yet because a profile-scoped snapshot must not be presented as a complete volume optimization analysis.
 
 Fallback parity can be added later only with clear scope labeling and equivalent hard-link/accounting semantics.
 
@@ -59,24 +59,35 @@ This feature is analysis only. It does not:
 - modify registry settings;
 - disable services or startup applications;
 - change power plans, memory settings or filesystem policy;
+- run SQLite `VACUUM` or force WAL checkpoints;
 - calculate an opaque health/performance score.
 
 Any future cleanup action remains behind explicit user selection, reviewed preflight, recovery evidence and fresh authorization at the mutation boundary.
 
 ## Performance direction
 
-Future optimization work should remain measurable. Useful next layers include:
+Optimize now includes measured performance evidence alongside reclaim candidates:
+
+- exact bounded Search/root-Storage latency probes;
+- timer-overhead disclosure;
+- current volume free-space capacity;
+- helper-owned main/WAL/SHM index footprint;
+- SQLite page/freelist evidence;
+- the default `cache_size` target observed on the read-only diagnostics connection, explicitly not resident RAM.
+
+Useful next layers include:
 
 1. lazy content verification for same-size duplicate candidates;
 2. user-controlled cleanup review for known disposable locations, with provenance and rollback where possible;
-3. index/search performance telemetry such as query latency, sync backlog, index size and maintenance cost;
-4. startup/background-work analysis based on observable resource impact rather than registry folklore;
-5. storage pressure recommendations tied to actual free-space and growth-history evidence.
+3. explicit USN/checkpoint freshness and catch-up backlog;
+4. low-frequency latency distributions with strict foreground/overhead budgets;
+5. startup/background-work analysis based on observable resource impact rather than registry folklore;
+6. storage pressure recommendations tied to actual free-space and growth-history evidence.
 
 The product should avoid registry cleaners, RAM boosters, broad service disabling and similarly ungrounded optimization claims.
 
 ## Validation without GitHub Actions
 
-`tools/verify_storage_optimization.py` exercises the ranking, age filtering, hard-link collapse and same-size upper-bound model with randomized inventories and guards the read-only source/UI wiring. It is included in `tools/test-local.ps1 -OfflineOnly`.
+`tools/verify_storage_optimization.py` exercises the ranking, age filtering, hard-link collapse and same-size upper-bound model with randomized inventories and guards the read-only source/UI wiring. `tools/verify_performance_diagnostics.py` and `tools/verify_index_diagnostics.py` separately guard measured-performance and helper-index evidence. They are included in `tools/test-local.ps1 -OfflineOnly`.
 
-The Windows/.NET local gate additionally contains focused SQLite and named-pipe protocol regressions. Those native tests require the Windows/.NET toolchain and are not replaced by the Python model verifier.
+The Windows/.NET local gate additionally contains focused SQLite and named-pipe protocol regressions. Those native tests require the Windows/.NET toolchain and are not replaced by the Python model verifiers.

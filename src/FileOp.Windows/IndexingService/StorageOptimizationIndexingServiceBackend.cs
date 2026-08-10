@@ -1,4 +1,5 @@
 using FileOp.Core.Indexing.Service;
+using FileOp.Core.Performance;
 using FileOp.Core.Search;
 using FileOp.Core.Storage;
 using FileOp.Windows.Ntfs;
@@ -36,6 +37,51 @@ public sealed class StorageOptimizationIndexingServiceBackend : IIndexingService
     public ValueTask<IndexingServiceStatusResponse> GetStatusAsync(
         CancellationToken cancellationToken = default) =>
         _inner.GetStatusAsync(cancellationToken);
+
+    public async ValueTask<IndexingIndexDiagnosticsResponse> GetIndexDiagnosticsAsync(
+        IndexingIndexDiagnosticsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ThrowIfDisposed();
+
+        var volume = ResolveVolume(request.VolumeIdentity, request.VolumeRootPath);
+        var databasePath = CreateDatabasePath(volume.VolumeIdentity, volume.RootPath);
+        var processGate = new IndexingVolumeFileGate(databasePath);
+        using var processLease = processGate.TryAcquireRead();
+        if (processLease is null)
+        {
+            throw new IndexingServiceException(
+                IndexingServiceErrorCode.Busy,
+                $"{volume.RootPath} index diagnostics are unavailable while another FileOp indexing process is maintaining it.",
+                canRetry: true);
+        }
+
+        try
+        {
+            var browser = new SqliteFileDirectoryBrowser(databasePath);
+            var sourceKey = NtfsIndexSynchronizer.CreateSourceKey(volume);
+            if (!await browser.HasCheckpointAsync(sourceKey, cancellationToken).ConfigureAwait(false))
+            {
+                throw new IndexingServiceException(
+                    IndexingServiceErrorCode.SnapshotRequired,
+                    $"{volume.RootPath} has no valid durable NTFS checkpoint for index diagnostics.",
+                    canRetry: true);
+            }
+
+            var reader = new SqliteIndexDatabaseDiagnosticsReader(databasePath);
+            var diagnostics = await reader.ReadAsync(_utcNow(), cancellationToken).ConfigureAwait(false);
+            return new IndexingIndexDiagnosticsResponse(diagnostics);
+        }
+        catch (SqliteException exception) when (exception.SqliteErrorCode is 5 or 6)
+        {
+            throw new IndexingServiceException(
+                IndexingServiceErrorCode.Busy,
+                $"Index diagnostics for {volume.RootPath} are temporarily busy.",
+                canRetry: true,
+                exception);
+        }
+    }
 
     public ValueTask<IndexingVolumeOperationResponse> RebuildVolumeAsync(
         IndexingVolumeRequest request,
@@ -172,18 +218,8 @@ public sealed class StorageOptimizationIndexingServiceBackend : IIndexingService
         }
     }
 
-    private string CreateDatabasePath(ulong volumeIdentity, string volumeRootPath)
-    {
-        var root = NormalizeRoot(volumeRootPath);
-        var rootToken = new string(root.Where(static character => char.IsLetterOrDigit(character)).ToArray());
-        if (string.IsNullOrEmpty(rootToken))
-        {
-            rootToken = "root";
-        }
-
-        var key = $"ntfs-{volumeIdentity:X16}-{rootToken.ToLowerInvariant()}";
-        return Path.Combine(_databaseDirectory, $"{key}.sqlite");
-    }
+    private string CreateDatabasePath(ulong volumeIdentity, string volumeRootPath) =>
+        IndexDatabasePathResolver.CreatePath(_databaseDirectory, volumeIdentity, volumeRootPath);
 
     private static string NormalizeRoot(string rootPath) =>
         Path.GetFullPath(rootPath)

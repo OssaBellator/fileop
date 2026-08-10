@@ -51,6 +51,10 @@ Invoke-Step "Offline performance diagnostics verifier" {
     python tools/verify_performance_diagnostics.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline index database diagnostics verifier" {
+    python tools/verify_index_diagnostics.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Storage history verifier" {
     python tools/verify_storage_history.py --repo-root $repoRoot --cases 1000
 }

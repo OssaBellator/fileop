@@ -8,17 +8,17 @@ The product direction is to combine instant file search, power-user file managem
 
 The current implementation has four runtime layers plus a benchmark harness:
 
-- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, exact paged directory-browse models, in-memory and SQLite-backed indexes, shared directory/file-type/category storage analytics, read-only storage-optimization analysis, aggregate storage-history persistence/deltas, checkpoint persistence, the fallback crawler and versioned service contracts.
-- `FileOp.Windows` contains the Windows/NTFS engine and indexing-service boundary: NTFS discovery, MFT namespace enumeration, USN journal processing, file-ID metadata hydration, hard-link expansion, transactional namespace synchronization, authenticated named-pipe transport and read-only browse/history/optimization service composition.
+- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, exact paged directory-browse models, in-memory and SQLite-backed indexes, shared directory/file-type/category storage analytics, read-only storage-optimization analysis, helper-index performance evidence, aggregate storage-history persistence/deltas, checkpoint persistence, the fallback crawler and versioned service contracts.
+- `FileOp.Windows` contains the Windows/NTFS engine and indexing-service boundary: NTFS discovery, MFT namespace enumeration, USN journal processing, file-ID metadata hydration, hard-link expansion, transactional namespace synchronization, authenticated named-pipe transport and read-only browse/history/optimization/index-diagnostics service composition.
 - `FileOp.Indexer` is the on-demand helper that owns native indexing and per-volume persistent-index writes. It starts unelevated; helper-only UAC is limited to same-account split-token administrators so the desktop never changes integrity level or identity.
-- `FileOp.App` is the WinUI 3 desktop shell. Search, Files and Storage share the same native-first metadata source and explicit crawler fallback; Files consumes exact paged direct-child browsing, while native Storage exposes Folders, Types, History and a read-only Optimize advisor.
+- `FileOp.App` is the WinUI 3 desktop shell. Search, Files and Storage share the same native-first metadata source and explicit crawler fallback; Files consumes exact paged direct-child browsing, while native Storage exposes Folders, Types, History and a read-only Optimize advisor with measured performance evidence.
 - `FileOp.Benchmarks` provides synthetic search, directory-aggregation and file-type/category baselines at 100,000 and 1,000,000 files.
 
 The NTFS engine can hydrate logical/allocated size, link count, timestamps and attributes by file ID, preserve multiple hard-link namespace paths, pair rename events, move directory subtrees transactionally, reconcile hard-link changes and commit namespace mutations together with durable USN checkpoints.
 
-`FileOp.Indexer` exposes version negotiation, volume/status discovery, snapshot rebuild, incremental journal synchronization, search, exact paged direct-child browsing, read-only Storage analytics, read-only optimization analysis and aggregate Storage-history capture/query. **Protocol v7** adds `AnalyzeStorageOptimization`; the v6 `BrowseDirectory` keyset-paging contract and v5 history operations remain intact. The protocol exposes no partition, format, cleanup or other destructive commands.
+`FileOp.Indexer` exposes version negotiation, volume/status discovery, read-only index diagnostics, snapshot rebuild, incremental journal synchronization, search, exact paged direct-child browsing, read-only Storage analytics, read-only optimization analysis and aggregate Storage-history capture/query. **Protocol v8** adds `GetIndexDiagnostics`; the v7 `AnalyzeStorageOptimization`, v6 `BrowseDirectory` keyset-paging and v5 history contracts remain intact. The protocol exposes no partition, format, cleanup or other destructive commands.
 
-Each NTFS volume/root pair has its own SQLite database. Live reads require a valid durable checkpoint and use shared cross-process leases; rebuild/sync operations use an exclusive maintenance lease so multiple FileOp instances cannot interleave one logical snapshot.
+Each NTFS volume/root pair has its own SQLite database. Live reads require a valid durable checkpoint and use shared cross-process leases; rebuild/sync operations use an exclusive maintenance lease so multiple FileOp instances cannot interleave one logical snapshot. All service layers now use one database-path resolver that preserves the historical `ntfs-<volume>-<root>.sqlite` filename format.
 
 ## Search, Files and Storage
 
@@ -50,7 +50,7 @@ File-type analysis groups the same subtree by normalized extension and determini
 
 Aggregate history stores root totals plus exact category rollups in the same per-volume database; it does **not** retain per-file history or trigger another filesystem scan. Namespace rebuilds do not erase prior observations, and root identity uses ordinal-ignore-case semantics rather than SQLite's ASCII-only `NOCASE`.
 
-Protocol v5 introduced trusted native history and those operations remain part of v7:
+Protocol v5 introduced trusted native history and those operations remain part of v8:
 
 - `CaptureStorageHistory` has no client timestamp. The service first materializes a valid exact-category live analysis, then writes it into the current UTC-hour bucket. Repeated captures in one hour are idempotent replacements.
 - `GetStorageHistory` returns a bounded persisted series. It requires the physical volume/root to remain attached but does not require the current namespace checkpoint to still be valid.
@@ -73,9 +73,19 @@ The native **Optimize** view is a read-only evidence advisor over the same durab
 
 Hard-link aliases are collapsed by stable file identity before candidates are ranked or grouped. Same-size groups are **not confirmed duplicates**: equal length does not establish content equality. Their displayed potential savings is a logical upper bound until a future lazy content-verification stage confirms matching bytes.
 
-The initial Optimize view is native-only. FileOp does not present the profile-scoped fallback crawler snapshot as complete reclaim analysis. The advisor performs no delete, cleanup, cache clearing, registry modification or opaque health scoring; destructive cleanup remains a separately authorized boundary. See `docs/storage-optimization.md` for policy and safety semantics.
+The initial Optimize reclaim view is native-only. FileOp does not present the profile-scoped fallback crawler snapshot as complete reclaim analysis. The advisor performs no delete, cleanup, cache clearing, registry modification or opaque health scoring; destructive cleanup remains a separately authorized boundary. See `docs/storage-optimization.md` for policy and safety semantics.
 
-Storage therefore has **Folders, Types, History and Optimize** modes: Folders explains where space is used, Types explains what uses it, History explains what changed, and Optimize identifies evidence-backed items worth reviewing.
+Optimize also contains **measured performance evidence**. On demand it records bounded end-to-end Search and root-Storage timings, current free-space capacity and a local timer baseline. In native mode protocol v8 additionally reports helper-owned SQLite index evidence through a read-only request:
+
+- main database, WAL and shared-memory file footprint;
+- SQLite page size and page count;
+- freelist page count and reusable-page bytes;
+- the default `cache_size` target observed on the diagnostics reader connection;
+- journal mode and indexed-row count.
+
+Reusable freelist pages are described as internal database space SQLite can reuse, not automatic reclaimable space. FileOp currently does not set `PRAGMA cache_size`, so the displayed reader-connection cache default is not a FileOp tuning choice, observed resident RAM, live cache occupancy or cache-hit evidence. The helper takes the same shared read lease and requires a valid durable checkpoint before reporting these numbers. No `VACUUM`, WAL checkpoint forcing or other database mutation is performed by diagnostics.
+
+Storage therefore has **Folders, Types, History and Optimize** modes: Folders explains where space is used, Types explains what uses it, History explains what changed, and Optimize identifies evidence-backed reclaim candidates plus measurable performance state.
 
 ## Trust and privilege boundary
 
@@ -83,7 +93,7 @@ The desktop process always remains non-elevated. Native indexing starts with the
 
 The per-session pipe is restricted to the current Windows user and exact desktop PID. Requests are versioned, framed and capped at 8 MiB. Oversized responses return retryable `ResponseTooLarge` without destroying an otherwise healthy session.
 
-The app build places the reviewed `FileOp.Indexer` host beside `FileOp.App`. Runtime resolution accepts only that exact adjacent non-reparse executable. This is a deterministic location rule, not an Authenticode trust claim; signed packaging still needs publisher/signature verification before elevation is offered.
+The app build places the reviewed `FileOp.Indexer` host beside `FileOp.App`. Runtime resolution accepts only the exact adjacent non-reparse executable. This is a deterministic location rule, not an Authenticode trust claim; signed packaging still needs publisher/signature verification before elevation is offered.
 
 ## Query examples
 
@@ -129,6 +139,8 @@ python tools/verify_storage_ui.py --self-test-only
 python tools/verify_storage_types.py --self-test-only
 python tools/verify_storage_types_fuzz.py --cases 1000
 python tools/verify_storage_optimization.py --cases 10000
+python tools/verify_performance_diagnostics.py --cases 50000
+python tools/verify_index_diagnostics.py --cases 50000
 python tools/verify_storage_history.py --self-test-only --cases 1000
 python tools/verify_storage_history_unicode.py --self-test-only
 python tools/verify_storage_history_service.py --self-test-only --cases 2000
@@ -137,7 +149,7 @@ python tools/verify_files_ui.py --self-test-only --cases 10000
 python tools/verify_directory_browse.py --self-test-only --cases 10000
 ```
 
-Repository-mode variants validate source wiring as well. The Optimize verifier checks hard-link collapse, measured-size ranking, stale-age filtering, same-size upper-bound semantics, read-only service wiring, WinUI disclaimers and stale-load invalidation. The Files verifier checks exact page accumulation, Load-more/cursor lifecycle and active-load supersession; the paged-browse verifier separately exercises SQLite keyset pagination over randomized fixtures and guards read-only database access, cross-process lease/checkpoint wiring, native/fallback routing and the no-rescan rule.
+Repository-mode variants validate source wiring as well. The Optimize verifier checks hard-link collapse, measured-size ranking, stale-age filtering, same-size upper-bound semantics, read-only service wiring, WinUI disclaimers and stale-load invalidation. The performance/index verifiers check exact bounded probe arguments, helper-owned read-only SQLite evidence, protocol-v8 wiring, shared database identity, reader-cache/freelist semantics and the no-polling/no-fake-optimiser boundary. The Files verifier checks exact page accumulation, Load-more/cursor lifecycle and active-load supersession; the paged-browse verifier separately exercises SQLite keyset pagination over randomized fixtures and guards read-only database access, cross-process lease/checkpoint wiring, native/fallback routing and the no-rescan rule.
 
 Run all standard-library verifiers without requiring the .NET SDK:
 
@@ -164,13 +176,13 @@ dotnet run -c Release --project benchmarks/FileOp.Benchmarks -- --filter *Storag
 
 ```text
 src/
-  FileOp.Core/       Search/index/browse/storage/history/optimization domain and service contracts
+  FileOp.Core/       Search/index/browse/storage/history/optimization/performance domain and service contracts
   FileOp.Windows/    Windows-native NTFS/USN engine and indexing IPC client/backends
   FileOp.Indexer/    On-demand native indexing helper process
   FileOp.App/        WinUI 3 desktop app with Search + exact paged Files + Storage
 
 tests/
-  FileOp.Windows.Tests/  NTFS, browsing, analytics/history/optimization and service regression/integration tests
+  FileOp.Windows.Tests/  NTFS, browsing, analytics/history/optimization/performance and service regression/integration tests
 
 benchmarks/
   FileOp.Benchmarks/     Synthetic persistent-index Search/Storage benchmarks
@@ -181,22 +193,25 @@ tools/
   verify_storage_types.py           Exact file-type/category SQL/source verifier
   verify_storage_types_fuzz.py      Randomized SQL/reference parity verifier
   verify_storage_optimization.py    Read-only optimization model/source/UI verifier
+  verify_performance_diagnostics.py Measured performance model/source/UI verifier
+  verify_index_diagnostics.py       Helper index SQLite evidence/protocol verifier
   verify_storage_history.py         Aggregate history SQLite/delta verifier
   verify_storage_history_unicode.py Ordinal-ignore-case history-root verifier
-  verify_storage_history_service.py Protocol-v7 history capture/query verifier
+  verify_storage_history_service.py Protocol-v8 history capture/query verifier
   verify_storage_history_ui.py      Native history scheduler/WinUI verifier
   verify_files_ui.py                Exact paged Files UI/source verifier
-  verify_directory_browse.py        Protocol-v7 keyset browse verifier
+  verify_directory_browse.py        Protocol-v8 keyset browse verifier
   test-local.ps1                    Offline-only or full local Windows gate
 
 docs/
-  architecture.md          Architectural decisions and roadmap
-  indexing-service.md      Helper trust boundary and protocol model
-  files-browser.md         Exact indexed Files UI and paging semantics
-  storage-analytics.md     Folder/type/category accounting semantics
-  storage-history.md       Aggregate history persistence/service/delta semantics
-  storage-optimization.md  Read-only optimization policy and safety semantics
-  storage-types-ui.md      WinUI Types/Categories lifecycle and presentation
+  architecture.md             Architectural decisions and roadmap
+  indexing-service.md         Helper trust boundary and protocol model
+  files-browser.md            Exact indexed Files UI and paging semantics
+  performance-diagnostics.md  Measured performance/index evidence semantics
+  storage-analytics.md        Folder/type/category accounting semantics
+  storage-history.md          Aggregate history persistence/service/delta semantics
+  storage-optimization.md     Read-only optimization policy and safety semantics
+  storage-types-ui.md         WinUI Types/Categories lifecycle and presentation
 ```
 
 ## Principles

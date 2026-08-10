@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using FileOp.Core.Indexing.Service;
 using FileOp.Core.Performance;
+using FileOp.Windows.IndexingService;
 
 namespace FileOp.App;
 
@@ -11,7 +13,7 @@ internal sealed partial class DesktopSearchEngine
         var capturedAt = DateTimeOffset.UtcNow;
         var state = State;
         var root = StorageRootPath;
-        var probes = new List<PerformanceProbeMeasurement>(3);
+        var probes = new List<PerformanceProbeMeasurement>(4);
 
         var timerOverhead = MeasureTimerOverheadMicroseconds();
         probes.Add(new PerformanceProbeMeasurement(
@@ -43,6 +45,41 @@ internal sealed partial class DesktopSearchEngine
             }
         }
 
+        IndexDatabaseDiagnostics? indexDatabase = null;
+        string? indexDatabaseStatus = null;
+        if (!state.IsBusy && state.Mode == DesktopSearchMode.Native)
+        {
+            var indexStart = Stopwatch.GetTimestamp();
+            try
+            {
+                indexDatabase = await CaptureNativeIndexDatabaseDiagnosticsAsync().ConfigureAwait(false);
+                if (indexDatabase is not null)
+                {
+                    probes.Add(new PerformanceProbeMeasurement(
+                        "Index database probe",
+                        "native helper index",
+                        ToMicroseconds(Stopwatch.GetElapsedTime(indexStart)),
+                        "Exact probe: helper-owned read-only database/WAL/SHM file metadata plus SQLite page_size, page_count, freelist_count, cache_size and journal_mode."));
+                }
+                else
+                {
+                    indexDatabaseStatus = "Native index diagnostics became unavailable while the source was changing.";
+                }
+            }
+            catch (IndexingServiceRemoteException exception)
+                when (exception.Error.Code is
+                    IndexingServiceErrorCode.Busy or
+                    IndexingServiceErrorCode.SnapshotRequired or
+                    IndexingServiceErrorCode.VolumeNotFound)
+            {
+                indexDatabaseStatus = exception.Error.Message;
+            }
+        }
+        else if (state.Mode == DesktopSearchMode.Fallback)
+        {
+            indexDatabaseStatus = "Helper-owned index database metrics are native-only; fallback mode has no persistent NTFS database to report.";
+        }
+
         var (totalBytes, freeBytes) = ReadVolumeCapacity(root);
         return new PerformanceDiagnosticsSnapshot(
             capturedAt,
@@ -52,7 +89,44 @@ internal sealed partial class DesktopSearchEngine
             root,
             totalBytes,
             freeBytes,
-            probes);
+            probes,
+            indexDatabase,
+            indexDatabaseStatus);
+    }
+
+    private async ValueTask<IndexDatabaseDiagnostics?> CaptureNativeIndexDatabaseDiagnosticsAsync()
+    {
+        await _searchOperationGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+        try
+        {
+            if (_nativeSession is not { Client.IsConnected: true } || _primaryVolume is null)
+            {
+                return null;
+            }
+
+            await _nativeOperationGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+            try
+            {
+                if (_nativeSession is not { Client.IsConnected: true } session ||
+                    _primaryVolume is not { } volume)
+                {
+                    return null;
+                }
+
+                var response = await session.Client.GetIndexDiagnosticsAsync(
+                    new IndexingIndexDiagnosticsRequest(volume.VolumeIdentity, volume.RootPath),
+                    _lifetimeCancellation.Token).ConfigureAwait(false);
+                return response.Diagnostics;
+            }
+            finally
+            {
+                _nativeOperationGate.Release();
+            }
+        }
+        finally
+        {
+            _searchOperationGate.Release();
+        }
     }
 
     private static long MeasureTimerOverheadMicroseconds()

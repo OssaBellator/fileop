@@ -165,18 +165,8 @@ public sealed class PagedDirectoryIndexingServiceBackend : IIndexingServiceBacke
         }
     }
 
-    private string CreateDatabasePath(ulong volumeIdentity, string volumeRootPath)
-    {
-        var root = NormalizeRoot(volumeRootPath);
-        var rootToken = new string(root.Where(static character => char.IsLetterOrDigit(character)).ToArray());
-        if (string.IsNullOrEmpty(rootToken))
-        {
-            rootToken = "root";
-        }
-
-        var key = $"ntfs-{volumeIdentity:X16}-{rootToken.ToLowerInvariant()}";
-        return Path.Combine(_databaseDirectory, $"{key}.sqlite");
-    }
+    private string CreateDatabasePath(ulong volumeIdentity, string volumeRootPath) =>
+        IndexDatabasePathResolver.CreatePath(_databaseDirectory, volumeIdentity, volumeRootPath);
 
     private static string NormalizeRoot(string rootPath) =>
         Path.GetFullPath(rootPath)
