@@ -1,4 +1,5 @@
 using FileOp.Core.Indexing.Service;
+using FileOp.Core.Performance;
 using FileOp.Core.Storage;
 using FileOp.Windows.IndexingService;
 using Microsoft.UI.Xaml;
@@ -11,6 +12,7 @@ public sealed partial class MainWindow
     private StorageOptimizationView _storageOptimizationView = null!;
     private Button _storageOptimizationButton = null!;
     private StorageOptimizationAnalysis? _storageOptimizationAnalysis;
+    private PerformanceDiagnosticsSnapshot? _performanceDiagnostics;
     private string? _storageOptimizationSourceKey;
     private int _storageOptimizationGeneration;
     private bool _storageOptimizationInitialized;
@@ -106,6 +108,7 @@ public sealed partial class MainWindow
         if (root is null)
         {
             _storageOptimizationLoadedForSource = false;
+            _performanceDiagnostics = null;
             if (_storageViewMode == StorageViewMode.Optimize)
             {
                 _storageOptimizationView.SetUnavailable(
@@ -123,6 +126,7 @@ public sealed partial class MainWindow
         {
             _storageOptimizationSourceKey = sourceKey;
             _storageOptimizationAnalysis = null;
+            _performanceDiagnostics = null;
             _storageOptimizationLoadedForSource = false;
             Interlocked.Increment(ref _storageOptimizationGeneration);
         }
@@ -202,19 +206,17 @@ public sealed partial class MainWindow
         {
             _storageOptimizationSourceKey = sourceKey;
             _storageOptimizationAnalysis = null;
+            _performanceDiagnostics = null;
             _storageOptimizationLoadedForSource = false;
             forceRefresh = true;
         }
 
-        if (!forceRefresh && _storageOptimizationLoadedForSource && _storageOptimizationAnalysis is { } cached)
-        {
-            ApplyStorageOptimization(cached);
-            return;
-        }
-
         var generation = Interlocked.Increment(ref _storageOptimizationGeneration);
-        _storageOptimizationView.SetLoading("Analyzing reclaim candidates from the native metadata index…");
-        SetStorageStatus("Analyzing storage optimization candidates…");
+        _storageOptimizationView.SetLoading(
+            forceRefresh || _storageOptimizationAnalysis is null
+                ? "Analyzing reclaim candidates and bounded performance probes from the current source…"
+                : "Refreshing bounded performance probes from the current source…");
+        SetStorageStatus("Refreshing storage and performance optimization evidence…");
 
         try
         {
@@ -226,15 +228,21 @@ public sealed partial class MainWindow
                     return;
                 }
 
-                var analysis = await _searchEngine.AnalyzeStorageOptimizationAsync(root);
-                if (_closed || generation != Volatile.Read(ref _storageOptimizationGeneration))
+                var analysis = _storageOptimizationAnalysis;
+                if (forceRefresh || analysis is null)
                 {
-                    return;
+                    analysis = await _searchEngine.AnalyzeStorageOptimizationAsync(root);
+                    if (_closed || generation != Volatile.Read(ref _storageOptimizationGeneration))
+                    {
+                        return;
+                    }
+
+                    _storageOptimizationAnalysis = analysis;
+                    _storageOptimizationLoadedForSource = true;
                 }
 
-                _storageOptimizationAnalysis = analysis;
-                _storageOptimizationLoadedForSource = true;
                 ApplyStorageOptimization(analysis);
+                await CapturePerformanceDiagnosticsAsync(generation);
             }
             finally
             {
@@ -279,6 +287,32 @@ public sealed partial class MainWindow
                     _storageViewMode == StorageViewMode.Optimize &&
                     _searchEngine.StorageOptimizationAvailable &&
                     !_searchEngine.State.IsBusy);
+            }
+        }
+    }
+
+    private async Task CapturePerformanceDiagnosticsAsync(int generation)
+    {
+        try
+        {
+            var diagnostics = await _searchEngine.CapturePerformanceDiagnosticsAsync();
+            if (_closed || generation != Volatile.Read(ref _storageOptimizationGeneration))
+            {
+                return;
+            }
+
+            _performanceDiagnostics = diagnostics;
+            _storageOptimizationView.ApplyPerformanceDiagnostics(diagnostics);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
+            {
+                _storageOptimizationView.SetPerformanceUnavailable(
+                    $"Performance diagnostics are unavailable: {exception.Message}");
             }
         }
     }
