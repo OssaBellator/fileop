@@ -333,7 +333,12 @@ public sealed partial class MainWindow
         finally
         {
             _storageSameSizeVerificationActive = false;
-            if (!_closed && ReferenceEquals(analysis, _storageOptimizationAnalysis))
+            if (_closed)
+            {
+                return;
+            }
+
+            if (ReferenceEquals(analysis, _storageOptimizationAnalysis))
             {
                 _storageOptimizationView.SetReadyForRefresh(
                     _storageViewMode == StorageViewMode.Optimize &&
@@ -342,6 +347,10 @@ public sealed partial class MainWindow
                 _storageOptimizationView.SetDiskIoReadyForCapture(
                     _storageViewMode == StorageViewMode.Optimize &&
                     !_performanceDiskIoCaptureActive);
+            }
+            else
+            {
+                HandleStorageOptimizationEngineState(_searchEngine.State);
             }
         }
     }
