@@ -160,7 +160,7 @@ internal sealed class WindowsEtwEventRecordSnapshot
             Keyword: ReadUInt64(eventRecord, 48));
 
         return new WindowsEtwEventRecordSnapshot(
-            eventRecordSize,
+            eventRecordSize: eventRecordSize,
             headerType: ReadUInt16(eventRecord, 2),
             flags: ReadUInt16(eventRecord, 4),
             eventProperty: ReadUInt16(eventRecord, 6),
@@ -168,13 +168,13 @@ internal sealed class WindowsEtwEventRecordSnapshot
             processId: ReadUInt32(eventRecord, 12),
             timestamp: Marshal.ReadInt64(eventRecord, 16),
             providerId: ReadGuid(eventRecord, 24),
-            descriptor,
+            descriptor: descriptor,
             processorTime: ReadUInt64(eventRecord, 56),
             activityId: ReadGuid(eventRecord, 64),
             processorIndex: ReadUInt16(eventRecord, BufferContextOffset),
             loggerId: ReadUInt16(eventRecord, BufferContextOffset + sizeof(ushort)),
             extendedDataCount: ReadUInt16(eventRecord, ExtendedDataCountOffset),
-            copiedUserData);
+            userData: copiedUserData);
     }
 
     private static ushort ReadUInt16(IntPtr pointer, int offset) =>
