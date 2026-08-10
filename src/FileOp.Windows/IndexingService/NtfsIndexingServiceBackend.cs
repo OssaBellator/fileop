@@ -348,7 +348,7 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
 
     private VolumeContext GetOrCreateContext(NtfsVolume volume)
     {
-        var key = CreateVolumeKey(volume);
+        var key = IndexDatabasePathResolver.CreateKey(volume.VolumeIdentity, volume.RootPath);
         lock (_contextGate)
         {
             if (_contexts.TryGetValue(key, out var existing))
@@ -356,7 +356,10 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
                 return existing;
             }
 
-            var databasePath = Path.Combine(_databaseDirectory, $"{key}.sqlite");
+            var databasePath = IndexDatabasePathResolver.CreatePath(
+                _databaseDirectory,
+                volume.VolumeIdentity,
+                volume.RootPath);
             var context = new VolumeContext(volume, databasePath);
             _contexts.Add(key, context);
             return context;
@@ -562,18 +565,6 @@ public sealed class NtfsIndexingServiceBackend : IIndexingServiceBackend
             $"Could not {operation} {context.Volume.RootPath}: {exception.Message}",
             canRetry: false,
             exception);
-    }
-
-    private static string CreateVolumeKey(NtfsVolume volume)
-    {
-        var root = NormalizeRoot(volume.RootPath);
-        var rootToken = new string(root.Where(static character => char.IsLetterOrDigit(character)).ToArray());
-        if (string.IsNullOrEmpty(rootToken))
-        {
-            rootToken = "root";
-        }
-
-        return $"ntfs-{volume.VolumeIdentity:X16}-{rootToken.ToLowerInvariant()}";
     }
 
     private static bool IsPathWithinRoot(string path, string rootPath)
