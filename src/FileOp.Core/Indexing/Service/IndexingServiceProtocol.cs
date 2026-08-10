@@ -1,12 +1,13 @@
 using System.Text.Json;
 using FileOp.Core.Models;
+using FileOp.Core.Performance;
 using FileOp.Core.Storage;
 
 namespace FileOp.Core.Indexing.Service;
 
 public static class IndexingServiceProtocol
 {
-    public const int CurrentVersion = 7;
+    public const int CurrentVersion = 8;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -15,6 +16,7 @@ public enum IndexingServiceOperation
     Hello,
     GetVolumes,
     GetStatus,
+    GetIndexDiagnostics,
     RebuildVolume,
     SyncVolume,
     Search,
@@ -81,6 +83,12 @@ public sealed record IndexingServiceStatusResponse(
     int VolumeCount,
     int BusyVolumeCount,
     IReadOnlyList<IndexingVolumeDescriptor> Volumes);
+
+public sealed record IndexingIndexDiagnosticsRequest(
+    ulong VolumeIdentity,
+    string VolumeRootPath);
+
+public sealed record IndexingIndexDiagnosticsResponse(IndexDatabaseDiagnostics Diagnostics);
 
 // The provider volume token is stable for the physical volume when Windows exposes a
 // volume GUID, but requests still carry the current root path because all persisted
