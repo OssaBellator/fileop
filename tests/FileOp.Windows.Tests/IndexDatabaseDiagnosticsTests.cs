@@ -45,7 +45,7 @@ public sealed class IndexDatabaseDiagnosticsTests
             Assert.IsTrue(diagnostics.FreePageCount <= diagnostics.PageCount);
             Assert.IsTrue(diagnostics.LivePageBytes >= 0);
             Assert.IsTrue(diagnostics.ConfiguredCacheTargetBytes is > 0);
-            Assert.AreEqual("wal", diagnostics.JournalMode, ignoreCase: true);
+            Assert.IsTrue(string.Equals("wal", diagnostics.JournalMode, StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
