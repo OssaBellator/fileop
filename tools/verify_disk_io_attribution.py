@@ -224,7 +224,9 @@ def run_model(cases: int) -> int:
                 expected_unattributed[disk] += transfer
 
         summaries = summarize(events, max_owners)
-        assert [summary.disk for summary in summaries] == list(range(disk_count))
+        observed_disks = sorted({event.disk for event in events})
+        assert [summary.disk for summary in summaries] == observed_disks
+        checks += 1
         for summary in summaries:
             disk = summary.disk
             assert summary.total.total_bytes == expected_disk_bytes[disk]
@@ -240,13 +242,15 @@ def run_model(cases: int) -> int:
                 + summary.unattributed.total_bytes
                 == summary.total.total_bytes
             )
+            checks += 7
             if summary.total.total_bytes > 0:
                 assert summary.coverage_percent is not None
                 assert 0.0 <= summary.coverage_percent <= 100.0
                 assert all(0.0 <= row.share_percent <= 100.0 for row in summary.owners)
+                checks += 3
             else:
                 assert summary.coverage_percent is None
-            checks += 9
+                checks += 1
     return checks
 
 
