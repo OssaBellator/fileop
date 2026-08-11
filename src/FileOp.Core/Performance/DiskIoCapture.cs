@@ -204,6 +204,9 @@ public sealed record DiskIoCaptureResult
     public IReadOnlyList<DiskIoDiskResponseTiming> ResponseTimings { get; private init; } =
         Array.Empty<DiskIoDiskResponseTiming>();
 
+    public IReadOnlyList<DiskIoDiskProcessResponseTiming> ProcessResponseTimings { get; private init; } =
+        Array.Empty<DiskIoDiskProcessResponseTiming>();
+
     public bool EvidenceMayBeIncomplete =>
         Status == DiskIoCaptureStatus.Completed &&
         (StopReason == DiskIoCaptureStopReason.ObservationLimitReached ||
@@ -265,6 +268,88 @@ public sealed record DiskIoCaptureResult
         return this with
         {
             ResponseTimings = snapshot,
+        };
+    }
+
+    public DiskIoCaptureResult WithProcessResponseTimings(
+        IReadOnlyList<DiskIoDiskProcessResponseTiming> processResponseTimings)
+    {
+        ArgumentNullException.ThrowIfNull(processResponseTimings);
+        if (Status != DiskIoCaptureStatus.Completed || Report is null)
+        {
+            throw new InvalidOperationException(
+                "Disk-I/O process response timing can be attached only to a completed capture result.");
+        }
+        if (ResponseTimings.Count != Report.Disks.Count)
+        {
+            throw new InvalidOperationException(
+                "Disk-I/O disk response timing must be attached before process response timing.");
+        }
+
+        var snapshot = processResponseTimings.ToArray();
+        if (snapshot.Length != Report.Disks.Count)
+        {
+            throw new ArgumentException(
+                "Disk-I/O process response timing must contain exactly one row for every physical disk in the attribution report.",
+                nameof(processResponseTimings));
+        }
+
+        var responseByDisk = ResponseTimings.ToDictionary(static timing => timing.PhysicalDiskNumber);
+        long sampleCount = 0;
+        for (var diskIndex = 0; diskIndex < Report.Disks.Count; diskIndex++)
+        {
+            var disk = Report.Disks[diskIndex];
+            var timing = snapshot[diskIndex];
+            if (timing.PhysicalDiskNumber != disk.PhysicalDiskNumber ||
+                !responseByDisk.TryGetValue(disk.PhysicalDiskNumber, out var diskTiming))
+            {
+                throw new ArgumentException(
+                    "Disk-I/O process response timing must preserve attribution disk order and identity.",
+                    nameof(processResponseTimings));
+            }
+            if (timing.TotalSamples != disk.TotalOperations ||
+                timing.TotalSamples != diskTiming.SampleCount ||
+                timing.UnattributedReadSamples != disk.UnattributedReadOperations ||
+                timing.UnattributedWriteSamples != disk.UnattributedWriteOperations ||
+                timing.UnattributedFlushSamples != disk.UnattributedFlushOperations ||
+                timing.OtherIdentifiedReadSamples != disk.OtherIdentifiedReadOperations ||
+                timing.OtherIdentifiedWriteSamples != disk.OtherIdentifiedWriteOperations ||
+                timing.OtherIdentifiedFlushSamples != disk.OtherIdentifiedFlushOperations ||
+                timing.Owners.Count != disk.Owners.Count)
+            {
+                throw new ArgumentException(
+                    $"Disk {disk.PhysicalDiskNumber} process response timing does not match attribution/timing counts.",
+                    nameof(processResponseTimings));
+            }
+
+            for (var ownerIndex = 0; ownerIndex < disk.Owners.Count; ownerIndex++)
+            {
+                var attributionOwner = disk.Owners[ownerIndex];
+                var timingOwner = timing.Owners[ownerIndex];
+                if (timingOwner.Owner != attributionOwner.Owner ||
+                    (timingOwner.Reads?.SampleCount ?? 0) != attributionOwner.ReadOperations ||
+                    (timingOwner.Writes?.SampleCount ?? 0) != attributionOwner.WriteOperations ||
+                    (timingOwner.Flushes?.SampleCount ?? 0) != attributionOwner.FlushOperations)
+                {
+                    throw new ArgumentException(
+                        $"Disk {disk.PhysicalDiskNumber} process response timing does not preserve visible attribution owner order/counts.",
+                        nameof(processResponseTimings));
+                }
+            }
+
+            sampleCount += timing.TotalSamples;
+        }
+
+        if (sampleCount != Report.AcceptedEventCount)
+        {
+            throw new ArgumentException(
+                "Disk-I/O process response timing sample count does not match the completed attribution report.",
+                nameof(processResponseTimings));
+        }
+
+        return this with
+        {
+            ProcessResponseTimings = snapshot,
         };
     }
 
