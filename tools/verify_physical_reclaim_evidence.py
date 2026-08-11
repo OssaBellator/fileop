@@ -122,19 +122,26 @@ def check_repository(root: Path) -> int:
 
     for needle in (
         "GetFileInformationByHandle",
-        "GetCompressedFileSizeW",
+        "GetFileInformationByHandleEx",
+        "FileInfoByHandleClass.FileStandardInfo",
+        "FileStandardInfo",
+        "AllocationSize",
+        "EndOfFile",
         "VolumeSerialNumber",
         "NumberOfLinks",
         "FileIndexHigh",
         "FileIndexLow",
-        "Marshal.SetLastPInvokeError(0)",
-        "stream.Length",
-        "ToExtendedLengthPath",
+        "standardInfo.DeletePending",
+        "standardInfo.Directory",
+        "standardInfo.EndOfFile != stream.Length",
+        "handleInfo.NumberOfLinks != standardInfo.NumberOfLinks",
     ):
         assert needle in reader, needle
         checks += 1
 
     for forbidden in (
+        "GetCompressedFileSizeW",
+        "ToExtendedLengthPath",
         "FileAccess.Write",
         "File.Delete(",
         "DeleteFile",
