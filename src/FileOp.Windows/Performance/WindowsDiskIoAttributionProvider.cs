@@ -253,10 +253,8 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                 lostEventCount: finalEvidence.EventsLost,
                 lostBufferCount: finalEvidence.BuffersLost,
                 providerOverheadDuration: null,
-                detail) with
-            {
-                ResponseTimings = responseTimings,
-            };
+                detail)
+                .WithResponseTimings(responseTimings);
         }
         finally
         {
