@@ -94,8 +94,6 @@ public sealed class WindowsCurrentReviewFileEvidenceReader
     {
         cancellationToken.ThrowIfCancellationRequested();
         var requestedPath = Path.GetFullPath(path);
-        var attributes = File.GetAttributes(requestedPath);
-        var leafIsReparsePoint = (attributes & FileAttributes.ReparsePoint) != 0;
 
         using var handle = CreateFileW(
             requestedPath,
@@ -150,7 +148,7 @@ public sealed class WindowsCurrentReviewFileEvidenceReader
                 CombineUnsigned(information.FileIndexHigh, information.FileIndexLow)),
             (long)logicalBytesUnsigned,
             new DateTimeOffset(DateTime.FromFileTimeUtc((long)lastWriteRaw), TimeSpan.Zero),
-            leafIsReparsePoint);
+            (information.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0);
     }
 
     private static string GetFinalPath(SafeFileHandle handle)
