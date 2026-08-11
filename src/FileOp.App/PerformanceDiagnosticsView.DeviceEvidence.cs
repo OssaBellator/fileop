@@ -14,6 +14,7 @@ public sealed partial class PerformanceDiagnosticsView
         _diskIoAttributionView.ResetDeviceEvidence();
 
     public void ApplyDiskIoDeviceEvidence(
-        IReadOnlyList<DiskIoPhysicalDiskDeviceEvidence> evidence) =>
-        _diskIoAttributionView.ApplyDeviceEvidence(evidence);
+        IReadOnlyList<DiskIoPhysicalDiskDeviceEvidence> evidence,
+        TimeSpan elapsed) =>
+        _diskIoAttributionView.ApplyDeviceEvidence(evidence, elapsed);
 }
