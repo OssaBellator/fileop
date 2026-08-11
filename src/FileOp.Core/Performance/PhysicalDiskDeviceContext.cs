@@ -127,7 +127,7 @@ public sealed record PhysicalDiskDeviceContext
 
 public sealed record PhysicalDiskDeviceContextResult
 {
-    private PhysicalDiskDeviceContextResult(
+    public PhysicalDiskDeviceContextResult(
         int physicalDiskNumber,
         PhysicalDiskDeviceContextStatus status,
         PhysicalDiskDeviceContext? context,
