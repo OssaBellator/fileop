@@ -85,8 +85,6 @@ public sealed partial class StorageOptimizationView : UserControl
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetUnavailable(message);
-        PerformanceDiagnostics.SetDiskIoDeviceEvidenceUnavailable(
-            "Physical-disk device evidence is unavailable because the Performance surface is unavailable.");
         FileOpResourceFootprint.Apply(null, FileOpResourceRefreshUnavailableMessage);
         KnownLocationReview.SetUnavailable(
             "Known-location review is unavailable until a native indexed NTFS volume is active and ready.");
