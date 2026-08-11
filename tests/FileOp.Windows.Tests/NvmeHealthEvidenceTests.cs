@@ -188,7 +188,7 @@ public sealed class NvmeHealthEvidenceTests
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(36, 4), 0);
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(40, 4), 0);
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(44, 4), 0);
-        healthLog.CopyTo(buffer.AsSpan(48, 512));
+        healthLog.AsSpan().CopyTo(buffer.AsSpan(48, 512));
         return buffer;
     }
 
