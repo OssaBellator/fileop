@@ -144,12 +144,12 @@ public sealed class DiskIoInvestigationSummaryTests
             1,
             TimeSpan.FromMilliseconds(1),
             TimeSpan.FromMilliseconds(1),
-            p95: null,
+            null,
             TimeSpan.FromMilliseconds(1));
         Assert.ThrowsException<ArgumentException>(() =>
             new DiskIoObservedP95Cue(0, DiskIoOperationKind.Read, immature));
         Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
-            new DiskIoObservedByteDiskCue(0, 0, 1, 0, attributionCoveragePercent: null));
+            new DiskIoObservedByteDiskCue(0, 0, 1, 0, null));
         Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
             new DiskIoObservedOwnerBytesCue(
                 0,
@@ -168,10 +168,10 @@ public sealed class DiskIoInvestigationSummaryTests
         Assert.ThrowsException<ArgumentException>(() =>
             new DiskIoInvestigationSummary(
                 0,
-                evidenceMayBeIncomplete: false,
+                false,
                 cue,
-                largestObservedByteDisk: null,
-                largestIdentifiedOwner: null));
+                null,
+                null));
     }
 
     private static DiskIoCaptureResult Capture(
