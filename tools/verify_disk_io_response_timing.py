@@ -7,9 +7,10 @@ import math
 import random
 import sys
 from pathlib import Path
+from typing import Optional, Tuple
 
 
-def summarize(values: list[int]) -> tuple[int, int, int, int | None, int] | None:
+def summarize(values: list[int]) -> Optional[Tuple[int, int, int, Optional[int], int]]:
     if not values:
         return None
     ordered = sorted(values)
@@ -124,11 +125,17 @@ def run_source_guards(root: Path) -> int:
         (collector, "decoded.ResponseTime", "decoded response preservation"),
         (collector, "_responseTimings.Add(responseTiming);", "one timing per accepted completion"),
         (collector, "public IReadOnlyList<DiskIoResponseTimingObservation> ResponseTimings { get; init; }", "snapshot compatibility body property"),
-        (capture, "public IReadOnlyList<DiskIoDiskResponseTiming> ResponseTimings { get; init; }", "typed capture timing evidence"),
+        (capture, "public IReadOnlyList<DiskIoDiskResponseTiming> ResponseTimings { get; private init; }", "read-only typed timing evidence"),
+        (capture, "public DiskIoCaptureResult WithResponseTimings(", "validated timing attachment"),
+        (capture, "snapshot.Length != Report.Disks.Count", "one timing row per report disk"),
+        (capture, "readSamples != disk.ReadOperations", "read count alignment"),
+        (capture, "writeSamples != disk.WriteOperations", "write count alignment"),
+        (capture, "flushSamples != disk.FlushOperations", "flush count alignment"),
+        (capture, "sampleCount != Report.AcceptedEventCount", "total count alignment"),
         (provider, "DiskIoResponseTimingAnalyzer.Analyze(", "provider timing aggregation"),
         (provider, "collection.ResponseTimings.Count != collection.Observations.Count", "raw timing count consistency"),
         (provider, "responseTimingSampleCount != collection.Observations.Count", "summary count consistency"),
-        (provider, "ResponseTimings = responseTimings", "result timing attachment"),
+        (provider, ".WithResponseTimings(responseTimings)", "validated result timing attachment"),
         (provider, "one decoded response-duration sample per completion", "provider evidence wording"),
         (tests, "SummarizesEachOperationPerPhysicalDisk", "Core timing regression"),
         (tests, "EmptyTimingSetRemainsEmptyInsteadOfInventingLatency", "no invented timing regression"),
@@ -151,6 +158,7 @@ def run_source_guards(root: Path) -> int:
         "IReadOnlyList<DiskIoResponseTimingObservation> ResponseTimings,",
         "positional collector snapshot timing field",
     )
+    checks += forbid(capture, "ResponseTimings { get; init; }", "publicly mutable timing attachment")
     checks += forbid(ui, "ResponseTimings", "premature timing UI claim")
     checks += forbid(ui.lower(), "bottleneck", "premature bottleneck UI claim")
     checks += forbid(timing.lower(), "health score", "health scoring")
