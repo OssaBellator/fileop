@@ -5,7 +5,7 @@
     <StackPanel Spacing="10">
         <TextBlock Text="Known locations review" FontSize="16" FontWeight="SemiBold" />
         <TextBlock
-            Text="Read-only, bounded review evidence from the current native index. Downloads/Temp location, file age, size, or extension do not establish that a file is safe to delete. Review in Files only opens the indexed browser; it does not prepare or queue an operation."
+            Text="Read-only, bounded review evidence from the current native index. Downloads/Temp location, file age, size, or extension do not establish that a file is safe to delete. Review in Files only opens the indexed browser; cleanup readiness only revalidates current path evidence. Neither action prepares, queues, authorizes, or executes deletion."
             TextWrapping="Wrap"
             Opacity="0.72" />
         <TextBlock
@@ -13,6 +13,11 @@
             Text="Known-location review has not been loaded yet."
             TextWrapping="Wrap"
             Opacity="0.82" />
+        <TextBlock
+            x:Name="CleanupReadinessStatusText"
+            Text="Cleanup readiness has not been checked. Delete recovery/history and mutation authorization are not implemented."
+            TextWrapping="Wrap"
+            Opacity="0.76" />
 
         <ListView x:Name="LocationStatusList" SelectionMode="None">
             <ListView.ItemTemplate>
@@ -41,6 +46,10 @@
                         <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="6">
                             <TextBlock Text="{Binding SizeText}" HorizontalAlignment="Right" />
                             <TextBlock Text="{Binding LastWriteText}" HorizontalAlignment="Right" Opacity="0.64" />
+                            <Button
+                                Content="Check readiness"
+                                HorizontalAlignment="Right"
+                                Click="CheckCleanupReadinessButton_Click" />
                             <Button
                                 Content="Review in Files"
                                 HorizontalAlignment="Right"
