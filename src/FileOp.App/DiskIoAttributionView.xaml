@@ -129,6 +129,20 @@
                     Text="No response-duration evidence has been captured."
                     Opacity="0.72"
                     TextWrapping="Wrap" />
+                <TextBlock
+                    Text="Storage I/O bottleneck evidence"
+                    FontSize="16"
+                    FontWeight="SemiBold"
+                    Margin="0,10,0,0" />
+                <TextBlock
+                    Text="Comparative cues within this bounded capture only. FileOp does not apply a universal slow-disk threshold or declare a bottleneck from these values alone."
+                    Opacity="0.62"
+                    TextWrapping="Wrap" />
+                <TextBlock
+                    x:Name="InvestigationSummaryText"
+                    Text="No storage I/O investigation summary has been captured."
+                    Opacity="0.78"
+                    TextWrapping="Wrap" />
             </StackPanel>
             <Grid Grid.Row="6">
                 <Grid.RowDefinitions>
