@@ -7,8 +7,6 @@ namespace FileOp.Windows.Storage;
 
 public sealed class WindowsCurrentFilePhysicalEvidenceReader
 {
-    private const uint InvalidFileSize = uint.MaxValue;
-
     public StoragePhysicalFileEvidence Read(FileStream stream, string path)
     {
         ArgumentNullException.ThrowIfNull(stream);
@@ -31,36 +29,51 @@ public sealed class WindowsCurrentFilePhysicalEvidenceReader
                 $"Could not read current file identity/link evidence for {fullPath}.");
         }
 
-        if (handleInfo.NumberOfLinks == 0)
+        if (!GetFileInformationByHandleEx(
+                stream.SafeFileHandle,
+                FileInfoByHandleClass.FileStandardInfo,
+                out var standardInfo,
+                (uint)Marshal.SizeOf<FileStandardInfo>()))
+        {
+            throw new Win32Exception(
+                Marshal.GetLastPInvokeError(),
+                $"Could not read current file allocation/link evidence for {fullPath}.");
+        }
+
+        if (handleInfo.NumberOfLinks == 0 || standardInfo.NumberOfLinks == 0)
         {
             throw new InvalidDataException(
                 $"Windows reported zero hard links for the open file {fullPath}.");
         }
+        if (handleInfo.NumberOfLinks != standardInfo.NumberOfLinks)
+        {
+            throw new InvalidDataException(
+                $"Windows returned inconsistent hard-link counts for the open file {fullPath}.");
+        }
+        if (standardInfo.DeletePending)
+        {
+            throw new InvalidDataException(
+                $"The open file {fullPath} is pending deletion, so reclaim evidence was not trusted.");
+        }
+        if (standardInfo.Directory)
+        {
+            throw new InvalidDataException(
+                $"The open handle for {fullPath} represents a directory rather than a file.");
+        }
 
         var logicalBytes = CombineUnsigned(handleInfo.FileSizeHigh, handleInfo.FileSizeLow);
-        if (logicalBytes > long.MaxValue || (long)logicalBytes != stream.Length)
+        if (logicalBytes > long.MaxValue ||
+            standardInfo.EndOfFile < 0 ||
+            (ulong)standardInfo.EndOfFile != logicalBytes ||
+            standardInfo.EndOfFile != stream.Length)
         {
             throw new InvalidDataException(
                 $"The open file {fullPath} changed logical length while physical reclaim evidence was being captured.");
         }
-
-        Marshal.SetLastPInvokeError(0);
-        var allocationLow = GetCompressedFileSizeW(
-            ToExtendedLengthPath(fullPath),
-            out var allocationHigh);
-        var allocationError = Marshal.GetLastPInvokeError();
-        if (allocationLow == InvalidFileSize && allocationError != 0)
-        {
-            throw new Win32Exception(
-                allocationError,
-                $"Could not read current allocated disk bytes for {fullPath}.");
-        }
-
-        var allocatedBytes = CombineUnsigned(allocationHigh, allocationLow);
-        if (allocatedBytes > long.MaxValue)
+        if (standardInfo.AllocationSize < 0)
         {
             throw new InvalidDataException(
-                $"Windows reported an allocated size outside FileOp's signed-byte range for {fullPath}.");
+                $"Windows reported a negative allocated size for the open file {fullPath}.");
         }
 
         return new StoragePhysicalFileEvidence(
@@ -68,26 +81,17 @@ public sealed class WindowsCurrentFilePhysicalEvidenceReader
             new StoragePhysicalFileIdentity(
                 handleInfo.VolumeSerialNumber,
                 CombineUnsigned(handleInfo.FileIndexHigh, handleInfo.FileIndexLow)),
-            handleInfo.NumberOfLinks,
-            (long)allocatedBytes);
+            standardInfo.NumberOfLinks,
+            standardInfo.AllocationSize);
     }
 
     private static ulong CombineUnsigned(uint high, uint low) =>
         ((ulong)high << 32) | low;
 
-    private static string ToExtendedLengthPath(string fullPath)
+    private enum FileInfoByHandleClass
     {
-        if (fullPath.StartsWith(@"\\?\", StringComparison.Ordinal))
-        {
-            return fullPath;
-        }
-
-        if (fullPath.StartsWith(@"\\", StringComparison.Ordinal))
-        {
-            return @"\\?\UNC\" + fullPath[2..];
-        }
-
-        return @"\\?\" + fullPath;
+        FileBasicInfo = 0,
+        FileStandardInfo = 1,
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -112,18 +116,29 @@ public sealed class WindowsCurrentFilePhysicalEvidenceReader
         public uint FileIndexLow;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileStandardInfo
+    {
+        public long AllocationSize;
+        public long EndOfFile;
+        public uint NumberOfLinks;
+        [MarshalAs(UnmanagedType.U1)]
+        public bool DeletePending;
+        [MarshalAs(UnmanagedType.U1)]
+        public bool Directory;
+    }
+
     [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(
         SafeFileHandle hFile,
         out ByHandleFileInformation lpFileInformation);
 
-    [DllImport(
-        "kernel32.dll",
-        CharSet = CharSet.Unicode,
-        ExactSpelling = true,
-        SetLastError = true)]
-    private static extern uint GetCompressedFileSizeW(
-        string lpFileName,
-        out uint lpFileSizeHigh);
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(
+        SafeFileHandle hFile,
+        FileInfoByHandleClass fileInformationClass,
+        out FileStandardInfo lpFileInformation,
+        uint dwBufferSize);
 }
