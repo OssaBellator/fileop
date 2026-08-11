@@ -30,6 +30,7 @@ public sealed class WindowsDiskIoAttributionProviderTests
         Assert.AreEqual(0L, result.LostBufferCount);
         Assert.AreEqual(budget.Duration, result.Report!.ObservationDuration);
         Assert.AreEqual(0, result.Report.AcceptedEventCount);
+        Assert.AreEqual(0, result.ResponseTimings.Count);
         Assert.AreEqual(1, harness.Control.StopCalls);
         Assert.AreEqual(1, harness.Consumer.CloseCalls);
         Assert.AreEqual(2, harness.Consumer.EvidenceReads);
@@ -44,6 +45,11 @@ public sealed class WindowsDiskIoAttributionProviderTests
             Observation(CaptureStart.AddMilliseconds(100), 0, 1_000),
             Observation(CaptureStart.AddMilliseconds(200), 0, 2_000),
         };
+        var responseTimings = new[]
+        {
+            ResponseTiming(CaptureStart.AddMilliseconds(100), 0, TimeSpan.FromMilliseconds(1)),
+            ResponseTiming(CaptureStart.AddMilliseconds(200), 0, TimeSpan.FromMilliseconds(3)),
+        };
         var collection = new WindowsDiskIoCaptureCollectionSnapshot(
             observations,
             new Dictionary<WindowsDiskIoOwnerResolutionStatus, int>
@@ -51,7 +57,10 @@ public sealed class WindowsDiskIoAttributionProviderTests
                 [WindowsDiskIoOwnerResolutionStatus.ThreadUnavailable] = 2,
             },
             IgnoredEventCount: 7,
-            ObservationLimitReached: true);
+            ObservationLimitReached: true)
+        {
+            ResponseTimings = responseTimings,
+        };
         var harness = ProviderHarness.Create(
             collection,
             processResult: WindowsDiskIoTraceConsumerPolicy.ErrorCancelled,
@@ -69,6 +78,11 @@ public sealed class WindowsDiskIoAttributionProviderTests
         Assert.AreEqual(3L, result.LostBufferCount);
         Assert.AreEqual(2, result.Report!.AcceptedEventCount);
         Assert.AreEqual(TimeSpan.FromMilliseconds(200), result.Report.ObservationDuration);
+        var timing = AssertSingle(result.ResponseTimings);
+        Assert.AreEqual(0u, timing.PhysicalDiskNumber);
+        Assert.AreEqual(2, timing.Reads!.SampleCount);
+        Assert.AreEqual(TimeSpan.FromMilliseconds(2), timing.Reads.Median);
+        Assert.IsNull(timing.Reads.P95);
         Assert.IsTrue(result.EvidenceMayBeIncomplete);
         StringAssert.Contains(result.Detail, "2 had unresolved process ownership");
         StringAssert.Contains(result.Detail, "3 lost buffers");
@@ -163,6 +177,40 @@ public sealed class WindowsDiskIoAttributionProviderTests
         Assert.IsTrue(harness.Consumer.ProcessReturned);
     }
 
+    [TestMethod]
+    public async Task MismatchedResponseTimingCountFailsClosed()
+    {
+        var observations = new[]
+        {
+            Observation(CaptureStart.AddMilliseconds(100), 0, 1_000),
+            Observation(CaptureStart.AddMilliseconds(200), 0, 2_000),
+        };
+        var collection = new WindowsDiskIoCaptureCollectionSnapshot(
+            observations,
+            new Dictionary<WindowsDiskIoOwnerResolutionStatus, int>(),
+            IgnoredEventCount: 0,
+            ObservationLimitReached: true)
+        {
+            ResponseTimings =
+            [
+                ResponseTiming(CaptureStart.AddMilliseconds(100), 0, TimeSpan.FromMilliseconds(1)),
+            ],
+        };
+        var harness = ProviderHarness.Create(
+            collection,
+            processResult: WindowsDiskIoTraceConsumerPolicy.ErrorCancelled,
+            blockProcessUntilStop: false,
+            initialEvidence: new WindowsDiskIoTraceEvidence(10_000_000, 0, 0),
+            finalEvidence: new WindowsDiskIoTraceEvidence(10_000_000, 0, 0),
+            delayAsync: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+
+        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(async () =>
+            await harness.Provider.CaptureAsync(
+                new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 2, 4)));
+
+        StringAssert.Contains(exception.Message, "response-timing evidence count");
+    }
+
     private static WindowsDiskIoCaptureCollectionSnapshot EmptyCollection() =>
         new(
             Array.Empty<DiskIoEventObservation>(),
@@ -175,6 +223,18 @@ public sealed class WindowsDiskIoAttributionProviderTests
         uint disk,
         long bytes) =>
         new(timestamp, disk, DiskIoOperationKind.Read, bytes, Owner: null);
+
+    private static DiskIoResponseTimingObservation ResponseTiming(
+        DateTimeOffset timestamp,
+        uint disk,
+        TimeSpan responseTime) =>
+        new(timestamp, disk, DiskIoOperationKind.Read, responseTime);
+
+    private static T AssertSingle<T>(IReadOnlyList<T> items)
+    {
+        Assert.AreEqual(1, items.Count);
+        return items[0];
+    }
 
     private sealed class ProviderHarness
     {
