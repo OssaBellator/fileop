@@ -70,8 +70,8 @@ public sealed class BackgroundProcessActivityTests
             budget,
             start,
             end,
-            captureProcessId: 999,
-            providerOverheadDuration: TimeSpan.Zero);
+            999,
+            TimeSpan.Zero);
 
         Assert.AreEqual(1, report.StableMatchedProcessCount);
         Assert.AreEqual(1, report.StartedDuringSampleCount);
@@ -87,23 +87,23 @@ public sealed class BackgroundProcessActivityTests
         var budget = new BackgroundProcessActivityBudget(TimeSpan.FromSeconds(1), 2, 1);
         var start = new BackgroundProcessActivityFrame(
             StartAt,
-            enumeratedProcessCount: 5,
-            inaccessibleProcessCount: 1,
-            snapshotCapReached: true,
+            5,
+            1,
+            true,
             [Snapshot(identity, 10, 100, 90, 1)]);
         var end = new BackgroundProcessActivityFrame(
             EndAt,
-            enumeratedProcessCount: 6,
-            inaccessibleProcessCount: 2,
-            snapshotCapReached: true,
+            6,
+            2,
+            true,
             [Snapshot(identity, 20, 110, 95, 1)]);
 
         var report = BackgroundProcessActivityAnalyzer.Analyze(
             budget,
             start,
             end,
-            captureProcessId: 99,
-            providerOverheadDuration: TimeSpan.FromMilliseconds(5));
+            99,
+            TimeSpan.FromMilliseconds(5));
 
         Assert.IsTrue(report.EvidenceMayBeIncomplete);
         Assert.IsTrue(report.SnapshotCapReached);
@@ -124,8 +124,8 @@ public sealed class BackgroundProcessActivityTests
                 budget,
                 start,
                 end,
-                captureProcessId: 99,
-                providerOverheadDuration: TimeSpan.Zero));
+                99,
+                TimeSpan.Zero));
     }
 
     [TestMethod]
@@ -151,7 +151,7 @@ public sealed class BackgroundProcessActivityTests
                 delays.Add(duration);
                 return Task.CompletedTask;
             },
-            captureProcessId: 99);
+            99);
         var budget = new BackgroundProcessActivityBudget(TimeSpan.FromMilliseconds(250), 10, 10);
 
         var result = await provider.CaptureAsync(budget);
@@ -206,6 +206,19 @@ public sealed class BackgroundProcessActivityTests
                 0,
                 false,
                 [Snapshot(future, 0, 0, 0, 0)]));
+
+        var oldPid = Identity(2, StartAt.AddMinutes(-2), "old.exe");
+        var reusedPid = Identity(2, StartAt.AddMinutes(-1), "new.exe");
+        Assert.ThrowsException<ArgumentException>(() =>
+            new BackgroundProcessActivityFrame(
+                StartAt,
+                2,
+                0,
+                false,
+                [
+                    Snapshot(oldPid, 10, 10, 10, 1),
+                    Snapshot(reusedPid, 20, 20, 20, 1),
+                ]));
     }
 
     private static BackgroundProcessIdentity Identity(
@@ -233,8 +246,8 @@ public sealed class BackgroundProcessActivityTests
         new(
             capturedAt,
             processes.Length,
-            inaccessibleProcessCount: 0,
-            snapshotCapReached: false,
+            0,
+            false,
             processes);
 
     private sealed class FakeSnapshotSource(Queue<BackgroundProcessActivityFrame> frames)
