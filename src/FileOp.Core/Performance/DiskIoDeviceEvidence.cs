@@ -1,3 +1,6 @@
+using System.Collections;
+using System.Diagnostics;
+
 namespace FileOp.Core.Performance;
 
 public enum DiskIoDeviceEvidenceQueryStatus
@@ -86,11 +89,45 @@ public sealed record DiskIoPhysicalDiskDeviceEvidence
     };
 }
 
+public sealed record DiskIoDeviceEvidenceSnapshot
+    : IReadOnlyList<DiskIoPhysicalDiskDeviceEvidence>
+{
+    private readonly DiskIoPhysicalDiskDeviceEvidence[] _rows;
+
+    public DiskIoDeviceEvidenceSnapshot(
+        IReadOnlyList<DiskIoPhysicalDiskDeviceEvidence> rows,
+        TimeSpan queryElapsed)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        if (queryElapsed < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(queryElapsed));
+        }
+
+        _rows = rows.ToArray();
+        foreach (var row in _rows)
+        {
+            ArgumentNullException.ThrowIfNull(row);
+        }
+        QueryElapsed = queryElapsed;
+    }
+
+    public TimeSpan QueryElapsed { get; }
+    public int Count => _rows.Length;
+    public DiskIoPhysicalDiskDeviceEvidence this[int index] => _rows[index];
+    public IReadOnlyList<DiskIoPhysicalDiskDeviceEvidence> Rows => _rows;
+
+    public IEnumerator<DiskIoPhysicalDiskDeviceEvidence> GetEnumerator() =>
+        ((IEnumerable<DiskIoPhysicalDiskDeviceEvidence>)_rows).GetEnumerator();
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
 public static class DiskIoDeviceEvidenceCollector
 {
     public const int MaximumQueriedPhysicalDisks = 32;
 
-    public static IReadOnlyList<DiskIoPhysicalDiskDeviceEvidence> Query(
+    public static DiskIoDeviceEvidenceSnapshot Query(
         IReadOnlyList<uint> physicalDiskNumbers,
         IPhysicalDiskDeviceContextProvider deviceContextProvider,
         INvmeHealthEvidenceProvider nvmeHealthProvider)
@@ -99,6 +136,7 @@ public static class DiskIoDeviceEvidenceCollector
         ArgumentNullException.ThrowIfNull(deviceContextProvider);
         ArgumentNullException.ThrowIfNull(nvmeHealthProvider);
 
+        var queryStart = Stopwatch.GetTimestamp();
         var numbers = physicalDiskNumbers.ToArray();
         var seen = new HashSet<uint>();
         foreach (var number in numbers)
@@ -146,6 +184,8 @@ public static class DiskIoDeviceEvidenceCollector
             queriedCount++;
         }
 
-        return rows;
+        return new DiskIoDeviceEvidenceSnapshot(
+            rows,
+            Stopwatch.GetElapsedTime(queryStart));
     }
 }
