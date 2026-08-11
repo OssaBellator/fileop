@@ -183,7 +183,8 @@ def run_source_guards(root: Path) -> int:
         (app, "internal MainWindow? MainWindow", "internal window routing"),
         (app, "MainWindow = window;", "window assignment"),
         (coordinator, "_performanceDiskIoCaptureActive || _storageSameSizeVerificationActive", "measurement isolation"),
-        (coordinator, "_storageGate.CurrentCount == 0", "Storage-work isolation"),
+        (coordinator, "!await _storageGate.WaitAsync(0)", "non-blocking Storage gate acquisition"),
+        (coordinator, "_storageGate.Release();", "Storage gate release"),
         (coordinator, "_searchEngine.State.Mode != DesktopSearchMode.Native", "native evidence"),
         (coordinator, "PathsEqual(root, review.ActiveVolumeRootPath)", "review root revalidation"),
         (coordinator, ".SelectMany(static location => location.Candidates)", "candidate membership"),
@@ -194,7 +195,7 @@ def run_source_guards(root: Path) -> int:
         (coordinator, "CreateFilesTab(parentPath)", "new Files tab"),
         (coordinator, "_leftFilesPane.Tabs.Add(tab)", "left-pane handoff"),
         (coordinator, "LoadFilesDirectoryAsync(", "existing paged Files loader"),
-        (coordinator, "SetReviewSelectionHint(candidate.Path)", "selection hint"),
+        (coordinator, "SetReviewSelectionHint(candidatePath)", "selection hint"),
         (coordinator, "not in the currently loaded page", "page disclosure"),
         (pane, "_selectedPaths.Add(path)", "path-bound selection"),
         (pane, "RestoreSelection();", "selection restoration"),
@@ -206,6 +207,12 @@ def run_source_guards(root: Path) -> int:
     ]
     for text, needle, label in required:
         checks += require(text, needle, label)
+
+    release_at = coordinator.index("_storageGate.Release();")
+    load_at = coordinator.index("await LoadFilesDirectoryAsync(")
+    if release_at >= load_at:
+        raise AssertionError("Storage gate must be released before Files loader reacquires it")
+    checks += 1
 
     combined = coordinator + "\n" + pane + "\n" + view
     for token in (
