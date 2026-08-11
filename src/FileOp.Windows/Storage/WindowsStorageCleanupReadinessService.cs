@@ -116,20 +116,52 @@ public sealed class WindowsCurrentReviewFileEvidenceReader
         {
             throw new Win32Exception(
                 Marshal.GetLastWin32Error(),
-                $"Could not read current cleanup-readiness metadata for {requestedPath}.");
+                $"Could not read current cleanup-readiness identity metadata for {requestedPath}.");
         }
-        if ((information.FileAttributes & (uint)FileAttributes.Directory) != 0)
+        if (!GetFileInformationByHandleEx(
+                handle,
+                FileInfoByHandleClass.FileStandardInfo,
+                out var standardInfo,
+                (uint)Marshal.SizeOf<FileStandardInfo>()))
+        {
+            throw new Win32Exception(
+                Marshal.GetLastWin32Error(),
+                $"Could not read current cleanup-readiness allocation/link metadata for {requestedPath}.");
+        }
+        if ((information.FileAttributes & (uint)FileAttributes.Directory) != 0 || standardInfo.Directory)
         {
             throw new InvalidDataException(
                 $"The cleanup-readiness candidate is currently a directory: {requestedPath}.");
         }
+        if (standardInfo.DeletePending)
+        {
+            throw new InvalidDataException(
+                $"The cleanup-readiness candidate is already pending deletion: {requestedPath}.");
+        }
+        if (information.NumberOfLinks == 0 || standardInfo.NumberOfLinks == 0)
+        {
+            throw new InvalidDataException(
+                $"Windows reported zero current hard links for {requestedPath}.");
+        }
+        if (information.NumberOfLinks != standardInfo.NumberOfLinks)
+        {
+            throw new InvalidDataException(
+                $"Windows returned inconsistent current hard-link counts for {requestedPath}.");
+        }
 
         var finalPath = GetFinalPath(handle);
         var logicalBytesUnsigned = CombineUnsigned(information.FileSizeHigh, information.FileSizeLow);
-        if (logicalBytesUnsigned > long.MaxValue)
+        if (logicalBytesUnsigned > long.MaxValue ||
+            standardInfo.EndOfFile < 0 ||
+            (ulong)standardInfo.EndOfFile != logicalBytesUnsigned)
         {
             throw new InvalidDataException(
-                $"Windows reported a file size outside FileOp's signed-byte range for {requestedPath}.");
+                $"Windows returned inconsistent current logical-size evidence for {requestedPath}.");
+        }
+        if (standardInfo.AllocationSize < 0)
+        {
+            throw new InvalidDataException(
+                $"Windows reported a negative current allocation size for {requestedPath}.");
         }
 
         var lastWriteRaw = CombineUnsigned(
@@ -148,6 +180,8 @@ public sealed class WindowsCurrentReviewFileEvidenceReader
                 information.VolumeSerialNumber,
                 CombineUnsigned(information.FileIndexHigh, information.FileIndexLow)),
             (long)logicalBytesUnsigned,
+            standardInfo.AllocationSize,
+            standardInfo.NumberOfLinks,
             new DateTimeOffset(DateTime.FromFileTimeUtc((long)lastWriteRaw), TimeSpan.Zero),
             (information.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0);
     }
@@ -193,6 +227,24 @@ public sealed class WindowsCurrentReviewFileEvidenceReader
     private static ulong CombineUnsigned(uint high, uint low) =>
         ((ulong)high << 32) | low;
 
+    private enum FileInfoByHandleClass
+    {
+        FileBasicInfo = 0,
+        FileStandardInfo = 1,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileStandardInfo
+    {
+        public long AllocationSize;
+        public long EndOfFile;
+        public uint NumberOfLinks;
+        [MarshalAs(UnmanagedType.U1)]
+        public bool DeletePending;
+        [MarshalAs(UnmanagedType.U1)]
+        public bool Directory;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(
         string lpFileName,
@@ -215,6 +267,14 @@ public sealed class WindowsCurrentReviewFileEvidenceReader
     private static extern bool GetFileInformationByHandle(
         SafeFileHandle hFile,
         out ByHandleFileInformation lpFileInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(
+        SafeFileHandle hFile,
+        FileInfoByHandleClass fileInformationClass,
+        out FileStandardInfo lpFileInformation,
+        uint dwBufferSize);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct ByHandleFileInformation
