@@ -210,6 +210,7 @@ def check_repository(root: Path) -> int:
         encoding="utf-8"
     )
     docs = (root / "docs/physical-disk-device-context.md").read_text(encoding="utf-8")
+    parent = (root / "tools/verify_disk_io_bottleneck_evidence.py").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
     protocol = (
         root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs"
@@ -239,7 +240,10 @@ def check_repository(root: Path) -> int:
         (tests, "BooleanDescriptorsPreserveReportedValues", "boolean descriptor regression"),
         (docs, "does not infer SSD, HDD", "no media inference documentation"),
         (docs, "Unsupported` and `Unavailable` are never converted to `false`", "unknown state semantics"),
-        (gate, "verify_physical_disk_device_context.py --repo-root $repoRoot --cases 50000", "offline gate entry"),
+        (parent, "from verify_physical_disk_device_context import (", "parent imports physical verifier"),
+        (parent, "run_physical_disk_model(args.cases", "parent runs physical model"),
+        (parent, "check_physical_disk_repository(root)", "parent runs physical source checks"),
+        (gate, "verify_disk_io_bottleneck_evidence.py --repo-root $repoRoot --cases 50000", "transitive offline gate entry"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
     ]
     for text, needle, label in required:
