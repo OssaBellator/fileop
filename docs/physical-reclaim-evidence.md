@@ -16,18 +16,16 @@ The result is a **current physical reclaim upper bound**, not an authorized clea
 
 `WindowsCurrentFilePhysicalEvidenceReader` receives the already-open read handle created by the bounded content verifier.
 
-It uses `GetFileInformationByHandle` for:
+It uses two read-only handle queries:
 
-- volume serial number;
-- file index;
-- logical file size;
-- hard-link count.
+- `GetFileInformationByHandle` for volume serial number, file index, logical file size and hard-link count;
+- `GetFileInformationByHandleEx(..., FileStandardInfo, ...)` for allocation size, end-of-file, hard-link count, delete-pending state and directory state.
 
 FileOp combines volume serial + file index into `StoragePhysicalFileIdentity` for the current physical file object.
 
-Allocated disk bytes are read with `GetCompressedFileSizeW`, which lets Windows report the current on-disk storage size for normal, compressed and sparse files rather than reusing logical length as a physical-size guess.
+Allocation, logical length and hard-link evidence therefore come from the same already-open handle set used for content verification. There is no pathname allocation query. FileOp requires both handle-level structures to agree on logical length and hard-link count before trusting the physical reclaim value.
 
-The path-based allocation call occurs while the verifier still owns the read-only/share-read handle set. Normal write/delete sharing remains disallowed for those opens. This is conservative current evidence, not a transactional filesystem snapshot.
+The reader also rejects delete-pending handles and directory handles. This is conservative current evidence, not a transactional filesystem snapshot.
 
 ## Evidence validation
 
@@ -38,7 +36,10 @@ FileOp rejects physical reclaim accounting when:
 - a matched path has no current evidence;
 - an evidence path appears more than once;
 - hard-link count is zero;
-- allocated bytes are negative/out of supported range;
+- the two handle-level queries disagree on hard-link count;
+- the two handle-level length views disagree with the open stream;
+- allocation is negative;
+- the current handle is delete-pending or represents a directory;
 - two paths with one physical identity disagree on current link count or allocated bytes;
 - the number of sampled aliases for one identity exceeds its current hard-link count;
 - one current physical identity appears in more than one SHA-256 match set.
@@ -129,7 +130,7 @@ Its deterministic randomized model covers:
 - singleton copies beside an already-retained multi-link object;
 - saturated allocation totals.
 
-Source guards pin current-handle identity/link metadata, allocated-byte observation, post-hash ordering, unchanged protocol v8, UI uncertainty wording and the absence of write/delete/control APIs.
+Source guards pin handle-only identity/link/allocation metadata, dual length/link cross-checks, delete-pending/directory rejection, post-hash ordering, unchanged protocol v8, UI uncertainty wording and the absence of write/delete/control APIs.
 
 Focused .NET tests cover portable Core accounting plus a Windows-only reader regression that requires two open handles to the same temporary file to report the same current identity/allocation evidence.
 
