@@ -19,6 +19,7 @@ internal sealed partial class DesktopSearchEngine
                 "Known-location review currently requires the native indexed NTFS volume.");
         }
 
+        var capturedRoot = Path.GetFullPath(activeRoot);
         var locations = new List<StorageKnownLocationReview>(2);
         string downloadsPath;
         try
@@ -45,7 +46,7 @@ internal sealed partial class DesktopSearchEngine
             locations.Add(await AnalyzeKnownLocationAsync(
                 StorageReviewProvenance.Downloads,
                 downloadsPath,
-                activeRoot).ConfigureAwait(false));
+                capturedRoot).ConfigureAwait(false));
         }
 
         string tempPath;
@@ -72,12 +73,24 @@ internal sealed partial class DesktopSearchEngine
             locations.Add(await AnalyzeKnownLocationAsync(
                 StorageReviewProvenance.UserTemp,
                 tempPath,
-                activeRoot).ConfigureAwait(false));
+                capturedRoot).ConfigureAwait(false));
+        }
+
+        ThrowIfDisposed();
+        if (!StorageOptimizationAvailable ||
+            StorageRootPath is not { } currentRoot ||
+            !string.Equals(
+                Path.GetFullPath(currentRoot),
+                capturedRoot,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "The native indexing source changed while known-location review evidence was being captured.");
         }
 
         return new StorageKnownLocationReviewSnapshot(
             DateTimeOffset.UtcNow,
-            Path.GetFullPath(activeRoot),
+            capturedRoot,
             locations.ToArray());
     }
 
@@ -93,7 +106,7 @@ internal sealed partial class DesktopSearchEngine
                 provenance,
                 StorageReviewLocationStatus.OutsideActiveVolume,
                 fullPath,
-                $"{FormatProvenance(provenance)} is outside the currently active indexed volume {Path.GetFullPath(activeRoot)}. " +
+                $"{FormatProvenance(provenance)} is outside the currently active indexed volume {activeRoot}. " +
                 "This first review slice does not aggregate candidates across volumes.");
         }
 
