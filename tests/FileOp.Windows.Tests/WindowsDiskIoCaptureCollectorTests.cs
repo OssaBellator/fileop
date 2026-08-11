@@ -38,6 +38,14 @@ public sealed class WindowsDiskIoCaptureCollectorTests
         Assert.IsNotNull(observation.Owner);
         Assert.AreEqual(50, observation.Owner.ProcessId);
         Assert.AreEqual("worker.exe", observation.Owner.ImageName);
+
+        Assert.AreEqual(1, snapshot.ResponseTimings.Count);
+        var timing = snapshot.ResponseTimings[0];
+        Assert.AreEqual(observation.Timestamp, timing.Timestamp);
+        Assert.AreEqual(observation.PhysicalDiskNumber, timing.PhysicalDiskNumber);
+        Assert.AreEqual(observation.Operation, timing.Operation);
+        Assert.AreEqual(observation.Owner, timing.Owner);
+        Assert.AreEqual(TimeSpan.FromTicks(1000), timing.ResponseTime);
         Assert.AreEqual(0, snapshot.UnresolvedOwnerCounts.Count);
         Assert.IsFalse(snapshot.ObservationLimitReached);
     }
@@ -60,6 +68,8 @@ public sealed class WindowsDiskIoCaptureCollectorTests
 
         Assert.AreEqual(1, snapshot.Observations.Count);
         Assert.IsNull(snapshot.Observations[0].Owner);
+        Assert.AreEqual(1, snapshot.ResponseTimings.Count);
+        Assert.IsNull(snapshot.ResponseTimings[0].Owner);
         Assert.AreEqual(
             1,
             snapshot.UnresolvedOwnerCounts[WindowsDiskIoOwnerResolutionStatus.ThreadUnavailable]);
@@ -91,6 +101,7 @@ public sealed class WindowsDiskIoCaptureCollectorTests
         var snapshot = collector.Snapshot();
 
         Assert.AreEqual(0, snapshot.Observations.Count);
+        Assert.AreEqual(0, snapshot.ResponseTimings.Count);
         Assert.AreEqual(2, snapshot.IgnoredEventCount);
         Assert.AreEqual(0, lifetime.OpenThreadCalls);
         Assert.IsFalse(snapshot.ObservationLimitReached);
@@ -115,6 +126,7 @@ public sealed class WindowsDiskIoCaptureCollectorTests
 
         var snapshot = collector.Snapshot();
         Assert.AreEqual(2, snapshot.Observations.Count);
+        Assert.AreEqual(2, snapshot.ResponseTimings.Count);
         Assert.IsTrue(snapshot.ObservationLimitReached);
         Assert.AreEqual(2, snapshot.UnresolvedOwnerCounts.Values.Sum());
     }
