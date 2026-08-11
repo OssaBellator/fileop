@@ -167,7 +167,18 @@
                 </ListView>
             </Grid>
 
-            <TextBlock Grid.Row="7" Padding="14,10,14,5" Text="Top attributed process instances" FontSize="16" FontWeight="SemiBold" />
+            <StackPanel Grid.Row="7" Padding="14,10,14,5" Spacing="3">
+                <TextBlock Text="Top attributed process instances (byte-ranked)" FontSize="16" FontWeight="SemiBold" />
+                <TextBlock
+                    Text="Rows remain selected and ordered by observed bytes. Response timing is shown only for these same process instances; issuing-process association does not prove that the process caused the device response duration."
+                    Opacity="0.62"
+                    TextWrapping="Wrap" />
+                <TextBlock
+                    x:Name="ProcessTimingEvidenceStatusText"
+                    Text="No process-bound response timing has been captured."
+                    Opacity="0.72"
+                    TextWrapping="Wrap" />
+            </StackPanel>
             <Grid Grid.Row="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -175,12 +186,13 @@
                 </Grid.RowDefinitions>
                 <Grid Padding="14,8" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="80" />
                         <ColumnDefinition Width="2*" />
-                        <ColumnDefinition Width="120" />
-                        <ColumnDefinition Width="120" />
                         <ColumnDefinition Width="100" />
-                        <ColumnDefinition Width="110" />
+                        <ColumnDefinition Width="100" />
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="100" />
+                        <ColumnDefinition Width="3*" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Disk" FontWeight="SemiBold" />
                     <TextBlock Grid.Column="1" Text="Process instance" FontWeight="SemiBold" />
@@ -188,18 +200,20 @@
                     <TextBlock Grid.Column="3" Text="Write" FontWeight="SemiBold" HorizontalAlignment="Right" />
                     <TextBlock Grid.Column="4" Text="Operations" FontWeight="SemiBold" HorizontalAlignment="Right" />
                     <TextBlock Grid.Column="5" Text="Byte share" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                    <TextBlock Grid.Column="6" Text="Response timing" FontWeight="SemiBold" />
                 </Grid>
                 <ListView x:Name="ProcessList" Grid.Row="1" SelectionMode="None">
                     <ListView.ItemTemplate>
                         <DataTemplate>
                             <Grid Padding="14,8" ColumnSpacing="12">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="90" />
+                                    <ColumnDefinition Width="80" />
                                     <ColumnDefinition Width="2*" />
-                                    <ColumnDefinition Width="120" />
-                                    <ColumnDefinition Width="120" />
                                     <ColumnDefinition Width="100" />
-                                    <ColumnDefinition Width="110" />
+                                    <ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="90" />
+                                    <ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="3*" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="{Binding DiskText}" />
                                 <TextBlock Grid.Column="1" Text="{Binding ProcessInstanceText}" FontWeight="SemiBold" TextWrapping="Wrap" />
@@ -207,6 +221,7 @@
                                 <TextBlock Grid.Column="3" Text="{Binding WriteText}" HorizontalAlignment="Right" />
                                 <TextBlock Grid.Column="4" Text="{Binding OperationsText}" HorizontalAlignment="Right" />
                                 <TextBlock Grid.Column="5" Text="{Binding ShareText}" HorizontalAlignment="Right" />
+                                <TextBlock Grid.Column="6" Text="{Binding ResponseTimingText}" Opacity="0.82" TextWrapping="Wrap" />
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>
