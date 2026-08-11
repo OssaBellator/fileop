@@ -178,7 +178,11 @@ public sealed class BackgroundProcessActivityTests
         Assert.IsTrue(frame.EnumeratedProcessCount > 0);
         var current = frame.Processes.FirstOrDefault(process =>
             process.Identity.ProcessId == Environment.ProcessId);
-        Assert.IsNotNull(current);
+        if (current is null)
+        {
+            Assert.IsTrue(frame.SnapshotCapReached);
+            return;
+        }
         Assert.IsTrue(current.TotalProcessorTime >= TimeSpan.Zero);
         Assert.IsTrue(current.WorkingSetBytes >= 0);
     }
