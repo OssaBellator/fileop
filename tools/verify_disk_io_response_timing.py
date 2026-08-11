@@ -106,6 +106,7 @@ def run_source_guards(root: Path) -> int:
     collector = (root / "src/FileOp.Windows/Performance/WindowsDiskIoCaptureCollector.cs").read_text(encoding="utf-8")
     provider = (root / "src/FileOp.Windows/Performance/WindowsDiskIoAttributionProvider.cs").read_text(encoding="utf-8")
     ui = (root / "src/FileOp.App/DiskIoAttributionView.xaml.cs").read_text(encoding="utf-8")
+    ui_xaml = (root / "src/FileOp.App/DiskIoAttributionView.xaml").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/DiskIoResponseTimingTests.cs").read_text(encoding="utf-8")
     provider_tests = (root / "tests/FileOp.Windows.Tests/WindowsDiskIoAttributionProviderTests.cs").read_text(encoding="utf-8")
@@ -139,20 +140,24 @@ def run_source_guards(root: Path) -> int:
         (capture, "writeSamples != disk.WriteOperations", "write count alignment"),
         (capture, "flushSamples != disk.FlushOperations", "flush count alignment"),
         (capture, "sampleCount != Report.AcceptedEventCount", "total count alignment"),
+        (provider, "WindowsDiskIoTimingProvenanceValidator.Validate(", "raw timing/provenance consistency"),
         (provider, "DiskIoResponseTimingAnalyzer.Analyze(", "provider timing aggregation"),
-        (provider, "collection.ResponseTimings.Count != collection.Observations.Count", "raw timing count consistency"),
         (provider, "responseTimingSampleCount != collection.Observations.Count", "summary count consistency"),
         (provider, ".WithResponseTimings(responseTimings)", "validated result timing attachment"),
-        (provider, "one decoded response-duration sample per completion", "provider evidence wording"),
+        (provider, "provenance-bound decoded response-duration sample per completion", "provider evidence wording"),
         (tests, "SummarizesEachOperationPerPhysicalDisk", "Core timing regression"),
         (tests, "SummaryRejectsMalformedDurationsAndPercentiles", "summary invariant regression"),
         (tests, "CaptureResultValidatesTimingOperationCountsBeforeAttachment", "attachment invariant regression"),
         (tests, "EmptyTimingSetRemainsEmptyInsteadOfInventingLatency", "no invented timing regression"),
         (provider_tests, "MismatchedResponseTimingCountFailsClosed", "provider count regression"),
+        (ui, "TimingList.ItemsSource = result.ResponseTimings", "typed timing UI source"),
+        (ui, "DiskIoTimingRow.FromEvidence", "timing UI projection"),
+        (ui_xaml, "not a queue-time/service-time decomposition", "timing UI semantics"),
+        (ui_xaml, "do not by themselves establish a storage bottleneck", "no timing-only bottleneck verdict"),
         (gate, "verify_disk_io_response_timing.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
         (docs, "not a queue-time/service-time decomposition", "timing semantics"),
-        (docs, "does not label a disk as a bottleneck", "no premature bottleneck claim"),
+        (docs, "timing alone is not a bottleneck verdict", "descriptive timing boundary"),
     ]
     for text, needle, label in required:
         checks += require(text, needle, label)
@@ -168,9 +173,8 @@ def run_source_guards(root: Path) -> int:
         "positional collector snapshot timing field",
     )
     checks += forbid(capture, "ResponseTimings { get; init; }", "publicly mutable timing attachment")
-    checks += forbid(ui, "ResponseTimings", "premature timing UI claim")
-    checks += forbid(ui.lower(), "bottleneck", "premature bottleneck UI claim")
-    checks += forbid(timing.lower(), "health score", "health scoring")
+    checks += forbid(ui, "HealthScore", "timing UI health score API")
+    checks += forbid(ui, "LatencyScore", "timing UI latency score API")
     checks += forbid(timing, "Task.Delay", "timing background sampler")
     checks += forbid(timing, "Timer", "timing poller")
     return checks

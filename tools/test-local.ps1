@@ -107,6 +107,10 @@ Invoke-Step "Offline DiskIo response-timing verifier" {
     python tools/verify_disk_io_response_timing.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline DiskIo timing provenance verifier" {
+    python tools/verify_disk_io_timing_provenance.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline disk I/O capture-policy verifier" {
     python tools/verify_disk_io_capture_policy.py --repo-root $repoRoot --cases 50000
 }

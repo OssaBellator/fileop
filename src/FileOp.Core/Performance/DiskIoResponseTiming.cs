@@ -4,7 +4,10 @@ public sealed record DiskIoResponseTimingObservation(
     DateTimeOffset Timestamp,
     uint PhysicalDiskNumber,
     DiskIoOperationKind Operation,
-    TimeSpan ResponseTime);
+    TimeSpan ResponseTime)
+{
+    public DiskIoProcessIdentity? Owner { get; init; }
+}
 
 public sealed record DiskIoResponseTimingSummary
 {
@@ -206,6 +209,24 @@ public static class DiskIoResponseTimingAnalyzer
         {
             throw new InvalidDataException(
                 $"Disk-I/O response timing cannot be negative ({observation.ResponseTime}).");
+        }
+        if (observation.Owner is { } owner)
+        {
+            if (owner.ProcessId <= 0)
+            {
+                throw new InvalidDataException(
+                    $"Disk-I/O response timing owner process ID {owner.ProcessId} is invalid.");
+            }
+            if (owner.StartedAt is { } processStart && processStart > observation.Timestamp)
+            {
+                throw new InvalidDataException(
+                    $"Disk-I/O response timing owner process {owner.ProcessId} starts after its completion timestamp.");
+            }
+            if (owner.ImageName is { Length: > 0 } imageName && string.IsNullOrWhiteSpace(imageName))
+            {
+                throw new InvalidDataException(
+                    "Disk-I/O response timing owner image name cannot contain only whitespace.");
+            }
         }
     }
 
