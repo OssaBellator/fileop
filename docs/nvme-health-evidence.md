@@ -19,13 +19,13 @@ Microsoft documents this protocol-specific query path for NVMe monitoring/invent
 The returned `STORAGE_PROTOCOL_DATA_DESCRIPTOR` is validated before the health bytes are read. FileOp requires:
 
 - enough returned bytes for the 48-byte descriptor header;
-- descriptor `Version` and `Size` large enough for the known structure and contained in the returned buffer;
+- descriptor `Version` and `Size` to equal the documented 48-byte descriptor size;
 - returned protocol type = NVMe;
 - returned data type = NVMe log page;
 - returned request value = SMART/Health log page;
 - protocol data offset at least 40 bytes;
 - protocol data length at least 512 bytes;
-- the complete 512-byte health payload to fit inside the actual returned byte count.
+- the complete 512-byte health payload to fit inside the actual returned byte count, using overflow-safe range arithmetic.
 
 Malformed protocol metadata fails closed instead of being interpreted as a health log.
 
@@ -87,6 +87,6 @@ Protocol remains v8. A later UI may present these fields only as standardized NV
 
 ## Validation
 
-`tools/verify_nvme_health_evidence.py` provides a portable randomized model for the query layout and 512-byte health parser plus repository source guards. Focused .NET tests cover exact query fields, critical-warning bits, 128-bit counters, normalized spare validation, descriptor/protocol/range validation, reserved warning bits and result invariants.
+`tools/verify_nvme_health_evidence.py` provides a portable randomized model for the query layout and 512-byte health parser plus repository source guards. Focused .NET tests cover exact query fields, critical-warning bits, 128-bit counters, normalized spare validation, exact descriptor/protocol/range validation, reserved warning bits and result invariants.
 
 The already-gated DiskIo bottleneck verifier runs the NVMe verifier transitively, and the NVMe verifier pins that parent→child chain. Native Windows/.NET execution is still required before release claims about live NVMe `DeviceIoControl` behavior.
