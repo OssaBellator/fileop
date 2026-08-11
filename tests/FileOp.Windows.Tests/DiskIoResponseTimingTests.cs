@@ -30,7 +30,7 @@ public sealed class DiskIoResponseTimingTests
         Assert.AreEqual(2, result.Count);
         var disk0 = result[0];
         Assert.AreEqual(0u, disk0.PhysicalDiskNumber);
-        Assert.AreEqual(8, disk0.SampleCount);
+        Assert.AreEqual(8L, disk0.SampleCount);
         AssertSummary(
             disk0.Reads,
             count: 5,
@@ -55,7 +55,7 @@ public sealed class DiskIoResponseTimingTests
 
         var disk2 = result[1];
         Assert.AreEqual(2u, disk2.PhysicalDiskNumber);
-        Assert.AreEqual(1, disk2.SampleCount);
+        Assert.AreEqual(1L, disk2.SampleCount);
         Assert.IsNotNull(disk2.Reads);
         Assert.IsNull(disk2.Writes);
         Assert.IsNull(disk2.Flushes);
@@ -105,35 +105,35 @@ public sealed class DiskIoResponseTimingTests
                 TimeSpan.Zero,
                 TimeSpan.Zero,
                 p95: null,
-                TimeSpan.Zero));
+                maximum: TimeSpan.Zero));
         Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
             new DiskIoResponseTimingSummary(
                 1,
                 TimeSpan.FromTicks(-1),
                 TimeSpan.Zero,
                 p95: null,
-                TimeSpan.Zero));
+                maximum: TimeSpan.Zero));
         Assert.ThrowsException<ArgumentException>(() =>
             new DiskIoResponseTimingSummary(
                 1,
                 TimeSpan.FromMilliseconds(2),
                 TimeSpan.FromMilliseconds(1),
                 p95: null,
-                TimeSpan.FromMilliseconds(3)));
+                maximum: TimeSpan.FromMilliseconds(3)));
         Assert.ThrowsException<ArgumentException>(() =>
             new DiskIoResponseTimingSummary(
                 4,
                 TimeSpan.FromMilliseconds(1),
                 TimeSpan.FromMilliseconds(2),
-                TimeSpan.FromMilliseconds(3),
-                TimeSpan.FromMilliseconds(4)));
+                p95: TimeSpan.FromMilliseconds(3),
+                maximum: TimeSpan.FromMilliseconds(4)));
         Assert.ThrowsException<ArgumentException>(() =>
             new DiskIoResponseTimingSummary(
                 5,
                 TimeSpan.FromMilliseconds(1),
                 TimeSpan.FromMilliseconds(2),
                 p95: null,
-                TimeSpan.FromMilliseconds(4)));
+                maximum: TimeSpan.FromMilliseconds(4)));
         Assert.ThrowsException<ArgumentException>(() =>
             new DiskIoDiskResponseTiming(0, reads: null, writes: null, flushes: null));
     }
