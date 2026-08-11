@@ -83,6 +83,10 @@ Invoke-Step "Offline Performance DiskIo UI verifier" {
     python tools/verify_performance_disk_io_ui.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline Performance DiskIo timing UI verifier" {
+    python tools/verify_performance_disk_io_timing_ui.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline latency distribution verifier" {
     python tools/verify_latency_distributions.py --repo-root $repoRoot --cases 50000
 }
@@ -97,6 +101,10 @@ Invoke-Step "Offline USN/checkpoint freshness verifier" {
 
 Invoke-Step "Offline disk I/O attribution verifier" {
     python tools/verify_disk_io_attribution.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline DiskIo response-timing verifier" {
+    python tools/verify_disk_io_response_timing.py --repo-root $repoRoot --cases 50000
 }
 
 Invoke-Step "Offline disk I/O capture-policy verifier" {
