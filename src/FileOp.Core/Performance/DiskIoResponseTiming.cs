@@ -1,0 +1,119 @@
+namespace FileOp.Core.Performance;
+
+public sealed record DiskIoResponseTimingObservation(
+    DateTimeOffset Timestamp,
+    uint PhysicalDiskNumber,
+    DiskIoOperationKind Operation,
+    TimeSpan ResponseTime);
+
+public sealed record DiskIoResponseTimingSummary(
+    int SampleCount,
+    TimeSpan Minimum,
+    TimeSpan Median,
+    TimeSpan? P95,
+    TimeSpan Maximum);
+
+public sealed record DiskIoDiskResponseTiming(
+    uint PhysicalDiskNumber,
+    DiskIoResponseTimingSummary? Reads,
+    DiskIoResponseTimingSummary? Writes,
+    DiskIoResponseTimingSummary? Flushes)
+{
+    public int SampleCount =>
+        (Reads?.SampleCount ?? 0) +
+        (Writes?.SampleCount ?? 0) +
+        (Flushes?.SampleCount ?? 0);
+}
+
+public static class DiskIoResponseTimingAnalyzer
+{
+    public const int MinimumSamplesForP95 = 5;
+
+    public static IReadOnlyList<DiskIoDiskResponseTiming> Analyze(
+        DateTimeOffset startedAt,
+        DateTimeOffset endedAt,
+        IReadOnlyList<DiskIoResponseTimingObservation> observations)
+    {
+        ArgumentNullException.ThrowIfNull(observations);
+        if (endedAt < startedAt)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(endedAt),
+                endedAt,
+                "Disk-I/O response-timing end time cannot precede the start time.");
+        }
+
+        foreach (var observation in observations)
+        {
+            ValidateObservation(observation, startedAt, endedAt);
+        }
+
+        return observations
+            .GroupBy(static observation => observation.PhysicalDiskNumber)
+            .OrderBy(static group => group.Key)
+            .Select(group => new DiskIoDiskResponseTiming(
+                group.Key,
+                Build(group, DiskIoOperationKind.Read),
+                Build(group, DiskIoOperationKind.Write),
+                Build(group, DiskIoOperationKind.Flush)))
+            .ToArray();
+    }
+
+    private static DiskIoResponseTimingSummary? Build(
+        IEnumerable<DiskIoResponseTimingObservation> observations,
+        DiskIoOperationKind operation)
+    {
+        var ticks = observations
+            .Where(observation => observation.Operation == operation)
+            .Select(static observation => observation.ResponseTime.Ticks)
+            .OrderBy(static value => value)
+            .ToArray();
+        if (ticks.Length == 0)
+        {
+            return null;
+        }
+
+        var middle = ticks.Length / 2;
+        var medianTicks = ticks.Length % 2 == 1
+            ? ticks[middle]
+            : Midpoint(ticks[middle - 1], ticks[middle]);
+        TimeSpan? p95 = null;
+        if (ticks.Length >= MinimumSamplesForP95)
+        {
+            var rank = ((long)ticks.Length * 95 + 99) / 100;
+            p95 = TimeSpan.FromTicks(ticks[checked((int)rank - 1)]);
+        }
+
+        return new DiskIoResponseTimingSummary(
+            ticks.Length,
+            TimeSpan.FromTicks(ticks[0]),
+            TimeSpan.FromTicks(medianTicks),
+            p95,
+            TimeSpan.FromTicks(ticks[^1]));
+    }
+
+    private static void ValidateObservation(
+        DiskIoResponseTimingObservation observation,
+        DateTimeOffset startedAt,
+        DateTimeOffset endedAt)
+    {
+        if (observation.Timestamp < startedAt || observation.Timestamp > endedAt)
+        {
+            throw new InvalidDataException(
+                $"Disk-I/O response timing at {observation.Timestamp:O} is outside the declared capture window {startedAt:O}–{endedAt:O}.");
+        }
+        if (!Enum.IsDefined(observation.Operation))
+        {
+            throw new InvalidDataException(
+                $"Disk-I/O response timing has unsupported operation value {(int)observation.Operation}.");
+        }
+        if (observation.ResponseTime < TimeSpan.Zero)
+        {
+            throw new InvalidDataException(
+                $"Disk-I/O response timing cannot be negative ({observation.ResponseTime}).");
+        }
+    }
+
+    private static long Midpoint(long lower, long upper) =>
+        lower + ((upper - lower) / 2);
+}
