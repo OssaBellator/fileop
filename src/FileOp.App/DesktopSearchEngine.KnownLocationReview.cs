@@ -57,7 +57,6 @@ internal sealed partial class DesktopSearchEngine
             exception is ArgumentException or
             IOException or
             NotSupportedException or
-            PathTooLongException or
             UnauthorizedAccessException)
         {
             tempPath = string.Empty;
@@ -88,7 +87,7 @@ internal sealed partial class DesktopSearchEngine
         string activeRoot)
     {
         var fullPath = Path.GetFullPath(locationPath);
-        if (!IsWithinRoot(fullPath, activeRoot))
+        if (!IsReviewPathWithinRoot(fullPath, activeRoot))
         {
             return StorageKnownLocationReviewClassifier.CreateUnavailable(
                 provenance,
@@ -125,7 +124,7 @@ internal sealed partial class DesktopSearchEngine
         }
     }
 
-    private static bool IsWithinRoot(string path, string rootPath)
+    private static bool IsReviewPathWithinRoot(string path, string rootPath)
     {
         var fullPath = Path.GetFullPath(path);
         var fullRoot = Path.GetFullPath(rootPath);
