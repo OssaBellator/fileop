@@ -119,6 +119,10 @@ Invoke-Step "Offline DiskIo process response-timing verifier" {
     python tools/verify_disk_io_process_response_timing.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline DiskIo bottleneck evidence verifier" {
+    python tools/verify_disk_io_bottleneck_evidence.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline disk I/O capture-policy verifier" {
     python tools/verify_disk_io_capture_policy.py --repo-root $repoRoot --cases 50000
 }
