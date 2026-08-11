@@ -195,6 +195,35 @@ public sealed class StorageCleanupReadinessTests
         Assert.AreEqual("Current metadata unavailable.", preview.Detail);
     }
 
+    [TestMethod]
+    public void MismatchedCanonicalRequestedPathsAreBlocked()
+    {
+        var candidate = Candidate();
+        var preview = StorageCleanupReadinessAnalyzer.Analyze(
+            candidate,
+            @"C:\Users\A\Downloads",
+            CanonicalRoot() with { RequestedPath = @"C:\Users\A\Other" },
+            CanonicalCandidate(candidate),
+            Current(candidate),
+            null,
+            IndexedTime.AddDays(10));
+
+        Assert.AreEqual(StorageCleanupReadinessStatus.Blocked, preview.Status);
+        StringAssert.Contains(preview.Detail, "not bound to the requested known-location root");
+    }
+
+    [TestMethod]
+    public void MismatchedCurrentRequestedPathIsBlocked()
+    {
+        var candidate = Candidate();
+        var preview = Analyze(
+            candidate,
+            Current(candidate) with { RequestedPath = @"C:\Users\A\Downloads\other.zip" });
+
+        Assert.AreEqual(StorageCleanupReadinessStatus.Blocked, preview.Status);
+        StringAssert.Contains(preview.Detail, "not bound to the requested review candidate path");
+    }
+
     private static StorageCleanupReadinessPreview Analyze(
         StorageReviewCandidate candidate,
         StorageCleanupCurrentFileEvidence current) =>
