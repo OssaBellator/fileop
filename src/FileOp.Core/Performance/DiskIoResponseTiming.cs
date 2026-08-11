@@ -22,14 +22,33 @@ public sealed record DiskIoResponseTimingSummary
                 sampleCount,
                 "Disk-I/O response timing summaries require at least one sample.");
         }
-        if (minimum < TimeSpan.Zero ||
-            median < TimeSpan.Zero ||
-            maximum < TimeSpan.Zero ||
-            p95 is { } percentile && percentile < TimeSpan.Zero)
+        if (minimum < TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(minimum),
-                "Disk-I/O response timing summary durations cannot be negative.");
+                minimum,
+                "Disk-I/O response timing minimum cannot be negative.");
+        }
+        if (median < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(median),
+                median,
+                "Disk-I/O response timing median cannot be negative.");
+        }
+        if (p95 is { } percentile && percentile < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(p95),
+                p95,
+                "Disk-I/O response timing p95 cannot be negative.");
+        }
+        if (maximum < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximum),
+                maximum,
+                "Disk-I/O response timing maximum cannot be negative.");
         }
         if (minimum > median || median > maximum)
         {
@@ -95,8 +114,8 @@ public sealed record DiskIoDiskResponseTiming
     public DiskIoResponseTimingSummary? Writes { get; }
     public DiskIoResponseTimingSummary? Flushes { get; }
 
-    public int SampleCount =>
-        (Reads?.SampleCount ?? 0) +
+    public long SampleCount =>
+        (long)(Reads?.SampleCount ?? 0) +
         (Writes?.SampleCount ?? 0) +
         (Flushes?.SampleCount ?? 0);
 }
