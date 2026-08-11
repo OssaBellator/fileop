@@ -201,6 +201,9 @@ public sealed record DiskIoCaptureResult
 
     public string Detail { get; }
 
+    public IReadOnlyList<DiskIoDiskResponseTiming> ResponseTimings { get; init; } =
+        Array.Empty<DiskIoDiskResponseTiming>();
+
     public bool EvidenceMayBeIncomplete =>
         Status == DiskIoCaptureStatus.Completed &&
         (StopReason == DiskIoCaptureStopReason.ObservationLimitReached ||
