@@ -83,6 +83,10 @@ Invoke-Step "Offline FileOp resource footprint verifier" {
     python tools/verify_fileop_resource_footprint.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline background process activity verifier" {
+    python tools/verify_background_process_activity.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Performance DiskIo UI verifier" {
     python tools/verify_performance_disk_io_ui.py --repo-root $repoRoot --cases 50000
 }
