@@ -175,7 +175,8 @@ def check_repository(root: Path) -> int:
     ):
         checks += forbid(combined.lower(), needle.lower(), "new lookup/poller/process timing claim")
 
-    checks += forbid(ui, ".Owner", "owner-specific timing UI")
+    checks += forbid(ui, "timing.Owner", "timing-owner UI exposure")
+    checks += forbid(ui, "responseTiming.Owner", "timing-owner UI exposure")
     checks += forbid(ui, "Process response", "process response timing UI")
     return checks
 
