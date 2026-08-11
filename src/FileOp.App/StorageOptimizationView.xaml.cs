@@ -1,5 +1,6 @@
 using FileOp.Core.Performance;
 using FileOp.Core.Storage;
+using FileOp.Windows.Performance;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -12,6 +13,10 @@ public sealed partial class StorageOptimizationView : UserControl
 
     private readonly Dictionary<int, StorageSameSizeContentVerification> _sameSizeVerificationResults = [];
     private readonly Dictionary<int, string> _sameSizeVerificationMessages = [];
+    private readonly IPhysicalDiskDeviceContextProvider _physicalDiskDeviceContextProvider =
+        new WindowsPhysicalDiskDeviceContextProvider();
+    private readonly INvmeHealthEvidenceProvider _nvmeHealthEvidenceProvider =
+        new WindowsNvmeHealthEvidenceProvider();
     private StorageOptimizationAnalysis? _analysis;
     private int? _sameSizeVerificationActiveIndex;
     private bool _sameSizeVerificationControlsBlocked;
@@ -51,6 +56,7 @@ public sealed partial class StorageOptimizationView : UserControl
     public void SetDiskIoLoading()
     {
         PerformanceDiagnostics.SetDiskIoLoading();
+        PerformanceDiagnostics.ResetDiskIoDeviceEvidence();
         _sameSizeVerificationControlsBlocked = true;
         RefreshSameSizeRows();
     }
@@ -79,6 +85,8 @@ public sealed partial class StorageOptimizationView : UserControl
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetUnavailable(message);
+        PerformanceDiagnostics.SetDiskIoDeviceEvidenceUnavailable(
+            "Physical-disk device evidence is unavailable because the Performance surface is unavailable.");
         FileOpResourceFootprint.Apply(null, FileOpResourceRefreshUnavailableMessage);
         KnownLocationReview.SetUnavailable(
             "Known-location review is unavailable until a native indexed NTFS volume is active and ready.");
@@ -101,6 +109,8 @@ public sealed partial class StorageOptimizationView : UserControl
     public void SetDiskIoUnavailable(string message)
     {
         PerformanceDiagnostics.SetDiskIoUnavailable(message);
+        PerformanceDiagnostics.SetDiskIoDeviceEvidenceUnavailable(
+            "Physical-disk device evidence was not queried because the Disk I/O capture did not complete.");
         _sameSizeVerificationControlsBlocked = false;
         RefreshSameSizeRows();
     }
@@ -108,8 +118,11 @@ public sealed partial class StorageOptimizationView : UserControl
     public void SetDiskIoReadyForCapture(bool ready) =>
         PerformanceDiagnostics.SetDiskIoReadyForCapture(ready);
 
-    public void ResetDiskIoCapture() =>
+    public void ResetDiskIoCapture()
+    {
         PerformanceDiagnostics.ResetDiskIoCapture();
+        PerformanceDiagnostics.ResetDiskIoDeviceEvidence();
+    }
 
     public void Apply(StorageOptimizationAnalysis analysis)
     {
@@ -152,7 +165,35 @@ public sealed partial class StorageOptimizationView : UserControl
 
     public void ApplyDiskIoCapture(DiskIoCaptureResult result)
     {
+        ArgumentNullException.ThrowIfNull(result);
         PerformanceDiagnostics.ApplyDiskIoCapture(result);
+
+        if (result.Status == DiskIoCaptureStatus.Completed && result.Report is { } report)
+        {
+            PerformanceDiagnostics.SetDiskIoDeviceEvidenceLoading();
+            try
+            {
+                var physicalDiskNumbers = report.Disks
+                    .Select(static disk => disk.PhysicalDiskNumber)
+                    .ToArray();
+                var evidence = DiskIoDeviceEvidenceCollector.Query(
+                    physicalDiskNumbers,
+                    _physicalDiskDeviceContextProvider,
+                    _nvmeHealthEvidenceProvider);
+                PerformanceDiagnostics.ApplyDiskIoDeviceEvidence(evidence);
+            }
+            catch (Exception exception)
+            {
+                PerformanceDiagnostics.SetDiskIoDeviceEvidenceUnavailable(
+                    $"The Disk I/O capture completed, but post-capture physical-disk device evidence could not be rendered: {exception.Message}");
+            }
+        }
+        else
+        {
+            PerformanceDiagnostics.SetDiskIoDeviceEvidenceUnavailable(
+                "Physical-disk device evidence was not queried because the Disk I/O capture did not complete.");
+        }
+
         _sameSizeVerificationControlsBlocked = false;
         RefreshSameSizeRows();
     }
