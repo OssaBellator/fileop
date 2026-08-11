@@ -168,15 +168,23 @@ public sealed record BackgroundProcessActivityFrame
                 nameof(processes));
         }
 
+        var capturedAtUtc = capturedAt.ToUniversalTime();
         var snapshot = processes.ToArray();
+        var processIds = new HashSet<int>();
         var identities = new HashSet<ProcessKey>();
         foreach (var process in snapshot)
         {
             ArgumentNullException.ThrowIfNull(process);
-            if (process.Identity.StartedAt > capturedAt.ToUniversalTime())
+            if (process.Identity.StartedAt > capturedAtUtc)
             {
                 throw new ArgumentException(
                     $"Process {process.Identity.ProcessId} starts after the frame capture timestamp.",
+                    nameof(processes));
+            }
+            if (!processIds.Add(process.Identity.ProcessId))
+            {
+                throw new ArgumentException(
+                    $"A background-process frame cannot contain PID {process.Identity.ProcessId} more than once, even with different start times.",
                     nameof(processes));
             }
             if (!identities.Add(ProcessKey.From(process.Identity)))
@@ -187,7 +195,7 @@ public sealed record BackgroundProcessActivityFrame
             }
         }
 
-        CapturedAt = capturedAt.ToUniversalTime();
+        CapturedAt = capturedAtUtc;
         EnumeratedProcessCount = enumeratedProcessCount;
         InaccessibleProcessCount = inaccessibleProcessCount;
         SnapshotCapReached = snapshotCapReached;
@@ -350,16 +358,42 @@ public sealed record BackgroundProcessActivityReport
         }
 
         var rowSnapshot = rows.ToArray();
+        var rowProcessIds = new HashSet<int>();
         var identities = new HashSet<ProcessKey>();
+        BackgroundProcessActivityRow? visibleCaptureProcess = null;
         foreach (var row in rowSnapshot)
         {
             ArgumentNullException.ThrowIfNull(row);
+            if (!rowProcessIds.Add(row.Identity.ProcessId))
+            {
+                throw new ArgumentException(
+                    $"Visible background-process rows cannot contain PID {row.Identity.ProcessId} more than once.",
+                    nameof(rows));
+            }
             if (!identities.Add(ProcessKey.From(row.Identity)))
             {
                 throw new ArgumentException(
                     "Visible background-process rows cannot repeat a stable process instance.",
                     nameof(rows));
             }
+            if (row.IsCaptureProcess)
+            {
+                if (visibleCaptureProcess is not null)
+                {
+                    throw new ArgumentException(
+                        "Visible background-process rows cannot identify more than one capture process.",
+                        nameof(rows));
+                }
+                visibleCaptureProcess = row;
+            }
+        }
+        if (visibleCaptureProcess is not null &&
+            (captureProcessProcessorTime != visibleCaptureProcess.ProcessorTimeDelta ||
+             captureProcessWorkingSetBytes != visibleCaptureProcess.WorkingSetBytes))
+        {
+            throw new ArgumentException(
+                "Visible capture-process row must match the report's observer CPU and working-set evidence.",
+                nameof(rows));
         }
 
         Budget = budget;
