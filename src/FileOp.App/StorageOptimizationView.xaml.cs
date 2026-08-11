@@ -55,6 +55,15 @@ public sealed partial class StorageOptimizationView : UserControl
         RefreshSameSizeRows();
     }
 
+    public void SetKnownLocationReviewLoading() =>
+        KnownLocationReview.SetLoading();
+
+    public void SetKnownLocationReviewUnavailable(string message) =>
+        KnownLocationReview.SetUnavailable(message);
+
+    public void ApplyKnownLocationReview(StorageKnownLocationReviewSnapshot snapshot) =>
+        KnownLocationReview.Apply(snapshot);
+
     public void SetUnavailable(string message)
     {
         SetThresholdAnalysisLoading(true);
@@ -71,6 +80,8 @@ public sealed partial class StorageOptimizationView : UserControl
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetUnavailable(message);
         FileOpResourceFootprint.Apply(null, FileOpResourceRefreshUnavailableMessage);
+        KnownLocationReview.SetUnavailable(
+            "Known-location review is unavailable until a native indexed NTFS volume is active and ready.");
     }
 
     public void SetReadyForRefresh(bool ready)
