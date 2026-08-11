@@ -36,10 +36,8 @@ public sealed partial class MainWindow
         Guid tabId;
         try
         {
-            review = _storageKnownLocationReview!;
-            root = _searchEngine.StorageRootPath!;
-            if (_storageKnownLocationReview is null ||
-                _searchEngine.StorageRootPath is null ||
+            if (_storageKnownLocationReview is not { } currentReview ||
+                _searchEngine.StorageRootPath is not { } currentRoot ||
                 _searchEngine.State.IsBusy ||
                 _searchEngine.State.Mode != DesktopSearchMode.Native ||
                 !_searchEngine.StorageOptimizationAvailable)
@@ -49,8 +47,8 @@ public sealed partial class MainWindow
                 return;
             }
 
-            review = _storageKnownLocationReview;
-            root = _searchEngine.StorageRootPath;
+            review = currentReview;
+            root = currentRoot;
             if (!PathsEqual(root, review.ActiveVolumeRootPath))
             {
                 SetStorageStatus(
