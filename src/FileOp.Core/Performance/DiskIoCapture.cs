@@ -201,13 +201,72 @@ public sealed record DiskIoCaptureResult
 
     public string Detail { get; }
 
-    public IReadOnlyList<DiskIoDiskResponseTiming> ResponseTimings { get; init; } =
+    public IReadOnlyList<DiskIoDiskResponseTiming> ResponseTimings { get; private init; } =
         Array.Empty<DiskIoDiskResponseTiming>();
 
     public bool EvidenceMayBeIncomplete =>
         Status == DiskIoCaptureStatus.Completed &&
         (StopReason == DiskIoCaptureStopReason.ObservationLimitReached ||
          LossState != DiskIoCaptureLossState.NoneObserved);
+
+    public DiskIoCaptureResult WithResponseTimings(
+        IReadOnlyList<DiskIoDiskResponseTiming> responseTimings)
+    {
+        ArgumentNullException.ThrowIfNull(responseTimings);
+        if (Status != DiskIoCaptureStatus.Completed || Report is null)
+        {
+            throw new InvalidOperationException(
+                "Disk-I/O response timing can be attached only to a completed capture result.");
+        }
+
+        var snapshot = responseTimings.ToArray();
+        if (snapshot.Length != Report.Disks.Count)
+        {
+            throw new ArgumentException(
+                "Disk-I/O response timing must contain exactly one row for every physical disk in the attribution report.",
+                nameof(responseTimings));
+        }
+
+        var reportDisks = Report.Disks.ToDictionary(static disk => disk.PhysicalDiskNumber);
+        var seen = new HashSet<uint>();
+        long sampleCount = 0;
+        foreach (var timing in snapshot)
+        {
+            if (!seen.Add(timing.PhysicalDiskNumber) ||
+                !reportDisks.TryGetValue(timing.PhysicalDiskNumber, out var disk))
+            {
+                throw new ArgumentException(
+                    "Disk-I/O response timing contains a duplicate or unknown physical disk.",
+                    nameof(responseTimings));
+            }
+
+            var readSamples = timing.Reads?.SampleCount ?? 0;
+            var writeSamples = timing.Writes?.SampleCount ?? 0;
+            var flushSamples = timing.Flushes?.SampleCount ?? 0;
+            if (readSamples != disk.ReadOperations ||
+                writeSamples != disk.WriteOperations ||
+                flushSamples != disk.FlushOperations)
+            {
+                throw new ArgumentException(
+                    $"Disk {timing.PhysicalDiskNumber} response timing sample counts do not match the attribution operation counts.",
+                    nameof(responseTimings));
+            }
+
+            sampleCount += timing.SampleCount;
+        }
+
+        if (sampleCount != Report.AcceptedEventCount)
+        {
+            throw new ArgumentException(
+                "Disk-I/O response timing sample count does not match the completed attribution report.",
+                nameof(responseTimings));
+        }
+
+        return this with
+        {
+            ResponseTimings = snapshot,
+        };
+    }
 
     public static DiskIoCaptureResult Completed(
         DiskIoCaptureBudget budget,
