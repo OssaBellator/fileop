@@ -1,5 +1,4 @@
 using FileOp.Core.Storage;
-using FileOp.Windows.IndexingService;
 using FileOp.Windows.Storage;
 
 namespace FileOp.App;
@@ -7,11 +6,12 @@ namespace FileOp.App;
 public sealed partial class MainWindow
 {
     private readonly WindowsStorageCleanupReadinessService _storageCleanupReadinessService = new();
+    private bool _storageCleanupReadinessActive;
 
     internal async Task CheckKnownLocationCleanupReadinessAsync(string requestedPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(requestedPath);
-        if (_closed || !_storageOptimizationInitialized)
+        if (_closed || !_storageOptimizationInitialized || _storageCleanupReadinessActive)
         {
             return;
         }
@@ -30,6 +30,7 @@ public sealed partial class MainWindow
             return;
         }
 
+        _storageCleanupReadinessActive = true;
         try
         {
             if (_storageKnownLocationReview is not { } review ||
@@ -113,6 +114,7 @@ public sealed partial class MainWindow
         }
         finally
         {
+            _storageCleanupReadinessActive = false;
             _storageGate.Release();
         }
     }
