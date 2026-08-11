@@ -10,6 +10,6 @@ After the asynchronous indexed parent load returns, FileOp rechecks the cached r
 
 When the source is still current, FileOp selects the candidate if it is already loaded. If it is beyond the first page, a path-bound selection hint is retained so an explicit **Load more** can reveal and select it; the handoff does not auto-page through the directory.
 
-This is navigation and selection only. It does not prepare or queue a Copy/Move plan, run Files preflight/execution validation, authorize cleanup, or execute a filesystem mutation. It does not rescan the filesystem, hash content, add a protocol operation, or delete, move, copy or replace a candidate. Protocol remains v8.
+This is navigation and selection only. It does not prepare or queue a Copy/Move plan or run Files preflight/execution validation. It does not authorize or run cleanup, and it does not execute a filesystem mutation. It does not rescan the filesystem, hash content, add a protocol operation, or delete, move, copy or replace a candidate. Protocol remains v8.
 
 The review button routes the candidate path to the app-owned `MainWindow` only to enter the existing Files navigation coordinator. That routing does not expose a mutation API; the destination remains the same indexed Files surface and its existing paging/selection state.
