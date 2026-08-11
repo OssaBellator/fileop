@@ -63,6 +63,24 @@ def resolve_parent(
     return parent if parent and within(parent, active_root) else None
 
 
+def choose_tab(existing_paths: list[str | None], parent: str) -> tuple[int, bool]:
+    for index, value in enumerate(existing_paths):
+        if value is not None and same(value, parent):
+            return index, False
+    return len(existing_paths), True
+
+
+def may_apply_selection(
+    *,
+    same_review: bool,
+    same_root: bool,
+    native: bool,
+    busy: bool,
+    optimize_ready: bool,
+) -> bool:
+    return same_review and same_root and native and not busy and optimize_ready
+
+
 def run_model(cases: int, seed: int) -> int:
     rng = random.Random(seed)
     checks = 0
@@ -87,6 +105,26 @@ def run_model(cases: int, seed: int) -> int:
         )
         assert (result is not None) == expected
         checks += 1
+
+    tab_index, created = choose_tab([r"C:\One", r"C:\Two"], r"c:\two")
+    assert tab_index == 1 and not created
+    tab_index, created = choose_tab([r"C:\One"], r"C:\Three")
+    assert tab_index == 1 and created
+    assert may_apply_selection(
+        same_review=True,
+        same_root=True,
+        native=True,
+        busy=False,
+        optimize_ready=True,
+    )
+    assert not may_apply_selection(
+        same_review=False,
+        same_root=True,
+        native=True,
+        busy=False,
+        optimize_ready=True,
+    )
+    checks += 4
 
     for index in range(cases):
         drive = rng.choice("CDE")
@@ -131,9 +169,24 @@ def run_model(cases: int, seed: int) -> int:
             assert same(result, ntpath.dirname(candidate))
             checks += 2
 
-        # A selection hint becomes visible only after an explicit page contains it.
+            existing = [
+                f"{root}\\Other{slot}"
+                for slot in range(rng.randint(0, 4))
+            ]
+            insert_match = rng.random() < 0.55
+            if insert_match:
+                match_at = rng.randrange(len(existing) + 1)
+                existing.insert(match_at, result.swapcase())
+            chosen, created = choose_tab(existing, result)
+            assert created is (not insert_match)
+            if insert_match:
+                assert chosen == match_at
+            else:
+                assert chosen == len(existing)
+            checks += 2
+
         page_count = rng.randint(1, 5)
-        target_page = rng.randrange(page_count + 1)  # page_count means absent.
+        target_page = rng.randrange(page_count + 1)
         target = f"{root}\\Dir\\target-{index}.bin"
         loaded: list[str] = []
         for page in range(page_count):
@@ -145,6 +198,29 @@ def run_model(cases: int, seed: int) -> int:
             assert len(selected) <= 1
             assert bool(selected) == (target_page <= page)
             checks += 2
+
+        same_review_after_load = rng.random() < 0.93
+        same_root_after_load = rng.random() < 0.96
+        native_after_load = rng.random() < 0.97
+        busy_after_load = rng.random() < 0.04
+        optimize_ready_after_load = rng.random() < 0.96
+        can_select = may_apply_selection(
+            same_review=same_review_after_load,
+            same_root=same_root_after_load,
+            native=native_after_load,
+            busy=busy_after_load,
+            optimize_ready=optimize_ready_after_load,
+        )
+        assert can_select == (
+            same_review_after_load
+            and same_root_after_load
+            and native_after_load
+            and not busy_after_load
+            and optimize_ready_after_load
+        )
+        if not same_review_after_load or not same_root_after_load or not native_after_load:
+            assert not can_select
+        checks += 2
     return checks
 
 
@@ -192,9 +268,16 @@ def run_source_guards(root: Path) -> int:
         (coordinator, "IsPathWithinRoot(candidate.Path, root)", "candidate containment"),
         (coordinator, "IsPathWithinRoot(parentPath, root)", "parent containment"),
         (coordinator, "SetStorageViewMode(StorageViewMode.Folders)", "Optimize exit"),
-        (coordinator, "CreateFilesTab(parentPath)", "new Files tab"),
+        (coordinator, "_leftFilesPane.Tabs.FirstOrDefault(existing =>", "matching-tab lookup"),
+        (coordinator, "PathsEqual(existing.CurrentPath, parentPath)", "matching-tab path"),
+        (coordinator, "if (tab is null)", "create-only-when-needed"),
+        (coordinator, "CreateFilesTab(parentPath)", "new Files tab fallback"),
         (coordinator, "_leftFilesPane.Tabs.Add(tab)", "left-pane handoff"),
         (coordinator, "LoadFilesDirectoryAsync(", "existing paged Files loader"),
+        (coordinator, "ReferenceEquals(review, _storageKnownLocationReview)", "post-load review identity"),
+        (coordinator, "var currentRoot = _searchEngine.StorageRootPath", "post-load root capture"),
+        (coordinator, "!PathsEqual(currentRoot, root)", "post-load root comparison"),
+        (coordinator, "did not auto-select stale review evidence", "stale-selection suppression"),
         (coordinator, "SetReviewSelectionHint(candidatePath)", "selection hint"),
         (coordinator, "not in the currently loaded page", "page disclosure"),
         (pane, "_selectedPaths.Add(path)", "path-bound selection"),
@@ -203,6 +286,7 @@ def run_source_guards(root: Path) -> int:
         (gate, "verify_known_location_files_handoff.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8"),
         (docs, "does not auto-page", "no auto-paging documentation"),
+        (docs, "does not prepare or queue", "operation-plan boundary"),
         (docs, "does not authorize or run cleanup", "cleanup boundary"),
     ]
     for text, needle, label in required:
@@ -210,9 +294,13 @@ def run_source_guards(root: Path) -> int:
 
     release_at = coordinator.index("_storageGate.Release();")
     load_at = coordinator.index("await LoadFilesDirectoryAsync(")
+    selection_at = coordinator.index("SetReviewSelectionHint(candidatePath)")
+    freshness_at = coordinator.index("ReferenceEquals(review, _storageKnownLocationReview)")
     if release_at >= load_at:
         raise AssertionError("Storage gate must be released before Files loader reacquires it")
-    checks += 1
+    if freshness_at <= load_at or freshness_at >= selection_at:
+        raise AssertionError("post-load source freshness must be checked before applying the selection hint")
+    checks += 2
 
     combined = coordinator + "\n" + pane + "\n" + view
     for token in (
