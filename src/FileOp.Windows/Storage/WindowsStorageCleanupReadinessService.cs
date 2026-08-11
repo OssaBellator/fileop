@@ -76,6 +76,7 @@ public sealed class WindowsStorageCleanupReadinessService
 
 public sealed class WindowsCurrentReviewFileEvidenceReader
 {
+    private const uint FileFlagOpenReparsePoint = 0x00200000;
     private const uint FileFlagBackupSemantics = 0x02000000;
 
     public ValueTask<StorageCleanupCurrentFileEvidence> ReadAsync(
@@ -101,7 +102,7 @@ public sealed class WindowsCurrentReviewFileEvidenceReader
             FileShare.ReadWrite | FileShare.Delete,
             IntPtr.Zero,
             FileMode.Open,
-            FileFlagBackupSemantics,
+            FileFlagBackupSemantics | FileFlagOpenReparsePoint,
             IntPtr.Zero);
         if (handle.IsInvalid)
         {
