@@ -207,6 +207,10 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                     $"DiskIo trace timing metadata changed or became invalid during capture (initial PerfFreq {initialEvidence.PerformanceCounterFrequency}, final {finalEvidence.PerformanceCounterFrequency}).");
             }
 
+            ValidateResponseTimingProvenance(
+                collection.Observations,
+                collection.ResponseTimings);
+
             var stopReason = collection.ObservationLimitReached
                 ? DiskIoCaptureStopReason.ObservationLimitReached
                 : DiskIoCaptureStopReason.DurationElapsed;
@@ -223,8 +227,7 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                 reportEnd,
                 collection.ResponseTimings);
             var responseTimingSampleCount = responseTimings.Sum(static timing => timing.SampleCount);
-            if (collection.ResponseTimings.Count != collection.Observations.Count ||
-                responseTimingSampleCount != collection.Observations.Count)
+            if (responseTimingSampleCount != collection.Observations.Count)
             {
                 throw new InvalidDataException(
                     $"DiskIo response-timing evidence count {responseTimingSampleCount:N0} does not match the {collection.Observations.Count:N0} accepted normalized completions.");
@@ -239,7 +242,7 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                     ? long.MaxValue
                     : total + count);
             var detail =
-                $"Captured {collection.Observations.Count:N0} normalized DiskIo completions with one decoded response-duration sample per completion; " +
+                $"Captured {collection.Observations.Count:N0} normalized DiskIo completions with one provenance-bound decoded response-duration sample per completion; " +
                 $"{unresolvedCount:N0} had unresolved process ownership; " +
                 $"ignored {collection.IgnoredEventCount:N0} non-target/out-of-window records. " +
                 $"ETW reported {finalEvidence.EventsLost:N0} lost events and {finalEvidence.BuffersLost:N0} lost buffers. " +
@@ -312,6 +315,31 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                 throw new InvalidOperationException(
                     "DiskIo capture cleanup failed after FileOp attempted to stop its owned session, close its consumer, and drain ProcessTrace.",
                     cleanupFailure);
+            }
+        }
+    }
+
+    private static void ValidateResponseTimingProvenance(
+        IReadOnlyList<DiskIoEventObservation> observations,
+        IReadOnlyList<DiskIoResponseTimingObservation> responseTimings)
+    {
+        if (observations.Count != responseTimings.Count)
+        {
+            throw new InvalidDataException(
+                $"DiskIo response-timing evidence count {responseTimings.Count:N0} does not match the {observations.Count:N0} accepted normalized completions.");
+        }
+
+        for (var index = 0; index < observations.Count; index++)
+        {
+            var observation = observations[index];
+            var timing = responseTimings[index];
+            if (timing.Timestamp != observation.Timestamp ||
+                timing.PhysicalDiskNumber != observation.PhysicalDiskNumber ||
+                timing.Operation != observation.Operation ||
+                timing.Owner != observation.Owner)
+            {
+                throw new InvalidDataException(
+                    $"DiskIo response-timing evidence at accepted completion index {index:N0} does not match its timestamp/disk/operation/process provenance.");
             }
         }
     }
