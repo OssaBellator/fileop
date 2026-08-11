@@ -195,6 +195,21 @@ def check_repository(root: Path) -> int:
         assert needle in coordinator, needle
         checks += 1
 
+    load_start = coordinator.index("private async Task LoadStorageOptimizationAsync")
+    load_end = coordinator.index("private async Task CaptureKnownLocationReviewAsync", load_start)
+    performance_probe_index = coordinator.index(
+        "await CapturePerformanceDiagnosticsAsync(generation);",
+        load_start,
+        load_end,
+    )
+    known_location_index = coordinator.index(
+        "await CaptureKnownLocationReviewAsync(generation);",
+        load_start,
+        load_end,
+    )
+    assert performance_probe_index < known_location_index
+    checks += 1
+
     disk_io_start = coordinator.index("private async void StorageOptimizationView_PerformanceDiskIoCaptureRequested")
     disk_io_end = coordinator.index("private async void StorageOptimizationView_SameSizeVerificationRequested", disk_io_start)
     disk_io_block = coordinator[disk_io_start:disk_io_end]
