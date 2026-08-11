@@ -137,6 +137,43 @@ public sealed class DiskIoInvestigationSummaryTests
             DiskIoInvestigationSummaryAnalyzer.Analyze(result));
     }
 
+    [TestMethod]
+    public void PublicCueContractsRejectMalformedManualEvidence()
+    {
+        var immature = new DiskIoResponseTimingSummary(
+            1,
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromMilliseconds(1),
+            p95: null,
+            TimeSpan.FromMilliseconds(1));
+        Assert.ThrowsException<ArgumentException>(() =>
+            new DiskIoObservedP95Cue(0, DiskIoOperationKind.Read, immature));
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            new DiskIoObservedByteDiskCue(0, 0, 1, 0, attributionCoveragePercent: null));
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            new DiskIoObservedOwnerBytesCue(
+                0,
+                new DiskIoProcessIdentity(0, StartedAt, "bad.exe"),
+                1,
+                1,
+                100d));
+
+        var mature = new DiskIoResponseTimingSummary(
+            5,
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromMilliseconds(2),
+            TimeSpan.FromMilliseconds(5),
+            TimeSpan.FromMilliseconds(5));
+        var cue = new DiskIoObservedP95Cue(0, DiskIoOperationKind.Read, mature);
+        Assert.ThrowsException<ArgumentException>(() =>
+            new DiskIoInvestigationSummary(
+                0,
+                evidenceMayBeIncomplete: false,
+                cue,
+                largestObservedByteDisk: null,
+                largestIdentifiedOwner: null));
+    }
+
     private static DiskIoCaptureResult Capture(
         IReadOnlyList<DiskIoEventObservation> events,
         IReadOnlyList<DiskIoResponseTimingObservation> timings,
