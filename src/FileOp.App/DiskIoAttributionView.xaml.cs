@@ -54,6 +54,8 @@ public sealed partial class DiskIoAttributionView : UserControl
             LossText.Text = "Unknown";
             TimingEvidenceStatusText.Text =
                 "Response-duration evidence is unavailable because this capture did not complete with an attribution report.";
+            ProcessTimingEvidenceStatusText.Text =
+                "Process-bound response timing is unavailable because this capture did not complete with an attribution report.";
             StatusText.Text = result.Detail;
             return;
         }
@@ -65,10 +67,29 @@ public sealed partial class DiskIoAttributionView : UserControl
         TimingList.ItemsSource = result.ResponseTimings
             .Select(DiskIoTimingRow.FromEvidence)
             .ToArray();
-        ProcessList.ItemsSource = report.Disks
-            .SelectMany(static disk => disk.Owners.Select(owner =>
-                DiskIoProcessRow.FromAttribution(disk.PhysicalDiskNumber, owner)))
-            .ToArray();
+
+        var processRows = new List<DiskIoProcessRow>();
+        var processTimingAvailable =
+            result.ProcessResponseTimings.Count > 0 &&
+            result.ProcessResponseTimings.Count == report.Disks.Count;
+        for (var diskIndex = 0; diskIndex < report.Disks.Count; diskIndex++)
+        {
+            var disk = report.Disks[diskIndex];
+            var diskTiming = processTimingAvailable
+                ? result.ProcessResponseTimings[diskIndex]
+                : null;
+            for (var ownerIndex = 0; ownerIndex < disk.Owners.Count; ownerIndex++)
+            {
+                var ownerTiming = diskTiming is not null && ownerIndex < diskTiming.Owners.Count
+                    ? diskTiming.Owners[ownerIndex]
+                    : null;
+                processRows.Add(DiskIoProcessRow.FromAttribution(
+                    disk.PhysicalDiskNumber,
+                    disk.Owners[ownerIndex],
+                    ownerTiming));
+            }
+        }
+        ProcessList.ItemsSource = processRows.ToArray();
 
         StopReasonText.Text = result.StopReason switch
         {
@@ -87,6 +108,22 @@ public sealed partial class DiskIoAttributionView : UserControl
                 ? "No accepted Disk I/O completions were observed, so there are no response-duration samples."
                 : "This completed result does not carry typed response-duration evidence. No latency value is inferred."
             : $"{timingSampleCount:N0} response-duration sample(s) across {result.ResponseTimings.Count:N0} physical disk(s), aligned with the accepted completion evidence.";
+
+        if (result.ProcessResponseTimings.Count == 0)
+        {
+            ProcessTimingEvidenceStatusText.Text = report.AcceptedEventCount == 0
+                ? "No accepted Disk I/O completions were observed, so there is no process-bound response timing."
+                : "This completed result does not carry typed process-bound response timing. No per-process latency is inferred.";
+        }
+        else
+        {
+            var visibleSamples = result.ProcessResponseTimings.Sum(static timing => timing.VisibleOwnerSamples);
+            var hiddenSamples = result.ProcessResponseTimings.Sum(static timing => timing.OtherIdentifiedSamples);
+            var unattributedSamples = result.ProcessResponseTimings.Sum(static timing => timing.UnattributedSamples);
+            ProcessTimingEvidenceStatusText.Text =
+                $"{visibleSamples:N0} response-duration sample(s) are attached to {processRows.Count:N0} byte-ranked visible process row(s); " +
+                $"{hiddenSamples:N0} identified-hidden and {unattributedSamples:N0} unresolved-owner sample(s) remain outside the visible process rows.";
+        }
 
         var partialDiskCount = report.Disks.Count(static disk =>
             disk.TotalBytes > 0 && disk.AttributionCoveragePercent is not >= 100d);
@@ -119,6 +156,7 @@ public sealed partial class DiskIoAttributionView : UserControl
         LossText.Text = "—";
         DurationText.Text = "—";
         TimingEvidenceStatusText.Text = "No response-duration evidence has been captured.";
+        ProcessTimingEvidenceStatusText.Text = "No process-bound response timing has been captured.";
     }
 
     private static string FormatCount(long? count) =>
@@ -168,7 +206,7 @@ public sealed record DiskIoTimingRow(
             FormatSummary(timing.Writes),
             FormatSummary(timing.Flushes));
 
-    private static string FormatSummary(DiskIoResponseTimingSummary? summary)
+    internal static string FormatSummary(DiskIoResponseTimingSummary? summary)
     {
         if (summary is null)
         {
@@ -206,11 +244,13 @@ public sealed record DiskIoProcessRow(
     string ReadText,
     string WriteText,
     string OperationsText,
-    string ShareText)
+    string ShareText,
+    string ResponseTimingText)
 {
     public static DiskIoProcessRow FromAttribution(
         uint physicalDiskNumber,
-        DiskIoProcessAttribution attribution)
+        DiskIoProcessAttribution attribution,
+        DiskIoProcessResponseTiming? timing)
     {
         var owner = attribution.Owner;
         var name = string.IsNullOrWhiteSpace(owner.ImageName)
@@ -219,6 +259,11 @@ public sealed record DiskIoProcessRow(
         var identity = owner.StartedAt is { } startedAt
             ? $"{name} · started {startedAt.ToLocalTime():g}"
             : $"{name} · process start unavailable";
+        var responseTiming = timing is null
+            ? "No typed timing"
+            : $"Read: {DiskIoTimingRow.FormatSummary(timing.Reads)}\n" +
+              $"Write: {DiskIoTimingRow.FormatSummary(timing.Writes)}\n" +
+              $"Flush: {DiskIoTimingRow.FormatSummary(timing.Flushes)}";
 
         return new DiskIoProcessRow(
             $"Disk {physicalDiskNumber}",
@@ -226,6 +271,7 @@ public sealed record DiskIoProcessRow(
             ByteFormatter.Format(attribution.ReadBytes),
             ByteFormatter.Format(attribution.WriteBytes),
             $"{attribution.TotalOperations:N0}",
-            $"{attribution.ObservedByteSharePercent:N1}%");
+            $"{attribution.ObservedByteSharePercent:N1}%",
+            responseTiming);
     }
 }
