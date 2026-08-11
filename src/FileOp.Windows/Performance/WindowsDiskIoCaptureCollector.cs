@@ -4,10 +4,13 @@ namespace FileOp.Windows.Performance;
 
 internal sealed record WindowsDiskIoCaptureCollectionSnapshot(
     IReadOnlyList<DiskIoEventObservation> Observations,
-    IReadOnlyList<DiskIoResponseTimingObservation> ResponseTimings,
     IReadOnlyDictionary<WindowsDiskIoOwnerResolutionStatus, int> UnresolvedOwnerCounts,
     int IgnoredEventCount,
-    bool ObservationLimitReached);
+    bool ObservationLimitReached)
+{
+    public IReadOnlyList<DiskIoResponseTimingObservation> ResponseTimings { get; init; } =
+        Array.Empty<DiskIoResponseTimingObservation>();
+}
 
 internal interface IWindowsDiskIoCaptureCollector :
     IWindowsDiskIoNativeTraceCallbackSink,
@@ -183,10 +186,12 @@ internal sealed class WindowsDiskIoCaptureCollector : IWindowsDiskIoCaptureColle
             EnsureConfigured();
             return new WindowsDiskIoCaptureCollectionSnapshot(
                 _observations.ToArray(),
-                _responseTimings.ToArray(),
                 new Dictionary<WindowsDiskIoOwnerResolutionStatus, int>(_unresolvedOwnerCounts),
                 _ignoredEventCount,
-                _observationLimitReached);
+                _observationLimitReached)
+            {
+                ResponseTimings = _responseTimings.ToArray(),
+            };
         }
     }
 
