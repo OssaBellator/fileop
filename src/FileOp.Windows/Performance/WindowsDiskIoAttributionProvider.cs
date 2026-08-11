@@ -207,7 +207,7 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                     $"DiskIo trace timing metadata changed or became invalid during capture (initial PerfFreq {initialEvidence.PerformanceCounterFrequency}, final {finalEvidence.PerformanceCounterFrequency}).");
             }
 
-            ValidateResponseTimingProvenance(
+            WindowsDiskIoTimingProvenanceValidator.Validate(
                 collection.Observations,
                 collection.ResponseTimings);
 
@@ -315,31 +315,6 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                 throw new InvalidOperationException(
                     "DiskIo capture cleanup failed after FileOp attempted to stop its owned session, close its consumer, and drain ProcessTrace.",
                     cleanupFailure);
-            }
-        }
-    }
-
-    private static void ValidateResponseTimingProvenance(
-        IReadOnlyList<DiskIoEventObservation> observations,
-        IReadOnlyList<DiskIoResponseTimingObservation> responseTimings)
-    {
-        if (observations.Count != responseTimings.Count)
-        {
-            throw new InvalidDataException(
-                $"DiskIo response-timing evidence count {responseTimings.Count:N0} does not match the {observations.Count:N0} accepted normalized completions.");
-        }
-
-        for (var index = 0; index < observations.Count; index++)
-        {
-            var observation = observations[index];
-            var timing = responseTimings[index];
-            if (timing.Timestamp != observation.Timestamp ||
-                timing.PhysicalDiskNumber != observation.PhysicalDiskNumber ||
-                timing.Operation != observation.Operation ||
-                timing.Owner != observation.Owner)
-            {
-                throw new InvalidDataException(
-                    $"DiskIo response-timing evidence at accepted completion index {index:N0} does not match its timestamp/disk/operation/process provenance.");
             }
         }
     }
