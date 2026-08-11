@@ -101,6 +101,22 @@ public sealed class NvmeHealthEvidenceTests
             response.Length);
         Assert.AreEqual((UInt128)99, evidence.PowerOnHours);
 
+        var wrongVersion = (byte[])response.Clone();
+        BinaryPrimitives.WriteUInt32LittleEndian(wrongVersion.AsSpan(0, 4), 49);
+        Assert.ThrowsException<InvalidDataException>(() =>
+            WindowsNvmeHealthQueryCodec.ParseHealthResponse(
+                2,
+                wrongVersion,
+                wrongVersion.Length));
+
+        var wrongSize = (byte[])response.Clone();
+        BinaryPrimitives.WriteUInt32LittleEndian(wrongSize.AsSpan(4, 4), 49);
+        Assert.ThrowsException<InvalidDataException>(() =>
+            WindowsNvmeHealthQueryCodec.ParseHealthResponse(
+                2,
+                wrongSize,
+                wrongSize.Length));
+
         var wrongProtocol = (byte[])response.Clone();
         BinaryPrimitives.WriteUInt32LittleEndian(wrongProtocol.AsSpan(8, 4), 2);
         Assert.ThrowsException<InvalidDataException>(() =>
@@ -117,15 +133,13 @@ public sealed class NvmeHealthEvidenceTests
                 shortOffset,
                 shortOffset.Length));
 
-        var excessiveSize = (byte[])response.Clone();
-        BinaryPrimitives.WriteUInt32LittleEndian(
-            excessiveSize.AsSpan(4, 4),
-            checked((uint)(response.Length + 1)));
+        var excessiveOffset = (byte[])response.Clone();
+        BinaryPrimitives.WriteUInt32LittleEndian(excessiveOffset.AsSpan(24, 4), uint.MaxValue);
         Assert.ThrowsException<InvalidDataException>(() =>
             WindowsNvmeHealthQueryCodec.ParseHealthResponse(
                 2,
-                excessiveSize,
-                excessiveSize.Length));
+                excessiveOffset,
+                excessiveOffset.Length));
 
         Assert.ThrowsException<InvalidDataException>(() =>
             WindowsNvmeHealthQueryCodec.ParseHealthResponse(
