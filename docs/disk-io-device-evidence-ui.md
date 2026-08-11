@@ -15,6 +15,8 @@ Only after a completed result contains a report does `StorageOptimizationView.Ap
 
 The device queries are synchronous and bounded inside the same explicit user action. They do not create a detached task, timer, watcher or resident monitor.
 
+`DiskIoDeviceEvidenceCollector.Query` measures its own elapsed time with `Stopwatch` from the start of collector validation through the bounded provider queries. The panel displays this post-capture device-query elapsed time separately from the ETW capture/timing evidence; it is not folded into Disk I/O response-time measurements.
+
 If the ETW result is unsupported/unavailable, the device query is not attempted. If post-capture enrichment throws, the already-rendered ETW result remains intact and only the device-evidence section reports the enrichment failure.
 
 ## Query budget and identity
@@ -71,7 +73,7 @@ Protocol remains v8. ATA/SATA/vendor SMART remains outside this standardized NVM
 
 ## Validation
 
-`tools/verify_disk_io_device_evidence_ui.py` contains a randomized collector/presentation-state model and repository source guards. Focused .NET regressions verify order, provider call count, duplicate rejection, signed-range handling, the 32-disk budget and provider-result disk identity.
+`tools/verify_disk_io_device_evidence_ui.py` contains a randomized collector/presentation-state model and repository source guards. Focused .NET regressions verify order, provider call count, duplicate rejection, signed-range handling, the 32-disk budget, provider-result disk identity and non-negative collector timing evidence.
 
 The already-gated Performance DiskIo UI verifier invokes the new verifier transitively; the child verifier pins the parent model/source calls and the existing `tools/test-local.ps1 -OfflineOnly` entry.
 
