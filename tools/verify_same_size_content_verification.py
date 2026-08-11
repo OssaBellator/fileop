@@ -106,7 +106,7 @@ def check_repository(root: Path) -> int:
         "ArrayPool<byte>.Shared.Rent",
         "policy.MaxTotalBytesRead / group.LogicalBytesPerFile",
         "MatchingSets: Array.Empty<StorageVerifiedContentMatchSet>()",
-        "physical reclaimable space is not verified here",
+        "CapturePhysicalReclaimEvidence(",
     ):
         assert needle in verifier, needle
         checks += 1
@@ -117,6 +117,12 @@ def check_repository(root: Path) -> int:
     hash_call = verifier.index("HashStreamAsync(", digest_setup)
     assert open_loop < digest_setup < hash_call
     checks += 2
+
+    # Current physical metadata is only requested after full-file hash match sets exist.
+    matching_sets = verifier.index("var matchingSets =", digest_setup)
+    physical = verifier.index("CapturePhysicalReclaimEvidence(", matching_sets)
+    assert hash_call < matching_sets < physical
+    checks += 1
 
     for forbidden in (
         "FileAccess.Write",
@@ -145,8 +151,9 @@ def check_repository(root: Path) -> int:
     for needle in (
         'Content="Verify content"',
         "fully SHA-256 hashes a bounded sample under your user account",
-        "physical reclaimable space is still not verified",
         "Potential savings are a logical upper bound only",
+        "current physical identity, hard-link count, and allocated disk bytes",
+        "not deletion authorization",
     ):
         assert needle in xaml, needle
         checks += 1
@@ -157,7 +164,8 @@ def check_repository(root: Path) -> int:
         "ApplySameSizeVerification",
         "VerifiedLogicalDuplicateBytes",
         "never uses the elevated indexer to read file contents",
-        "content-hash evidence, not verified physical reclaimable space",
+        "VerifiedPhysicalReclaimableBytesUpperBound",
+        "not deletion authorization",
     ):
         assert needle in view, needle
         checks += 1
@@ -187,10 +195,11 @@ def check_repository(root: Path) -> int:
         assert needle in tests, needle
         checks += 1
 
-    # Content verification stays outside the elevated named-pipe protocol in this slice.
+    # Content and physical verification stay outside the elevated named-pipe protocol.
     assert "public const int CurrentVersion = 8;" in protocol
     assert "VerifySameSizeContent" not in protocol
-    checks += 2
+    assert "PhysicalReclaim" not in protocol
+    checks += 3
 
     assert "verify_same_size_content_verification.py" in gate
     checks += 1

@@ -285,11 +285,11 @@ public sealed record StorageSameSizeGroupRow(
             : string.Empty;
 
         var verificationText = isActive
-            ? $"Verifying with read-only handles that share read access only. FileOp will fully SHA-256 hash only whole sampled files that fit within the {ByteFormatter.Format(StorageSameSizeContentVerificationPolicy.Default.MaxTotalBytesRead)} content-byte budget."
+            ? $"Verifying with read-only handles that share read access only. FileOp will fully SHA-256 hash only whole sampled files that fit within the {ByteFormatter.Format(StorageSameSizeContentVerificationPolicy.Default.MaxTotalBytesRead)} content-byte budget, then revalidate current physical identity, hard-link count, and allocated disk bytes for any hash matches."
             : !string.IsNullOrWhiteSpace(message)
                 ? message
                 : verification is null
-                    ? $"Not content-verified. Explicit verification processes at most {ByteFormatter.Format(StorageSameSizeContentVerificationPolicy.Default.MaxTotalBytesRead)} of file content and never uses the elevated indexer to read file contents."
+                    ? $"Not content-verified. Explicit verification processes at most {ByteFormatter.Format(StorageSameSizeContentVerificationPolicy.Default.MaxTotalBytesRead)} of file content and never uses the elevated indexer to read file contents. Physical reclaim evidence is collected only for fully hashed matches."
                     : FormatVerification(verification);
 
         return new StorageSameSizeGroupRow(
@@ -320,8 +320,21 @@ public sealed record StorageSameSizeGroupRow(
         var matches = string.Join(
             " | ",
             verification.MatchingSets.Select(static set => string.Join(" = ", set.Paths)));
-        return scope +
-            $" SHA-256 verified {ByteFormatter.Format(verification.VerifiedLogicalDuplicateBytes)} of logical duplicate content within matching sampled paths: {matches}. " +
-            "This is content-hash evidence, not verified physical reclaimable space.";
+        var contentEvidence =
+            $" SHA-256 matched {ByteFormatter.Format(verification.VerifiedLogicalDuplicateBytes)} of logical duplicate content within sampled paths: {matches}.";
+        var physicalEvidence = verification.PhysicalReclaim switch
+        {
+            { Status: StoragePhysicalReclaimEvidenceStatus.Verified } physical =>
+                $" Current-handle physical evidence verifies a maximum {ByteFormatter.Format(verification.VerifiedPhysicalReclaimableBytesUpperBound)} reclaim upper bound across those sampled matches " +
+                $"({physical.MatchingSets.Sum(static set => set.UniquePhysicalFileCount):N0} unique physical file(s), " +
+                $"{physical.MatchingSets.Sum(static set => set.SingletonLinkPhysicalFileCount):N0} singleton-link physical file(s)). " +
+                "The bound assumes one content-equivalent physical file remains per match set and only singleton-link files are later authorized for deletion; it is not deletion authorization and becomes stale if the files change.",
+            { Status: StoragePhysicalReclaimEvidenceStatus.Unavailable } physical =>
+                $" Physical reclaim remains unverified: {physical.Detail}",
+            _ =>
+                " Physical reclaim evidence was not applicable for this result.",
+        };
+
+        return scope + contentEvidence + physicalEvidence;
     }
 }

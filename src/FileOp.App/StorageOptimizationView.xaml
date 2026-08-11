@@ -101,7 +101,7 @@
                 <StackPanel Spacing="8">
                     <TextBlock Text="Same-size duplicate candidates" FontSize="16" FontWeight="SemiBold" />
                     <TextBlock
-                        Text="Hard-link aliases are collapsed by the index first. Potential savings are a logical upper bound only until content is verified. Verify content fully SHA-256 hashes a bounded sample under your user account. Hash matches verify logical duplicate evidence for those sampled paths only; physical reclaimable space is still not verified."
+                        Text="Hard-link aliases are collapsed by the index first. Potential savings are a logical upper bound only until content is verified. Verify content fully SHA-256 hashes a bounded sample under your user account, then revalidates current physical identity, hard-link count, and allocated disk bytes for hash matches. Any physical reclaim value is a current upper bound for sampled matches, not deletion authorization."
                         TextWrapping="Wrap"
                         Opacity="0.7" />
                     <ListView x:Name="SameSizeGroupsList" SelectionMode="None">

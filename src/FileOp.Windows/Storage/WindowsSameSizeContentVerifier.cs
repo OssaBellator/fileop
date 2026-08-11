@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.ComponentModel;
 using System.Security.Cryptography;
 using FileOp.Core.Storage;
 
@@ -7,6 +8,7 @@ namespace FileOp.Windows.Storage;
 public sealed class WindowsSameSizeContentVerifier
 {
     private readonly Func<DateTimeOffset> _utcNow;
+    private readonly WindowsCurrentFilePhysicalEvidenceReader _physicalEvidenceReader = new();
 
     public WindowsSameSizeContentVerifier(Func<DateTimeOffset>? utcNow = null)
     {
@@ -142,6 +144,11 @@ public sealed class WindowsSameSizeContentVerifier
                 .Select(static paths => new StorageVerifiedContentMatchSet(paths.ToArray()))
                 .ToArray();
             var matchingFileCount = matchingSets.Sum(static set => set.FileCount);
+            var physicalReclaim = CapturePhysicalReclaimEvidence(
+                matchingSets,
+                selected,
+                streams,
+                cancellationToken);
             return new StorageSameSizeContentVerification(
                 StorageSameSizeContentVerificationStatus.Completed,
                 _utcNow(),
@@ -155,7 +162,8 @@ public sealed class WindowsSameSizeContentVerifier
                 matchingSets,
                 Detail:
                     $"Fully SHA-256 hashed {fullyHashed:N0} sampled file(s) under read-only handles that share read access only; {matchingFileCount:N0} file(s) belong to {matchingSets.Length:N0} matching set(s). " +
-                    $"Processed {bytesRead:N0} content byte(s) through SHA-256. Hash matches are verified logical duplicate evidence only for the selected sampled paths; physical reclaimable space is not verified here.");
+                    $"Processed {bytesRead:N0} content byte(s) through SHA-256. Hash matches are verified logical duplicate evidence only for the selected sampled paths. {physicalReclaim.Detail}",
+                PhysicalReclaim: physicalReclaim);
         }
         catch (OperationCanceledException)
         {
@@ -186,6 +194,65 @@ public sealed class WindowsSameSizeContentVerifier
             {
                 stream.Dispose();
             }
+        }
+    }
+
+    private StoragePhysicalReclaimVerification CapturePhysicalReclaimEvidence(
+        IReadOnlyList<StorageVerifiedContentMatchSet> matchingSets,
+        IReadOnlyList<StorageSameSizeCandidateFile> selected,
+        IReadOnlyList<FileStream> streams,
+        CancellationToken cancellationToken)
+    {
+        if (matchingSets.Count == 0)
+        {
+            return StoragePhysicalReclaimVerification.NotApplicable(
+                "No SHA-256 matching sampled paths were found, so physical reclaim evidence was not required.");
+        }
+
+        try
+        {
+            var streamByPath = selected
+                .Select((file, index) => new KeyValuePair<string, FileStream>(
+                    Path.GetFullPath(file.Path),
+                    streams[index]))
+                .ToDictionary(
+                    static pair => pair.Key,
+                    static pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
+            var physicalEvidence = new List<StoragePhysicalFileEvidence>();
+            foreach (var set in matchingSets)
+            {
+                foreach (var path in set.Paths)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var fullPath = Path.GetFullPath(path);
+                    if (!streamByPath.TryGetValue(fullPath, out var stream))
+                    {
+                        return StoragePhysicalReclaimVerification.Unavailable(
+                            "A SHA-256 matched path was no longer present in the bounded open-handle set, so physical reclaim bytes were not inferred.");
+                    }
+
+                    physicalEvidence.Add(_physicalEvidenceReader.Read(stream, fullPath));
+                }
+            }
+
+            return StoragePhysicalReclaimAnalyzer.Analyze(
+                matchingSets,
+                physicalEvidence);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is Win32Exception or
+            IOException or
+            UnauthorizedAccessException or
+            InvalidDataException or
+            NotSupportedException)
+        {
+            return StoragePhysicalReclaimVerification.Unavailable(
+                $"SHA-256 content evidence is valid, but current physical identity/allocation evidence is unavailable: {exception.Message}");
         }
     }
 
