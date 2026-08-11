@@ -91,7 +91,6 @@ public sealed partial class DiskIoAttributionView
         {
             Text = "Reported device context for observed disks",
             FontSize = 16,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
         });
         _deviceEvidencePanel.Children.Add(new TextBlock
         {
@@ -115,20 +114,13 @@ public sealed partial class DiskIoAttributionView
         content.Children.Add(new TextBlock
         {
             Text = $"Disk {evidence.PhysicalDiskNumber}",
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            FontSize = 15,
         });
 
         if (!evidence.QueryAttempted)
         {
             content.Children.Add(EvidenceText(evidence.QueryStatusDetail));
-            return new Border
-            {
-                Padding = new Thickness(10),
-                BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Child = content,
-            };
+            return EvidenceBorder(content);
         }
 
         var device = evidence.DeviceContext!;
@@ -137,16 +129,17 @@ public sealed partial class DiskIoAttributionView
         content.Children.Add(EvidenceText($"Seek penalty: {FormatCapability(device.Context?.SeekPenalty, device)}"));
         content.Children.Add(EvidenceText($"TRIM: {FormatCapability(device.Context?.Trim, device)}"));
         content.Children.Add(EvidenceText($"Standardized NVMe SMART/Health: {FormatNvmeHealth(nvme)}"));
+        return EvidenceBorder(content);
+    }
 
-        return new Border
+    private static Border EvidenceBorder(StackPanel content) =>
+        new()
         {
             Padding = new Thickness(10),
-            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
             Child = content,
         };
-    }
 
     private static TextBlock EvidenceText(string text) =>
         new()
