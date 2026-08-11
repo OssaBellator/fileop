@@ -54,6 +54,8 @@ public sealed partial class DiskIoAttributionView : UserControl
             LossText.Text = "Unknown";
             TimingEvidenceStatusText.Text =
                 "Response-duration evidence is unavailable because this capture did not complete with an attribution report.";
+            InvestigationSummaryText.Text =
+                "Storage I/O investigation cues are unavailable because this capture did not complete with an attribution report.";
             ProcessTimingEvidenceStatusText.Text =
                 "Process-bound response timing is unavailable because this capture did not complete with an attribution report.";
             StatusText.Text = result.Detail;
@@ -109,6 +111,9 @@ public sealed partial class DiskIoAttributionView : UserControl
                 : "This completed result does not carry typed response-duration evidence. No latency value is inferred."
             : $"{timingSampleCount:N0} response-duration sample(s) across {result.ResponseTimings.Count:N0} physical disk(s), aligned with the accepted completion evidence.";
 
+        var investigation = DiskIoInvestigationSummaryAnalyzer.Analyze(result);
+        InvestigationSummaryText.Text = FormatInvestigationSummary(investigation);
+
         if (result.ProcessResponseTimings.Count == 0)
         {
             ProcessTimingEvidenceStatusText.Text = report.AcceptedEventCount == 0
@@ -156,7 +161,74 @@ public sealed partial class DiskIoAttributionView : UserControl
         LossText.Text = "—";
         DurationText.Text = "—";
         TimingEvidenceStatusText.Text = "No response-duration evidence has been captured.";
+        InvestigationSummaryText.Text = "No storage I/O investigation summary has been captured.";
         ProcessTimingEvidenceStatusText.Text = "No process-bound response timing has been captured.";
+    }
+
+    private static string FormatInvestigationSummary(DiskIoInvestigationSummary summary)
+    {
+        if (summary.AcceptedEventCount == 0)
+        {
+            return "No accepted Disk I/O completions were observed, so this capture has no comparative storage I/O cues.";
+        }
+
+        var parts = new List<string>();
+        parts.Add(summary.EvidenceMayBeIncomplete
+            ? "Capture evidence may be incomplete because the observation cap or ETW loss can omit completions; comparative cues below are partial."
+            : "No ETW loss or observation-cap truncation was reported for these comparative cues.");
+
+        if (summary.HighestObservedP95 is { } response)
+        {
+            var operation = response.Operation switch
+            {
+                DiskIoOperationKind.Read => "Read",
+                DiskIoOperationKind.Write => "Write",
+                DiskIoOperationKind.Flush => "Flush",
+                _ => response.Operation.ToString(),
+            };
+            parts.Add(
+                $"Highest observed eligible p95: Disk {response.PhysicalDiskNumber} {operation} · " +
+                $"{DiskIoTimingRow.FormatSummary(response.Timing)}. " +
+                "This is the largest eligible p95 within this capture, not a device-performance threshold.");
+        }
+        else
+        {
+            parts.Add(
+                $"No operation has an eligible p95; each operation either has fewer than {DiskIoResponseTimingAnalyzer.MinimumSamplesForP95} samples or no typed response timing.");
+        }
+
+        if (summary.LargestObservedByteDisk is { } disk)
+        {
+            var coverage = disk.AttributionCoveragePercent is { } percent
+                ? $"{percent:N1}% attributed"
+                : "attribution coverage unavailable";
+            parts.Add(
+                $"Largest observed byte volume: Disk {disk.PhysicalDiskNumber} · {ByteFormatter.Format(disk.TotalBytes)} " +
+                $"across {disk.TotalOperations:N0} operation(s) · {coverage} · " +
+                $"{ByteFormatter.Format(disk.UnattributedBytes)} unattributed.");
+        }
+        else
+        {
+            parts.Add("No transferred read/write bytes were observed in this capture.");
+        }
+
+        if (summary.LargestIdentifiedOwner is { } owner)
+        {
+            var identity = string.IsNullOrWhiteSpace(owner.Owner.ImageName)
+                ? $"PID {owner.Owner.ProcessId}"
+                : $"{owner.Owner.ImageName} · PID {owner.Owner.ProcessId}";
+            parts.Add(
+                $"Largest identified owner by observed bytes: {identity} on Disk {owner.PhysicalDiskNumber} · " +
+                $"{ByteFormatter.Format(owner.TotalBytes)} across {owner.TotalOperations:N0} operation(s) · " +
+                $"{owner.ObservedByteSharePercent:N1}% of that disk's observed bytes. " +
+                "Issuing ownership is an association, not proof that this process caused device response delay.");
+        }
+        else
+        {
+            parts.Add("No identified process owner carried transferred read/write bytes in this capture.");
+        }
+
+        return string.Join(" ", parts);
     }
 
     private static string FormatCount(long? count) =>
