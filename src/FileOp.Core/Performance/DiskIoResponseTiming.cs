@@ -151,13 +151,13 @@ public static class DiskIoResponseTimingAnalyzer
             .OrderBy(static group => group.Key)
             .Select(group => new DiskIoDiskResponseTiming(
                 group.Key,
-                Build(group, DiskIoOperationKind.Read),
-                Build(group, DiskIoOperationKind.Write),
-                Build(group, DiskIoOperationKind.Flush)))
+                BuildSummary(group, DiskIoOperationKind.Read),
+                BuildSummary(group, DiskIoOperationKind.Write),
+                BuildSummary(group, DiskIoOperationKind.Flush)))
             .ToArray();
     }
 
-    private static DiskIoResponseTimingSummary? Build(
+    internal static DiskIoResponseTimingSummary? BuildSummary(
         IEnumerable<DiskIoResponseTimingObservation> observations,
         DiskIoOperationKind operation)
     {
@@ -190,7 +190,7 @@ public static class DiskIoResponseTimingAnalyzer
             TimeSpan.FromTicks(ticks[^1]));
     }
 
-    private static void ValidateObservation(
+    internal static void ValidateObservation(
         DiskIoResponseTimingObservation observation,
         DateTimeOffset startedAt,
         DateTimeOffset endedAt)
