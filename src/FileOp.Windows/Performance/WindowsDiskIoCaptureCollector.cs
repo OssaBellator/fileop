@@ -6,7 +6,11 @@ internal sealed record WindowsDiskIoCaptureCollectionSnapshot(
     IReadOnlyList<DiskIoEventObservation> Observations,
     IReadOnlyDictionary<WindowsDiskIoOwnerResolutionStatus, int> UnresolvedOwnerCounts,
     int IgnoredEventCount,
-    bool ObservationLimitReached);
+    bool ObservationLimitReached)
+{
+    public IReadOnlyList<DiskIoResponseTimingObservation> ResponseTimings { get; init; } =
+        Array.Empty<DiskIoResponseTimingObservation>();
+}
 
 internal interface IWindowsDiskIoCaptureCollector :
     IWindowsDiskIoNativeTraceCallbackSink,
@@ -26,6 +30,7 @@ internal sealed class WindowsDiskIoCaptureCollector : IWindowsDiskIoCaptureColle
     private readonly int _maxObservations;
     private readonly WindowsDiskIoIssuingThreadResolver _ownerResolver;
     private readonly List<DiskIoEventObservation> _observations = [];
+    private readonly List<DiskIoResponseTimingObservation> _responseTimings = [];
     private readonly Dictionary<WindowsDiskIoOwnerResolutionStatus, int> _unresolvedOwnerCounts = [];
 
     private long _performanceCounterFrequency;
@@ -132,6 +137,11 @@ internal sealed class WindowsDiskIoCaptureCollector : IWindowsDiskIoCaptureColle
             decoded.Completion.Operation,
             decoded.Completion.TransferBytes,
             ownerResolution.Owner);
+        var responseTiming = new DiskIoResponseTimingObservation(
+            observationTimestamp,
+            decoded.Completion.PhysicalDiskNumber,
+            decoded.Completion.Operation,
+            decoded.ResponseTime);
 
         lock (_gate)
         {
@@ -141,6 +151,7 @@ internal sealed class WindowsDiskIoCaptureCollector : IWindowsDiskIoCaptureColle
             }
 
             _observations.Add(observation);
+            _responseTimings.Add(responseTiming);
             if (!ownerResolution.Resolved)
             {
                 _unresolvedOwnerCounts.TryGetValue(ownerResolution.Status, out var current);
@@ -177,7 +188,10 @@ internal sealed class WindowsDiskIoCaptureCollector : IWindowsDiskIoCaptureColle
                 _observations.ToArray(),
                 new Dictionary<WindowsDiskIoOwnerResolutionStatus, int>(_unresolvedOwnerCounts),
                 _ignoredEventCount,
-                _observationLimitReached);
+                _observationLimitReached)
+            {
+                ResponseTimings = _responseTimings.ToArray(),
+            };
         }
     }
 
