@@ -50,7 +50,9 @@ public static class StorageOptimizationThresholdFilter
         ArgumentNullException.ThrowIfNull(thresholds);
         ValidateAgainstAnalysis(analysis, thresholds);
 
-        var staleCutoff = analysis.AsOfUtc.ToUniversalTime().AddDays(-thresholds.StaleAgeDays);
+        var staleCutoff = CalculateStaleCutoff(
+            analysis.AsOfUtc.ToUniversalTime(),
+            thresholds.StaleAgeDays);
         var largestFiles = analysis.LargestFiles
             .Where(file => file.MeasuredBytes >= thresholds.LargeFileMinimumBytes)
             .ToArray();
@@ -77,6 +79,27 @@ public static class StorageOptimizationThresholdFilter
         ArgumentNullException.ThrowIfNull(analysis);
         ArgumentNullException.ThrowIfNull(thresholds);
 
+        if (thresholds.LargeFileMinimumBytes < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(thresholds),
+                thresholds.LargeFileMinimumBytes,
+                "The display large-file threshold cannot be negative.");
+        }
+        if (thresholds.SameSizeMinimumBytes < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(thresholds),
+                thresholds.SameSizeMinimumBytes,
+                "The display same-size threshold cannot be negative.");
+        }
+        if (thresholds.StaleAgeDays < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(thresholds),
+                thresholds.StaleAgeDays,
+                "The display stale-age threshold cannot be negative.");
+        }
         if (thresholds.LargeFileMinimumBytes < analysis.Policy.LargeFileMinimumBytes)
         {
             throw new ArgumentOutOfRangeException(
@@ -98,5 +121,15 @@ public static class StorageOptimizationThresholdFilter
                 thresholds.StaleAgeDays,
                 "The display stale-age threshold cannot be younger than the helper analysis threshold because omitted files would make the filtered result incomplete.");
         }
+    }
+
+    private static DateTimeOffset CalculateStaleCutoff(
+        DateTimeOffset asOfUtc,
+        int staleAgeDays)
+    {
+        var maximumRepresentableAgeDays = (asOfUtc.UtcTicks - DateTimeOffset.MinValue.UtcTicks) / TimeSpan.TicksPerDay;
+        return staleAgeDays > maximumRepresentableAgeDays
+            ? DateTimeOffset.MinValue
+            : asOfUtc.AddDays(-staleAgeDays);
     }
 }
