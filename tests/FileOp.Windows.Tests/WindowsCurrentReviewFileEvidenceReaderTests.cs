@@ -29,6 +29,8 @@ public sealed class WindowsCurrentReviewFileEvidenceReaderTests
             Assert.AreEqual(Path.GetFullPath(path), Path.GetFullPath(evidence.RequestedPath));
             Assert.AreEqual(Path.GetFullPath(path), Path.GetFullPath(evidence.CanonicalPath));
             Assert.AreEqual(new FileInfo(path).Length, evidence.LogicalBytes);
+            Assert.IsTrue(evidence.AllocatedBytes >= 0);
+            Assert.IsTrue(evidence.HardLinkCount > 0);
             Assert.AreEqual(expectedLastWrite.Ticks, evidence.LastWriteTimeUtc.UtcDateTime.Ticks);
             Assert.AreNotEqual(0UL, evidence.Identity.FileReferenceNumber);
             Assert.IsFalse(evidence.IsLeafReparsePoint);

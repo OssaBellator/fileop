@@ -16,6 +16,8 @@ public sealed record StorageCleanupCurrentFileEvidence(
     string CanonicalPath,
     FileIdentity Identity,
     long LogicalBytes,
+    long AllocatedBytes,
+    uint HardLinkCount,
     DateTimeOffset LastWriteTimeUtc,
     bool IsLeafReparsePoint);
 
@@ -27,11 +29,21 @@ public sealed record StorageCleanupReadinessPreview(
     string? CanonicalPath,
     FileIdentity? CurrentIdentity,
     long? CurrentLogicalBytes,
+    long? CurrentAllocatedBytes,
+    uint? CurrentHardLinkCount,
     DateTimeOffset? CurrentLastWriteTimeUtc,
     string Detail)
 {
     public bool CanonicalEvidencePassed =>
         Status == StorageCleanupReadinessStatus.CurrentEvidenceConsistent;
+
+    public long CurrentPhysicalReleaseUpperBoundBytes =>
+        Status == StorageCleanupReadinessStatus.CurrentEvidenceConsistent &&
+        CurrentHardLinkCount == 1 &&
+        CurrentAllocatedBytes is { } allocatedBytes &&
+        allocatedBytes >= 0
+            ? allocatedBytes
+            : 0;
 
     // The repository does not yet have a durable delete recovery/history executor.
     // This preview is intentionally incapable of authorizing mutation.
@@ -70,6 +82,8 @@ public static class StorageCleanupReadinessAnalyzer
                         : canonicalCandidate.CanonicalPath),
                 evidence?.Identity ?? canonicalCandidate.Identity,
                 evidence?.LogicalBytes,
+                evidence?.AllocatedBytes,
+                evidence?.HardLinkCount,
                 evidence?.LastWriteTimeUtc,
                 detail);
 
@@ -162,6 +176,13 @@ public static class StorageCleanupReadinessAnalyzer
                 "The current file handle reports a reparse-point leaf. Cleanup remains blocked.",
                 currentFile);
         }
+        if (currentFile.HardLinkCount == 0 || currentFile.AllocatedBytes < 0)
+        {
+            return Result(
+                StorageCleanupReadinessStatus.Unavailable,
+                "Current hard-link or allocation evidence is invalid, so physical release evidence cannot be trusted.",
+                currentFile);
+        }
         if (!PathsEqual(currentFile.CanonicalPath, canonicalCandidate.CanonicalPath) ||
             currentFile.Identity != canonicalCandidate.Identity.Value)
         {
@@ -180,9 +201,13 @@ public static class StorageCleanupReadinessAnalyzer
                 currentFile);
         }
 
+        var releaseDetail = currentFile.HardLinkCount == 1
+            ? "The current file has one hard link, so its current allocated bytes are a per-path physical-release upper bound if a later authorized deletion actually removes this file object. "
+            : $"The current file has {currentFile.HardLinkCount:N0} hard links, so deleting this one path alone is not evidence that its allocation would be released. ";
         return Result(
             StorageCleanupReadinessStatus.CurrentEvidenceConsistent,
-            "Current canonical path, file type, identity snapshot, logical size and last-write time are internally consistent with this indexed review candidate. " +
+            "Current canonical path, file type, identity snapshot, logical size, allocation, hard-link count and last-write time are internally consistent with this indexed review candidate. " +
+            releaseDetail +
             "The indexed review did not preserve a prior physical identity, so continuity of the same file object since indexing is not proven. " +
             "Deletion is still unavailable because durable delete recovery/history and final mutation authorization are not implemented.",
             currentFile);

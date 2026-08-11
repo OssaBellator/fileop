@@ -270,6 +270,8 @@ public sealed class StorageCleanupReadinessTests
             candidate.Path,
             new FileIdentity(7, 202),
             candidate.LogicalBytes,
+            1536,
+            1,
             candidate.LastWriteTime,
             false);
 }
