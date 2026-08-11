@@ -412,7 +412,7 @@ public sealed partial class MainWindow
         var generation = Interlocked.Increment(ref _storageOptimizationGeneration);
         _storageOptimizationView.SetLoading(
             forceRefresh || _storageOptimizationAnalysis is null || refreshKnownLocations
-                ? "Analyzing reclaim candidates, known-location review evidence, and bounded performance probes from the current source…"
+                ? "Analyzing reclaim candidates, bounded performance probes, and known-location review evidence from the current source…"
                 : "Refreshing bounded performance probes from the current source…");
         if (refreshKnownLocations)
         {
@@ -444,6 +444,7 @@ public sealed partial class MainWindow
                 }
 
                 ApplyStorageOptimization(analysis);
+                await CapturePerformanceDiagnosticsAsync(generation);
                 if (refreshKnownLocations)
                 {
                     await CaptureKnownLocationReviewAsync(generation);
@@ -452,8 +453,6 @@ public sealed partial class MainWindow
                 {
                     _storageOptimizationView.ApplyKnownLocationReview(cachedReview);
                 }
-
-                await CapturePerformanceDiagnosticsAsync(generation);
             }
             finally
             {
