@@ -302,6 +302,12 @@ public sealed partial class MainWindow
                 _storageOptimizationView.SetDiskIoReadyForCapture(
                     _storageViewMode == StorageViewMode.Optimize &&
                     !_storageSameSizeVerificationActive);
+
+                if (_storageViewMode == StorageViewMode.Optimize &&
+                    !_storageOptimizationLoadedForSource)
+                {
+                    HandleStorageOptimizationEngineState(_searchEngine.State);
+                }
             }
         }
     }
