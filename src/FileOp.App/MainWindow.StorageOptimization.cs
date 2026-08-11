@@ -11,6 +11,7 @@ public sealed partial class MainWindow
     private StorageOptimizationView _storageOptimizationView = null!;
     private Button _storageOptimizationButton = null!;
     private StorageOptimizationAnalysis? _storageOptimizationAnalysis;
+    private StorageKnownLocationReviewSnapshot? _storageKnownLocationReview;
     private string? _storageOptimizationSourceKey;
     private int _storageOptimizationGeneration;
     private int _performanceDiskIoGeneration;
@@ -120,6 +121,7 @@ public sealed partial class MainWindow
         _storageOptimizationView.SetReadyForRefresh(
             _storageViewMode == StorageViewMode.Optimize &&
             storageAvailable &&
+            !_performanceDiskIoCaptureActive &&
             !_storageSameSizeVerificationActive);
         _storageOptimizationView.SetDiskIoReadyForCapture(
             _storageViewMode == StorageViewMode.Optimize &&
@@ -129,6 +131,7 @@ public sealed partial class MainWindow
         if (root is null)
         {
             _storageOptimizationAnalysis = null;
+            _storageKnownLocationReview = null;
             _storageOptimizationLoadedForSource = false;
             if (_storageViewMode == StorageViewMode.Optimize)
             {
@@ -147,6 +150,7 @@ public sealed partial class MainWindow
         {
             _storageOptimizationSourceKey = sourceKey;
             _storageOptimizationAnalysis = null;
+            _storageKnownLocationReview = null;
             _storageOptimizationLoadedForSource = false;
             Interlocked.Increment(ref _storageOptimizationGeneration);
         }
@@ -175,6 +179,8 @@ public sealed partial class MainWindow
 
         if (!storageAvailable)
         {
+            _storageOptimizationLoadedForSource = false;
+            _storageKnownLocationReview = null;
             _storageOptimizationView.SetUnavailable(
                 state.Mode == DesktopSearchMode.Fallback
                     ? "Optimization recommendations currently require the native NTFS index; fallback snapshots are not presented as complete reclaim analysis. Disk I/O attribution remains independently available."
@@ -211,7 +217,7 @@ public sealed partial class MainWindow
 
     private async void StorageOptimizationView_RefreshRequested(object? sender, EventArgs e)
     {
-        if (_storageSameSizeVerificationActive)
+        if (_storageSameSizeVerificationActive || _performanceDiskIoCaptureActive)
         {
             return;
         }
@@ -226,6 +232,7 @@ public sealed partial class MainWindow
         if (_closed ||
             _storageViewMode != StorageViewMode.Optimize ||
             _storageSameSizeVerificationActive ||
+            _performanceDiskIoCaptureActive ||
             !_searchEngine.StorageOptimizationAvailable ||
             _searchEngine.State.IsBusy)
         {
@@ -240,6 +247,7 @@ public sealed partial class MainWindow
             _storageOptimizationView.SetReadyForRefresh(
                 _searchEngine.StorageOptimizationAvailable &&
                 !_searchEngine.State.IsBusy &&
+                !_performanceDiskIoCaptureActive &&
                 !_storageSameSizeVerificationActive);
         }
     }
@@ -258,6 +266,7 @@ public sealed partial class MainWindow
 
         var generation = Interlocked.Increment(ref _performanceDiskIoGeneration);
         _performanceDiskIoCaptureActive = true;
+        _storageOptimizationView.SetReadyForRefresh(false);
         _storageOptimizationView.SetDiskIoLoading();
         try
         {
@@ -285,6 +294,11 @@ public sealed partial class MainWindow
             _performanceDiskIoCaptureActive = false;
             if (!_closed && generation == Volatile.Read(ref _performanceDiskIoGeneration))
             {
+                _storageOptimizationView.SetReadyForRefresh(
+                    _storageViewMode == StorageViewMode.Optimize &&
+                    _searchEngine.StorageOptimizationAvailable &&
+                    !_searchEngine.State.IsBusy &&
+                    !_storageSameSizeVerificationActive);
                 _storageOptimizationView.SetDiskIoReadyForCapture(
                     _storageViewMode == StorageViewMode.Optimize &&
                     !_storageSameSizeVerificationActive);
@@ -348,7 +362,8 @@ public sealed partial class MainWindow
                     _storageOptimizationView.SetReadyForRefresh(
                         _storageViewMode == StorageViewMode.Optimize &&
                         _searchEngine.StorageOptimizationAvailable &&
-                        !_searchEngine.State.IsBusy);
+                        !_searchEngine.State.IsBusy &&
+                        !_performanceDiskIoCaptureActive);
                     _storageOptimizationView.SetDiskIoReadyForCapture(
                         _storageViewMode == StorageViewMode.Optimize &&
                         !_performanceDiskIoCaptureActive);
@@ -363,7 +378,7 @@ public sealed partial class MainWindow
 
     private async Task LoadStorageOptimizationAsync(bool forceRefresh)
     {
-        if (_closed || _storageSameSizeVerificationActive)
+        if (_closed || _storageSameSizeVerificationActive || _performanceDiskIoCaptureActive)
         {
             return;
         }
@@ -382,15 +397,21 @@ public sealed partial class MainWindow
         {
             _storageOptimizationSourceKey = sourceKey;
             _storageOptimizationAnalysis = null;
+            _storageKnownLocationReview = null;
             _storageOptimizationLoadedForSource = false;
             forceRefresh = true;
         }
 
+        var refreshKnownLocations = forceRefresh || _storageKnownLocationReview is null;
         var generation = Interlocked.Increment(ref _storageOptimizationGeneration);
         _storageOptimizationView.SetLoading(
-            forceRefresh || _storageOptimizationAnalysis is null
-                ? "Analyzing reclaim candidates and bounded performance probes from the current source…"
+            forceRefresh || _storageOptimizationAnalysis is null || refreshKnownLocations
+                ? "Analyzing reclaim candidates, known-location review evidence, and bounded performance probes from the current source…"
                 : "Refreshing bounded performance probes from the current source…");
+        if (refreshKnownLocations)
+        {
+            _storageOptimizationView.SetKnownLocationReviewLoading();
+        }
         SetStorageStatus("Refreshing storage and performance optimization evidence…");
 
         try
@@ -417,6 +438,15 @@ public sealed partial class MainWindow
                 }
 
                 ApplyStorageOptimization(analysis);
+                if (refreshKnownLocations)
+                {
+                    await CaptureKnownLocationReviewAsync(generation);
+                }
+                else if (_storageKnownLocationReview is { } cachedReview)
+                {
+                    _storageOptimizationView.ApplyKnownLocationReview(cachedReview);
+                }
+
                 await CapturePerformanceDiagnosticsAsync(generation);
             }
             finally
@@ -432,6 +462,10 @@ public sealed partial class MainWindow
         {
             if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
             {
+                _storageOptimizationLoadedForSource = false;
+                _storageKnownLocationReview = null;
+                _storageOptimizationView.SetKnownLocationReviewUnavailable(
+                    "Known-location review is waiting for native index maintenance to complete.");
                 _storageOptimizationView.SetReadyForRefresh(true);
                 SetStorageStatus("Storage optimization is temporarily busy. Refresh after index maintenance completes.");
             }
@@ -441,6 +475,8 @@ public sealed partial class MainWindow
         {
             if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
             {
+                _storageOptimizationLoadedForSource = false;
+                _storageKnownLocationReview = null;
                 _storageOptimizationView.SetUnavailable(
                     "The native snapshot must be refreshed before optimization analysis can continue. Disk I/O attribution remains independently available.");
                 SetStorageStatus("Storage optimization is waiting for a fresh native index snapshot.");
@@ -450,6 +486,10 @@ public sealed partial class MainWindow
         {
             if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
             {
+                _storageOptimizationLoadedForSource = false;
+                _storageKnownLocationReview = null;
+                _storageOptimizationView.SetKnownLocationReviewUnavailable(
+                    "Known-location review was not completed because the parent Optimize refresh failed.");
                 _storageOptimizationView.SetReadyForRefresh(_searchEngine.StorageOptimizationAvailable);
                 SetStorageStatus($"Storage optimization failed: {exception.Message}");
             }
@@ -462,7 +502,35 @@ public sealed partial class MainWindow
                     _storageViewMode == StorageViewMode.Optimize &&
                     _searchEngine.StorageOptimizationAvailable &&
                     !_searchEngine.State.IsBusy &&
+                    !_performanceDiskIoCaptureActive &&
                     !_storageSameSizeVerificationActive);
+            }
+        }
+    }
+
+    private async Task CaptureKnownLocationReviewAsync(int generation)
+    {
+        try
+        {
+            var review = await _searchEngine.AnalyzeKnownLocationReviewAsync();
+            if (_closed || generation != Volatile.Read(ref _storageOptimizationGeneration))
+            {
+                return;
+            }
+
+            _storageKnownLocationReview = review;
+            _storageOptimizationView.ApplyKnownLocationReview(review);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!_closed && generation == Volatile.Read(ref _storageOptimizationGeneration))
+            {
+                _storageKnownLocationReview = null;
+                _storageOptimizationView.SetKnownLocationReviewUnavailable(
+                    $"Known-location review is unavailable: {exception.Message}");
             }
         }
     }
