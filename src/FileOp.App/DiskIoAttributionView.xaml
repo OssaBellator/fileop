@@ -124,6 +124,11 @@
                     Text="Completion-response evidence only. These durations are not a queue-time/service-time decomposition and do not by themselves establish a storage bottleneck. p95 is shown only with at least 5 samples for that operation."
                     Opacity="0.62"
                     TextWrapping="Wrap" />
+                <TextBlock
+                    x:Name="TimingEvidenceStatusText"
+                    Text="No response-duration evidence has been captured."
+                    Opacity="0.72"
+                    TextWrapping="Wrap" />
             </StackPanel>
             <Grid Grid.Row="6">
                 <Grid.RowDefinitions>
