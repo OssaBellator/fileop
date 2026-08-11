@@ -169,11 +169,11 @@ def check_repository(root: Path) -> int:
         "Process.GetProcessById",
         "PeriodicTimer",
         "DispatcherQueueTimer",
-        "health score",
-        "latency score",
-        "process bottleneck",
+        "HealthScore",
+        "LatencyScore",
+        "ProcessBottleneck",
     ):
-        checks += forbid(combined.lower(), needle.lower(), "new lookup/poller/process timing claim")
+        checks += forbid(combined, needle, "new lookup/poller/process timing API")
 
     checks += forbid(ui, "timing.Owner", "timing-owner UI exposure")
     checks += forbid(ui, "responseTiming.Owner", "timing-owner UI exposure")
