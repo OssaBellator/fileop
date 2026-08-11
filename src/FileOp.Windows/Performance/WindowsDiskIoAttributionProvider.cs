@@ -218,6 +218,17 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                 reportEnd,
                 collection.Observations,
                 budget.MaxOwnersPerDisk);
+            var responseTimings = DiskIoResponseTimingAnalyzer.Analyze(
+                windowStart,
+                reportEnd,
+                collection.ResponseTimings);
+            var responseTimingSampleCount = responseTimings.Sum(static timing => timing.SampleCount);
+            if (collection.ResponseTimings.Count != collection.Observations.Count ||
+                responseTimingSampleCount != collection.Observations.Count)
+            {
+                throw new InvalidDataException(
+                    $"DiskIo response-timing evidence count {responseTimingSampleCount:N0} does not match the {collection.Observations.Count:N0} accepted normalized completions.");
+            }
 
             var lossState = finalEvidence.HasReportedLoss
                 ? DiskIoCaptureLossState.Observed
@@ -228,7 +239,7 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                     ? long.MaxValue
                     : total + count);
             var detail =
-                $"Captured {collection.Observations.Count:N0} normalized DiskIo completions; " +
+                $"Captured {collection.Observations.Count:N0} normalized DiskIo completions with one decoded response-duration sample per completion; " +
                 $"{unresolvedCount:N0} had unresolved process ownership; " +
                 $"ignored {collection.IgnoredEventCount:N0} non-target/out-of-window records. " +
                 $"ETW reported {finalEvidence.EventsLost:N0} lost events and {finalEvidence.BuffersLost:N0} lost buffers. " +
@@ -242,7 +253,10 @@ public sealed class WindowsDiskIoAttributionProvider : IDiskIoAttributionProvide
                 lostEventCount: finalEvidence.EventsLost,
                 lostBufferCount: finalEvidence.BuffersLost,
                 providerOverheadDuration: null,
-                detail);
+                detail) with
+            {
+                ResponseTimings = responseTimings,
+            };
         }
         finally
         {
