@@ -211,12 +211,11 @@ internal static class WindowsNvmeHealthQueryCodec
         var returned = data[..bytesReturned];
         var version = BinaryPrimitives.ReadUInt32LittleEndian(returned[0..4]);
         var size = BinaryPrimitives.ReadUInt32LittleEndian(returned[4..8]);
-        if (version < ProtocolDataDescriptorBytes ||
-            size < ProtocolDataDescriptorBytes ||
-            size > (uint)bytesReturned)
+        if (version != ProtocolDataDescriptorBytes ||
+            size != ProtocolDataDescriptorBytes)
         {
             throw new InvalidDataException(
-                $"NVMe protocol descriptor version/size {version}/{size} is not valid for {bytesReturned} returned bytes.");
+                $"NVMe protocol descriptor version/size {version}/{size} does not match the expected {ProtocolDataDescriptorBytes}-byte descriptor.");
         }
 
         var protocol = returned.Slice(StoragePropertyQueryHeaderBytes, ProtocolSpecificDataBytes);
@@ -239,14 +238,17 @@ internal static class WindowsNvmeHealthQueryCodec
                 $"Returned NVMe health offset/length {protocolDataOffset}/{protocolDataLength} is too small.");
         }
 
-        var healthStart = checked(StoragePropertyQueryHeaderBytes + (int)protocolDataOffset);
-        var healthEnd = checked(healthStart + NvmeHealthLogBytes);
-        if (healthStart < ProtocolDataDescriptorBytes || healthEnd > bytesReturned)
+        var healthStartLong = (long)StoragePropertyQueryHeaderBytes + protocolDataOffset;
+        var healthEndLong = healthStartLong + NvmeHealthLogBytes;
+        if (healthStartLong < ProtocolDataDescriptorBytes ||
+            healthStartLong > int.MaxValue ||
+            healthEndLong > bytesReturned)
         {
             throw new InvalidDataException(
-                $"Returned NVMe health payload range {healthStart}..{healthEnd} exceeds {bytesReturned} returned bytes.");
+                $"Returned NVMe health payload range {healthStartLong}..{healthEndLong} exceeds {bytesReturned} returned bytes.");
         }
 
+        var healthStart = checked((int)healthStartLong);
         return ParseHealthLog(
             physicalDiskNumber,
             returned.Slice(healthStart, NvmeHealthLogBytes));
