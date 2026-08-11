@@ -54,7 +54,6 @@ public sealed class WindowsStorageCleanupReadinessService
                     IOException or
                     UnauthorizedAccessException or
                     SecurityException or
-                    InvalidDataException or
                     ArgumentException or
                     NotSupportedException)
             {
