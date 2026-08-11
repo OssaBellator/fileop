@@ -177,9 +177,18 @@ def check_repository(root: Path) -> int:
         (tests, "ProcessTimingFailsClosedWhenUnattributedAndHiddenBucketsDiverge", "bucket count regression"),
         (tests, "CaptureAttachmentRequiresDiskTimingAndPreservesVisibleOwnerOrder", "attachment regression"),
         (tests, "EmptyCaptureStillRequiresExplicitDiskTimingAttachment", "empty attachment-state regression"),
+        (ui, "result.ProcessResponseTimings.Count > 0", "typed process timing UI source"),
+        (ui, "result.ProcessResponseTimings[diskIndex]", "disk-order process timing projection"),
+        (ui, "disk.Owners[ownerIndex]", "attribution owner-order projection"),
+        (ui, "DiskIoProcessRow.FromAttribution(", "existing process row projection"),
+        (ui, "DiskIoProcessResponseTiming? timing", "optional compatibility process timing"),
+        (ui, "No typed timing", "no invented process latency"),
+        (ui, "byte-ranked visible process row(s)", "visible process timing status"),
+        (ui, "identified-hidden and", "hidden/unresolved process timing disclosure"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
-        (docs, "byte-ranked visible attribution owners", "byte-ranked process timing documentation"),
-        (docs, "does not yet display process-specific timing", "no process timing UI"),
+        (docs, "Process timing UI presentation", "process timing UI documentation"),
+        (docs, "process timing does not choose, reorder or promote rows", "no process timing promotion documentation"),
+        (docs, "No typed timing", "compatibility process timing documentation"),
         (gate, "verify_disk_io_response_timing.py --repo-root $repoRoot --cases 50000", "disk timing verifier retained"),
         (gate, "verify_disk_io_timing_provenance.py --repo-root $repoRoot --cases 50000", "provenance verifier retained"),
         (gate, "verify_disk_io_process_response_timing.py --repo-root $repoRoot --cases 50000", "process timing verifier wiring"),
@@ -197,8 +206,10 @@ def check_repository(root: Path) -> int:
 
     checks += forbid(process_timing, "OrderByDescending", "latency-based owner ranking")
     checks += forbid(process_timing, ".Take(", "independent process timing truncation")
-    checks += forbid(ui, "ProcessResponseTimings", "process timing UI exposure")
-    checks += forbid(ui, "DiskIoProcessResponseTiming", "process timing UI projection")
+    checks += forbid(ui, "OrderByDescending", "UI process latency ranking")
+    checks += forbid(ui, ".OrderBy(", "UI process reordering")
+    checks += forbid(ui, ".Take(", "UI process timing truncation")
+    checks += forbid(ui, ".Sort(", "UI process timing sorting")
     checks += forbid(provider, "Process.GetProcessById", "second process lookup")
     checks += forbid(provider, "PeriodicTimer", "process timing poller")
     checks += forbid(provider, "DispatcherQueueTimer", "process timing poller")

@@ -24,7 +24,17 @@ Timing samples for identified owners hidden by the attribution top-N limit remai
 
 A hidden process with a larger response duration therefore cannot become visible merely because its timing is high. The process-timing attachment also requires ordinary per-disk response timing to be attached first and verifies that disk totals, visible owner order/counts, hidden counts, unattributed counts and the completed event total all describe the same capture.
 
-This evidence layer **does not yet expose process-specific response timing** and the Performance UI **does not yet display process-specific timing**. It preserves typed evidence for a later, separately reviewed presentation layer. Even when process timing is displayed, issuing-process association will not prove that the process caused the device response duration.
+Issuing-process association still does not prove that the process caused the device response duration. The process timing is evidence about completions associated with that captured process instance, not a causal attribution of storage delay.
+
+## Process timing UI presentation
+
+The existing **Top attributed process instances** table now includes a wrapped response-timing column. The table remains explicitly **byte-ranked**: process timing does not choose, reorder or promote rows.
+
+Each visible process row shows Read, Write and Flush summaries using the same sample-count/minimum/median/p95/maximum formatter as the per-disk timing table. A compatibility result with no typed process-bound timing says **No typed timing** instead of inventing zero latency.
+
+The process-timing status reports how many response-duration samples are attached to the visible byte-ranked rows and separately reports identified-hidden and unresolved-owner sample counts. Those hidden/unresolved samples remain outside the visible process table; they are not promoted because their timing is high.
+
+The UI repeats the evidence boundary that issuing-process association does not prove the process caused the device response duration. It adds no process latency ranking, slow/fast label, score, recommendation, automatic capture, poller, control action or storage action.
 
 ## Performance UI presentation
 
@@ -34,4 +44,4 @@ Durations below 1 ms are displayed in microseconds, durations below 1 second in 
 
 The UI repeats the evidence boundary: completion response is not queue time or service time, p95 requires at least five samples, and timing alone is not a bottleneck verdict. A completed legacy/compatibility result with accepted operations but no typed timing evidence explicitly says that no latency value is inferred.
 
-This UI slice does not add a latency threshold, health score, continuous sampler, timer, protocol operation, persistence path, process/service control, storage action or automated recommendation. The existing observation-cap, ETW-loss and attribution-coverage evidence remains visible alongside timing so a later interpretation layer can stay evidence-correct.
+This UI slice does not add a latency threshold, health score, continuous sampler, timer, protocol operation, persistence path, process/service control, storage action or automated recommendation. The existing observation-cap, ETW-loss and attribution-coverage evidence remains visible alongside timing so later interpretation work can stay evidence-correct.

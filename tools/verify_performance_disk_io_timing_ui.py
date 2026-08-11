@@ -24,6 +24,22 @@ def timing_state(accepted_events: int, timing_rows: int, timing_samples: int) ->
     return "available"
 
 
+def process_partition_state(
+    accepted_events: int,
+    process_disk_rows: int,
+    visible_samples: int,
+    hidden_samples: int,
+    unattributed_samples: int,
+) -> str:
+    if accepted_events == 0:
+        return "empty" if process_disk_rows == 0 else "invalid"
+    if process_disk_rows == 0:
+        return "unavailable"
+    if visible_samples + hidden_samples + unattributed_samples != accepted_events:
+        return "invalid"
+    return "available"
+
+
 def run_model(cases: int, seed: int) -> int:
     checks = 0
     assert unit_for_microseconds(0) == "us"
@@ -35,7 +51,12 @@ def run_model(cases: int, seed: int) -> int:
     assert timing_state(5, 0, 0) == "unavailable"
     assert timing_state(5, 1, 5) == "available"
     assert timing_state(5, 1, 4) == "invalid"
-    checks += 9
+    assert process_partition_state(0, 0, 0, 0, 0) == "empty"
+    assert process_partition_state(0, 1, 0, 0, 0) == "invalid"
+    assert process_partition_state(5, 0, 0, 0, 0) == "unavailable"
+    assert process_partition_state(5, 1, 3, 1, 1) == "available"
+    assert process_partition_state(5, 1, 3, 1, 0) == "invalid"
+    checks += 14
 
     rng = random.Random(seed)
     for _ in range(cases):
@@ -63,6 +84,36 @@ def run_model(cases: int, seed: int) -> int:
         sample_count = rng.randint(1, 100)
         p95_visible = sample_count >= 5
         assert p95_visible == (sample_count >= 5)
+        checks += 1
+
+        process_rows = 0 if rng.random() < 0.15 else rng.randint(1, 12)
+        if process_rows == 0:
+            visible = hidden = unattributed = 0
+        elif accepted == 0:
+            visible = hidden = unattributed = 0
+        elif rng.random() < 0.9:
+            visible = rng.randint(0, accepted)
+            remaining = accepted - visible
+            hidden = rng.randint(0, remaining)
+            unattributed = remaining - hidden
+        else:
+            visible = accepted + 1
+            hidden = unattributed = 0
+        process_state = process_partition_state(
+            accepted,
+            process_rows,
+            visible,
+            hidden,
+            unattributed,
+        )
+        if accepted == 0:
+            assert process_state == ("empty" if process_rows == 0 else "invalid")
+        elif process_rows == 0:
+            assert process_state == "unavailable"
+        elif visible + hidden + unattributed == accepted:
+            assert process_state == "available"
+        else:
+            assert process_state == "invalid"
         checks += 1
 
     return checks
@@ -104,6 +155,12 @@ def check_repository(root: Path) -> int:
         (xaml, "not a queue-time/service-time decomposition", "queue/service disclaimer"),
         (xaml, "do not by themselves establish a storage bottleneck", "no bottleneck verdict"),
         (xaml, "p95 is shown only with at least 5 samples", "p95 sample floor wording"),
+        (xaml, 'x:Name="ProcessTimingEvidenceStatusText"', "process timing status"),
+        (xaml, 'Text="Top attributed process instances (byte-ranked)"', "byte-ranked process title"),
+        (xaml, "Rows remain selected and ordered by observed bytes", "byte-ranked process wording"),
+        (xaml, "does not prove that the process caused the device response duration", "process causation disclaimer"),
+        (xaml, 'Text="Response timing"', "process response timing column"),
+        (xaml, 'Text="{Binding ResponseTimingText}"', "process timing binding"),
         (view, "result.ResponseTimings", "typed timing source"),
         (view, "DiskIoTimingRow.FromEvidence", "timing row projection"),
         (view, "TimingList.ItemsSource = null", "timing row reset"),
@@ -115,13 +172,29 @@ def check_repository(root: Path) -> int:
         (view, "duration.TotalMicroseconds", "microsecond display"),
         (view, "duration.TotalMilliseconds", "millisecond display"),
         (view, "duration.TotalSeconds", "second display"),
+        (view, "result.ProcessResponseTimings", "typed process timing source"),
+        (view, "processTimingAvailable", "process timing compatibility state"),
+        (view, "result.ProcessResponseTimings[diskIndex]", "process disk order"),
+        (view, "disk.Owners[ownerIndex]", "process owner order"),
+        (view, "No typed timing", "no invented process timing"),
+        (view, "visibleSamples", "visible process sample disclosure"),
+        (view, "hiddenSamples", "hidden process sample disclosure"),
+        (view, "unattributedSamples", "unresolved process sample disclosure"),
+        (view, "DiskIoTimingRow.FormatSummary(timing.Reads)", "shared process read formatter"),
+        (view, "DiskIoTimingRow.FormatSummary(timing.Writes)", "shared process write formatter"),
+        (view, "DiskIoTimingRow.FormatSummary(timing.Flushes)", "shared process flush formatter"),
+        (capture, "WithProcessResponseTimings", "validated process timing attachment"),
         (timing, "public const int MinimumSamplesForP95 = 5;", "Core p95 floor"),
         (capture, "WithResponseTimings", "validated capture timing"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
         (docs, "These are display units only, not performance thresholds.", "unit-not-threshold documentation"),
         (docs, "no latency value is inferred", "legacy evidence documentation"),
+        (docs, "Process timing UI presentation", "process timing UI documentation"),
+        (docs, "process timing does not choose, reorder or promote rows", "no process promotion documentation"),
+        (docs, "No typed timing", "process compatibility documentation"),
         (gate, "verify_performance_disk_io_ui.py", "existing DiskIo UI gate retained"),
         (gate, "verify_performance_disk_io_timing_ui.py --repo-root $repoRoot --cases 50000", "timing UI gate wiring"),
+        (gate, "verify_disk_io_process_response_timing.py --repo-root $repoRoot --cases 50000", "process timing evidence gate retained"),
     ]
     for text, needle, label in required:
         checks += require(text, needle, label)
@@ -132,6 +205,9 @@ def check_repository(root: Path) -> int:
         "fast disk",
         "healthy disk",
         "unhealthy disk",
+        "slow process",
+        "fast process",
+        "process bottleneck",
         "latency score",
         "performance score",
         "recommended threshold",
@@ -141,6 +217,10 @@ def check_repository(root: Path) -> int:
     ):
         checks += forbid(combined.lower(), needle.lower(), "timing judgment/poller")
 
+    checks += forbid(view, "OrderByDescending", "process timing UI ranking")
+    checks += forbid(view, ".OrderBy(", "process timing UI reordering")
+    checks += forbid(view, ".Take(", "process timing UI truncation")
+    checks += forbid(view, ".Sort(", "process timing UI sorting")
     checks += forbid(view, "CaptureDiskIoAttributionAsync", "timing display starting capture")
     checks += forbid(view, "Task.Delay", "timing display sampler")
     checks += forbid(view, "System.Threading.Timer", "timing display timer")

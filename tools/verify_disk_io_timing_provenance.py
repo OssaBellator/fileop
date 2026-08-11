@@ -139,7 +139,7 @@ def check_repository(root: Path) -> int:
         (validator, "timing.Operation != observation.Operation", "operation provenance"),
         (validator, "timing.Owner != observation.Owner", "process provenance"),
         (provider, "WindowsDiskIoTimingProvenanceValidator.Validate(", "provider provenance gate"),
-        (provider, "provenance-bound decoded response-duration sample per completion", "provider provenance wording"),
+        (provider, "provenance-bound disk and visible-owner response timing", "provider provenance/timing wording"),
         (collector_tests, "Assert.AreEqual(observation.Owner, timing.Owner);", "collector resolved-owner regression"),
         (collector_tests, "Assert.IsNull(snapshot.ResponseTimings[0].Owner);", "collector unresolved-owner regression"),
         (validator_tests, "ResolvedOwnerMismatchFailsClosed", "resolved mismatch regression"),
@@ -148,11 +148,13 @@ def check_repository(root: Path) -> int:
         (owner_tests, "InvalidOwnerProcessIdFailsClosed", "invalid owner PID regression"),
         (owner_tests, "OwnerStartingAfterCompletionFailsClosed", "invalid owner chronology regression"),
         (owner_tests, "WhitespaceOwnerImageNameFailsClosed", "invalid owner image regression"),
+        (ui, "result.ProcessResponseTimings", "aggregated process timing UI source"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
         (docs, "same resolver result", "provenance documentation"),
-        (docs, "does not yet expose process-specific response timing", "no process timing claim"),
+        (docs, "Issuing-process association still does not prove", "process timing causation boundary"),
         (gate, "verify_disk_io_response_timing.py --repo-root $repoRoot --cases 50000", "existing timing verifier retained"),
         (gate, "verify_disk_io_timing_provenance.py --repo-root $repoRoot --cases 50000", "provenance verifier wiring"),
+        (gate, "verify_disk_io_process_response_timing.py --repo-root $repoRoot --cases 50000", "process timing verifier retained"),
     ]
     for text, needle, label in required:
         checks += require(text, needle, label)
@@ -160,8 +162,9 @@ def check_repository(root: Path) -> int:
     provider_gate = provider.index("WindowsDiskIoTimingProvenanceValidator.Validate(")
     attribution_analysis = provider.index("DiskIoAttributionAnalyzer.Analyze(")
     timing_analysis = provider.index("DiskIoResponseTimingAnalyzer.Analyze(")
-    if not provider_gate < attribution_analysis < timing_analysis:
-        raise AssertionError("provider provenance validation must precede attribution/timing aggregation")
+    process_analysis = provider.index("DiskIoProcessResponseTimingAnalyzer.Analyze(")
+    if not provider_gate < attribution_analysis < timing_analysis < process_analysis:
+        raise AssertionError("provider provenance validation must precede attribution/disk/process timing aggregation")
     checks += 1
 
     combined = timing + "\n" + collector + "\n" + provider + "\n" + ui
@@ -175,9 +178,10 @@ def check_repository(root: Path) -> int:
     ):
         checks += forbid(combined, needle, "new lookup/poller/process timing API")
 
-    checks += forbid(ui, "timing.Owner", "timing-owner UI exposure")
-    checks += forbid(ui, "responseTiming.Owner", "timing-owner UI exposure")
-    checks += forbid(ui, "Process response", "process response timing UI")
+    # UI may consume validated aggregate process timing, but must not reach back into raw
+    # per-completion timing owner provenance directly.
+    checks += forbid(ui, "timing.Owner", "raw timing-owner UI exposure")
+    checks += forbid(ui, "responseTiming.Owner", "raw timing-owner UI exposure")
     return checks
 
 
