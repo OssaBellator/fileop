@@ -123,6 +123,7 @@ def check_repository(root: Path) -> int:
     provider = (root / "src/FileOp.Windows/Performance/WindowsMachineProcessActivityProvider.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/MachineProcessActivityTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/machine-process-activity.md").read_text(encoding="utf-8")
+    wrapper = (root / "tools/verify_background_process_activity.py").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
     checks = 0
@@ -156,8 +157,9 @@ def check_repository(root: Path) -> int:
         (docs, "does not classify a process as foreground or background", "no foreground/background classification"),
         (docs, "does not inspect startup registry keys", "no registration heuristic"),
         (docs, "CPU percentage is intentionally", "no fake CPU percent"),
+        (wrapper, "from verify_machine_process_activity import main", "stable gate delegation"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
-        (gate, "verify_machine_process_activity.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
+        (gate, "verify_background_process_activity.py --repo-root $repoRoot --cases 50000", "stable offline gate entry"),
     ]
     for text, needle, label in required:
         checks += require(text, needle, label)
