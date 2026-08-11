@@ -27,7 +27,7 @@ The raw bus value remains an unsigned numeric value. FileOp maps currently docum
 
 `BusTypeMaxReserved` is currently `0x7F`. Values above that documented reserved maximum are rejected as malformed descriptor data. Values inside the reserved numeric space that FileOp does not know remain explicit as `Unrecognized bus type N` rather than being narrowed, silently remapped or treated as a known media type.
 
-Bus transport is **not** a disk-health or media-type classifier. In particular, FileOp does not infer SSD/HDD status from NVMe, SATA, USB or any other bus label.
+Bus transport is **not** a disk-health or media-type classifier. FileOp does not infer SSD, HDD, rotational media or flash media from NVMe, SATA, USB or any other bus label.
 
 ## Seek-penalty and TRIM evidence
 
@@ -76,6 +76,8 @@ Protocol remains v8. SMART/NVMe health and TRIM/defrag applicability remain sepa
 
 ## Validation
 
-`tools/verify_physical_disk_device_context.py` contains a portable randomized descriptor model plus source guards. Focused .NET tests exercise descriptor offsets/ASCII parsing, known and unknown bus values, rejection above `0x7F`, boolean descriptor validation, capability-state invariants and a failure-tolerant Windows-native query.
+`tools/verify_physical_disk_device_context.py` contains a portable randomized descriptor model plus source guards. Focused .NET tests cover descriptor offsets/ASCII parsing, known and unknown bus values, rejection above `0x7F`, boolean descriptor validation and capability/result contract invariants.
+
+The existing `tools/test-local.ps1 -OfflineOnly` DiskIo bottleneck verifier invokes the physical-disk model and source checks transitively; the physical verifier pins that parent→child gate chain.
 
 Native Windows/.NET execution remains required before release claims about live `DeviceIoControl` behavior.
