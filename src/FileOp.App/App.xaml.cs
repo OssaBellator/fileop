@@ -6,6 +6,8 @@ public partial class App : Application
 {
     private Window? _window;
 
+    internal MainWindow? MainWindow { get; private set; }
+
     public App()
     {
         InitializeComponent();
@@ -15,6 +17,7 @@ public partial class App : Application
     {
         var window = new MainWindow();
         window.InitializeFilesFeature();
+        MainWindow = window;
         _window = window;
         window.Activate();
     }

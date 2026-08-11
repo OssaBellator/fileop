@@ -5,7 +5,7 @@
     <StackPanel Spacing="10">
         <TextBlock Text="Known locations review" FontSize="16" FontWeight="SemiBold" />
         <TextBlock
-            Text="Read-only, bounded review evidence from the current native index. Downloads/Temp location, file age, size, or extension do not establish that a file is safe to delete."
+            Text="Read-only, bounded review evidence from the current native index. Downloads/Temp location, file age, size, or extension do not establish that a file is safe to delete. Review in Files only opens the indexed browser; it does not prepare or queue an operation."
             TextWrapping="Wrap"
             Opacity="0.72" />
         <TextBlock
@@ -38,9 +38,13 @@
                             <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" Opacity="0.64" />
                             <TextBlock Text="{Binding EvidenceText}" TextWrapping="Wrap" Opacity="0.74" />
                         </StackPanel>
-                        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="2">
+                        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="6">
                             <TextBlock Text="{Binding SizeText}" HorizontalAlignment="Right" />
                             <TextBlock Text="{Binding LastWriteText}" HorizontalAlignment="Right" Opacity="0.64" />
+                            <Button
+                                Content="Review in Files"
+                                HorizontalAlignment="Right"
+                                Click="ReviewInFilesButton_Click" />
                         </StackPanel>
                     </Grid>
                 </DataTemplate>
