@@ -116,7 +116,7 @@ public static class StorageKnownLocationReviewClassifier
             {
                 StorageReviewProvenance.Downloads => ClassifyDownloads(source),
                 StorageReviewProvenance.UserTemp => ClassifyUserTemp(source),
-                _ => throw new UnreachableException(),
+                _ => throw new ArgumentOutOfRangeException(nameof(provenance), provenance, "Unsupported storage-review provenance."),
             };
             if (classified is not null)
             {
