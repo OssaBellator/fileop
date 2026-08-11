@@ -141,7 +141,10 @@ internal sealed class WindowsDiskIoCaptureCollector : IWindowsDiskIoCaptureColle
             observationTimestamp,
             decoded.Completion.PhysicalDiskNumber,
             decoded.Completion.Operation,
-            decoded.ResponseTime);
+            decoded.ResponseTime)
+        {
+            Owner = ownerResolution.Owner,
+        };
 
         lock (_gate)
         {
