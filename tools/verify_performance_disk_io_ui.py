@@ -6,6 +6,11 @@ import argparse
 import random
 from pathlib import Path
 
+from verify_disk_io_device_evidence_ui import (
+    check_repository as check_disk_io_device_evidence_repository,
+    run_model as run_disk_io_device_evidence_model,
+)
+
 
 def quality(incomplete: bool, partial_disks: int) -> tuple[bool, bool]:
     return incomplete, partial_disks > 0
@@ -189,11 +194,16 @@ def main() -> int:
         raise ValueError("--cases must be non-negative")
 
     model_checks = run_model(args.cases)
-    repo_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
+    device_model_checks = run_disk_io_device_evidence_model(args.cases, 0xD15CDE01)
+    if args.repo_root:
+        root = args.repo_root.resolve()
+        repo_checks = check_repository(root) + check_disk_io_device_evidence_repository(root)
+    else:
+        repo_checks = 0
     suffix = f" and {repo_checks:,} source/UI checks" if args.repo_root else ""
     print(
         "PASS: Performance DiskIo UI verified with "
-        f"{model_checks:,} model assertions across {args.cases:,} randomized evidence states{suffix}."
+        f"{model_checks:,} base assertions and {device_model_checks:,} device-evidence assertions across {args.cases:,} randomized evidence states{suffix}."
     )
     return 0
 
