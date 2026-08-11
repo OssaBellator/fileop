@@ -41,13 +41,13 @@ internal sealed class WindowsPhysicalDiskStorageApi : IWindowsPhysicalDiskStorag
     public WindowsPhysicalDiskOpenResult Open(int physicalDiskNumber)
     {
         var handle = CreateFileW(
-            $"\\\\.\\PhysicalDrive{physicalDiskNumber}",
-            desiredAccess: 0,
-            FileShareRead | FileShareWrite,
-            IntPtr.Zero,
-            OpenExisting,
-            flagsAndAttributes: 0,
-            IntPtr.Zero);
+            lpFileName: $"\\\\.\\PhysicalDrive{physicalDiskNumber}",
+            dwDesiredAccess: 0,
+            dwShareMode: FileShareRead | FileShareWrite,
+            lpSecurityAttributes: IntPtr.Zero,
+            dwCreationDisposition: OpenExisting,
+            dwFlagsAndAttributes: 0,
+            hTemplateFile: IntPtr.Zero);
         if (!handle.IsInvalid)
         {
             return new WindowsPhysicalDiskOpenResult(handle, 0);
