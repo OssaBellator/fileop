@@ -13,6 +13,8 @@ public sealed partial class StorageKnownLocationReviewView : UserControl
     public void SetLoading()
     {
         StatusText.Text = "Reviewing large, old files in current-user known locations from the native index…";
+        CleanupReadinessStatusText.Text =
+            "Cleanup readiness is waiting for the refreshed known-location review. No previous readiness result is retained as current evidence.";
     }
 
     public void SetUnavailable(string message)
@@ -20,6 +22,8 @@ public sealed partial class StorageKnownLocationReviewView : UserControl
         LocationStatusList.ItemsSource = null;
         CandidateList.ItemsSource = null;
         StatusText.Text = message;
+        CleanupReadinessStatusText.Text =
+            "Cleanup readiness is unavailable because the known-location review is unavailable.";
     }
 
     public void Apply(StorageKnownLocationReviewSnapshot snapshot)
@@ -35,6 +39,8 @@ public sealed partial class StorageKnownLocationReviewView : UserControl
             .Select(StorageKnownLocationStatusRow.FromLocation)
             .ToArray();
         CandidateList.ItemsSource = candidates;
+        CleanupReadinessStatusText.Text =
+            "Cleanup readiness has not been checked for this review. Delete recovery/history and mutation authorization are not implemented.";
 
         var available = snapshot.Locations.Count(static location =>
             location.Status == StorageReviewLocationStatus.Available);
