@@ -73,6 +73,14 @@ public static class StorageCleanupReadinessAnalyzer
                 evidence?.LastWriteTimeUtc,
                 detail);
 
+        if (!PathsEqual(canonicalReviewRoot.RequestedPath, reviewRoot) ||
+            !PathsEqual(canonicalCandidate.RequestedPath, candidate.Path))
+        {
+            return Result(
+                StorageCleanupReadinessStatus.Blocked,
+                "Canonical cleanup-readiness evidence is not bound to the requested known-location root and candidate paths.");
+        }
+
         if (canonicalReviewRoot.State is FileOperationCanonicalPathState.Inaccessible or
             FileOperationCanonicalPathState.Error)
         {
@@ -139,6 +147,13 @@ public static class StorageCleanupReadinessAnalyzer
                 string.IsNullOrWhiteSpace(currentFileError)
                     ? "Current read-only file metadata could not be captured."
                     : currentFileError);
+        }
+        if (!PathsEqual(currentFile.RequestedPath, candidate.Path))
+        {
+            return Result(
+                StorageCleanupReadinessStatus.Blocked,
+                "The current metadata snapshot is not bound to the requested review candidate path.",
+                currentFile);
         }
         if (currentFile.IsLeafReparsePoint)
         {
