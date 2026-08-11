@@ -104,6 +104,11 @@ public static class StorageKnownLocationReviewClassifier
         StorageReviewProvenance provenance)
     {
         ArgumentNullException.ThrowIfNull(analysis);
+        if (provenance is not StorageReviewProvenance.Downloads and not StorageReviewProvenance.UserTemp)
+        {
+            throw new ArgumentOutOfRangeException(nameof(provenance), provenance, "Unsupported storage-review provenance.");
+        }
+
         var candidates = new List<StorageReviewCandidate>();
         foreach (var source in analysis.StaleLargeFiles)
         {
@@ -111,7 +116,7 @@ public static class StorageKnownLocationReviewClassifier
             {
                 StorageReviewProvenance.Downloads => ClassifyDownloads(source),
                 StorageReviewProvenance.UserTemp => ClassifyUserTemp(source),
-                _ => null,
+                _ => throw new UnreachableException(),
             };
             if (classified is not null)
             {
@@ -206,10 +211,10 @@ public static class StorageKnownLocationReviewClassifier
         StorageReviewProvenance provenance)
     {
         var scope = provenance == StorageReviewProvenance.Downloads
-            ? "Downloads package/archive rules"
-            : "user Temp location rule";
+            ? "Downloads package/archive rules were"
+            : "The user Temp location rule was";
         return
-            $"{scope} were applied only to the native Optimize stale-large candidate set " +
+            $"{scope} applied only to the native Optimize stale-large candidate set " +
             $"(at least {analysis.Policy.LargeFileMinimumBytes:N0} measured bytes and {analysis.Policy.StaleAgeDays:N0} days old). " +
             "Location, age and extension are review evidence only; they do not establish that a file is safe to delete.";
     }
