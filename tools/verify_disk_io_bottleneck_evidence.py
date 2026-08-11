@@ -7,6 +7,11 @@ import random
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from verify_physical_disk_device_context import (
+    check_repository as check_physical_disk_repository,
+    run_model as run_physical_disk_model,
+)
+
 P95Cue = Tuple[int, int, int]
 DiskCue = Tuple[int, int, int]
 OwnerCue = Tuple[int, int, Optional[int], int, int]
@@ -253,11 +258,21 @@ def main() -> int:
         parser.error("--cases must be positive")
 
     model_checks = run_model(args.cases, args.seed)
-    source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
+    physical_model_checks = run_physical_disk_model(args.cases, args.seed ^ 0x50445953)
+    if args.repo_root:
+        root = args.repo_root.resolve()
+        source_checks = check_repository(root) + check_physical_disk_repository(root)
+    else:
+        source_checks = 0
     suffix = " and %s source checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: DiskIo bottleneck evidence verified with %s model assertions across %s randomized captures%s."
-        % (format(model_checks, ","), format(args.cases, ","), suffix)
+        "PASS: DiskIo bottleneck evidence verified with %s model assertions and physical-disk context with %s model assertions across %s randomized cases%s."
+        % (
+            format(model_checks, ","),
+            format(physical_model_checks, ","),
+            format(args.cases, ","),
+            suffix,
+        )
     )
     return 0
 
