@@ -7,6 +7,10 @@ import random
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from verify_nvme_health_evidence import (
+    check_repository as check_nvme_health_repository,
+    run_model as run_nvme_health_model,
+)
 from verify_physical_disk_device_context import (
     check_repository as check_physical_disk_repository,
     run_model as run_physical_disk_model,
@@ -259,17 +263,23 @@ def main() -> int:
 
     model_checks = run_model(args.cases, args.seed)
     physical_model_checks = run_physical_disk_model(args.cases, args.seed ^ 0x50445953)
+    nvme_model_checks = run_nvme_health_model(args.cases, args.seed ^ 0x4E564D45)
     if args.repo_root:
         root = args.repo_root.resolve()
-        source_checks = check_repository(root) + check_physical_disk_repository(root)
+        source_checks = (
+            check_repository(root)
+            + check_physical_disk_repository(root)
+            + check_nvme_health_repository(root)
+        )
     else:
         source_checks = 0
     suffix = " and %s source checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: DiskIo bottleneck evidence verified with %s model assertions and physical-disk context with %s model assertions across %s randomized cases%s."
+        "PASS: DiskIo bottleneck evidence verified with %s model assertions, physical-disk context with %s, and standardized NVMe health with %s across %s randomized cases%s."
         % (
             format(model_checks, ","),
             format(physical_model_checks, ","),
+            format(nvme_model_checks, ","),
             format(args.cases, ","),
             suffix,
         )
