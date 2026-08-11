@@ -153,6 +153,7 @@ def check_repository(root: Path) -> int:
     plan = (root / "src/FileOp.Core/Operations/FileOperationPlan.cs").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
+    docs = (root / "docs/cleanup-readiness.md").read_text(encoding="utf-8")
 
     for needle in (
         "StorageCleanupReadinessStatus",
@@ -162,11 +163,13 @@ def check_repository(root: Path) -> int:
         "StorageCleanupReadinessAnalyzer",
         "canonicalReviewRoot.IsLeafReparsePoint",
         "canonicalCandidate.IsLeafReparsePoint",
-        "canonicalReviewRoot.Identity.VolumeSerialNumber != canonicalCandidate.Identity.VolumeSerialNumber",
+        "canonicalReviewRoot.Identity.Value.VolumeSerialNumber",
+        "canonicalCandidate.Identity.Value.VolumeSerialNumber",
         "!IsPathWithinRoot(canonicalCandidate.CanonicalPath, canonicalReviewRoot.CanonicalPath)",
-        "currentFile.Identity != canonicalCandidate.Identity",
+        "currentFile.Identity != canonicalCandidate.Identity.Value",
         "currentFile.LogicalBytes != candidate.LogicalBytes",
-        "currentFile.LastWriteTimeUtc.UtcTicks != candidate.LastWriteTime.ToUniversalTime().UtcTicks",
+        "currentFile.LastWriteTimeUtc.UtcDateTime.Ticks !=",
+        "candidate.LastWriteTime.ToUniversalTime().UtcDateTime.Ticks",
         "CleanupMutationAuthorized => false",
         "continuity of the same file object since indexing is not proven",
         "Deletion is still unavailable",
@@ -207,7 +210,6 @@ def check_repository(root: Path) -> int:
         "ApplyCleanupReadiness",
         "CleanupMutationAuthorized",
     ):
-        # CleanupMutationAuthorized is intentionally not consumed by the UI to enable anything.
         if needle == "CleanupMutationAuthorized":
             checks += forbid(view, needle)
         else:
@@ -252,6 +254,12 @@ def check_repository(root: Path) -> int:
     checks += require(protocol, "public const int CurrentVersion = 8;")
     checks += forbid(protocol, "CleanupReadiness")
     checks += require(gate, "verify_cleanup_readiness.py --repo-root $repoRoot --cases 50000")
+    for needle in (
+        "does not yet provide a reviewed delete executor",
+        "does not prove that this is the same physical file object that was indexed earlier",
+        "CleanupMutationAuthorized` is always `false`",
+    ):
+        checks += require(docs, needle)
     return checks
 
 
