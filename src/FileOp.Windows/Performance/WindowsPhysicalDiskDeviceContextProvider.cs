@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 using FileOp.Core.Performance;
@@ -90,7 +89,7 @@ internal sealed class WindowsPhysicalDiskStorageApi : IWindowsPhysicalDiskStorag
                 Marshal.GetLastWin32Error());
         }
 
-        if (bytesReturned > output.Length)
+        if (bytesReturned > (uint)output.Length)
         {
             return new WindowsStoragePropertyQueryResult(null, 13); // ERROR_INVALID_DATA.
         }
@@ -275,7 +274,7 @@ internal static class WindowsPhysicalDiskPropertyParser
             throw new InvalidDataException(
                 $"Device descriptor version {version} is smaller than the fixed structure.");
         }
-        if (size < DeviceDescriptorFixedBytes || size > data.Length)
+        if (size < DeviceDescriptorFixedBytes || size > (uint)data.Length)
         {
             throw new InvalidDataException(
                 $"Device descriptor size {size} is outside the returned {data.Length}-byte buffer.");
@@ -320,7 +319,7 @@ internal static class WindowsPhysicalDiskPropertyParser
             throw new InvalidDataException(
                 $"{propertyName} descriptor version {version} is smaller than the known structure.");
         }
-        if (size < BooleanDescriptorMinimumBytes || size > data.Length)
+        if (size < BooleanDescriptorMinimumBytes || size > (uint)data.Length)
         {
             throw new InvalidDataException(
                 $"{propertyName} descriptor size {size} is outside the returned {data.Length}-byte buffer.");
@@ -369,7 +368,8 @@ internal static class WindowsPhysicalDiskPropertyParser
         {
             return null;
         }
-        if (rawOffset < DeviceDescriptorFixedBytes || rawOffset >= descriptor.Length)
+        if (rawOffset < DeviceDescriptorFixedBytes ||
+            rawOffset >= (uint)descriptor.Length)
         {
             throw new InvalidDataException(
                 $"{fieldName} offset {rawOffset} is outside the descriptor payload.");
