@@ -5,6 +5,7 @@ using System.Text;
 using FileOp.Core.Models;
 using FileOp.Core.Operations;
 using FileOp.Core.Storage;
+using FileOp.Windows.Operations;
 using Microsoft.Win32.SafeHandles;
 
 namespace FileOp.Windows.Storage;
