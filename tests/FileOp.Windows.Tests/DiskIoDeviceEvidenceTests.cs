@@ -19,7 +19,7 @@ public sealed class DiskIoDeviceEvidenceTests
         CollectionAssert.AreEqual(new[] { 2u, 0u, 7u }, rows.Select(static row => row.PhysicalDiskNumber).ToArray());
         CollectionAssert.AreEqual(new[] { 2, 0, 7 }, device.Calls.ToArray());
         CollectionAssert.AreEqual(new[] { 2, 0, 7 }, nvme.Calls.ToArray());
-        Assert.IsTrue(rows.All(static row => row.Queryable));
+        Assert.IsTrue(rows.All(static row => row.QueryAttempted));
         Assert.IsTrue(rows.All(static row => row.DeviceContext is not null));
         Assert.IsTrue(rows.All(static row => row.NvmeHealth is not null));
     }
@@ -53,12 +53,38 @@ public sealed class DiskIoDeviceEvidenceTests
 
         Assert.AreEqual(2, rows.Count);
         Assert.AreEqual(uint.MaxValue, rows[0].PhysicalDiskNumber);
-        Assert.IsFalse(rows[0].Queryable);
+        Assert.AreEqual(DiskIoDeviceEvidenceQueryStatus.DiskNumberOutOfRange, rows[0].QueryStatus);
+        Assert.IsFalse(rows[0].QueryAttempted);
         Assert.IsNull(rows[0].DeviceContext);
         Assert.IsNull(rows[0].NvmeHealth);
         StringAssert.Contains(rows[0].QueryStatusDetail, "no device metadata query was attempted");
         CollectionAssert.AreEqual(new[] { 4 }, device.Calls.ToArray());
         CollectionAssert.AreEqual(new[] { 4 }, nvme.Calls.ToArray());
+    }
+
+    [TestMethod]
+    public void QueryBudgetKeepsLaterObservedDisksExplicitWithoutCallingProviders()
+    {
+        var device = new FakeDeviceContextProvider();
+        var nvme = new FakeNvmeHealthProvider();
+        var numbers = Enumerable.Range(
+                0,
+                DiskIoDeviceEvidenceCollector.MaximumQueriedPhysicalDisks + 3)
+            .Select(static value => checked((uint)value))
+            .ToArray();
+
+        var rows = DiskIoDeviceEvidenceCollector.Query(numbers, device, nvme);
+
+        Assert.AreEqual(numbers.Length, rows.Count);
+        Assert.AreEqual(DiskIoDeviceEvidenceCollector.MaximumQueriedPhysicalDisks, device.Calls.Count);
+        Assert.AreEqual(DiskIoDeviceEvidenceCollector.MaximumQueriedPhysicalDisks, nvme.Calls.Count);
+        Assert.IsTrue(rows.Take(DiskIoDeviceEvidenceCollector.MaximumQueriedPhysicalDisks)
+            .All(static row => row.QueryAttempted));
+        Assert.IsTrue(rows.Skip(DiskIoDeviceEvidenceCollector.MaximumQueriedPhysicalDisks)
+            .All(static row =>
+                row.QueryStatus == DiskIoDeviceEvidenceQueryStatus.QueryBudgetExceeded &&
+                row.DeviceContext is null &&
+                row.NvmeHealth is null));
     }
 
     [TestMethod]
@@ -75,7 +101,7 @@ public sealed class DiskIoDeviceEvidenceTests
     }
 
     [TestMethod]
-    public void ManualOutOfRangeRowCannotCarrySignedProviderEvidence()
+    public void ManualSkippedRowsCannotCarryProviderEvidence()
     {
         var device = CreateDeviceContextResult(0);
         var nvme = CreateNvmeResult(0);
@@ -83,6 +109,13 @@ public sealed class DiskIoDeviceEvidenceTests
         Assert.ThrowsException<ArgumentException>(() =>
             new DiskIoPhysicalDiskDeviceEvidence(
                 uint.MaxValue,
+                DiskIoDeviceEvidenceQueryStatus.DiskNumberOutOfRange,
+                device,
+                nvme));
+        Assert.ThrowsException<ArgumentException>(() =>
+            new DiskIoPhysicalDiskDeviceEvidence(
+                0,
+                DiskIoDeviceEvidenceQueryStatus.QueryBudgetExceeded,
                 device,
                 nvme));
     }
