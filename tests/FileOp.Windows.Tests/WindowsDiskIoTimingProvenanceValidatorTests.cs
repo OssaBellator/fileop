@@ -86,15 +86,15 @@ public sealed class WindowsDiskIoTimingProvenanceValidatorTests
     private static DiskIoEventObservation Observation(DiskIoProcessIdentity? owner) =>
         new(
             At,
-            PhysicalDiskNumber: 3,
+            3,
             DiskIoOperationKind.Read,
-            TransferBytes: 4096,
+            4096,
             owner);
 
     private static DiskIoResponseTimingObservation Timing(DiskIoProcessIdentity? owner) =>
         new(
             At,
-            PhysicalDiskNumber: 3,
+            3,
             DiskIoOperationKind.Read,
             TimeSpan.FromMilliseconds(2))
         {
