@@ -21,6 +21,8 @@ def apply_model(
     stale_files: list[tuple[int, int]],
     same_size_groups: list[tuple[int, int]],
 ):
+    if large_threshold < 0 or same_size_threshold < 0 or stale_threshold < 0:
+        raise ValueError("negative threshold")
     if large_threshold < large_baseline:
         raise ValueError("large threshold below helper baseline")
     if same_size_threshold < same_size_baseline:
@@ -148,9 +150,15 @@ def check_repository(root: Path) -> int:
         "StorageOptimizationDisplayThresholds",
         "StorageOptimizationFilteredView",
         "StorageOptimizationThresholdFilter",
+        "thresholds.LargeFileMinimumBytes < 0",
+        "thresholds.SameSizeMinimumBytes < 0",
+        "thresholds.StaleAgeDays < 0",
         "thresholds.LargeFileMinimumBytes < analysis.Policy.LargeFileMinimumBytes",
         "thresholds.SameSizeMinimumBytes < analysis.Policy.SameSizeMinimumBytes",
         "thresholds.StaleAgeDays < analysis.Policy.StaleAgeDays",
+        "CalculateStaleCutoff(",
+        "DateTimeOffset.MinValue",
+        "TimeSpan.TicksPerDay",
         "file.MeasuredBytes >= thresholds.LargeFileMinimumBytes",
         "file.LastWriteTime.ToUniversalTime() <= staleCutoff",
         "group.LogicalBytesPerFile >= thresholds.SameSizeMinimumBytes",
@@ -217,6 +225,7 @@ def check_repository(root: Path) -> int:
         "LooserLargeThresholdIsRejected",
         "LooserSameSizeThresholdIsRejected",
         "YoungerStaleAgeIsRejected",
+        "ExtremeStaleAgeClampsWithoutDateOverflow",
         "SameSizePotentialSavingsSaturate",
     ):
         assert needle in tests, needle
