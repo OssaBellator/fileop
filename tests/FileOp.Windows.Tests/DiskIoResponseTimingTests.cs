@@ -116,6 +116,50 @@ public sealed class DiskIoResponseTimingTests
         Assert.AreEqual(0, result.ResponseTimings.Count);
     }
 
+    [TestMethod]
+    public void CaptureResultValidatesTimingOperationCountsBeforeAttachment()
+    {
+        var report = DiskIoAttributionAnalyzer.Analyze(
+            StartedAt,
+            EndedAt,
+            [new DiskIoEventObservation(
+                StartedAt.AddMilliseconds(1),
+                3,
+                DiskIoOperationKind.Read,
+                4096,
+                Owner: null)]);
+        var result = DiskIoCaptureResult.Completed(
+            new DiskIoCaptureBudget(TimeSpan.FromSeconds(2), 10, DiskIoAttributionAnalyzer.DefaultMaxOwnersPerDisk),
+            report,
+            DiskIoCaptureStopReason.DurationElapsed,
+            DiskIoCaptureLossState.NoneObserved,
+            lostEventCount: 0,
+            lostBufferCount: 0,
+            providerOverheadDuration: null,
+            detail: "test");
+        var good = DiskIoResponseTimingAnalyzer.Analyze(
+            StartedAt,
+            EndedAt,
+            [Timing(3, DiskIoOperationKind.Read, 2, 1)]);
+
+        var attached = result.WithResponseTimings(good);
+        Assert.AreEqual(1, attached.ResponseTimings.Count);
+        Assert.AreEqual(1, attached.ResponseTimings[0].Reads!.SampleCount);
+
+        var bad = new DiskIoDiskResponseTiming(
+            3,
+            Reads: null,
+            Writes: new DiskIoResponseTimingSummary(
+                1,
+                TimeSpan.FromMilliseconds(2),
+                TimeSpan.FromMilliseconds(2),
+                P95: null,
+                TimeSpan.FromMilliseconds(2)),
+            Flushes: null);
+        Assert.ThrowsException<ArgumentException>(() =>
+            result.WithResponseTimings([bad]));
+    }
+
     private static DiskIoResponseTimingObservation Timing(
         uint disk,
         DiskIoOperationKind operation,
@@ -136,12 +180,14 @@ public sealed class DiskIoResponseTimingTests
         int maximumMilliseconds)
     {
         Assert.IsNotNull(summary);
-        Assert.AreEqual(count, summary.SampleCount);
-        Assert.AreEqual(TimeSpan.FromMilliseconds(minimumMilliseconds), summary.Minimum);
-        Assert.AreEqual(TimeSpan.FromMilliseconds(medianMilliseconds), summary.Median);
-        Assert.AreEqual(
-            p95Milliseconds is { } p95 ? TimeSpan.FromMilliseconds(p95) : null,
-            summary.P95);
-        Assert.AreEqual(TimeSpan.FromMilliseconds(maximumMilliseconds), summary.Maximum);
+        var value = summary!;
+        var expectedP95 = p95Milliseconds is { } p95
+            ? (TimeSpan?)TimeSpan.FromMilliseconds(p95)
+            : null;
+        Assert.AreEqual(count, value.SampleCount);
+        Assert.AreEqual(TimeSpan.FromMilliseconds(minimumMilliseconds), value.Minimum);
+        Assert.AreEqual(TimeSpan.FromMilliseconds(medianMilliseconds), value.Median);
+        Assert.AreEqual(expectedP95, value.P95);
+        Assert.AreEqual(TimeSpan.FromMilliseconds(maximumMilliseconds), value.Maximum);
     }
 }
