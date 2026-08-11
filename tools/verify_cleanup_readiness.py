@@ -14,6 +14,9 @@ UNAVAILABLE = "unavailable"
 
 def analyze(
     *,
+    root_binding: bool,
+    candidate_binding: bool,
+    current_binding: bool,
     root_state: str,
     root_reparse: bool,
     candidate_state: str,
@@ -26,6 +29,8 @@ def analyze(
     size_match: bool,
     time_match: bool,
 ) -> str:
+    if not root_binding or not candidate_binding:
+        return BLOCKED
     if root_state in {"inaccessible", "error"}:
         return UNAVAILABLE
     if root_state != "directory":
@@ -40,7 +45,7 @@ def analyze(
         return BLOCKED
     if not current_present:
         return UNAVAILABLE
-    if current_reparse:
+    if not current_binding or current_reparse:
         return BLOCKED
     if not same_current_path_identity or not size_match or not time_match:
         return CHANGED
@@ -49,41 +54,41 @@ def analyze(
 
 def run_model(cases: int, seed: int) -> int:
     checks = 0
-    assert analyze(
-        root_state="directory", root_reparse=False,
-        candidate_state="file", candidate_reparse=False,
-        same_volume=True, within_root=True, current_present=True,
-        current_reparse=False, same_current_path_identity=True,
-        size_match=True, time_match=True,
-    ) == CONSISTENT
-    assert analyze(
-        root_state="directory", root_reparse=False,
-        candidate_state="file", candidate_reparse=False,
-        same_volume=True, within_root=False, current_present=True,
-        current_reparse=False, same_current_path_identity=True,
-        size_match=True, time_match=True,
-    ) == BLOCKED
-    assert analyze(
-        root_state="directory", root_reparse=False,
-        candidate_state="missing", candidate_reparse=False,
-        same_volume=True, within_root=True, current_present=False,
-        current_reparse=False, same_current_path_identity=False,
-        size_match=False, time_match=False,
-    ) == CHANGED
-    assert analyze(
-        root_state="directory", root_reparse=False,
-        candidate_state="file", candidate_reparse=False,
-        same_volume=True, within_root=True, current_present=True,
-        current_reparse=False, same_current_path_identity=False,
-        size_match=True, time_match=True,
-    ) == CHANGED
-    checks += 4
+    base = dict(
+        root_binding=True,
+        candidate_binding=True,
+        current_binding=True,
+        root_state="directory",
+        root_reparse=False,
+        candidate_state="file",
+        candidate_reparse=False,
+        same_volume=True,
+        within_root=True,
+        current_present=True,
+        current_reparse=False,
+        same_current_path_identity=True,
+        size_match=True,
+        time_match=True,
+    )
+    assert analyze(**base) == CONSISTENT
+    changed = base | {"within_root": False}
+    assert analyze(**changed) == BLOCKED
+    changed = base | {"candidate_state": "missing", "current_present": False}
+    assert analyze(**changed) == CHANGED
+    changed = base | {"same_current_path_identity": False}
+    assert analyze(**changed) == CHANGED
+    changed = base | {"root_binding": False}
+    assert analyze(**changed) == BLOCKED
+    checks += 5
 
     rng = random.Random(seed)
     root_states = ("directory", "missing", "file", "inaccessible", "error")
     candidate_states = ("file", "missing", "directory", "inaccessible", "error")
     for _ in range(cases):
         values = dict(
+            root_binding=rng.random() < 0.97,
+            candidate_binding=rng.random() < 0.97,
+            current_binding=rng.random() < 0.97,
             root_state=rng.choice(root_states),
             root_reparse=rng.random() < 0.08,
             candidate_state=rng.choice(candidate_states),
@@ -98,33 +103,59 @@ def run_model(cases: int, seed: int) -> int:
         )
         result = analyze(**values)
         assert result in {CONSISTENT, CHANGED, BLOCKED, UNAVAILABLE}
-        assert (result == CONSISTENT) == (
-            values["root_state"] == "directory"
+        expected_consistent = (
+            values["root_binding"]
+            and values["candidate_binding"]
+            and values["root_state"] == "directory"
             and not values["root_reparse"]
             and values["candidate_state"] == "file"
             and not values["candidate_reparse"]
             and values["same_volume"]
             and values["within_root"]
             and values["current_present"]
+            and values["current_binding"]
             and not values["current_reparse"]
             and values["same_current_path_identity"]
             and values["size_match"]
             and values["time_match"]
         )
-        if values["root_state"] in {"inaccessible", "error"}:
-            assert result == UNAVAILABLE
-        if values["root_state"] == "directory" and values["root_reparse"]:
+        assert (result == CONSISTENT) == expected_consistent
+        if not values["root_binding"] or not values["candidate_binding"]:
             assert result == BLOCKED
         if (
-            values["root_state"] == "directory"
+            values["root_binding"]
+            and values["candidate_binding"]
+            and values["root_state"] in {"inaccessible", "error"}
+        ):
+            assert result == UNAVAILABLE
+        if (
+            values["root_binding"]
+            and values["candidate_binding"]
+            and values["root_state"] == "directory"
+            and values["root_reparse"]
+        ):
+            assert result == BLOCKED
+        if (
+            values["root_binding"]
+            and values["candidate_binding"]
+            and values["root_state"] == "directory"
             and not values["root_reparse"]
             and values["candidate_state"] == "file"
-            and values["candidate_reparse"]
+            and not values["candidate_reparse"]
+            and values["same_volume"]
+            and values["within_root"]
+            and values["current_present"]
+            and not values["current_binding"]
         ):
             assert result == BLOCKED
         if result == CONSISTENT:
-            assert values["same_current_path_identity"] and values["size_match"] and values["time_match"]
-        checks += 6
+            assert (
+                values["current_binding"]
+                and values["same_current_path_identity"]
+                and values["size_match"]
+                and values["time_match"]
+            )
+        checks += 7
     return checks
 
 
@@ -161,11 +192,14 @@ def check_repository(root: Path) -> int:
         "CandidateChanged",
         "StorageCleanupCurrentFileEvidence",
         "StorageCleanupReadinessAnalyzer",
+        "PathsEqual(canonicalReviewRoot.RequestedPath, reviewRoot)",
+        "PathsEqual(canonicalCandidate.RequestedPath, candidate.Path)",
         "canonicalReviewRoot.IsLeafReparsePoint",
         "canonicalCandidate.IsLeafReparsePoint",
         "canonicalReviewRoot.Identity.Value.VolumeSerialNumber",
         "canonicalCandidate.Identity.Value.VolumeSerialNumber",
         "!IsPathWithinRoot(canonicalCandidate.CanonicalPath, canonicalReviewRoot.CanonicalPath)",
+        "PathsEqual(currentFile.RequestedPath, candidate.Path)",
         "currentFile.Identity != canonicalCandidate.Identity.Value",
         "currentFile.LogicalBytes != candidate.LogicalBytes",
         "currentFile.LastWriteTimeUtc.UtcDateTime.Ticks !=",
@@ -182,11 +216,13 @@ def check_repository(root: Path) -> int:
         "FileShare.ReadWrite | FileShare.Delete",
         "GetFinalPathNameByHandleW",
         "GetFileInformationByHandle",
+        "FileAttributes.ReparsePoint",
         "new FileIdentity(",
         "DateTime.FromFileTimeUtc",
         "StorageCleanupReadinessAnalyzer.Analyze",
     ):
         checks += require(windows, needle)
+    checks += forbid(windows, "File.GetAttributes")
     for token in (
         "FileAccess.Write",
         "File.Delete(",
@@ -205,15 +241,9 @@ def check_repository(root: Path) -> int:
         "Delete recovery/history and mutation authorization are not implemented",
     ):
         checks += require(xaml, needle)
-    for needle in (
-        "CheckKnownLocationCleanupReadinessAsync(row.Path)",
-        "ApplyCleanupReadiness",
-        "CleanupMutationAuthorized",
-    ):
-        if needle == "CleanupMutationAuthorized":
-            checks += forbid(view, needle)
-        else:
-            checks += require(view, needle)
+    checks += require(view, "CheckKnownLocationCleanupReadinessAsync(row.Path)")
+    checks += require(view, "ApplyCleanupReadiness")
+    checks += forbid(view, "CleanupMutationAuthorized")
 
     for needle in (
         "No previous readiness result is retained as current evidence",
@@ -241,6 +271,8 @@ def check_repository(root: Path) -> int:
         "CandidateReparsePointIsBlocked",
         "CrossVolumeResolutionIsBlocked",
         "CurrentMetadataFailureDoesNotBecomeReady",
+        "MismatchedCanonicalRequestedPathsAreBlocked",
+        "MismatchedCurrentRequestedPathIsBlocked",
     ):
         checks += require(tests, needle)
     for needle in (
