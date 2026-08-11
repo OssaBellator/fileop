@@ -41,6 +41,7 @@
             <StackPanel Spacing="24" Padding="0,0,12,12">
                 <local:PerformanceDiagnosticsView x:Name="PerformanceDiagnostics" />
                 <local:FileOpResourceFootprintView x:Name="FileOpResourceFootprint" />
+                <local:StorageKnownLocationReviewView x:Name="KnownLocationReview" />
 
                 <StackPanel Spacing="8">
                     <TextBlock Text="Largest files" FontSize="16" FontWeight="SemiBold" />
