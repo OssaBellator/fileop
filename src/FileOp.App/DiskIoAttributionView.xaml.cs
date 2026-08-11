@@ -61,6 +61,9 @@ public sealed partial class DiskIoAttributionView : UserControl
         DiskList.ItemsSource = report.Disks
             .Select(DiskIoDiskRow.FromAttribution)
             .ToArray();
+        TimingList.ItemsSource = result.ResponseTimings
+            .Select(DiskIoTimingRow.FromEvidence)
+            .ToArray();
         ProcessList.ItemsSource = report.Disks
             .SelectMany(static disk => disk.Owners.Select(owner =>
                 DiskIoProcessRow.FromAttribution(disk.PhysicalDiskNumber, owner)))
@@ -76,6 +79,13 @@ public sealed partial class DiskIoAttributionView : UserControl
         LossText.Text =
             $"{FormatCount(result.LostEventCount)} events · {FormatCount(result.LostBufferCount)} buffers";
         DurationText.Text = $"{report.ObservationDuration.TotalSeconds:N2} s";
+
+        var timingSampleCount = result.ResponseTimings.Sum(static timing => timing.SampleCount);
+        TimingEvidenceStatusText.Text = result.ResponseTimings.Count == 0
+            ? report.AcceptedEventCount == 0
+                ? "No accepted Disk I/O completions were observed, so there are no response-duration samples."
+                : "This completed result does not carry typed response-duration evidence. No latency value is inferred."
+            : $"{timingSampleCount:N0} response-duration sample(s) across {result.ResponseTimings.Count:N0} physical disk(s), aligned with the accepted completion evidence.";
 
         var partialDiskCount = report.Disks.Count(static disk =>
             disk.TotalBytes > 0 && disk.AttributionCoveragePercent is not >= 100d);
@@ -97,6 +107,7 @@ public sealed partial class DiskIoAttributionView : UserControl
     private void ResetRows()
     {
         DiskList.ItemsSource = null;
+        TimingList.ItemsSource = null;
         ProcessList.ItemsSource = null;
     }
 
@@ -106,6 +117,7 @@ public sealed partial class DiskIoAttributionView : UserControl
         AcceptedEventsText.Text = "—";
         LossText.Text = "—";
         DurationText.Text = "—";
+        TimingEvidenceStatusText.Text = "No response-duration evidence has been captured.";
     }
 
     private static string FormatCount(long? count) =>
@@ -139,6 +151,51 @@ public sealed record DiskIoDiskRow(
             $"{disk.TotalOperations:N0}",
             coverage,
             unattributed);
+    }
+}
+
+public sealed record DiskIoTimingRow(
+    string DiskText,
+    string ReadTimingText,
+    string WriteTimingText,
+    string FlushTimingText)
+{
+    public static DiskIoTimingRow FromEvidence(DiskIoDiskResponseTiming timing) =>
+        new(
+            $"Disk {timing.PhysicalDiskNumber}",
+            FormatSummary(timing.Reads),
+            FormatSummary(timing.Writes),
+            FormatSummary(timing.Flushes));
+
+    private static string FormatSummary(DiskIoResponseTimingSummary? summary)
+    {
+        if (summary is null)
+        {
+            return "No samples";
+        }
+
+        var sampleLabel = summary.SampleCount == 1 ? "sample" : "samples";
+        var p95 = summary.P95 is { } percentile
+            ? FormatDuration(percentile)
+            : $"— (<{DiskIoResponseTimingAnalyzer.MinimumSamplesForP95} samples)";
+        return
+            $"{summary.SampleCount:N0} {sampleLabel} · " +
+            $"min {FormatDuration(summary.Minimum)} · " +
+            $"median {FormatDuration(summary.Median)} · " +
+            $"p95 {p95} · max {FormatDuration(summary.Maximum)}";
+    }
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        if (duration < TimeSpan.FromMilliseconds(1))
+        {
+            return $"{duration.TotalMicroseconds:N0} µs";
+        }
+        if (duration < TimeSpan.FromSeconds(1))
+        {
+            return $"{duration.TotalMilliseconds:N2} ms";
+        }
+        return $"{duration.TotalSeconds:N3} s";
     }
 }
 
