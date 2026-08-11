@@ -71,6 +71,10 @@ Invoke-Step "Offline cleanup readiness verifier" {
     python tools/verify_cleanup_readiness.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline cleanup physical release verifier" {
+    python tools/verify_cleanup_physical_release.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline performance diagnostics verifier" {
     python tools/verify_performance_diagnostics.py --repo-root $repoRoot --cases 50000
 }
@@ -109,6 +113,10 @@ Invoke-Step "Offline DiskIo response-timing verifier" {
 
 Invoke-Step "Offline DiskIo timing provenance verifier" {
     python tools/verify_disk_io_timing_provenance.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline DiskIo process response-timing verifier" {
+    python tools/verify_disk_io_process_response_timing.py --repo-root $repoRoot --cases 50000
 }
 
 Invoke-Step "Offline disk I/O capture-policy verifier" {
