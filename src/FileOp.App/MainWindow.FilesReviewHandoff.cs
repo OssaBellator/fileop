@@ -1,41 +1,78 @@
+using FileOp.Windows.IndexingService;
 using Microsoft.UI.Xaml;
 
 namespace FileOp.App;
 
 public sealed partial class MainWindow
 {
-    internal async Task ReviewPathInFilesAsync(string path)
+    internal async Task ReviewPathInFilesAsync(string requestedPath)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestedPath);
         if (_closed || !_filesInitialized)
         {
             return;
         }
 
-        var root = _searchEngine.StorageRootPath;
-        if (root is null || _searchEngine.State.IsBusy)
+        if (_performanceDiskIoCaptureActive || _storageSameSizeVerificationActive)
         {
-            SetFilesStatus("Review handoff is unavailable while indexed Files browsing is not ready.");
+            SetStorageStatus(
+                "Review in Files is unavailable while Disk I/O capture or duplicate content verification is active.");
             return;
         }
 
-        string fullPath;
+        if (_storageGate.CurrentCount == 0)
+        {
+            SetStorageStatus(
+                "Review in Files is waiting for the current Storage analysis to finish.");
+            return;
+        }
+
+        var review = _storageKnownLocationReview;
+        var root = _searchEngine.StorageRootPath;
+        if (review is null ||
+            root is null ||
+            _searchEngine.State.IsBusy ||
+            _searchEngine.State.Mode != DesktopSearchMode.Native ||
+            !_searchEngine.StorageOptimizationAvailable)
+        {
+            SetStorageStatus(
+                "Known-location review evidence is no longer current for an active native indexed volume. Refresh Optimize before reviewing it in Files.");
+            return;
+        }
+
+        if (!PathsEqual(root, review.ActiveVolumeRootPath))
+        {
+            SetStorageStatus(
+                "The active indexed volume changed after this known-location review. Refresh Optimize before reviewing it in Files.");
+            return;
+        }
+
+        var candidate = review.Locations
+            .SelectMany(static location => location.Candidates)
+            .FirstOrDefault(candidate => PathsEqual(candidate.Path, requestedPath));
+        if (candidate is null || !IsPathWithinRoot(candidate.Path, root))
+        {
+            SetStorageStatus(
+                "That path is not a candidate in the current known-location review for this indexed volume.");
+            return;
+        }
+
         string parentPath;
         try
         {
-            fullPath = Path.GetFullPath(path);
-            parentPath = Path.GetDirectoryName(fullPath) ?? root;
+            parentPath = Path.GetDirectoryName(candidate.Path) ?? string.Empty;
         }
         catch (Exception exception)
             when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            SetFilesStatus("Review handoff could not use the candidate path because it is invalid.");
+            SetStorageStatus("The review candidate path is invalid and cannot be handed to Files.");
             return;
         }
 
-        if (!IsPathWithinRoot(fullPath, root) || !IsPathWithinRoot(parentPath, root))
+        if (string.IsNullOrWhiteSpace(parentPath) || !IsPathWithinRoot(parentPath, root))
         {
-            SetFilesStatus("Review handoff could not open the candidate because it is outside the current indexed Files source.");
+            SetStorageStatus(
+                "The review candidate parent is outside the current indexed volume and cannot be handed to Files.");
             return;
         }
 
@@ -46,12 +83,12 @@ public sealed partial class MainWindow
         Interlocked.Increment(ref _storageGeneration);
         Interlocked.Increment(ref _storageTypeGeneration);
         Interlocked.Increment(ref _storageHistoryGeneration);
-        Interlocked.Increment(ref _storageOptimizationGeneration);
         SetStorageViewMode(StorageViewMode.Folders);
 
         SearchView.Visibility = Visibility.Collapsed;
         StorageView.Visibility = Visibility.Collapsed;
         _filesView.Visibility = Visibility.Visible;
+        SearchStatusText.Text = _lastFilesStatus;
 
         var sourceKey = CreateStorageSourceKey(_searchEngine.State.Mode, root);
         if (!string.Equals(sourceKey, _filesSourceKey, StringComparison.OrdinalIgnoreCase))
@@ -74,10 +111,25 @@ public sealed partial class MainWindow
             return;
         }
 
-        var selected = _filesView.LeftPane.TrySelectVisiblePath(fullPath);
+        var paneView = _filesView.LeftPane;
+        if (!paneView.IsDirectoryReady ||
+            paneView.CurrentPath is null ||
+            !PathsEqual(paneView.CurrentPath, parentPath))
+        {
+            SetFilesStatus(
+                "The review candidate parent directory could not be loaded from the current indexed source.");
+            return;
+        }
+
+        var selected = paneView.SetReviewSelectionHint(candidate.Path);
+        paneView.SetStatus(
+            selected
+                ? $"Selected review candidate {candidate.Name}. Known-location evidence does not authorize deletion."
+                : $"Opened the indexed parent for {candidate.Name}. The candidate is not in the currently loaded page; Load more can reveal and select it if it is still present. The review evidence may be stale and does not authorize deletion.",
+            parentPath);
         SetFilesStatus(
             selected
-                ? $"Opened a new Files tab for review and selected {Path.GetFileName(fullPath)}. No operation was prepared or queued."
-                : $"Opened a new Files tab for {parentPath}. The review candidate is not in the first loaded page; use Load more to locate it. No operation was prepared or queued.");
+                ? "Known-location candidate handed to Files for non-destructive inspection."
+                : "Known-location parent opened in Files; the candidate is not in the currently loaded exact page.");
     }
 }
