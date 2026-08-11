@@ -129,7 +129,7 @@ def parse_response(data: bytes, bytes_returned: int):
         raise ValueError("returned length outside response")
     returned = data[:bytes_returned]
     version, size = struct.unpack_from("<II", returned, 0)
-    if version < DESCRIPTOR_BYTES or size < DESCRIPTOR_BYTES or size > bytes_returned:
+    if version != DESCRIPTOR_BYTES or size != DESCRIPTOR_BYTES:
         raise ValueError("bad descriptor version/size")
     fields = struct.unpack_from("<IIIIIIIIII", returned, QUERY_HEADER_BYTES)
     protocol_type, data_type, request_value = fields[0], fields[1], fields[2]
@@ -217,13 +217,13 @@ def run_model(cases: int, seed: int) -> int:
         except ValueError:
             checks += 1
 
-        malformed_protocol = bytearray(response)
-        field = rng.choice((8, 12, 16))
-        current = struct.unpack_from("<I", malformed_protocol, field)[0]
-        struct.pack_into("<I", malformed_protocol, field, current + 1)
+        malformed_response = bytearray(response)
+        field = rng.choice((0, 4, 8, 12, 16, 24))
+        current = struct.unpack_from("<I", malformed_response, field)[0]
+        struct.pack_into("<I", malformed_response, field, current + 1)
         try:
-            parse_response(bytes(malformed_protocol), len(malformed_protocol))
-            raise AssertionError("wrong protocol metadata was accepted")
+            parse_response(bytes(malformed_response), len(malformed_response))
+            raise AssertionError("malformed protocol descriptor/metadata was accepted")
         except ValueError:
             checks += 1
 
@@ -269,10 +269,12 @@ def check_repository(root: Path) -> int:
         (provider, "NvmeHealthLogBytes = 512", "standardized health size"),
         (provider, "_physicalDiskApi.Open(physicalDiskNumber)", "shared zero-access open boundary"),
         (physical_provider, "dwDesiredAccess: 0", "zero desired access authority"),
+        (provider, "version != ProtocolDataDescriptorBytes", "exact returned descriptor version"),
+        (provider, "size != ProtocolDataDescriptorBytes", "exact returned descriptor size"),
         (provider, "protocolType != ProtocolTypeNvme", "returned protocol validation"),
         (provider, "dataType != NvmeDataTypeLogPage", "returned data type validation"),
         (provider, "requestValue != NvmeLogPageHealthInfo", "returned log page validation"),
-        (provider, "healthEnd > bytesReturned", "returned payload bound"),
+        (provider, "healthEndLong > bytesReturned", "overflow-safe returned payload bound"),
         (provider, "ReadUInt128LittleEndian", "full counter parsing"),
         (tests, "QueryBufferMatchesDocumentedProtocolSpecificHealthRequest", "query layout regression"),
         (tests, "HealthLogParsesStandardizedWarningsAndLifetimeCounters", "health parser regression"),
