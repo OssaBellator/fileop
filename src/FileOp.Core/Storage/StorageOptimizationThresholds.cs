@@ -127,7 +127,9 @@ public static class StorageOptimizationThresholdFilter
         DateTimeOffset asOfUtc,
         int staleAgeDays)
     {
-        var maximumRepresentableAgeDays = (asOfUtc.UtcTicks - DateTimeOffset.MinValue.UtcTicks) / TimeSpan.TicksPerDay;
+        var maximumRepresentableAgeDays =
+            (asOfUtc.UtcDateTime.Ticks - DateTimeOffset.MinValue.UtcDateTime.Ticks) /
+            TimeSpan.TicksPerDay;
         return staleAgeDays > maximumRepresentableAgeDays
             ? DateTimeOffset.MinValue
             : asOfUtc.AddDays(-staleAgeDays);
