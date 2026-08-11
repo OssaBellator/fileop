@@ -118,7 +118,8 @@ public static class StorageCleanupReadinessAnalyzer
                 StorageCleanupReadinessStatus.Unavailable,
                 "Current filesystem identity evidence is unavailable for the review root or candidate.");
         }
-        if (canonicalReviewRoot.Identity.VolumeSerialNumber != canonicalCandidate.Identity.VolumeSerialNumber)
+        if (canonicalReviewRoot.Identity.Value.VolumeSerialNumber !=
+            canonicalCandidate.Identity.Value.VolumeSerialNumber)
         {
             return Result(
                 StorageCleanupReadinessStatus.Blocked,
@@ -147,7 +148,7 @@ public static class StorageCleanupReadinessAnalyzer
                 currentFile);
         }
         if (!PathsEqual(currentFile.CanonicalPath, canonicalCandidate.CanonicalPath) ||
-            currentFile.Identity != canonicalCandidate.Identity)
+            currentFile.Identity != canonicalCandidate.Identity.Value)
         {
             return Result(
                 StorageCleanupReadinessStatus.CandidateChanged,
@@ -155,7 +156,8 @@ public static class StorageCleanupReadinessAnalyzer
                 currentFile);
         }
         if (currentFile.LogicalBytes != candidate.LogicalBytes ||
-            currentFile.LastWriteTimeUtc.UtcTicks != candidate.LastWriteTime.ToUniversalTime().UtcTicks)
+            currentFile.LastWriteTimeUtc.UtcDateTime.Ticks !=
+                candidate.LastWriteTime.ToUniversalTime().UtcDateTime.Ticks)
         {
             return Result(
                 StorageCleanupReadinessStatus.CandidateChanged,
