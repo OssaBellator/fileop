@@ -166,6 +166,38 @@ public sealed class DiskIoProcessResponseTimingTests
             capture.WithResponseTimings(diskTiming).WithProcessResponseTimings([reversed]));
     }
 
+    [TestMethod]
+    public void EmptyCaptureStillRequiresExplicitDiskTimingAttachment()
+    {
+        var attribution = DiskIoAttributionAnalyzer.Analyze(
+            StartedAt,
+            EndedAt,
+            Array.Empty<DiskIoEventObservation>(),
+            maxOwnersPerDisk: 2);
+        var processTiming = DiskIoProcessResponseTimingAnalyzer.Analyze(
+            attribution,
+            Array.Empty<DiskIoResponseTimingObservation>());
+        var capture = DiskIoCaptureResult.Completed(
+            new DiskIoCaptureBudget(TimeSpan.FromSeconds(2), 10, 2),
+            attribution,
+            DiskIoCaptureStopReason.DurationElapsed,
+            DiskIoCaptureLossState.NoneObserved,
+            lostEventCount: 0,
+            lostBufferCount: 0,
+            providerOverheadDuration: null,
+            detail: "empty test");
+
+        Assert.AreEqual(0, processTiming.Count);
+        Assert.ThrowsException<InvalidOperationException>(() =>
+            capture.WithProcessResponseTimings(processTiming));
+
+        var attached = capture
+            .WithResponseTimings(Array.Empty<DiskIoDiskResponseTiming>())
+            .WithProcessResponseTimings(processTiming);
+        Assert.AreEqual(0, attached.ResponseTimings.Count);
+        Assert.AreEqual(0, attached.ProcessResponseTimings.Count);
+    }
+
     private static DiskIoProcessIdentity Owner(int processId, string imageName) =>
         new(processId, StartedAt.AddMinutes(-1), imageName);
 
