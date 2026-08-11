@@ -176,9 +176,9 @@ public static class DiskIoProcessResponseTimingAnalyzer
                     DiskIoResponseTimingAnalyzer.BuildSummary(samples, DiskIoOperationKind.Flush)));
             }
 
-            var unattributedRead = Count(diskObservations, DiskIoOperationKind.Read, ownerExpected: false);
-            var unattributedWrite = Count(diskObservations, DiskIoOperationKind.Write, ownerExpected: false);
-            var unattributedFlush = Count(diskObservations, DiskIoOperationKind.Flush, ownerExpected: false);
+            var unattributedRead = CountUnattributed(diskObservations, DiskIoOperationKind.Read);
+            var unattributedWrite = CountUnattributed(diskObservations, DiskIoOperationKind.Write);
+            var unattributedFlush = CountUnattributed(diskObservations, DiskIoOperationKind.Flush);
             if (unattributedRead != disk.UnattributedReadOperations ||
                 unattributedWrite != disk.UnattributedWriteOperations ||
                 unattributedFlush != disk.UnattributedFlushOperations)
@@ -258,11 +258,15 @@ public static class DiskIoProcessResponseTimingAnalyzer
 
     private static long Count(
         IEnumerable<DiskIoResponseTimingObservation> observations,
-        DiskIoOperationKind operation,
-        bool? ownerExpected = null) =>
+        DiskIoOperationKind operation) =>
+        observations.LongCount(observation => observation.Operation == operation);
+
+    private static long CountUnattributed(
+        IEnumerable<DiskIoResponseTimingObservation> observations,
+        DiskIoOperationKind operation) =>
         observations.LongCount(observation =>
             observation.Operation == operation &&
-            (ownerExpected is null || observation.Owner is not null == ownerExpected));
+            observation.Owner is null);
 
     private readonly record struct ProcessKey(int ProcessId, DateTimeOffset? StartedAt)
     {
