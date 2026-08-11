@@ -223,7 +223,7 @@ def check_repository(root: Path) -> int:
         (core, "public uint RawBusType", "raw unsigned bus evidence"),
         (core, "PhysicalDiskBooleanCapability SeekPenalty", "seek evidence"),
         (core, "PhysicalDiskBooleanCapability Trim", "trim evidence"),
-        (provider, "desiredAccess: 0", "zero desired access"),
+        (provider, "dwDesiredAccess: 0", "zero desired access"),
         (provider, "IoctlStorageQueryProperty = 0x002D1400", "storage property IOCTL"),
         (provider, "StorageDeviceProperty = 0", "device descriptor property"),
         (provider, "StorageDeviceSeekPenaltyProperty = 7", "seek penalty property"),
