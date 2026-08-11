@@ -6,19 +6,95 @@ public sealed record DiskIoResponseTimingObservation(
     DiskIoOperationKind Operation,
     TimeSpan ResponseTime);
 
-public sealed record DiskIoResponseTimingSummary(
-    int SampleCount,
-    TimeSpan Minimum,
-    TimeSpan Median,
-    TimeSpan? P95,
-    TimeSpan Maximum);
-
-public sealed record DiskIoDiskResponseTiming(
-    uint PhysicalDiskNumber,
-    DiskIoResponseTimingSummary? Reads,
-    DiskIoResponseTimingSummary? Writes,
-    DiskIoResponseTimingSummary? Flushes)
+public sealed record DiskIoResponseTimingSummary
 {
+    public DiskIoResponseTimingSummary(
+        int sampleCount,
+        TimeSpan minimum,
+        TimeSpan median,
+        TimeSpan? p95,
+        TimeSpan maximum)
+    {
+        if (sampleCount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sampleCount),
+                sampleCount,
+                "Disk-I/O response timing summaries require at least one sample.");
+        }
+        if (minimum < TimeSpan.Zero ||
+            median < TimeSpan.Zero ||
+            maximum < TimeSpan.Zero ||
+            p95 is { } percentile && percentile < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(minimum),
+                "Disk-I/O response timing summary durations cannot be negative.");
+        }
+        if (minimum > median || median > maximum)
+        {
+            throw new ArgumentException(
+                "Disk-I/O response timing summaries require minimum <= median <= maximum.");
+        }
+        if (sampleCount < DiskIoResponseTimingAnalyzer.MinimumSamplesForP95 && p95 is not null)
+        {
+            throw new ArgumentException(
+                $"Disk-I/O response timing p95 requires at least {DiskIoResponseTimingAnalyzer.MinimumSamplesForP95} samples.",
+                nameof(p95));
+        }
+        if (sampleCount >= DiskIoResponseTimingAnalyzer.MinimumSamplesForP95 && p95 is null)
+        {
+            throw new ArgumentException(
+                $"Disk-I/O response timing summaries with {DiskIoResponseTimingAnalyzer.MinimumSamplesForP95}+ samples require p95 evidence.",
+                nameof(p95));
+        }
+        if (p95 is { } percentileValue &&
+            (percentileValue < median || percentileValue > maximum))
+        {
+            throw new ArgumentException(
+                "Disk-I/O response timing p95 must be between the median and maximum.",
+                nameof(p95));
+        }
+
+        SampleCount = sampleCount;
+        Minimum = minimum;
+        Median = median;
+        P95 = p95;
+        Maximum = maximum;
+    }
+
+    public int SampleCount { get; }
+    public TimeSpan Minimum { get; }
+    public TimeSpan Median { get; }
+    public TimeSpan? P95 { get; }
+    public TimeSpan Maximum { get; }
+}
+
+public sealed record DiskIoDiskResponseTiming
+{
+    public DiskIoDiskResponseTiming(
+        uint physicalDiskNumber,
+        DiskIoResponseTimingSummary? reads,
+        DiskIoResponseTimingSummary? writes,
+        DiskIoResponseTimingSummary? flushes)
+    {
+        if (reads is null && writes is null && flushes is null)
+        {
+            throw new ArgumentException(
+                "A physical-disk response timing row requires at least one operation summary.");
+        }
+
+        PhysicalDiskNumber = physicalDiskNumber;
+        Reads = reads;
+        Writes = writes;
+        Flushes = flushes;
+    }
+
+    public uint PhysicalDiskNumber { get; }
+    public DiskIoResponseTimingSummary? Reads { get; }
+    public DiskIoResponseTimingSummary? Writes { get; }
+    public DiskIoResponseTimingSummary? Flushes { get; }
+
     public int SampleCount =>
         (Reads?.SampleCount ?? 0) +
         (Writes?.SampleCount ?? 0) +
