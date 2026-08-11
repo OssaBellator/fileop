@@ -8,9 +8,19 @@ The response value is completion-response evidence supplied by the DiskIo event.
 
 Every accepted normalized completion from the Windows collector must have exactly one timing sample before the provider attaches timing summaries. Count mismatch fails closed instead of silently dropping or inventing timings. Empty captures remain valid with empty timing evidence.
 
+## Process provenance
+
+Each accepted timing sample now retains the exact optional `DiskIoProcessIdentity` from the **same resolver result** used to build its corresponding attribution observation. This adds no second process lookup. If issuing-thread/process resolution fails, both the attribution event and its timing sample retain `Owner = null` rather than assigning the timing to a guessed process.
+
+Before either disk attribution or timing aggregation runs, the Windows provider verifies the two bounded evidence sequences index by index. Timestamp, physical disk number, operation and optional process identity must all match; any count or provenance mismatch fails closed. This prevents future process-timing work from relying on two arrays that merely happen to contain the same number of entries.
+
+The provenance comparison deliberately uses the full captured process identity on each completion. Existing attribution grouping continues to use its reviewed stable PID + process-start key, so PID reuse remains distinct when start evidence is available.
+
+This slice **does not yet expose process-specific response timing** or claim that a process caused a device delay. It only preserves enough per-completion provenance for a later, separately reviewed aggregation layer to make such evidence explicit and conservative.
+
 ## Performance UI presentation
 
-The explicit **Capture disk I/O** result now shows a separate response-timing table beside the existing traffic/ownership evidence. Each physical disk has independent Read, Write and Flush cells containing sample count, minimum, median, p95 when eligible, and maximum. Operations with no samples say so rather than displaying zero latency.
+The explicit **Capture disk I/O** result shows a separate response-timing table beside the existing traffic/ownership evidence. Each physical disk has independent Read, Write and Flush cells containing sample count, minimum, median, p95 when eligible, and maximum. Operations with no samples say so rather than displaying zero latency.
 
 Durations below 1 ms are displayed in microseconds, durations below 1 second in milliseconds, and longer durations in seconds. These are display units only, not performance thresholds.
 
