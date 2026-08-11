@@ -207,6 +207,8 @@ public sealed record DiskIoCaptureResult
     public IReadOnlyList<DiskIoDiskProcessResponseTiming> ProcessResponseTimings { get; private init; } =
         Array.Empty<DiskIoDiskProcessResponseTiming>();
 
+    private bool ResponseTimingsAttached { get; init; }
+
     public bool EvidenceMayBeIncomplete =>
         Status == DiskIoCaptureStatus.Completed &&
         (StopReason == DiskIoCaptureStopReason.ObservationLimitReached ||
@@ -268,6 +270,7 @@ public sealed record DiskIoCaptureResult
         return this with
         {
             ResponseTimings = snapshot,
+            ResponseTimingsAttached = true,
         };
     }
 
@@ -280,7 +283,7 @@ public sealed record DiskIoCaptureResult
             throw new InvalidOperationException(
                 "Disk-I/O process response timing can be attached only to a completed capture result.");
         }
-        if (ResponseTimings.Count != Report.Disks.Count)
+        if (!ResponseTimingsAttached)
         {
             throw new InvalidOperationException(
                 "Disk-I/O disk response timing must be attached before process response timing.");
