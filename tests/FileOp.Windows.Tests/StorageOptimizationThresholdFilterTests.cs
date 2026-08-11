@@ -104,6 +104,20 @@ public sealed class StorageOptimizationThresholdFilterTests
     }
 
     [TestMethod]
+    public void ExtremeStaleAgeClampsWithoutDateOverflow()
+    {
+        var analysis = Analysis();
+        var thresholds = StorageOptimizationDisplayThresholds.FromAnalysis(analysis) with
+        {
+            StaleAgeDays = int.MaxValue,
+        };
+
+        var filtered = StorageOptimizationThresholdFilter.Apply(analysis, thresholds);
+
+        Assert.AreEqual(0, filtered.StaleLargeFiles.Count);
+    }
+
+    [TestMethod]
     public void SameSizePotentialSavingsSaturate()
     {
         var policy = StorageOptimizationPolicy.Default;
