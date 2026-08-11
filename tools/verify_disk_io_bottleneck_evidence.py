@@ -41,6 +41,43 @@ def largest_owner(cues: List[OwnerCue]) -> Optional[OwnerCue]:
     )[0]
 
 
+def expected_p95(cues: List[P95Cue]) -> Optional[P95Cue]:
+    if not cues:
+        return None
+    maximum = max(cue[2] for cue in cues)
+    tied = [cue for cue in cues if cue[2] == maximum]
+    return min(tied, key=lambda cue: (cue[0], cue[1]))
+
+
+def expected_disk(cues: List[DiskCue]) -> Optional[DiskCue]:
+    eligible = [cue for cue in cues if cue[1] > 0]
+    if not eligible:
+        return None
+    maximum_bytes = max(cue[1] for cue in eligible)
+    byte_tied = [cue for cue in eligible if cue[1] == maximum_bytes]
+    maximum_operations = max(cue[2] for cue in byte_tied)
+    operation_tied = [cue for cue in byte_tied if cue[2] == maximum_operations]
+    return min(operation_tied, key=lambda cue: cue[0])
+
+
+def expected_owner(cues: List[OwnerCue]) -> Optional[OwnerCue]:
+    eligible = [cue for cue in cues if cue[3] > 0]
+    if not eligible:
+        return None
+    maximum_bytes = max(cue[3] for cue in eligible)
+    byte_tied = [cue for cue in eligible if cue[3] == maximum_bytes]
+    maximum_operations = max(cue[4] for cue in byte_tied)
+    operation_tied = [cue for cue in byte_tied if cue[4] == maximum_operations]
+    return min(
+        operation_tied,
+        key=lambda cue: (
+            cue[0],
+            cue[1],
+            -1 if cue[2] is None else cue[2],
+        ),
+    )
+
+
 def run_model(cases: int, seed: int) -> int:
     rng = random.Random(seed)
     checks = 0
@@ -61,14 +98,7 @@ def run_model(cases: int, seed: int) -> int:
             p95_cues.append((rng.randint(0, 7), rng.randrange(3), rng.randint(0, 20_000_000)))
 
         selected_p95 = highest_p95(p95_cues)
-        if not p95_cues:
-            assert selected_p95 is None
-        else:
-            assert selected_p95 is not None
-            maximum = max(cue[2] for cue in p95_cues)
-            tied = [cue for cue in p95_cues if cue[2] == maximum]
-            expected = min(tied, key=lambda cue: (cue[0], cue[1]))
-            assert selected_p95 == expected
+        assert selected_p95 == expected_p95(p95_cues)
         checks += 1
 
         disk_cues: List[DiskCue] = []
@@ -78,16 +108,7 @@ def run_model(cases: int, seed: int) -> int:
             disk_cues.append((disk, byte_count, operation_count))
 
         selected_disk = largest_byte_disk(disk_cues)
-        eligible_disks = [cue for cue in disk_cues if cue[1] > 0]
-        if not eligible_disks:
-            assert selected_disk is None
-        else:
-            assert selected_disk is not None
-            expected_disk = sorted(
-                eligible_disks,
-                key=lambda cue: (-cue[1], -cue[2], cue[0]),
-            )[0]
-            assert selected_disk == expected_disk
+        assert selected_disk == expected_disk(disk_cues)
         checks += 1
 
         owner_cues: List[OwnerCue] = []
@@ -105,35 +126,22 @@ def run_model(cases: int, seed: int) -> int:
             owner_cues.append((disk, pid, started, byte_count, operation_count))
 
         selected_owner = largest_owner(owner_cues)
-        eligible_owners = [cue for cue in owner_cues if cue[3] > 0]
-        if not eligible_owners:
-            assert selected_owner is None
-        else:
-            assert selected_owner is not None
-            expected_owner = sorted(
-                eligible_owners,
-                key=lambda cue: (
-                    -cue[3],
-                    -cue[4],
-                    cue[0],
-                    cue[1],
-                    -1 if cue[2] is None else cue[2],
-                ),
-            )[0]
-            assert selected_owner == expected_owner
+        assert selected_owner == expected_owner(owner_cues)
         checks += 1
 
-        # Timing changes cannot alter byte-volume or owner selection.
+        # Timing changes cannot alter byte-volume or owner selection, while the changed
+        # timing selection is still independently cross-checked.
         retimed = [
             (disk, operation, rng.randint(0, 500_000_000))
             for disk, operation, _ in p95_cues
         ]
         assert largest_byte_disk(disk_cues) == selected_disk
         assert largest_owner(owner_cues) == selected_owner
-        assert highest_p95(retimed) == highest_p95(retimed)
+        assert highest_p95(retimed) == expected_p95(retimed)
         checks += 3
 
-        # Byte/operation changes cannot alter the original highest-p95 selection.
+        # Byte/operation changes cannot alter the original p95 selection, while both
+        # reweighted selectors are independently cross-checked.
         reweighted_disks = [
             (disk, rng.randint(0, 500_000_000), rng.randint(0, 50_000))
             for disk, _, _ in disk_cues
@@ -143,8 +151,8 @@ def run_model(cases: int, seed: int) -> int:
             for disk, pid, started, _, _ in owner_cues
         ]
         assert highest_p95(p95_cues) == selected_p95
-        assert isinstance(largest_byte_disk(reweighted_disks), (tuple, type(None)))
-        assert isinstance(largest_owner(reweighted_owners), (tuple, type(None)))
+        assert largest_byte_disk(reweighted_disks) == expected_disk(reweighted_disks)
+        assert largest_owner(reweighted_owners) == expected_owner(reweighted_owners)
         checks += 3
 
     return checks
@@ -185,6 +193,7 @@ def check_repository(root: Path) -> int:
         (core, ".ThenBy(static cue => cue.Operation)", "p95 deterministic operation tie"),
         (core, ".Where(static disk => disk.TotalBytes > 0)", "positive byte disk selection"),
         (core, ".OrderByDescending(static disk => disk.TotalBytes)", "largest byte disk selection"),
+        (core, ".SelectMany(static disk => disk.Owners.Select", "owner candidates sourced from attribution"),
         (core, ".Where(static candidate => candidate.Owner.TotalBytes > 0)", "positive owner byte selection"),
         (core, ".OrderByDescending(static candidate => candidate.Owner.TotalBytes)", "largest owner byte selection"),
         (core, "result.EvidenceMayBeIncomplete", "capture incompleteness preservation"),
@@ -193,6 +202,7 @@ def check_repository(root: Path) -> int:
         (tests, "EqualP95UsesDiskThenOperationOnlyAsDeterministicTieBreakers", "p95 tie regression"),
         (tests, "IncompleteCaptureFlagIsPreservedWithoutChangingCueSelection", "incomplete capture regression"),
         (tests, "EmptyCompletedCaptureProducesNoComparativeCues", "empty capture regression"),
+        (tests, "PublicCueContractsRejectMalformedManualEvidence", "manual cue invariant regression"),
         (view, "DiskIoInvestigationSummaryAnalyzer.Analyze(result)", "UI summary analysis"),
         (view, "InvestigationSummaryText.Text = FormatInvestigationSummary(investigation);", "UI summary rendering"),
         (view, "Highest observed eligible p95", "UI p95 wording"),
@@ -214,6 +224,7 @@ def check_repository(root: Path) -> int:
         checks += require(text, needle, label)
 
     for needle in (
+        "ProcessResponseTimings",
         "TimeSpan.FromMilliseconds(",
         "TimeSpan.FromSeconds(",
         "HealthScore",
@@ -224,7 +235,7 @@ def check_repository(root: Path) -> int:
         "DispatcherQueueTimer",
         "Task.Delay",
     ):
-        checks += forbid(core, needle, "new threshold/score/lookup/sampler")
+        checks += forbid(core, needle, "new timing-owner selection/threshold/score/lookup/sampler")
 
     checks += forbid(view, "CaptureDiskIoAttributionAsync", "summary starting a capture")
     checks += forbid(view, "PeriodicTimer", "summary poller")
