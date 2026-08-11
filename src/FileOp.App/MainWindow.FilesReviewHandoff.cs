@@ -1,3 +1,4 @@
+using FileOp.Core.Storage;
 using FileOp.Windows.IndexingService;
 using Microsoft.UI.Xaml;
 
@@ -27,16 +28,16 @@ public sealed partial class MainWindow
             return;
         }
 
+        StorageKnownLocationReviewSnapshot review;
+        string root;
         string candidatePath;
         string candidateName;
         string parentPath;
         Guid tabId;
         try
         {
-            var review = _storageKnownLocationReview;
-            var root = _searchEngine.StorageRootPath;
-            if (review is null ||
-                root is null ||
+            if (_storageKnownLocationReview is not { } currentReview ||
+                _searchEngine.StorageRootPath is not { } currentRoot ||
                 _searchEngine.State.IsBusy ||
                 _searchEngine.State.Mode != DesktopSearchMode.Native ||
                 !_searchEngine.StorageOptimizationAvailable)
@@ -46,6 +47,8 @@ public sealed partial class MainWindow
                 return;
             }
 
+            review = currentReview;
+            root = currentRoot;
             if (!PathsEqual(root, review.ActiveVolumeRootPath))
             {
                 SetStorageStatus(
@@ -107,8 +110,13 @@ public sealed partial class MainWindow
                 InvalidateFilesPane(_rightFilesPane);
             }
 
-            var tab = CreateFilesTab(parentPath);
-            _leftFilesPane.Tabs.Add(tab);
+            var tab = _leftFilesPane.Tabs.FirstOrDefault(existing =>
+                existing.CurrentPath is not null && PathsEqual(existing.CurrentPath, parentPath));
+            if (tab is null)
+            {
+                tab = CreateFilesTab(parentPath);
+                _leftFilesPane.Tabs.Add(tab);
+            }
             _leftFilesPane.ActiveTabId = tab.Id;
             tabId = tab.Id;
             InvalidateFilesPane(_leftFilesPane);
@@ -134,6 +142,22 @@ public sealed partial class MainWindow
         {
             SetFilesStatus(
                 "The review candidate parent directory could not be loaded from the current indexed source.");
+            return;
+        }
+
+        var currentRoot = _searchEngine.StorageRootPath;
+        if (!ReferenceEquals(review, _storageKnownLocationReview) ||
+            currentRoot is null ||
+            !PathsEqual(currentRoot, root) ||
+            _searchEngine.State.Mode != DesktopSearchMode.Native ||
+            _searchEngine.State.IsBusy ||
+            !_searchEngine.StorageOptimizationAvailable)
+        {
+            paneView.SetStatus(
+                "The indexed source changed while the review candidate was being handed to Files. The parent directory is open, but FileOp did not auto-select stale review evidence.",
+                parentPath);
+            SetFilesStatus(
+                "Known-location handoff stopped after the indexed source changed; refresh Optimize before selecting that review candidate.");
             return;
         }
 
