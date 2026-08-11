@@ -97,6 +97,48 @@ public sealed class DiskIoResponseTimingTests
     }
 
     [TestMethod]
+    public void SummaryRejectsMalformedDurationsAndPercentiles()
+    {
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            new DiskIoResponseTimingSummary(
+                0,
+                TimeSpan.Zero,
+                TimeSpan.Zero,
+                p95: null,
+                TimeSpan.Zero));
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            new DiskIoResponseTimingSummary(
+                1,
+                TimeSpan.FromTicks(-1),
+                TimeSpan.Zero,
+                p95: null,
+                TimeSpan.Zero));
+        Assert.ThrowsException<ArgumentException>(() =>
+            new DiskIoResponseTimingSummary(
+                1,
+                TimeSpan.FromMilliseconds(2),
+                TimeSpan.FromMilliseconds(1),
+                p95: null,
+                TimeSpan.FromMilliseconds(3)));
+        Assert.ThrowsException<ArgumentException>(() =>
+            new DiskIoResponseTimingSummary(
+                4,
+                TimeSpan.FromMilliseconds(1),
+                TimeSpan.FromMilliseconds(2),
+                TimeSpan.FromMilliseconds(3),
+                TimeSpan.FromMilliseconds(4)));
+        Assert.ThrowsException<ArgumentException>(() =>
+            new DiskIoResponseTimingSummary(
+                5,
+                TimeSpan.FromMilliseconds(1),
+                TimeSpan.FromMilliseconds(2),
+                p95: null,
+                TimeSpan.FromMilliseconds(4)));
+        Assert.ThrowsException<ArgumentException>(() =>
+            new DiskIoDiskResponseTiming(0, reads: null, writes: null, flushes: null));
+    }
+
+    [TestMethod]
     public void CaptureResultKeepsLegacyEmptyTimingEvidenceByDefault()
     {
         var report = DiskIoAttributionAnalyzer.Analyze(
@@ -148,14 +190,14 @@ public sealed class DiskIoResponseTimingTests
 
         var bad = new DiskIoDiskResponseTiming(
             3,
-            Reads: null,
-            Writes: new DiskIoResponseTimingSummary(
+            reads: null,
+            writes: new DiskIoResponseTimingSummary(
                 1,
                 TimeSpan.FromMilliseconds(2),
                 TimeSpan.FromMilliseconds(2),
-                P95: null,
-                TimeSpan.FromMilliseconds(2)),
-            Flushes: null);
+                p95: null,
+                maximum: TimeSpan.FromMilliseconds(2)),
+            flushes: null);
         Assert.ThrowsException<ArgumentException>(() =>
             result.WithResponseTimings([bad]));
     }
