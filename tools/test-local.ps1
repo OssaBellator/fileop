@@ -55,6 +55,10 @@ Invoke-Step "Offline physical reclaim evidence verifier" {
     python tools/verify_physical_reclaim_evidence.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline Optimize threshold overlay verifier" {
+    python tools/verify_storage_threshold_overlay.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline performance diagnostics verifier" {
     python tools/verify_performance_diagnostics.py --repo-root $repoRoot --cases 50000
 }
