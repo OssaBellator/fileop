@@ -19,6 +19,7 @@ public sealed partial class StorageOptimizationView : UserControl
     public StorageOptimizationView()
     {
         InitializeComponent();
+        EnsureThresholdPanel();
         PerformanceDiagnostics.RefreshRequested += PerformanceDiagnostics_RefreshRequested;
         PerformanceDiagnostics.DiskIoCaptureRequested += PerformanceDiagnostics_DiskIoCaptureRequested;
     }
@@ -30,6 +31,7 @@ public sealed partial class StorageOptimizationView : UserControl
 
     public void SetLoading(string message)
     {
+        SetThresholdAnalysisLoading(true);
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetLoading();
@@ -55,6 +57,7 @@ public sealed partial class StorageOptimizationView : UserControl
 
     public void SetUnavailable(string message)
     {
+        SetThresholdAnalysisLoading(true);
         LargestFilesList.ItemsSource = null;
         StaleFilesList.ItemsSource = null;
         SameSizeGroupsList.ItemsSource = null;
@@ -63,6 +66,7 @@ public sealed partial class StorageOptimizationView : UserControl
         _sameSizeVerificationMessages.Clear();
         _sameSizeVerificationActiveIndex = null;
         _sameSizeVerificationControlsBlocked = false;
+        SetThresholdAnalysisLoading(false);
         StatusText.Text = message;
         RefreshButton.IsEnabled = false;
         PerformanceDiagnostics.SetUnavailable(message);
@@ -106,6 +110,7 @@ public sealed partial class StorageOptimizationView : UserControl
             _sameSizeVerificationActiveIndex = null;
         }
         _analysis = analysis;
+        SetThresholdAnalysisLoading(false);
 
         LargestFilesList.ItemsSource = analysis.LargestFiles
             .Select(StorageOptimizationFileRow.FromCandidate)
@@ -121,6 +126,7 @@ public sealed partial class StorageOptimizationView : UserControl
             $"{analysis.StaleLargeFiles.Count:N0} older than {policy.StaleAgeDays:N0} days · " +
             $"{analysis.SameSizeCandidateGroups.Count:N0} same-size candidate group(s) · " +
             $"{ByteFormatter.Format(analysis.SameSizePotentialLogicalSavingsUpperBound)} maximum logical candidate savings";
+        ApplyThresholdOverlay();
         RefreshButton.IsEnabled = true;
     }
 
@@ -189,6 +195,10 @@ public sealed partial class StorageOptimizationView : UserControl
     private void RefreshSameSizeRows()
     {
         if (_analysis is null)
+        {
+            return;
+        }
+        if (TryApplyThresholdSameSizeRows())
         {
             return;
         }
