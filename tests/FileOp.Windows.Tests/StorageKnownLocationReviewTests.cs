@@ -123,6 +123,17 @@ public sealed class StorageKnownLocationReviewTests
                 "invalid"));
     }
 
+    [TestMethod]
+    public void UnsupportedProvenanceIsRejected()
+    {
+        var analysis = Analysis(File("setup.msi", ".msi"));
+
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            StorageKnownLocationReviewClassifier.Classify(
+                analysis,
+                (StorageReviewProvenance)999));
+    }
+
     private static StorageOptimizationAnalysis Analysis(
         params StorageOptimizationFileCandidate[] files) =>
         Analysis(StorageOptimizationPolicy.Default, files);
