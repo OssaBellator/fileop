@@ -49,10 +49,11 @@ public sealed partial class DiskIoAttributionView : UserControl
         if (result.Status != DiskIoCaptureStatus.Completed || result.Report is null)
         {
             ResetRows();
+            ResetSummary();
             StopReasonText.Text = result.Status.ToString();
-            AcceptedEventsText.Text = "—";
             LossText.Text = "Unknown";
-            DurationText.Text = "—";
+            TimingEvidenceStatusText.Text =
+                "Response-duration evidence is unavailable because this capture did not complete with an attribution report.";
             StatusText.Text = result.Detail;
             return;
         }
