@@ -92,18 +92,10 @@ public sealed record PhysicalDiskDeviceDescriptor
     public bool RemovableMedia { get; }
     public bool CommandQueueing { get; }
 
-    public string DisplayName
-    {
-        get
-        {
-            var pieces = new[] { VendorId, ProductId }
-                .Where(static value => !string.IsNullOrWhiteSpace(value));
-            var combined = string.Join(" ", pieces);
-            return string.IsNullOrWhiteSpace(combined)
-                ? $"PhysicalDrive{PhysicalDiskNumber}"
-                : combined;
-        }
-    }
+    public string DisplayName =>
+        VendorId is not null && ProductId is not null
+            ? $"{VendorId} {ProductId}"
+            : VendorId ?? ProductId ?? $"PhysicalDrive{PhysicalDiskNumber}";
 
     private static string? NormalizeOptionalText(string? value)
     {
