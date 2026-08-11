@@ -103,6 +103,7 @@ def check_repository(root: Path) -> int:
         '".msixbundle"',
         '".zip"',
         '".iso"',
+        "Unsupported storage-review provenance.",
         "SourceMayBeTruncated",
         "analysis.StaleLargeFiles.Count >= analysis.Policy.MaxStaleLargeFiles",
         "review evidence only",
@@ -132,6 +133,9 @@ def check_repository(root: Path) -> int:
     for needle in (
         "GetDownloadsPath()",
         "Path.GetTempPath()",
+        "capturedRoot",
+        "StorageRootPath is not { } currentRoot",
+        "The native indexing source changed while known-location review evidence was being captured.",
         "IsReviewPathWithinRoot",
         "StorageReviewLocationStatus.OutsideActiveVolume",
         "AnalyzeStorageOptimizationAsync(fullPath)",
@@ -191,12 +195,24 @@ def check_repository(root: Path) -> int:
         assert needle in coordinator, needle
         checks += 1
 
+    disk_io_start = coordinator.index("private async void StorageOptimizationView_PerformanceDiskIoCaptureRequested")
+    disk_io_end = coordinator.index("private async void StorageOptimizationView_SameSizeVerificationRequested", disk_io_start)
+    disk_io_block = coordinator[disk_io_start:disk_io_end]
+    for needle in (
+        "_performanceDiskIoCaptureActive = false;",
+        "!_storageOptimizationLoadedForSource",
+        "HandleStorageOptimizationEngineState(_searchEngine.State);",
+    ):
+        assert needle in disk_io_block, needle
+        checks += 1
+
     for needle in (
         "DownloadsExecutableIsNotInferredToBeInstaller",
         "DownloadsUnrecognizedExtensionIsIgnored",
         "UserTempUsesLocationProvenanceWithoutExtensionGuess",
         "ReachingUpstreamStaleCapIsMarkedPotentiallyTruncated",
         "CandidateMeasuredBytesSaturateAcrossLocationAndSnapshot",
+        "UnsupportedProvenanceIsRejected",
     ):
         assert needle in tests, needle
         checks += 1
