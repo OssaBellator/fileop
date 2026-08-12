@@ -214,6 +214,36 @@ public sealed class FileDeleteOperationFinalMutationLeaseScope : IAsyncDisposabl
         }
     }
 
+    /// <summary>
+    /// Transfers the privately held final capability to the next Core-owned lifecycle scope.
+    /// This uses the same gate as disposal, so a retained alias can either dispose first or
+    /// become inert after transfer; it can never race into a second owner of the same lease.
+    /// </summary>
+    internal async ValueTask<IFileDeleteOperationFinalMutationLease> DetachLeaseAsync()
+    {
+        await _disposeGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var lease = Volatile.Read(ref _lease)
+                ?? throw new InvalidOperationException(
+                    "Final delete lease ownership is no longer available for transfer.");
+            if (lease.DeleteMutationAuthorized ||
+                !lease.DeleteAccessCapabilityHeld ||
+                !ReferenceEquals(lease.Evidence, FinalEvidence))
+            {
+                throw new InvalidOperationException(
+                    "Final delete lease ownership can transfer only while the exact accepted capability remains live and non-authorizing.");
+            }
+
+            Volatile.Write(ref _lease, null);
+            return lease;
+        }
+        finally
+        {
+            _disposeGate.Release();
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _disposeGate.WaitAsync().ConfigureAwait(false);
