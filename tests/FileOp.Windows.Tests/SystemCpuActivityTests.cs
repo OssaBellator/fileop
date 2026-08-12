@@ -84,13 +84,13 @@ public sealed class SystemCpuActivityTests
             TimeSpan.FromTicks(100),
             TimeSpan.FromTicks(50));
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
             SystemCpuActivityResult.Unavailable(
                 budget,
                 SystemCpuActivityStatus.Completed,
                 TimeSpan.Zero,
                 "invalid"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
             new SystemCpuActivityEvidence(
                 DateTimeOffset.UnixEpoch,
                 DateTimeOffset.UnixEpoch.AddSeconds(1),
@@ -222,7 +222,7 @@ public sealed class SystemCpuActivityTests
     }
 
     [TestMethod]
-    public async Task CallerCancellationPropagatesOnWindows()
+    public async Task CallerCancellationBeforeCapturePropagatesOnWindows()
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -244,6 +244,33 @@ public sealed class SystemCpuActivityTests
                 SystemCpuActivityBudget.Default,
                 cancellation.Token));
         Assert.AreEqual(0, source.Calls);
+    }
+
+    [TestMethod]
+    public async Task CancellationDuringDelayPropagatesWithoutSecondQueryOnWindows()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var source = new FakeSource([
+            Success(Snapshot(0, 100, 300, 200)),
+        ]);
+        using var cancellation = new CancellationTokenSource();
+        var provider = new WindowsSystemCpuActivityProvider(
+            source,
+            (_, cancellationToken) =>
+            {
+                cancellation.Cancel();
+                return Task.FromCanceled(cancellationToken);
+            });
+
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(async () =>
+            await provider.CaptureAsync(
+                SystemCpuActivityBudget.Default,
+                cancellation.Token));
+        Assert.AreEqual(1, source.Calls);
     }
 
     [TestMethod]
