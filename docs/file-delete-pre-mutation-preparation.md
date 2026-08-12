@@ -14,7 +14,7 @@ The preparation order is deliberate:
 6. validate #127's exact receipt/stability/history binding against that provider-returned evidence;
 7. return a scope that privately owns the acquired lease.
 
-The scope never exposes the underlying `IFileDeleteOperationStabilityLease`. It exposes only the validated binding, authorization, stability evidence, history snapshot and ordinal. `StabilityLeaseHeld` remains true until scope disposal, and disposal transfers to the privately owned lease exactly once.
+The scope never exposes the underlying `IFileDeleteOperationStabilityLease`. It exposes only the validated binding, authorization, stability evidence, history snapshot and ordinal. `StabilityLeaseHeld` remains true until scope disposal succeeds. Successful disposal is serialized and idempotent. If an arbitrary lease implementation throws while disposing, the scope retains ownership and continues to report the lease as held so a later disposal attempt can retry rather than falsely claiming release.
 
 If preparation fails after acquisition — including missing/stale history, substituted evidence, cancellation during the history read, or another binding failure — the acquired lease is released before the failure is returned. If both preparation and lease cleanup fail, both exceptions are preserved in an `AggregateException` rather than silently hiding either failure.
 
@@ -24,7 +24,7 @@ The preparation scope records that this layer itself invoked the configured stab
 
 - `StabilityLeaseProviderAcquisitionObserved == true`;
 - `HistoryStoreReadObserved == true`;
-- `StabilityLeaseHeld == true` until disposal.
+- `StabilityLeaseHeld == true` until successful disposal.
 
 Those statements are intentionally narrower than mutation authority. An arbitrary interface implementation is not thereby proven to be the concrete Windows provider or SQLite store; production composition remains responsible for choosing reviewed implementations.
 
@@ -49,6 +49,6 @@ No `FileOperationKind.Delete`, generic executor/state-machine integration, delet
 
 ## Validation
 
-`tools/verify_file_delete_pre_mutation_preparation.py` is standard-library-only. Its randomized model checks acquisition/read ordering, fail-closed provider/history/binding cases, cleanup after acquisition failures, pre-cancellation, held-scope lifetime, idempotent disposal and a permanently untouched mutation barrier. Source guards require provider acquisition before history read, private lease ownership, exact #127 binding reuse, no action-history mutation calls or filesystem mutation APIs, no production consumer, Copy/Move-only generic operations and protocol v8.
+`tools/verify_file_delete_pre_mutation_preparation.py` is standard-library-only. Its randomized model checks acquisition/read ordering, fail-closed provider/history/binding cases, cleanup after acquisition failures, pre-cancellation, held-scope lifetime, disposal-failure ownership retention/retry, successful idempotent disposal and a permanently untouched mutation barrier. Source guards require provider acquisition before history read, private lease ownership, ownership clearing only after successful disposal, exact #127 binding reuse, no action-history mutation calls or filesystem mutation APIs, no production consumer, Copy/Move-only generic operations and protocol v8.
 
-Focused .NET contract tests use fake provider/store implementations and fail if preparation calls any action-history write method. They cover exact preparation/disposal, substituted provider evidence, mutation-authorizing lease refusal, missing/non-pending/terminal history, history-read failure cleanup and pre-cancellation.
+Focused .NET contract tests use fake provider/store implementations and fail if preparation calls any action-history write method. They cover exact preparation/disposal, substituted provider evidence, mutation-authorizing lease refusal, missing/non-pending/terminal history, history-read failure cleanup and pre-cancellation. The portable model additionally pins the throwing-disposal retry contract in environments where the native/.NET suite cannot run.
