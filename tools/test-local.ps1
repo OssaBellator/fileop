@@ -251,6 +251,10 @@ Invoke-Step "Offline same-handle file delete mutation verifier" {
     python tools/verify_file_delete_same_handle_mutation.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline multi-entry file delete orchestration verifier" {
+    python tools/verify_file_delete_multi_entry_orchestration.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline file delete recovery-history discovery verifier" {
     python tools/verify_file_delete_recovery_history_discovery.py --repo-root $repoRoot --cases 50000
 }
