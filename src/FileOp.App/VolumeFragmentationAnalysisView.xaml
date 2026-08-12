@@ -1,0 +1,93 @@
+<UserControl
+    x:Class="FileOp.App.VolumeFragmentationAnalysisView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Padding="14,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="3">
+                    <TextBlock Text="Volume fragmentation analysis" FontSize="16" FontWeight="SemiBold" />
+                    <TextBlock
+                        Text="Explicit analysis-only compatibility probe for the drive containing the current Storage source. It may be unsupported on current Windows clients. FileOp does not run Defrag, ReTrim, Optimize-Volume or another storage action."
+                        Opacity="0.68"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+                <Button x:Name="CaptureButton"
+                        Grid.Column="1"
+                        Content="Analyze fragmentation"
+                        Click="CaptureButton_Click" />
+            </Grid>
+
+            <TextBlock x:Name="StatusText"
+                       Grid.Row="1"
+                       Padding="14,10"
+                       Text="Fragmentation analysis has not been requested yet."
+                       Opacity="0.78"
+                       TextWrapping="Wrap" />
+
+            <Grid Grid.Row="2" Padding="14,6,14,10" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Spacing="2">
+                    <TextBlock Text="Volume" Opacity="0.62" />
+                    <TextBlock x:Name="VolumeText" Text="—" FontSize="17" FontWeight="SemiBold" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="Windows legacy recommendation" Opacity="0.62" />
+                    <TextBlock x:Name="RecommendationText" Text="—" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="2">
+                    <TextBlock Text="File fragmentation" Opacity="0.62" />
+                    <TextBlock x:Name="FragmentationText" Text="—" FontSize="17" FontWeight="SemiBold" />
+                </StackPanel>
+                <StackPanel Grid.Column="3" Spacing="2">
+                    <TextBlock Text="Average fragments / file" Opacity="0.62" />
+                    <TextBlock x:Name="AverageFragmentsText" Text="—" FontSize="17" FontWeight="SemiBold" />
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="3" Padding="14,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Spacing="2">
+                    <TextBlock Text="Fragmented / total files" Opacity="0.62" />
+                    <TextBlock x:Name="FilesText" Text="—" FontSize="15" FontWeight="SemiBold" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="Free-space extents" Opacity="0.62" />
+                    <TextBlock x:Name="FreeExtentsText" Text="—" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="2">
+                    <TextBlock Text="Largest / average free extent" Opacity="0.62" />
+                    <TextBlock x:Name="FreeExtentSizeText" Text="—" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="3" Spacing="2">
+                    <TextBlock Text="Used / free / volume" Opacity="0.62" />
+                    <TextBlock x:Name="SpaceText" Text="—" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>
