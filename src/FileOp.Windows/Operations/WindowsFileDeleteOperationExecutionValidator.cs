@@ -39,6 +39,14 @@ public sealed class WindowsFileDeleteProtectedLocationPolicy : IFileDeleteProtec
     public FileDeleteProtectedLocationResult Evaluate(string canonicalPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalPath);
+        if (canonicalPath.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) ||
+            canonicalPath.StartsWith(@"\\.\", StringComparison.OrdinalIgnoreCase) ||
+            canonicalPath.StartsWith(@"\??\", StringComparison.OrdinalIgnoreCase))
+        {
+            return Blocked(
+                "Residual extended/device namespace paths are blocked because this protected-location policy classifies normalized DOS/UNC canonical paths only.");
+        }
+
         string normalized;
         string root;
         try
