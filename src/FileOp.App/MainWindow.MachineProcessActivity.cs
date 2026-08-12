@@ -24,13 +24,15 @@ public sealed partial class MainWindow
         _storageOptimizationView.SetMachineProcessActivityLoading();
         try
         {
-            var result = await _searchEngine.CaptureMachineProcessActivityAsync();
+            var capture = await _searchEngine.CaptureMachineProcessActivityAsync();
             if (_closed)
             {
                 return;
             }
 
-            _storageOptimizationView.ApplyMachineProcessActivity(result);
+            _storageOptimizationView.ApplyMachineProcessActivity(
+                capture.ProcessActivity,
+                capture.SystemCpuActivity);
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
         {

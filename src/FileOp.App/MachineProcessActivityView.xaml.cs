@@ -15,9 +15,12 @@ public sealed partial class MachineProcessActivityView : UserControl
     {
         CaptureButton.IsEnabled = false;
         RowsList.ItemsSource = null;
-        ResetSummary();
+        ResetProcessSummary();
+        ResetSystemCpuSummary();
         StatusText.Text =
             $"Capturing exactly two readable process-counter frames around a {MachineProcessActivityBudget.Default.SamplingDelay.TotalMilliseconds:N0} ms bounded delay. CPU-time deltas are attributed only to stable PID + process-start identities.";
+        SystemCpuStatusText.Text =
+            $"Capturing a separate Windows GetSystemTimes interval in parallel around its own {SystemCpuActivityBudget.Default.SamplingDelay.TotalMilliseconds:N0} ms bounded delay. The two evidence streams have separate observation boundaries.";
     }
 
     public void SetReady(bool ready) =>
@@ -28,19 +31,27 @@ public sealed partial class MachineProcessActivityView : UserControl
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         CaptureButton.IsEnabled = true;
         RowsList.ItemsSource = null;
-        ResetSummary();
+        ResetProcessSummary();
+        ResetSystemCpuSummary();
         StatusText.Text = message;
+        SystemCpuStatusText.Text =
+            "System CPU interval was not retained because the combined explicit machine-activity action failed.";
     }
 
-    public void Apply(MachineProcessActivityResult result)
+    public void Apply(
+        MachineProcessActivityResult result,
+        SystemCpuActivityResult systemCpuActivity)
     {
         ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(systemCpuActivity);
         CaptureButton.IsEnabled = true;
+        ApplySystemCpu(systemCpuActivity);
+
         if (result.Status != MachineProcessActivityStatus.Completed ||
             result.Report is not { } report)
         {
             RowsList.ItemsSource = null;
-            ResetSummary();
+            ResetProcessSummary();
             StatusText.Text = result.Detail;
             return;
         }
@@ -65,7 +76,30 @@ public sealed partial class MachineProcessActivityView : UserControl
             : "No snapshot cap or inaccessible required-counter evidence was reported.";
         StatusText.Text =
             $"{result.Detail} Visible rows retain CPU-time-delta order; {report.OtherMatchedProcessCount:N0} additional stable matched process(es) remain represented by aggregate hidden CPU time. " +
-            $"{incomplete} CPU percentage is intentionally not inferred from these sequential process-counter reads.";
+            $"{incomplete} Process CPU percentage is intentionally not inferred from these sequential process-counter reads or from the separate Windows system CPU interval.";
+    }
+
+    private void ApplySystemCpu(SystemCpuActivityResult result)
+    {
+        if (result.Status != SystemCpuActivityStatus.Completed ||
+            result.Evidence is not { } evidence)
+        {
+            ResetSystemCpuSummary();
+            SystemCpuStatusText.Text =
+                $"Windows system CPU interval {result.Status}. {result.Detail}";
+            return;
+        }
+
+        SystemCpuBusyText.Text = evidence.BusyPercent is { } busyPercent
+            ? $"{busyPercent:N2}%"
+            : "No percentage";
+        SystemCpuTimeText.Text =
+            $"{FormatCpu(evidence.BusyProcessorTimeDelta)} / {FormatCpu(evidence.TotalProcessorTimeDelta)} · idle {FormatCpu(evidence.IdleProcessorTimeDelta)}";
+        SystemCpuWallText.Text =
+            $"{evidence.ObservationWallDuration.TotalMilliseconds:N2} ms · {evidence.StartObservedAt.ToLocalTime():HH:mm:ss.fff}–{evidence.EndObservedAt.ToLocalTime():HH:mm:ss.fff}";
+        SystemCpuOverheadText.Text = FormatCpu(result.ProviderOverheadDuration);
+        SystemCpuStatusText.Text =
+            $"{result.Detail} This interval is separate from the process rows below; FileOp does not treat visible process deltas as a decomposition of Windows busy time.";
     }
 
     private async void CaptureButton_Click(object sender, RoutedEventArgs e)
@@ -76,12 +110,20 @@ public sealed partial class MachineProcessActivityView : UserControl
         }
     }
 
-    private void ResetSummary()
+    private void ResetProcessSummary()
     {
         MatchedText.Text = "—";
         TurnoverText.Text = "—";
         HiddenCpuText.Text = "—";
         ObserverText.Text = "—";
+    }
+
+    private void ResetSystemCpuSummary()
+    {
+        SystemCpuBusyText.Text = "—";
+        SystemCpuTimeText.Text = "—";
+        SystemCpuWallText.Text = "—";
+        SystemCpuOverheadText.Text = "—";
     }
 
     private static string FormatCpu(TimeSpan duration) =>
