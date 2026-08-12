@@ -182,6 +182,11 @@ def forbid(text: str, needle: str, label: str) -> int:
     return 1
 
 
+def normalize_markdown_emphasis(text: str) -> str:
+    """Remove presentation-only emphasis markers before prose assertions."""
+    return text.replace("**", "").replace("__", "")
+
+
 def check_repository(root: Path) -> int:
     commit = (root / "src/FileOp.Core/Operations/FileDeleteOperationMutationCommit.cs").read_text(encoding="utf-8")
     barrier = (root / "src/FileOp.Core/Operations/FileDeleteOperationMutationBarrier.cs").read_text(encoding="utf-8")
@@ -189,6 +194,7 @@ def check_repository(root: Path) -> int:
     lifecycle_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationMutationCommitTests.cs").read_text(encoding="utf-8")
     native_tests = (root / "tests/FileOp.Windows.Tests/WindowsFileDeleteOperationSameHandleMutationTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/file-delete-same-handle-mutation.md").read_text(encoding="utf-8")
+    docs_prose = normalize_markdown_emphasis(docs)
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
     plan = (root / "src/FileOp.Core/Operations/FileOperationPlan.cs").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
@@ -225,7 +231,7 @@ def check_repository(root: Path) -> int:
         (native_tests, "PosixDispositionRemovesNamespaceWhileDeleteSharedReaderRemainsUsable", "POSIX held-reader test"),
         (native_tests, "ProtectedLocationPolicyIsRecheckedImmediatelyBeforeMutation", "policy recheck test"),
         (docs, "FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS | FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK", "documented exact native flags"),
-        (docs, "does not reopen the pathname", "documented same-handle boundary"),
+        (docs_prose, "does not reopen the pathname", "documented same-handle boundary"),
         (gate, "verify_file_delete_same_handle_mutation.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "generic Delete remains absent"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 unchanged"),
