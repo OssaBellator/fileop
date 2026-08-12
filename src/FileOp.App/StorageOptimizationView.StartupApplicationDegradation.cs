@@ -17,6 +17,9 @@ public sealed partial class StorageOptimizationView
     public void SetStartupApplicationDegradationReadyForCapture(bool ready) =>
         PerformanceDiagnostics.SetStartupApplicationDegradationReadyForCapture(ready);
 
+    public void SetStartupApplicationDegradationBusy(string message) =>
+        PerformanceDiagnostics.SetStartupApplicationDegradationUnavailable(message);
+
     public void SetStartupApplicationDegradationUnavailable(
         string message,
         bool canRetry = true)
