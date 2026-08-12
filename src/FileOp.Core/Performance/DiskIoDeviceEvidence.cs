@@ -17,6 +17,21 @@ public sealed record DiskIoPhysicalDiskDeviceEvidence
         DiskIoDeviceEvidenceQueryStatus queryStatus,
         PhysicalDiskDeviceContextResult? deviceContext,
         NvmeHealthEvidenceResult? nvmeHealth)
+        : this(
+            physicalDiskNumber,
+            queryStatus,
+            deviceContext,
+            nvmeHealth,
+            null)
+    {
+    }
+
+    public DiskIoPhysicalDiskDeviceEvidence(
+        uint physicalDiskNumber,
+        DiskIoDeviceEvidenceQueryStatus queryStatus,
+        PhysicalDiskDeviceContextResult? deviceContext,
+        NvmeHealthEvidenceResult? nvmeHealth,
+        PhysicalDiskFailurePredictionResult? failurePrediction)
     {
         if (!Enum.IsDefined(queryStatus))
         {
@@ -37,13 +52,17 @@ public sealed record DiskIoPhysicalDiskDeviceEvidence
             ArgumentNullException.ThrowIfNull(deviceContext);
             ArgumentNullException.ThrowIfNull(nvmeHealth);
             if (deviceContext.PhysicalDiskNumber != queryNumber ||
-                nvmeHealth.PhysicalDiskNumber != queryNumber)
+                nvmeHealth.PhysicalDiskNumber != queryNumber ||
+                (failurePrediction is not null &&
+                    failurePrediction.PhysicalDiskNumber != queryNumber))
             {
                 throw new ArgumentException(
                     "Disk I/O device evidence must match its physical-disk number.");
             }
         }
-        else if (deviceContext is not null || nvmeHealth is not null)
+        else if (deviceContext is not null ||
+            nvmeHealth is not null ||
+            failurePrediction is not null)
         {
             throw new ArgumentException(
                 "A skipped physical-disk device query cannot carry provider evidence.");
@@ -68,19 +87,23 @@ public sealed record DiskIoPhysicalDiskDeviceEvidence
         QueryStatus = queryStatus;
         DeviceContext = deviceContext;
         NvmeHealth = nvmeHealth;
+        FailurePrediction = failurePrediction;
     }
 
     public uint PhysicalDiskNumber { get; }
     public DiskIoDeviceEvidenceQueryStatus QueryStatus { get; }
     public PhysicalDiskDeviceContextResult? DeviceContext { get; }
     public NvmeHealthEvidenceResult? NvmeHealth { get; }
+    public PhysicalDiskFailurePredictionResult? FailurePrediction { get; }
 
     public bool QueryAttempted => QueryStatus == DiskIoDeviceEvidenceQueryStatus.Queried;
 
     public string QueryStatusDetail => QueryStatus switch
     {
         DiskIoDeviceEvidenceQueryStatus.Queried =>
-            $"Device context {DeviceContext!.Status}; standardized NVMe health {NvmeHealth!.Status}.",
+            FailurePrediction is null
+                ? $"Device context {DeviceContext!.Status}; standardized NVMe health {NvmeHealth!.Status}; Windows failure prediction not attached in this compatibility result."
+                : $"Device context {DeviceContext!.Status}; standardized NVMe health {NvmeHealth!.Status}; Windows failure prediction {FailurePrediction.Status}.",
         DiskIoDeviceEvidenceQueryStatus.DiskNumberOutOfRange =>
             $"Physical disk number {PhysicalDiskNumber} exceeds FileOp's signed PhysicalDrive query range; no device metadata query was attempted.",
         DiskIoDeviceEvidenceQueryStatus.QueryBudgetExceeded =>
@@ -187,5 +210,45 @@ public static class DiskIoDeviceEvidenceCollector
         return new DiskIoDeviceEvidenceSnapshot(
             rows,
             Stopwatch.GetElapsedTime(queryStart));
+    }
+
+    public static DiskIoDeviceEvidenceSnapshot AttachFailurePrediction(
+        DiskIoDeviceEvidenceSnapshot snapshot,
+        IPhysicalDiskFailurePredictionProvider failurePredictionProvider)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(failurePredictionProvider);
+
+        var started = Stopwatch.GetTimestamp();
+        var rows = new DiskIoPhysicalDiskDeviceEvidence[snapshot.Count];
+        for (var index = 0; index < snapshot.Count; index++)
+        {
+            var row = snapshot[index];
+            if (!row.QueryAttempted)
+            {
+                rows[index] = row;
+                continue;
+            }
+            if (row.FailurePrediction is not null)
+            {
+                throw new ArgumentException(
+                    $"Physical disk {row.PhysicalDiskNumber} already has failure-prediction evidence.",
+                    nameof(snapshot));
+            }
+
+            var queryNumber = checked((int)row.PhysicalDiskNumber);
+            var failurePrediction = failurePredictionProvider.Query(queryNumber);
+            ArgumentNullException.ThrowIfNull(failurePrediction);
+            rows[index] = new DiskIoPhysicalDiskDeviceEvidence(
+                row.PhysicalDiskNumber,
+                row.QueryStatus,
+                row.DeviceContext,
+                row.NvmeHealth,
+                failurePrediction);
+        }
+
+        return new DiskIoDeviceEvidenceSnapshot(
+            rows,
+            snapshot.QueryElapsed + Stopwatch.GetElapsedTime(started));
     }
 }
