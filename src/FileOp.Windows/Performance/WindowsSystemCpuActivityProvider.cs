@@ -114,10 +114,14 @@ public sealed class WindowsSystemCpuActivityProvider : ISystemCpuActivityProvide
         {
             cancellationToken.ThrowIfCancellationRequested();
             var captureStart = Stopwatch.GetTimestamp();
-            var start = QuerySource(budget, captureStart);
-            if (start is not null)
+            var startQuery = _source.Query();
+            if (!startQuery.Succeeded || startQuery.Snapshot is not { } startSnapshot)
             {
-                return start;
+                return SystemCpuActivityResult.Unavailable(
+                    budget,
+                    SystemCpuActivityStatus.Unavailable,
+                    Stopwatch.GetElapsedTime(captureStart),
+                    $"The first GetSystemTimes observation failed with Win32 error {startQuery.Win32Error}; no sampling delay was started.");
             }
 
             await _delayAsync(budget.SamplingDelay, cancellationToken).ConfigureAwait(false);
@@ -136,11 +140,10 @@ public sealed class WindowsSystemCpuActivityProvider : ISystemCpuActivityProvide
                     $"The second GetSystemTimes observation failed with Win32 error {endQuery.Win32Error} after the bounded delay.");
             }
 
-            var firstQuery = _firstSnapshot!;
             SystemCpuActivityEvidence evidence;
             try
             {
-                evidence = SystemCpuActivityAnalyzer.Analyze(firstQuery, endSnapshot);
+                evidence = SystemCpuActivityAnalyzer.Analyze(startSnapshot, endSnapshot);
             }
             catch (Exception exception) when (
                 exception is InvalidDataException or ArgumentException)
@@ -150,10 +153,6 @@ public sealed class WindowsSystemCpuActivityProvider : ISystemCpuActivityProvide
                     SystemCpuActivityStatus.Unavailable,
                     overhead,
                     $"GetSystemTimes returned inconsistent interval evidence: {exception.Message}");
-            }
-            finally
-            {
-                _firstSnapshot = null;
             }
 
             return SystemCpuActivityResult.Completed(
@@ -171,7 +170,6 @@ public sealed class WindowsSystemCpuActivityProvider : ISystemCpuActivityProvide
             EntryPointNotFoundException or
             TypeInitializationException)
         {
-            _firstSnapshot = null;
             return SystemCpuActivityResult.Unavailable(
                 budget,
                 SystemCpuActivityStatus.Unsupported,
@@ -180,28 +178,7 @@ public sealed class WindowsSystemCpuActivityProvider : ISystemCpuActivityProvide
         }
         finally
         {
-            _firstSnapshot = null;
             _captureGate.Release();
         }
-    }
-
-    private SystemCpuTimeSnapshot? _firstSnapshot;
-
-    private SystemCpuActivityResult? QuerySource(
-        SystemCpuActivityBudget budget,
-        long captureStart)
-    {
-        var query = _source.Query();
-        if (!query.Succeeded || query.Snapshot is not { } snapshot)
-        {
-            return SystemCpuActivityResult.Unavailable(
-                budget,
-                SystemCpuActivityStatus.Unavailable,
-                Stopwatch.GetElapsedTime(captureStart),
-                $"The first GetSystemTimes observation failed with Win32 error {query.Win32Error}; no sampling delay was started.");
-        }
-
-        _firstSnapshot = snapshot;
-        return null;
     }
 }
