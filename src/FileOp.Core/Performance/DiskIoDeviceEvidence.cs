@@ -238,6 +238,7 @@ public static class DiskIoDeviceEvidenceCollector
 
             var queryNumber = checked((int)row.PhysicalDiskNumber);
             var failurePrediction = failurePredictionProvider.Query(queryNumber);
+            ArgumentNullException.ThrowIfNull(failurePrediction);
             rows[index] = new DiskIoPhysicalDiskDeviceEvidence(
                 row.PhysicalDiskNumber,
                 row.QueryStatus,
