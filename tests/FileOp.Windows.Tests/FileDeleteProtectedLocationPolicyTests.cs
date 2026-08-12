@@ -1,3 +1,4 @@
+using FileOp.Core.Operations;
 using FileOp.Windows.Operations;
 
 namespace FileOp.Windows.Tests;
@@ -5,6 +6,19 @@ namespace FileOp.Windows.Tests;
 [TestClass]
 public sealed class FileDeleteProtectedLocationPolicyTests
 {
+    [TestMethod]
+    public void ProtectedLocationResultRejectsMalformedDecisionsAndReasons()
+    {
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            new FileDeleteProtectedLocationResult(
+                (FileDeleteProtectedLocationDecision)999,
+                "invalid"));
+        Assert.ThrowsException<ArgumentException>(() =>
+            new FileDeleteProtectedLocationResult(
+                FileDeleteProtectedLocationDecision.Blocked,
+                " "));
+    }
+
     [TestMethod]
     public void ResidualExtendedAndDeviceNamespacesFailClosed()
     {
