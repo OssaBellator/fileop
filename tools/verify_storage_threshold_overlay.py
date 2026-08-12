@@ -181,8 +181,9 @@ def check_repository(root: Path) -> int:
         "item.Index",
         "_sameSizeVerificationResults.TryGetValue(item.Index",
         "_sameSizeVerificationMessages.TryGetValue(item.Index",
-        "SaturatingMultiply(baseline, 8)",
-        "SaturatingMultiply(baseline, 6)",
+        "StorageOptimizationThresholdPreferencePolicy.SupportedSizeMultipliers",
+        "StorageOptimizationThresholdPreferencePolicy.SupportedStaleAgeMultipliers",
+        "StorageOptimizationThresholdPreferencePolicy.SaturatingMultiply(baseline, multiplier)",
     ):
         assert needle in view, needle
         checks += 1
