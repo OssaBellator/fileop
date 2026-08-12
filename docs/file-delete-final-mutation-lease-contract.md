@@ -2,7 +2,7 @@
 
 This contract defines the portable release/reacquire boundary between the earlier read-only delete stability lease and a final provider capability. It does **not** itself perform deletion or make cleanup reachable from the product UI.
 
-The Core contract was introduced before any production Windows provider existed. The later reviewed Windows provider now implements this interface by reacquiring exact root/file handles with a `DELETE`-capable leaf handle, while the contract itself remains pre-barrier and non-mutating.
+The Core contract was introduced before any production Windows provider existed. The later reviewed Windows provider implements this interface by reacquiring exact root/file handles with a `DELETE`-capable leaf handle. The final-lease contract itself remains pre-barrier and non-mutating; #144 adds a separately gated destructive facet to the provider's private lease only after Core has crossed the durable mutation barrier.
 
 ## Why the read-only lease cannot simply become the final lease
 
@@ -53,17 +53,17 @@ Core accepts a provider result only while the live lease reports its capability 
 
 `WindowsFileDeleteOperationFinalMutationLeaseProvider` is the one reviewed production implementation of the provider interface.
 
-It reacquires the exact authorized root and direct-child file after the read-only lease has been released. The file is opened root-relative with a successful native request for:
+Its acquisition path reacquires the exact authorized root and direct-child file after the read-only lease has been released. The file is opened root-relative with a successful native request for:
 
 ```text
 DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
 ```
 
-The provider then validates the final handle path, file-vs-directory type, non-reparse state, and exact `FileIdentity`, and revalidates the still-held root after the relative leaf open.
+Acquisition then validates the final handle path, file-vs-directory type, non-reparse state, and exact `FileIdentity`, and revalidates the still-held root after the relative leaf open. Acquisition itself calls no disposition/history API and remains non-authorizing.
 
-The provider has no mutation method. It does not call a file-disposition API, delete-on-close option, path delete API, or action-history settlement method. Its private handles only establish that Windows granted the requested final capability and keep the exact binding live until disposal or later internal ownership transfer.
+The private provider lease now also implements `IFileDeleteOperationSameLeaseMutation`. That interface is not part of the pre-barrier final-lease authority: its destructive method requires a separate `FileDeleteOperationMutationAuthorization` that Core can mint only from the exact live post-barrier scope. The provider lease itself continues to report `DeleteMutationAuthorized == false`.
 
-See `docs/windows-file-delete-final-mutation-lease-provider.md` for the native access/sharing and test boundary.
+See `docs/windows-file-delete-final-mutation-lease-provider.md` for the native access/sharing boundary and `docs/file-delete-same-handle-mutation.md` for the separately reviewed mutation/settlement lifecycle.
 
 ## Release/reacquisition gap
 
@@ -71,7 +71,7 @@ Releasing the earlier read-only lease necessarily creates a handoff interval bef
 
 The final provider must reacquire and revalidate the exact authorized root/file identities after release. Native tests exercise file and root replacement during that handoff and require the concrete provider to reject the stale authorization evidence.
 
-A future destructive primitive must consume the same live final capability. Reopening the pathname after final validation would reopen the namespace race and is not an acceptable fallback.
+The reviewed destructive boundary now consumes the same live final capability after `Pending -> MutationStarted`. Reopening the pathname after final validation would reopen the namespace race and is not an acceptable fallback.
 
 ## Scope lifetime
 
@@ -89,21 +89,22 @@ The scope distinguishes capability from authorization:
 
 Disposal is serialized. Ownership is cleared only after final-lease disposal succeeds; if disposal throws, the portable scope continues to report the lease held so a later disposal attempt can retry instead of falsely claiming release.
 
-The later mutation-barrier slice transfers this private ownership internally under the same disposal gate before it writes `Pending -> MutationStarted`. Durable history alone still never recreates the live lease.
+The mutation-barrier slice transfers this private ownership internally under the same disposal gate before it writes `Pending -> MutationStarted`. #144 adds a second serialized transfer from the live barrier scope into the mutation/settlement coordinator. Retained public aliases become inert before the destructive call. Durable history alone still never recreates the live lease.
 
-## Still out of scope
+## What remains outside this contract
 
-Even with the reviewed Windows provider, this contract/provider chain adds no:
+The final-lease contract still does not itself expose a mutation method, raw handle, durable barrier call, or history settlement call. Those responsibilities remain separated between the post-barrier mutation authorization, the provider's private reviewed facet, and the Core mutation/settlement coordinator.
 
-- `SetFileInformationByHandle`, `NtSetInformationFile`, `DeleteFileW`, managed file/directory delete, recycle-bin, move, replacement, or delete-on-close production action;
-- final same-handle mutation primitive;
-- `CommitDeletedAsync` settlement after a filesystem mutation;
-- automatic recovery/retry after restart;
+Even with #144, FileOp still has no:
+
+- `DeleteFileW`, `File.Delete`, `Directory.Delete`, path-reopen delete fallback, rename/move/truncate, read-only bypass, or recycle-bin production path;
+- automatic mutation replay after restart;
 - generic `FileOperationKind.Delete` / `IFileOperationExecutor` integration;
-- App, Indexer, Files, or Storage production consumer;
+- multi-entry delete orchestration or operation `CompleteAsync` integration;
+- App, Indexer, Files, or Storage cleanup consumer;
 - raw `SafeFileHandle` exposure;
 - indexing-helper operation or protocol change.
 
 Protocol remains v8.
 
-The next native boundary can define the same-handle file-only disposition primitive that consumes live barrier authority. That primitive must be tested on the full Windows local gate before any cleanup UI or generic Delete operation is wired.
+The next product boundary after #144 is not another lower-level delete API. It is controlled orchestration around this reviewed one-file primitive: multi-entry sequencing/completion, recovery reconciliation, and only then explicit Files/Storage cleanup UX, each behind the full Windows local gate.
