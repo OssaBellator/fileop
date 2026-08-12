@@ -84,7 +84,7 @@ public sealed class FileDeleteOperationUserAuthorizationTests
         var validation = CreateReadyValidation();
         var firstId = Guid.NewGuid();
         var secondId = Guid.NewGuid();
-        var issuedIds = new Queue<Guid>([firstId, secondId]);
+        var issuedIds = new Queue<Guid>(new[] { firstId, secondId });
         var authorizedAt = new DateTimeOffset(2026, 8, 12, 5, 45, 0, TimeSpan.Zero);
         var issuer = new FileDeleteOperationUserAuthorizationIssuer(
             new FixedTimeProvider(authorizedAt),
@@ -93,6 +93,8 @@ public sealed class FileDeleteOperationUserAuthorizationTests
         var first = issuer.IssueAfterExplicitUserConfirmation(validation);
         var second = issuer.IssueAfterExplicitUserConfirmation(validation);
 
+        Assert.AreNotSame(first, second);
+        Assert.AreNotEqual(first, second);
         Assert.AreEqual(firstId, first.AuthorizationId);
         Assert.AreEqual(secondId, second.AuthorizationId);
         Assert.AreNotEqual(first.AuthorizationId, second.AuthorizationId);
