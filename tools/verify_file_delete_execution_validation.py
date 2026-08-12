@@ -8,6 +8,11 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
+from verify_file_delete_user_authorization import (
+    check_repository as check_delete_authorization_repository,
+    run_model as run_delete_authorization_model,
+)
+
 READY = "ready-for-authorization-review"
 BLOCKED = "blocked"
 
@@ -403,11 +408,20 @@ def main() -> int:
     if args.cases < 1:
         parser.error("--cases must be positive")
 
-    model_checks = run_model(args.cases, args.seed)
-    source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
+    model_checks = (
+        run_model(args.cases, args.seed)
+        + run_delete_authorization_model(args.cases, args.seed ^ 0xA0710)
+    )
+    source_checks = 0
+    if args.repo_root:
+        repo_root = args.repo_root.resolve()
+        source_checks = (
+            check_repository(repo_root)
+            + check_delete_authorization_repository(repo_root)
+        )
     suffix = f" and {source_checks:,} source checks" if args.repo_root else ""
     print(
-        f"PASS: file delete execution validation verified with {model_checks:,} model assertions "
+        f"PASS: file delete execution validation + user authorization verified with {model_checks:,} model assertions "
         f"across {args.cases:,} randomized states{suffix}."
     )
     return 0
