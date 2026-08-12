@@ -10,6 +10,7 @@ namespace FileOp.Core.Operations;
 /// </summary>
 public sealed class FileDeleteOperationPreMutationPreparationScope : IAsyncDisposable
 {
+    private readonly SemaphoreSlim _disposeGate = new(1, 1);
     private IFileDeleteOperationStabilityLease? _lease;
 
     internal FileDeleteOperationPreMutationPreparationScope(
@@ -45,12 +46,27 @@ public sealed class FileDeleteOperationPreMutationPreparationScope : IAsyncDispo
 
     public bool IsDisposed => _lease is null;
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        var lease = Interlocked.Exchange(ref _lease, null);
-        return lease is null
-            ? ValueTask.CompletedTask
-            : lease.DisposeAsync();
+        await _disposeGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var lease = _lease;
+            if (lease is null)
+            {
+                return;
+            }
+
+            // Do not clear ownership until disposal succeeds. If an arbitrary lease
+            // implementation throws, the scope must not falsely claim that its held
+            // resource was released; a later caller may retry disposal.
+            await lease.DisposeAsync().ConfigureAwait(false);
+            _lease = null;
+        }
+        finally
+        {
+            _disposeGate.Release();
+        }
     }
 }
 
