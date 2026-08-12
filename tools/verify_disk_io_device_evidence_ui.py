@@ -28,6 +28,23 @@ def collect(numbers: list[int]):
     return rows, calls
 
 
+def attach_failure_prediction(
+    rows: list[tuple[int, str]],
+    raw_by_disk: dict[int, int],
+):
+    enriched = []
+    calls = []
+    for number, status in rows:
+        if status != "queried":
+            enriched.append((number, status, None))
+            continue
+        if number not in raw_by_disk:
+            raise ValueError("missing failure prediction")
+        calls.append(number)
+        enriched.append((number, status, raw_by_disk[number]))
+    return enriched, calls
+
+
 def run_model(cases: int, seed: int) -> int:
     rng = random.Random(seed)
     checks = 0
@@ -35,7 +52,15 @@ def run_model(cases: int, seed: int) -> int:
     rows, calls = collect([2, 0, 7])
     assert rows == [(2, "queried"), (0, "queried"), (7, "queried")]
     assert calls == [2, 0, 7]
-    checks += 2
+    raw = {2: 9, 0: 0, 7: 0xFFFFFFFF}
+    enriched, prediction_calls = attach_failure_prediction(rows, raw)
+    assert prediction_calls == calls
+    assert enriched == [
+        (2, "queried", 9),
+        (0, "queried", 0),
+        (7, "queried", 0xFFFFFFFF),
+    ]
+    checks += 4
 
     try:
         collect([1, 2, 1])
@@ -71,6 +96,30 @@ def run_model(cases: int, seed: int) -> int:
         if len(numbers) > 1:
             assert len(set(numbers)) == len(numbers)
         checks += 7
+
+        raw_by_disk = {number: rng.getrandbits(32) for number in calls}
+        enriched, prediction_calls = attach_failure_prediction(rows, raw_by_disk)
+        assert [item[:2] for item in enriched] == rows
+        assert prediction_calls == calls
+        assert all(
+            raw_value is None
+            for _, status, raw_value in enriched
+            if status != "queried"
+        )
+        assert all(
+            raw_value == raw_by_disk[number]
+            for number, status, raw_value in enriched
+            if status == "queried"
+        )
+        checks += 4
+
+        remapped_raw = {number: rng.getrandbits(32) for number in calls}
+        remapped, remapped_calls = attach_failure_prediction(rows, remapped_raw)
+        assert [item[:2] for item in remapped] == [item[:2] for item in enriched]
+        assert remapped_calls == prediction_calls
+        assert [number for number, _, _ in remapped] == numbers
+        checks += 3
+
     return checks
 
 
@@ -103,9 +152,12 @@ def forbid(text: str, needle: str, label: str) -> int:
 def check_repository(root: Path) -> int:
     core = (root / "src/FileOp.Core/Performance/DiskIoDeviceEvidence.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/DiskIoDeviceEvidenceTests.cs").read_text(encoding="utf-8")
+    failure_tests = (root / "tests/FileOp.Windows.Tests/DiskIoDeviceFailurePredictionTests.cs").read_text(encoding="utf-8")
     engine = (root / "src/FileOp.App/DesktopSearchEngine.DiskIoAttribution.cs").read_text(encoding="utf-8")
     view = (root / "src/FileOp.App/DiskIoAttributionView.DeviceEvidence.cs").read_text(encoding="utf-8")
+    failure_view = (root / "src/FileOp.App/DiskIoAttributionView.FailurePredictionEvidence.cs").read_text(encoding="utf-8")
     performance = (root / "src/FileOp.App/PerformanceDiagnosticsView.DeviceEvidence.cs").read_text(encoding="utf-8")
+    performance_failure = (root / "src/FileOp.App/PerformanceDiagnosticsView.DiskIoFailurePrediction.cs").read_text(encoding="utf-8")
     storage = (root / "src/FileOp.App/StorageOptimizationView.xaml.cs").read_text(encoding="utf-8")
     docs = (root / "docs/disk-io-device-evidence-ui.md").read_text(encoding="utf-8")
     parent = (root / "tools/verify_performance_disk_io_ui.py").read_text(encoding="utf-8")
@@ -121,24 +173,46 @@ def check_repository(root: Path) -> int:
         (core, "queriedCount >= MaximumQueriedPhysicalDisks", "bounded provider calls"),
         (core, "deviceContext.PhysicalDiskNumber != queryNumber", "device result identity"),
         (core, "nvmeHealth.PhysicalDiskNumber != queryNumber", "NVMe result identity"),
+        (core, "PhysicalDiskFailurePredictionResult? FailurePrediction", "optional compatibility attachment"),
+        (core, "failurePrediction.PhysicalDiskNumber != queryNumber", "failure prediction result identity"),
+        (core, "public static DiskIoDeviceEvidenceSnapshot AttachFailurePrediction", "additive enrichment boundary"),
+        (core, "if (!row.QueryAttempted)", "failure prediction inherits original query partition"),
+        (core, "if (row.FailurePrediction is not null)", "duplicate attachment rejection"),
+        (core, "failurePredictionProvider.Query(queryNumber)", "bounded failure prediction call"),
+        (core, "snapshot.QueryElapsed + Stopwatch.GetElapsedTime(started)", "combined post-capture elapsed"),
         (tests, "QueryPreservesDiskOrderAndCallsEachProviderOnce", "order/call regression"),
         (tests, "DuplicateDiskNumbersFailBeforeAnyDeviceQuery", "duplicate regression"),
         (tests, "QueryBudgetKeepsLaterObservedDisksExplicitWithoutCallingProviders", "budget regression"),
         (tests, "MismatchedProviderEvidenceFailsClosed", "identity regression"),
+        (failure_tests, "AttachmentPreservesOrderAndQueriesOnlyPreviouslyQueriedRows", "failure attachment partition regression"),
+        (failure_tests, "AttachmentFailsClosedOnMismatchedPredictionDiskIdentity", "failure identity regression"),
+        (failure_tests, "AttachmentRefusesToQueryAnAlreadyEnrichedSnapshot", "duplicate enrichment regression"),
+        (failure_tests, "SkippedRowsCannotCarryFailurePredictionEvidence", "skipped-row invariant"),
+        (failure_tests, "ExistingFourArgumentRowShapeRemainsCompatibleWithoutPrediction", "legacy row compatibility"),
         (engine, "CaptureDiskIoAttributionAsync", "existing ETW bridge"),
         (view, "Reported device context for observed disks", "device panel heading"),
         (view, "not an SSD/HDD classification, health score, bottleneck verdict or recommendation", "no verdict disclaimer"),
         (view, "life-used estimate >254% (raw 255)", "raw PercentageUsed 255 rendering"),
         (view, "no currently defined warning bits set", "neutral zero-warning wording"),
         (view, "not a FileOp health verdict", "NVMe no-verdict wording"),
-        (performance, "ApplyDiskIoDeviceEvidence", "performance forwarding"),
+        (failure_view, "Windows failure prediction:", "failure prediction annotation"),
+        (failure_view, "failure prediction reported (raw", "nonzero raw rendering"),
+        (failure_view, "no current prediction reported (raw 0)", "neutral zero rendering"),
+        (failure_view, "not a comprehensive device-health verdict", "zero no-health disclaimer"),
+        (failure_view, "result.Elapsed.TotalMilliseconds", "per-provider elapsed rendering"),
+        (performance, "AttachDiskIoFailurePrediction(evidence)", "failure prediction enrichment before render"),
+        (performance, "ApplyFailurePredictionEvidence(enriched.Rows)", "failure prediction UI annotation"),
+        (performance_failure, "new WindowsPhysicalDiskFailurePredictionProvider()", "failure prediction provider composition"),
+        (performance_failure, "DiskIoDeviceEvidenceCollector.AttachFailurePrediction", "Core enrichment authority"),
         (storage, "new WindowsPhysicalDiskDeviceContextProvider()", "physical provider composition"),
         (storage, "new WindowsNvmeHealthEvidenceProvider()", "NVMe provider composition"),
-        (storage, "DiskIoDeviceEvidenceCollector.Query", "bounded enrichment call"),
+        (storage, "DiskIoDeviceEvidenceCollector.Query", "bounded initial enrichment call"),
         (storage, "PerformanceDiagnostics.ApplyDiskIoCapture(result);", "ETW result rendered first"),
         (storage, "SetDiskIoDeviceEvidenceUnavailable", "supplementary failure isolation"),
         (docs, "At most **32 queryable physical disks**", "documented query budget"),
         (docs, "does not extend the ETW session", "post-capture lifecycle"),
+        (docs, "Failure prediction inherits this exact visible/query partition", "prediction budget inheritance"),
+        (docs, "no current prediction reported (raw 0)", "documented neutral zero"),
         (docs, "must not acquire DiskIo capture/device-query behavior", "storage independence"),
         (parent, "from verify_disk_io_device_evidence_ui import (", "parent imports child verifier"),
         (parent, "run_disk_io_device_evidence_model(args.cases", "parent runs child model"),
@@ -154,6 +228,7 @@ def check_repository(root: Path) -> int:
         "PhysicalDisk",
         "NvmeHealth",
         "DiskIoDeviceEvidence",
+        "FailurePrediction",
         "Task.Run",
     ):
         checks += forbid(capture_method, needle, "unchanged ETW bridge")
@@ -167,18 +242,30 @@ def check_repository(root: Path) -> int:
     checks += forbid(apply_method, "OrderBy", "device evidence ranking")
     checks += forbid(apply_method, "Task.Run", "detached device enrichment")
 
+    performance_apply = method_body(performance, "public void ApplyDiskIoDeviceEvidence")
+    if performance_apply.index("AttachDiskIoFailurePrediction(evidence)") > performance_apply.index("ApplyDeviceEvidence("):
+        raise AssertionError("failure prediction is attached after device rows are rendered")
+    checks += 1
+    checks += forbid(performance_apply, "OrderBy", "failure prediction ranking")
+    checks += forbid(performance_apply, "Task.Run", "detached failure prediction enrichment")
+
+    attachment = method_body(core, "public static DiskIoDeviceEvidenceSnapshot AttachFailurePrediction")
+    checks += forbid(attachment, "MaximumQueriedPhysicalDisks", "second independent failure-prediction budget")
+    checks += forbid(attachment, "OrderBy", "failure prediction row ranking")
+
     set_unavailable = method_body(storage, "public void SetUnavailable")
     set_ready = method_body(storage, "public void SetReadyForRefresh")
     checks += forbid(set_unavailable, "DiskIo", "native storage unavailable affecting system-wide DiskIo")
     checks += forbid(set_ready, "DiskIo", "native storage readiness affecting system-wide DiskIo")
 
-    combined = core + "\n" + view + "\n" + storage
+    combined = core + "\n" + view + "\n" + failure_view + "\n" + performance + "\n" + performance_failure + "\n" + storage
     for needle in (
         "OrderBy(",
         "OrderByDescending(",
         "HealthScore",
         "ReliabilityScore",
         "RemainingHealth",
+        "FailureScore",
         "PeriodicTimer",
         "DispatcherQueueTimer",
         "FileSystemWatcher",
