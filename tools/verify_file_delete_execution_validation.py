@@ -39,6 +39,8 @@ def volume_root(path: str) -> str:
 
 
 def protected(path: str, protected_trees: tuple[str, ...]) -> bool:
+    if path.casefold().startswith(("\\\\?\\", "\\\\.\\", "\\??\\")):
+        return True
     root = volume_root(path)
     if not root:
         return True
@@ -86,8 +88,11 @@ def run_model(cases: int, seed: int) -> int:
     assert protected(r"C:\", protected_trees)
     assert protected(r"C:\Windows\Temp\a.tmp", protected_trees)
     assert protected(r"C:\$Recycle.Bin\x.bin", protected_trees)
+    assert protected(r"\\?\Volume{00000000-0000-0000-0000-000000000000}\Users\A\a.tmp", protected_trees)
+    assert protected(r"\\.\C:\Users\A\a.tmp", protected_trees)
+    assert protected(r"\??\C:\Users\A\a.tmp", protected_trees)
     assert not protected(r"C:\Users\A\AppData\Local\Temp\a.tmp", protected_trees)
-    checks += 7
+    checks += 10
 
     rng = random.Random(seed)
     states = ("file", "directory", "missing", "inaccessible", "error")
@@ -203,6 +208,7 @@ def check_repository(root: Path) -> int:
     core = (root / "src/FileOp.Core/Operations/FileDeleteOperationExecutionValidation.cs").read_text(encoding="utf-8")
     windows = (root / "src/FileOp.Windows/Operations/WindowsFileDeleteOperationExecutionValidator.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationExecutionValidationTests.cs").read_text(encoding="utf-8")
+    namespace_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteProtectedLocationPolicyTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/file-delete-execution-validation.md").read_text(encoding="utf-8")
     delete_preflight = (root / "src/FileOp.Core/Operations/FileDeleteOperationPreflight.cs").read_text(encoding="utf-8")
     generic_execution = (root / "src/FileOp.Core/Operations/FileOperationExecution.cs").read_text(encoding="utf-8")
@@ -229,6 +235,7 @@ def check_repository(root: Path) -> int:
         (windows, '"$Recycle.Bin"', "recycle root protection"),
         (windows, '"System Volume Information"', "volume metadata protection"),
         (windows, "Filesystem volume/share roots are protected", "volume-root protection"),
+        (windows, "Residual extended/device namespace paths are blocked", "extended/device namespace protection"),
         (windows, "sourceDirectory.Identity is null", "root identity check"),
         (windows, "source.Identity is null", "file identity check"),
         (windows, "canonicalSourceParent", "canonical parent validation"),
@@ -242,6 +249,7 @@ def check_repository(root: Path) -> int:
         (tests, "ProtectedCanonicalRootBlocksBeforeEntryResolution", "protected short-circuit regression"),
         (tests, "MissingChangedReparseOrIdentitylessFileFailsClosed", "file identity regression"),
         (tests, "SourceRootNeedsCanonicalDirectoryIdentityAndCannotBeReparse", "root identity regression"),
+        (namespace_tests, "ResidualExtendedAndDeviceNamespacesFailClosed", "extended/device namespace regression"),
         (docs, "fresh handle-resolved validation pass", "fresh validation documentation"),
         (docs, "volume/share roots", "protected root documentation"),
         (docs, "mutation-time identity/handle lease", "TOCTOU boundary documentation"),
