@@ -13,8 +13,9 @@ namespace FileOp.Windows.Operations;
 
 /// <summary>
 /// Reacquires the exact authorized root/direct-child file under a final DELETE-capable
-/// handle lease. Acquisition proves only that Windows granted the requested capability;
-/// this provider exposes no mutation method and never changes filesystem state.
+/// handle lease. Acquisition proves only that Windows granted the requested capability.
+/// The private lease exposes a same-handle mutation facet, but that facet requires an exact
+/// Core-minted post-barrier authorization and is one-shot per lease.
 /// </summary>
 public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
     IFileDeleteOperationFinalMutationLeaseProvider
@@ -134,7 +135,8 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
             var lease = new FinalMutationLease(
                 evidence,
                 sourceDirectory,
-                sourceFile);
+                sourceFile,
+                _protectedLocationPolicy);
             sourceDirectory = null;
             sourceFile = null;
             return lease;
@@ -443,19 +445,29 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
         }
     }
 
-    private sealed class FinalMutationLease : IFileDeleteOperationFinalMutationLease
+    private sealed class FinalMutationLease :
+        IFileDeleteOperationFinalMutationLease,
+        IFileDeleteOperationSameLeaseMutation
     {
+        private readonly IFileDeleteProtectedLocationPolicy _protectedLocationPolicy;
         private SafeFileHandle? _sourceDirectory;
         private SafeFileHandle? _sourceFile;
+        private int _mutationAttempted;
 
         public FinalMutationLease(
             FileDeleteOperationFinalMutationLeaseEvidence evidence,
             SafeFileHandle sourceDirectory,
-            SafeFileHandle sourceFile)
+            SafeFileHandle sourceFile,
+            IFileDeleteProtectedLocationPolicy protectedLocationPolicy)
         {
+            ArgumentNullException.ThrowIfNull(evidence);
+            ArgumentNullException.ThrowIfNull(sourceDirectory);
+            ArgumentNullException.ThrowIfNull(sourceFile);
+            ArgumentNullException.ThrowIfNull(protectedLocationPolicy);
             Evidence = evidence;
             _sourceDirectory = sourceDirectory;
             _sourceFile = sourceFile;
+            _protectedLocationPolicy = protectedLocationPolicy;
         }
 
         public FileDeleteOperationFinalMutationLeaseEvidence Evidence { get; }
@@ -465,6 +477,66 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
 
         public bool DeleteMutationAuthorized => false;
 
+        public ValueTask MarkDeletePendingAsync(
+            FileDeleteOperationMutationAuthorization authorization,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(authorization);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!authorization.MutationBarrierSatisfied ||
+                !authorization.DeleteMutationAuthorized ||
+                authorization.DeleteMutationPerformed ||
+                !authorization.IsBoundTo(Evidence))
+            {
+                throw new UnauthorizedAccessException(
+                    "Windows same-handle deletion requires the exact Core-minted post-barrier authorization for this final lease.");
+            }
+
+            var sourceDirectory = Volatile.Read(ref _sourceDirectory);
+            var sourceFile = Volatile.Read(ref _sourceFile);
+            if (!IsLive(sourceDirectory) || !IsLive(sourceFile))
+            {
+                throw new ObjectDisposedException(
+                    nameof(FinalMutationLease),
+                    "Windows same-handle deletion requires the exact live root/file lease.");
+            }
+
+            EnsureMutationAllowed(
+                Evidence.CanonicalSourceDirectoryPath,
+                "source directory");
+            EnsureMutationAllowed(
+                Evidence.CanonicalSourcePath,
+                "source file");
+            ValidateDirectoryHandle(
+                sourceDirectory!,
+                Evidence.CanonicalSourceDirectoryPath,
+                Evidence.SourceDirectoryIdentity);
+            ValidateFileHandle(
+                sourceFile!,
+                Evidence.CanonicalSourcePath,
+                Evidence.SourceIdentity);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (Interlocked.CompareExchange(ref _mutationAttempted, 1, 0) != 0)
+            {
+                throw new InvalidOperationException(
+                    "The same-handle delete disposition may be attempted only once for a final lease.");
+            }
+
+            var disposition = new FileDispositionInformation { DeleteFile = true };
+            if (!SetFileInformationByHandle(
+                    sourceFile!,
+                    FileInfoByHandleClass.FileDispositionInfo,
+                    ref disposition,
+                    checked((uint)Marshal.SizeOf<FileDispositionInformation>())))
+            {
+                throw Win32IOException(
+                    "Marking the exact authorized final-delete handle for deletion");
+            }
+
+            return ValueTask.CompletedTask;
+        }
+
         public ValueTask DisposeAsync()
         {
             DisposeNoThrow(_sourceFile);
@@ -472,6 +544,18 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
             DisposeNoThrow(_sourceDirectory);
             _sourceDirectory = null;
             return ValueTask.CompletedTask;
+        }
+
+        private void EnsureMutationAllowed(
+            string canonicalPath,
+            string description)
+        {
+            var decision = _protectedLocationPolicy.Evaluate(canonicalPath);
+            if (decision.IsBlocked)
+            {
+                throw new UnauthorizedAccessException(
+                    $"The canonical same-handle delete {description} is protected: {decision.Reason}");
+            }
         }
     }
 
@@ -511,6 +595,26 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
     private static extern bool GetFileInformationByHandle(
         SafeFileHandle hFile,
         out ByHandleFileInformation lpFileInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(
+        SafeFileHandle hFile,
+        FileInfoByHandleClass fileInformationClass,
+        ref FileDispositionInformation fileInformation,
+        uint bufferSize);
+
+    private enum FileInfoByHandleClass
+    {
+        FileDispositionInfo = 4,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileDispositionInformation
+    {
+        [MarshalAs(UnmanagedType.U1)]
+        public bool DeleteFile;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct UnicodeString
