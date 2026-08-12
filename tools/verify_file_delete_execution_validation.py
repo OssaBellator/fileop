@@ -21,6 +21,12 @@ class Resolved:
     identity: tuple[int, int] | None = None
 
 
+@dataclass(frozen=True)
+class EntryEvidence:
+    entry: tuple[str, str, bool]
+    source_requested: str
+
+
 def norm(path: str) -> str:
     value = ntpath.normpath(path.replace("/", "\\"))
     if len(value) == 2 and value[1] == ":":
@@ -76,6 +82,27 @@ def validate_delete(
     return READY
 
 
+def result_evidence_bound(
+    plan_root: str,
+    root_requested: str,
+    plan_entries: tuple[tuple[str, str, bool], ...],
+    items: tuple[EntryEvidence, ...],
+    status: str,
+) -> bool:
+    if norm(plan_root) != norm(root_requested):
+        return False
+    if not items:
+        return status == BLOCKED
+    if len(items) != len(plan_entries):
+        return False
+    for planned, item in zip(plan_entries, items):
+        if item.entry != planned:
+            return False
+        if norm(item.source_requested) != norm(planned[0]):
+            return False
+    return True
+
+
 def run_model(cases: int, seed: int) -> int:
     protected_trees = (r"C:\Windows", r"C:\Program Files", r"C:\ProgramData")
     root = Resolved(r"C:\Users\A\Temp", r"C:\Users\A\Temp", "directory", identity=(1, 10))
@@ -93,6 +120,18 @@ def run_model(cases: int, seed: int) -> int:
     assert protected(r"\??\C:\Users\A\a.tmp", protected_trees)
     assert not protected(r"C:\Users\A\AppData\Local\Temp\a.tmp", protected_trees)
     checks += 10
+
+    fixed_entries = (
+        (r"C:\Users\A\Temp\a.tmp", "a.tmp", False),
+        (r"C:\Users\A\Temp\b.tmp", "b.tmp", False),
+    )
+    fixed_items = tuple(EntryEvidence(entry, entry[0]) for entry in fixed_entries)
+    assert result_evidence_bound(root.requested, root.requested, fixed_entries, fixed_items, READY)
+    assert result_evidence_bound(root.requested, root.requested, fixed_entries, (), BLOCKED)
+    assert not result_evidence_bound(root.requested, r"C:\Users\A\Other", fixed_entries, fixed_items, READY)
+    assert not result_evidence_bound(root.requested, root.requested, fixed_entries, fixed_items[:1], READY)
+    assert not result_evidence_bound(root.requested, root.requested, fixed_entries, tuple(reversed(fixed_items)), READY)
+    checks += 5
 
     rng = random.Random(seed)
     states = ("file", "directory", "missing", "inaccessible", "error")
@@ -186,6 +225,61 @@ def run_model(cases: int, seed: int) -> int:
         ) == BLOCKED
         checks += 1
 
+        plan_count = rng.randint(1, 5)
+        plan_entries = tuple(
+            (
+                source_root_path + f"\\planned-{case}-{ordinal}.tmp",
+                f"planned-{case}-{ordinal}.tmp",
+                False,
+            )
+            for ordinal in range(plan_count)
+        )
+        exact_items = tuple(EntryEvidence(entry, entry[0]) for entry in plan_entries)
+        assert result_evidence_bound(
+            source_root_path,
+            source_root_path.swapcase(),
+            plan_entries,
+            exact_items,
+            READY,
+        )
+        assert not result_evidence_bound(
+            source_root_path,
+            source_root_path + r"\Other",
+            plan_entries,
+            exact_items,
+            READY,
+        )
+        assert not result_evidence_bound(
+            source_root_path,
+            source_root_path,
+            plan_entries,
+            exact_items[:-1],
+            READY,
+        )
+        substituted = list(exact_items)
+        first = plan_entries[0]
+        substituted[0] = EntryEvidence(
+            (first[0] + ".other", first[1] + ".other", first[2]),
+            first[0] + ".other",
+        )
+        assert not result_evidence_bound(
+            source_root_path,
+            source_root_path,
+            plan_entries,
+            tuple(substituted),
+            READY,
+        )
+        cross_entry = list(exact_items)
+        cross_entry[0] = EntryEvidence(plan_entries[0], plan_entries[0][0] + ".other")
+        assert not result_evidence_bound(
+            source_root_path,
+            source_root_path,
+            plan_entries,
+            tuple(cross_entry),
+            READY,
+        )
+        checks += 5
+
     return checks
 
 
@@ -205,6 +299,7 @@ def check_repository(root: Path) -> int:
     core = (root / "src/FileOp.Core/Operations/FileDeleteOperationExecutionValidation.cs").read_text(encoding="utf-8")
     windows = (root / "src/FileOp.Windows/Operations/WindowsFileDeleteOperationExecutionValidator.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationExecutionValidationTests.cs").read_text(encoding="utf-8")
+    provenance_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationExecutionValidationProvenanceTests.cs").read_text(encoding="utf-8")
     policy_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteProtectedLocationPolicyTests.cs").read_text(encoding="utf-8")
     requested_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationExecutionRequestedPathTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/file-delete-execution-validation.md").read_text(encoding="utf-8")
@@ -222,6 +317,10 @@ def check_repository(root: Path) -> int:
         (core, "if (!Enum.IsDefined(decision))", "protected policy decision invariant"),
         (core, "ArgumentException.ThrowIfNullOrWhiteSpace(reason)", "protected policy reason invariant"),
         (core, "ReadyForAuthorizationReview", "authorization-review naming"),
+        (core, "source-directory evidence must belong to the exact captured plan", "root-to-plan provenance invariant"),
+        (core, "itemSnapshot.Length != 0 && itemSnapshot.Length != plan.Intent.Entries.Count", "complete item provenance invariant"),
+        (core, "item.Entry != plannedEntry", "exact plan entry/order invariant"),
+        (core, "item.Source.RequestedPath", "entry source-request provenance invariant"),
         (core, "current non-reparse file identity evidence", "ready item identity invariant"),
         (core, "sourceDirectory.Identity is not null", "root identity invariant"),
         (core, "public bool CanRequestAuthorizationReview", "review handoff state"),
@@ -252,6 +351,13 @@ def check_repository(root: Path) -> int:
         (tests, "ProtectedCanonicalRootBlocksBeforeEntryResolution", "protected short-circuit regression"),
         (tests, "MissingChangedReparseOrIdentitylessFileFailsClosed", "file identity regression"),
         (tests, "SourceRootNeedsCanonicalDirectoryIdentityAndCannotBeReparse", "root identity regression"),
+        (provenance_tests, "ResultBindsRootAndEveryItemToExactCapturedPlan", "exact plan provenance regression"),
+        (provenance_tests, "partial evidence", "partial-result rejection regression"),
+        (provenance_tests, "reordered evidence", "reordered-result rejection regression"),
+        (provenance_tests, "substituted evidence", "substituted-result rejection regression"),
+        (provenance_tests, "cross-entry source evidence", "cross-entry source rejection regression"),
+        (provenance_tests, "cross-plan root evidence", "cross-plan root rejection regression"),
+        (provenance_tests, "RootLevelBlockMayRemainItemlessWhenRootEvidenceBelongsToPlan", "root-level block provenance regression"),
         (policy_tests, "ProtectedLocationResultRejectsMalformedDecisionsAndReasons", "policy result invariant regression"),
         (policy_tests, "ResidualExtendedAndDeviceNamespacesFailClosed", "extended/device namespace regression"),
         (requested_tests, "RequestedPathMustRemainDirectChildWithCapturedLeafAndNoAds", "requested path regression"),
