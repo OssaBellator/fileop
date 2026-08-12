@@ -7,6 +7,11 @@ import random
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from verify_volume_fragmentation_analysis import (
+    check_repository as check_volume_fragmentation_repository,
+    run_model as run_volume_fragmentation_model,
+)
+
 
 def volume_metrics(total: int | None, free: int | None) -> tuple[int | None, float | None]:
     if total is None or free is None:
@@ -240,13 +245,19 @@ def main() -> int:
         raise ValueError("--cases must be non-negative")
 
     model_checks = run_model(args.cases)
+    fragmentation_model_checks = run_volume_fragmentation_model(args.cases, 0xD3F6A6)
     repository_checks = 0
     if args.repo_root is not None:
-        repository_checks = check_repository(args.repo_root.resolve())
+        root = args.repo_root.resolve()
+        repository_checks = (
+            check_repository(root) +
+            check_volume_fragmentation_repository(root)
+        )
     suffix = f" and {repository_checks:,} source/UI checks" if args.repo_root else ""
     print(
         "PASS: measurable performance diagnostics verified with "
-        f"{model_checks:,} model assertions across {args.cases:,} randomized capacity cases{suffix}."
+        f"{model_checks:,} capacity assertions and {fragmentation_model_checks:,} fragmentation-analysis assertions "
+        f"across {args.cases:,} randomized cases{suffix}."
     )
     return 0
 
