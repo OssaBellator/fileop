@@ -21,6 +21,14 @@ The receipt snapshots:
 
 `UserAuthorizedAttempt` is true because the receipt represents the positive user-confirmation outcome. A decline or cancellation creates **no receipt**; the absence of a receipt is the negative outcome.
 
+## Issuer-owned nonce and time
+
+Callers do not construct receipts directly. The receipt constructor is internal and `IFileDeleteOperationUserAuthorizationIssuer` exposes the deliberately named `IssueAfterExplicitUserConfirmation(...)` seam.
+
+The production `FileDeleteOperationUserAuthorizationIssuer` owns the consent observation metadata: its default path uses `Guid.NewGuid` for a fresh authorization nonce and `TimeProvider.System.GetUtcNow()` for the authorization timestamp. The issuer rejects an empty generated ID before constructing a receipt.
+
+A dependency-injected issuer constructor exists for deterministic tests. This slice has no App, Windows, or Indexer producer at all; a later UI change must separately prove that the production issuer is invoked only from an explicit user-confirmation action. The authorization issuer owns the nonce/time observation so a future UI caller does not stamp arbitrary consent metadata directly.
+
 ## Exact validation-instance binding
 
 The receipt deliberately stays session-only and retains the exact validation object that was reviewed. `IsBoundTo(...)` uses reference identity, not structural equality.
@@ -52,7 +60,7 @@ A future destructive lane still needs a separately reviewed mutation-time bounda
 
 This slice does **not** add:
 
-- a production App/Windows producer of authorization receipts;
+- a production App/Windows/Indexer producer of authorization receipts;
 - `FileOperationKind.Delete`;
 - `IFileOperationExecutor` integration;
 - a delete execution state machine;
@@ -67,8 +75,10 @@ Protocol remains v8.
 
 ## Validation
 
-`tools/verify_file_delete_user_authorization.py` models explicit confirmation, blocked/missing identity evidence, non-empty authorization IDs, exact validation-instance binding, identity snapshots, and immutable non-mutation authority. At 50,000 randomized states it performs **389,305 assertions**.
+`tools/verify_file_delete_user_authorization.py` models explicit confirmation, blocked/missing identity evidence, issuer-generated non-empty/distinct authorization IDs, exact validation-instance binding, identity snapshots, and immutable non-mutation authority. At its standalone 50,000-state seed it performs **458,143 assertions**.
 
-The verifier also requires the receipt to remain unwired from `FileOp.App`, `FileOp.Windows`, and `FileOp.Indexer` in this slice, retains the existing Copy/Move operation enum and protocol v8, and forbids executor/action-history/delete primitive integration.
+Through the existing delete execution-validation parent, the deterministic composed seed contributes **456,643 authorization assertions** alongside **456,090 canonical delete-validation assertions**. The outer existing Copy/Move execution-validation model contributes **150,009**, so the repository's single direct execution-validation gate now carries **1,062,742 randomized assertions across 50,000 cases** before source checks.
 
-It is composed through the existing delete execution-validation verifier, which is already reached from the repository's single direct execution-validation local gate. Native Windows/.NET execution remains a local release-validation requirement.
+The source verifier also requires the authorization types to remain unwired from `FileOp.App`, `FileOp.Windows`, and `FileOp.Indexer` in this slice, retains the existing Copy/Move operation enum and protocol v8, and forbids executor/action-history/delete primitive integration.
+
+Native Windows/.NET execution remains a local release-validation requirement.
