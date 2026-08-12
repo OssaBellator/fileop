@@ -83,7 +83,8 @@ public sealed class FileDeleteOperationExecutionValidationTests
         Assert.AreEqual(0, result.BlockedCount);
         Assert.IsTrue(result.CanRequestAuthorizationReview);
         Assert.IsFalse(result.DeleteMutationAuthorized);
-        Assert.AreEqual(new FileIdentity(1, 11), result.Items[0].Source.Identity);
+        Assert.IsNotNull(result.Items[0].Source.Identity);
+        Assert.AreEqual(new FileIdentity(1, 11), result.Items[0].Source.Identity.Value);
         StringAssert.Contains(result.Summary, "No delete authorization was granted");
     }
 
