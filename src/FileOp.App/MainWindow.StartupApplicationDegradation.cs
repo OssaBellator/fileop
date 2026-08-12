@@ -10,7 +10,7 @@ public sealed partial class MainWindow
         }
         if (_storageSameSizeVerificationActive || _performanceDiskIoCaptureActive)
         {
-            _storageOptimizationView.SetStartupApplicationDegradationUnavailable(
+            _storageOptimizationView.SetStartupApplicationDegradationBusy(
                 "Another explicit Performance/Storage diagnostic is already active. Startup degradation history was not read.");
             return;
         }
