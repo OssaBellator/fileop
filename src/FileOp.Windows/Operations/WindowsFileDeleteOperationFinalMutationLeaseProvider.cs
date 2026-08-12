@@ -451,6 +451,7 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
     {
         private const uint FileDispositionDelete = 0x00000001;
         private const uint FileDispositionPosixSemantics = 0x00000002;
+        private const uint FileDispositionForceImageSectionCheck = 0x00000004;
 
         private readonly IFileDeleteProtectedLocationPolicy _protectedLocationPolicy;
         private SafeFileHandle? _sourceDirectory;
@@ -528,7 +529,10 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
 
             var disposition = new FileDispositionInformationEx
             {
-                Flags = FileDispositionDelete | FileDispositionPosixSemantics,
+                Flags =
+                    FileDispositionDelete |
+                    FileDispositionPosixSemantics |
+                    FileDispositionForceImageSectionCheck,
             };
             var status = NtSetInformationFile(
                 sourceFile!,
