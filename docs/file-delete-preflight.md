@@ -1,6 +1,6 @@
 # Read-only file delete preflight foundation
 
-FileOp now has a destination-less **delete preflight contract** for reasoning about captured source entries without granting or performing deletion.
+FileOp now has a destination-less **file delete preflight contract** for reasoning about captured source files without granting or performing deletion.
 
 This is deliberately separate from `FileOperationPlan`, whose `FileOperationIntent` is destination-oriented for Copy/Move. The delete foundation does not add `Delete` to `FileOperationKind`, does not enter `FileOperationExecutionSnapshot`, and does not reuse destination/collision semantics that do not apply to deletion.
 
@@ -34,17 +34,20 @@ For each captured entry it requires:
 - the path still being an exact direct child of the captured source directory;
 - the current leaf name matching the captured entry name case-insensitively;
 - no alternate-data-stream leaf syntax;
-- the entry still existing with the captured file/directory type;
+- a **file** entry, not a directory;
+- the file still existing as a file;
 - readable inspection evidence;
 - no leaf reparse point.
 
-Any failed requirement blocks the whole preflight result. A result with no blocked entries is named `ReadyForFurtherReview`, not ready to delete.
+Directory entries are blocked before an entry probe. Recursive directory deletion and its recovery policy are intentionally outside this foundation.
+
+Any failed requirement blocks the whole preflight result. A result with no blocked file entries is named `ReadyForFurtherReview`, not ready to delete. The result constructor also enforces that a ready status cannot be paired with blocked or empty item evidence.
 
 ## Non-authorization boundary
 
 `FileDeleteOperationPreflightResult.DeleteMutationAuthorized` is always `false`.
 
-A green read-only preflight does **not** provide:
+A green read-only preflight is **not authorization to delete** and does **not** provide:
 
 - protected-location policy;
 - canonical execution-time source identity validation;
@@ -73,7 +76,7 @@ Protocol remains v8.
 
 ## Validation
 
-`tools/verify_file_delete_preflight.py` contains a randomized fail-closed model and source guards. It verifies direct-child/name/type/reparse invariants, immutable non-authorization, absence of delete primitives, and that `FileOperationKind` remains Copy/Move-only.
+`tools/verify_file_delete_preflight.py` contains a randomized fail-closed model and source guards. It verifies direct-child/name/file-type/reparse invariants, directory rejection, immutable non-authorization, absence of delete primitives, and that `FileOperationKind` remains Copy/Move-only.
 
 The existing `tools/verify_file_operation_preflight.py` imports and runs the delete-preflight child, so the current `tools/test-local.ps1 -OfflineOnly` file-operation preflight entry covers both the existing Copy/Move boundary and this new destination-less delete-readiness foundation without adding a second PowerShell gate entry.
 
