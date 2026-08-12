@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
 using System.Globalization;
+using System.Xml;
 using System.Xml.Linq;
 using FileOp.Core.Performance;
 
@@ -58,9 +59,13 @@ internal sealed class WindowsStartupApplicationDegradationEventSource
             {
                 reader.CancelReading();
             }
-            catch (ObjectDisposedException)
+            catch (Exception exception) when (
+                exception is ObjectDisposedException or
+                EventLogException or
+                InvalidOperationException)
             {
-                // The read loop or disposal already completed.
+                // The read loop or disposal already completed, or the event-log
+                // stack rejected a cancellation request that raced completion.
             }
         });
 
@@ -85,6 +90,14 @@ internal sealed class WindowsStartupApplicationDegradationEventSource
 
             if (record is null)
             {
+                // ReadEvent(TimeSpan) uses the supplied value as the maximum read
+                // duration. A null result at/after the total FileOp budget is not
+                // safe to reinterpret as a proven end-of-stream.
+                if (Stopwatch.GetElapsedTime(started) >= budget.ReadBudget)
+                {
+                    throw new TimeoutException(
+                        "The Diagnostics-Performance event read reached FileOp's total startup-degradation read budget without returning another event.");
+                }
                 break;
             }
 
@@ -198,6 +211,11 @@ internal sealed class WindowsStartupApplicationDegradationEventSource
         }
 
         var componentName = RequireData(data, "Name").Trim();
+        if (componentName.Length == 0)
+        {
+            throw new InvalidDataException(
+                "Diagnostics-Performance event 101 contained an empty EventData/Name field.");
+        }
         var friendlyName = NormalizeOptionalData(data, "FriendlyName");
         var version = NormalizeOptionalData(data, "Version");
         var totalTimeMilliseconds = ParseUInt64(
@@ -383,10 +401,12 @@ public sealed class WindowsStartupApplicationDegradationProvider
                 $"The Diagnostics-Performance Operational channel was not available: {exception.Message}");
         }
         catch (Exception exception) when (
-            exception is EventLogException or
+            exception is ArgumentException or
+            EventLogException or
             InvalidDataException or
             InvalidOperationException or
-            NotSupportedException)
+            NotSupportedException or
+            XmlException)
         {
             return Failure(
                 budget,
