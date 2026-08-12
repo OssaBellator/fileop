@@ -22,10 +22,15 @@ public sealed partial class StorageOptimizationView
         RefreshSameSizeRows();
     }
 
-    public void ApplyMachineProcessActivity(MachineProcessActivityResult result)
+    public void ApplyMachineProcessActivity(
+        MachineProcessActivityResult result,
+        SystemCpuActivityResult systemCpuActivity)
     {
         ArgumentNullException.ThrowIfNull(result);
-        PerformanceDiagnostics.ApplyMachineProcessActivity(result);
+        ArgumentNullException.ThrowIfNull(systemCpuActivity);
+        PerformanceDiagnostics.ApplyMachineProcessActivity(
+            result,
+            systemCpuActivity);
         _sameSizeVerificationControlsBlocked = false;
         RefreshSameSizeRows();
     }
