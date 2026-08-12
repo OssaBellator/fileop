@@ -178,6 +178,7 @@ def check_repository(root: Path) -> int:
     project = (root / "src/FileOp.Windows/FileOp.Windows.csproj").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/VolumeFragmentationAnalysisTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/volume-fragmentation-analysis.md").read_text(encoding="utf-8")
+    parent = (root / "tools/verify_performance_diagnostics.py").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
 
@@ -207,7 +208,10 @@ def check_repository(root: Path) -> int:
         (docs, "optional compatibility evidence", "legacy support boundary"),
         (docs, "cancellation requested / FileOp stopped waiting", "cancellation caveat"),
         (docs, "does not turn it into an automatic action", "no recommendation promotion"),
-        (gate, "verify_volume_fragmentation_analysis.py --repo-root $repoRoot --cases 50000", "offline gate entry"),
+        (parent, "from verify_volume_fragmentation_analysis import (", "parent imports fragmentation verifier"),
+        (parent, "run_volume_fragmentation_model(args.cases", "parent runs fragmentation model"),
+        (parent, "check_volume_fragmentation_repository(root)", "parent runs fragmentation source checks"),
+        (gate, "verify_performance_diagnostics.py --repo-root $repoRoot --cases 50000", "existing offline parent gate"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
     ]
     for text, needle, label in required:
