@@ -41,7 +41,6 @@ public sealed class SqliteFileDeleteOperationRecoveryHistoryReader :
         {
             DataSource = Path.GetFullPath(databasePath),
             Mode = SqliteOpenMode.ReadOnly,
-            Cache = SqliteCacheMode.Shared,
             Pooling = true,
             DefaultTimeout = 5,
         }.ToString();
