@@ -32,9 +32,12 @@ Canonical-parent mismatch blocks even when the requested path still appears to b
 - Windows and System trees;
 - Program Files and Program Files (x86) trees;
 - ProgramData / CommonApplicationData;
-- root-managed `$Recycle.Bin`, `System Volume Information`, `Recovery`, `Boot`, and `EFI` trees.
+- root-managed `$Recycle.Bin`, `System Volume Information`, `Recovery`, `Boot`, and `EFI` trees;
+- residual extended/device namespace paths such as volume-GUID or device paths that the shared canonical resolver intentionally preserves instead of converting to DOS/UNC form.
 
 The production parameterless policy derives the Windows-managed roots from `Environment.SpecialFolder`. An explicit protected-root constructor exists for deterministic composition/tests.
+
+The shared canonical resolver normally normalizes ordinary `\\?\C:\...` and `\\?\UNC\...` results to DOS/UNC form. If a final path remains in an extended/device namespace, this delete policy fails closed rather than comparing that representation against DOS-path protected trees.
 
 This is intentionally conservative. In particular, a file in Windows Temp or ProgramData is blocked by this first policy even if a future product might eventually support a narrower, specifically authorized cleanup lane there. The safe default is to require a later reviewed exception mechanism rather than silently broadening deletion scope.
 
@@ -69,7 +72,7 @@ Storage cleanup readiness also remains non-authorizing and is not consumed by th
 
 ## Validation
 
-`tools/verify_file_delete_execution_validation.py` models canonical containment, identity requirements, file-only scope, protected locations and immutable non-authorization. Source guards require reuse of the existing canonical resolver and forbid executor wiring plus filesystem mutation primitives.
+`tools/verify_file_delete_execution_validation.py` models canonical containment, identity requirements, file-only scope, protected locations, residual extended/device path blocking and immutable non-authorization. Source guards require reuse of the existing canonical resolver and forbid executor wiring plus filesystem mutation primitives.
 
 The existing `tools/verify_file_operation_execution_validation.py` imports and runs the delete child, so `tools/test-local.ps1 -OfflineOnly` keeps one direct execution-validation gate entry for the existing Copy/Move validation plus this delete-specific read-only authorization-review boundary.
 
