@@ -104,6 +104,8 @@ public sealed record StorageKnownLocationCandidateRow(
         var reason = candidate.Reason switch
         {
             StorageReviewReason.OldInstallerPackage => "old installer/package extension",
+            StorageReviewReason.OldArchive => "old archive extension",
+            StorageReviewReason.OldDiskImage => "old disk-image extension",
             StorageReviewReason.OldArchiveOrDiskImage => "old archive/disk-image extension",
             StorageReviewReason.OldUserTempFile => "old file under current-user Temp",
             _ => candidate.Reason.ToString(),

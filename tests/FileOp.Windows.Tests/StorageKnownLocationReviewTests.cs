@@ -22,7 +22,21 @@ public sealed class StorageKnownLocationReviewTests
     }
 
     [TestMethod]
-    public void DownloadsArchiveExtensionsBecomeReviewCandidates()
+    public void DownloadsArchiveExtensionsUseArchiveOnlyReviewProvenance()
+    {
+        var analysis = Analysis(File("archive.zip", ".zip"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.Downloads);
+
+        Assert.AreEqual(1, review.Candidates.Count);
+        Assert.AreEqual(StorageReviewReason.OldArchive, review.Candidates[0].Reason);
+        Assert.AreEqual(StorageKnownLocationReviewClassifier.DownloadsArchiveRuleId, review.Candidates[0].RuleId);
+    }
+
+    [TestMethod]
+    public void DownloadsDiskImageUsesDistinctReviewProvenance()
     {
         var analysis = Analysis(File("archive.iso", ".iso"));
 
@@ -31,8 +45,29 @@ public sealed class StorageKnownLocationReviewTests
             StorageReviewProvenance.Downloads);
 
         Assert.AreEqual(1, review.Candidates.Count);
-        Assert.AreEqual(StorageReviewReason.OldArchiveOrDiskImage, review.Candidates[0].Reason);
-        Assert.AreEqual(StorageKnownLocationReviewClassifier.DownloadsArchiveRuleId, review.Candidates[0].RuleId);
+        Assert.AreEqual(StorageReviewReason.OldDiskImage, review.Candidates[0].Reason);
+        Assert.AreEqual(StorageKnownLocationReviewClassifier.DownloadsDiskImageRuleId, review.Candidates[0].RuleId);
+    }
+
+    [TestMethod]
+    public void DownloadsArchiveDiskImageSplitDoesNotWidenCandidateExtensions()
+    {
+        var analysis = Analysis(
+            File("package.msix", ".msix"),
+            File("archive.7z", ".7z"),
+            File("image.iso", ".iso"),
+            File("setup.exe", ".exe"),
+            File("disk.img", ".img"),
+            File("virtual.vhdx", ".vhdx"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.Downloads);
+
+        Assert.AreEqual(3, review.Candidates.Count);
+        CollectionAssert.AreEqual(
+            new[] { "package.msix", "archive.7z", "image.iso" },
+            review.Candidates.Select(static candidate => candidate.Name).ToArray());
     }
 
     [TestMethod]

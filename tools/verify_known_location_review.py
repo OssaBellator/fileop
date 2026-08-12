@@ -8,7 +8,11 @@ from pathlib import Path
 
 LONG_MAX = (1 << 63) - 1
 PACKAGE_EXTENSIONS = {".msi", ".msix", ".msixbundle", ".appx", ".appxbundle", ".msu"}
-ARCHIVE_EXTENSIONS = {".zip", ".7z", ".rar", ".iso", ".tar", ".gz", ".tgz", ".bz2", ".xz"}
+ARCHIVE_EXTENSIONS = {".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".xz"}
+DISK_IMAGE_EXTENSIONS = {".iso"}
+# This is the exact pre-refinement Downloads candidate extension set. The richer
+# provenance split must never widen or narrow membership without separate review.
+LEGACY_REVIEW_EXTENSIONS = PACKAGE_EXTENSIONS | ARCHIVE_EXTENSIONS | DISK_IMAGE_EXTENSIONS
 
 
 def classify_download(extension: str) -> str | None:
@@ -17,6 +21,8 @@ def classify_download(extension: str) -> str | None:
         return "package"
     if normalized in ARCHIVE_EXTENSIONS:
         return "archive"
+    if normalized in DISK_IMAGE_EXTENSIONS:
+        return "disk-image"
     return None
 
 
@@ -37,16 +43,20 @@ def run_model(cases: int) -> int:
     assert classify_download(".msi") == "package"
     assert classify_download(".MSIXBUNDLE") == "package"
     assert classify_download(".zip") == "archive"
-    assert classify_download(".ISO") == "archive"
+    assert classify_download(".ISO") == "disk-image"
     assert classify_download(".exe") is None
-    assert classify_download(".dll") is None
+    assert classify_download(".img") is None
+    assert classify_download(".vhdx") is None
     assert measured_bytes(100, None) == 100
     assert measured_bytes(100, 40) == 40
     assert sat_sum([LONG_MAX, LONG_MAX]) == LONG_MAX
-    checks += 9
+    checks += 10
 
     rng = random.Random(20260811)
-    extension_pool = sorted(PACKAGE_EXTENSIONS | ARCHIVE_EXTENSIONS | {".exe", ".dll", ".txt", ".bin", ".tmp"})
+    extension_pool = sorted(
+        LEGACY_REVIEW_EXTENSIONS
+        | {".exe", ".dll", ".txt", ".bin", ".tmp", ".img", ".vhd", ".vhdx"}
+    )
     for _ in range(cases):
         extension = rng.choice(extension_pool)
         logical = rng.randint(0, 10**12)
@@ -57,10 +67,14 @@ def run_model(cases: int) -> int:
             if extension in PACKAGE_EXTENSIONS
             else "archive"
             if extension in ARCHIVE_EXTENSIONS
+            else "disk-image"
+            if extension in DISK_IMAGE_EXTENSIONS
             else None
         )
         assert result == expected
+        assert (result is not None) == (extension in LEGACY_REVIEW_EXTENSIONS)
         assert (extension == ".exe") <= (result is None)
+        assert (extension in {".img", ".vhd", ".vhdx"}) <= (result is None)
         assert measured_bytes(logical, allocated) == (logical if allocated is None else allocated)
         user_temp_candidate = True
         assert user_temp_candidate
@@ -71,7 +85,7 @@ def run_model(cases: int) -> int:
         cap = rng.randint(1, 50)
         source_count = rng.randint(0, cap)
         assert (source_count >= cap) == (source_count == cap)
-        checks += 7
+        checks += 9
 
     return checks
 
@@ -85,6 +99,7 @@ def check_repository(root: Path) -> int:
     parent = (root / "src/FileOp.App/StorageOptimizationView.xaml.cs").read_text(encoding="utf-8")
     coordinator = (root / "src/FileOp.App/MainWindow.StorageOptimization.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/StorageKnownLocationReviewTests.cs").read_text(encoding="utf-8")
+    docs = (root / "docs/known-location-review.md").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
     checks = 0
@@ -98,11 +113,16 @@ def check_repository(root: Path) -> int:
         "StorageKnownLocationReviewSnapshot",
         "downloads.old-package-extension.v1",
         "downloads.old-archive-extension.v1",
+        "downloads.old-disk-image-extension.v1",
         "user-temp.old-large-file.v1",
+        "StorageReviewReason.OldArchiveOrDiskImage,",
+        "StorageReviewReason.OldArchive,",
+        "StorageReviewReason.OldDiskImage,",
         '".msi"',
         '".msixbundle"',
         '".zip"',
-        '".iso"',
+        'private static readonly HashSet<string> DiskImageExtensions',
+        '[".iso"]',
         "Unsupported storage-review provenance.",
         "SourceMayBeTruncated",
         "analysis.StaleLargeFiles.Count >= analysis.Policy.MaxStaleLargeFiles",
@@ -111,6 +131,32 @@ def check_repository(root: Path) -> int:
     ):
         assert needle in model, needle
         checks += 1
+
+    classifier_start = model.index("private static StorageReviewCandidate? ClassifyDownloads")
+    classifier_end = model.index("private static StorageReviewCandidate ClassifyUserTemp", classifier_start)
+    classifier = model[classifier_start:classifier_end]
+    for needle in (
+        "StorageReviewReason.OldInstallerPackage",
+        "StorageReviewReason.OldArchive",
+        "StorageReviewReason.OldDiskImage",
+        "DownloadsInstallerRuleId",
+        "DownloadsArchiveRuleId",
+        "DownloadsDiskImageRuleId",
+    ):
+        assert needle in classifier, needle
+        checks += 1
+    assert "StorageReviewReason.OldArchiveOrDiskImage" not in classifier
+    checks += 1
+
+    archive_start = model.index("private static readonly HashSet<string> ArchiveExtensions")
+    disk_image_start = model.index("private static readonly HashSet<string> DiskImageExtensions", archive_start)
+    archive_block = model[archive_start:disk_image_start]
+    assert '".iso"' not in archive_block
+    assert '".img"' not in model
+    assert '".vhd"' not in model
+    assert '".vhdx"' not in model
+    checks += 4
+
     for forbidden in ("SafeToDelete", '".exe"', "File.Delete(", "Directory.Delete("):
         assert forbidden not in model, forbidden
         checks += 1
@@ -168,6 +214,10 @@ def check_repository(root: Path) -> int:
     for needle in (
         "candidate measured bytes",
         "not guaranteed reclaimable space or deletion authorization",
+        "old installer/package extension",
+        "old archive extension",
+        "old disk-image extension",
+        "old archive/disk-image extension",
         "rule {candidate.RuleId}",
         "Review only; this rule does not establish safe deletion.",
         "SourceMayBeTruncated",
@@ -222,6 +272,9 @@ def check_repository(root: Path) -> int:
         checks += 1
 
     for needle in (
+        "DownloadsArchiveExtensionsUseArchiveOnlyReviewProvenance",
+        "DownloadsDiskImageUsesDistinctReviewProvenance",
+        "DownloadsArchiveDiskImageSplitDoesNotWidenCandidateExtensions",
         "DownloadsExecutableIsNotInferredToBeInstaller",
         "DownloadsUnrecognizedExtensionIsIgnored",
         "UserTempUsesLocationProvenanceWithoutExtensionGuess",
@@ -230,6 +283,16 @@ def check_repository(root: Path) -> int:
         "UnsupportedProvenanceIsRejected",
     ):
         assert needle in tests, needle
+        checks += 1
+
+    for needle in (
+        "downloads.old-archive-extension.v1",
+        "downloads.old-disk-image-extension.v1",
+        "`.iso` remains within the existing review candidate set",
+        "`.img`, `.vhd`, and `.vhdx` are not added",
+        "does not establish safe deletion",
+    ):
+        assert needle in docs, needle
         checks += 1
 
     assert "public const int CurrentVersion = 8;" in protocol

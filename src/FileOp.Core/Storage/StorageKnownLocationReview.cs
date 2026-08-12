@@ -18,6 +18,8 @@ public enum StorageReviewReason
     OldInstallerPackage,
     OldArchiveOrDiskImage,
     OldUserTempFile,
+    OldArchive,
+    OldDiskImage,
 }
 
 public sealed record StorageReviewCandidate(
@@ -89,6 +91,7 @@ public static class StorageKnownLocationReviewClassifier
 {
     public const string DownloadsInstallerRuleId = "downloads.old-package-extension.v1";
     public const string DownloadsArchiveRuleId = "downloads.old-archive-extension.v1";
+    public const string DownloadsDiskImageRuleId = "downloads.old-disk-image-extension.v1";
     public const string UserTempRuleId = "user-temp.old-large-file.v1";
 
     private static readonly HashSet<string> InstallerPackageExtensions = new(
@@ -96,7 +99,11 @@ public static class StorageKnownLocationReviewClassifier
         StringComparer.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> ArchiveExtensions = new(
-        [".zip", ".7z", ".rar", ".iso", ".tar", ".gz", ".tgz", ".bz2", ".xz"],
+        [".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".xz"],
+        StringComparer.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> DiskImageExtensions = new(
+        [".iso"],
         StringComparer.OrdinalIgnoreCase);
 
     public static StorageKnownLocationReview Classify(
@@ -175,8 +182,17 @@ public static class StorageKnownLocationReviewClassifier
             return FromSource(
                 source,
                 StorageReviewProvenance.Downloads,
-                StorageReviewReason.OldArchiveOrDiskImage,
+                StorageReviewReason.OldArchive,
                 DownloadsArchiveRuleId);
+        }
+
+        if (DiskImageExtensions.Contains(source.Extension))
+        {
+            return FromSource(
+                source,
+                StorageReviewProvenance.Downloads,
+                StorageReviewReason.OldDiskImage,
+                DownloadsDiskImageRuleId);
         }
 
         return null;
@@ -211,7 +227,7 @@ public static class StorageKnownLocationReviewClassifier
         StorageReviewProvenance provenance)
     {
         var scope = provenance == StorageReviewProvenance.Downloads
-            ? "Downloads package/archive rules were"
+            ? "Downloads package/archive/disk-image rules were"
             : "The user Temp location rule was";
         return
             $"{scope} applied only to the native Optimize stale-large candidate set " +
