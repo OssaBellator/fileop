@@ -13,6 +13,8 @@ public sealed partial class PerformanceDiagnosticsView
     public void SetMachineProcessActivityUnavailable(string message) =>
         MachineProcessActivity.SetUnavailable(message);
 
-    public void ApplyMachineProcessActivity(MachineProcessActivityResult result) =>
-        MachineProcessActivity.Apply(result);
+    public void ApplyMachineProcessActivity(
+        MachineProcessActivityResult result,
+        SystemCpuActivityResult systemCpuActivity) =>
+        MachineProcessActivity.Apply(result, systemCpuActivity);
 }
