@@ -227,6 +227,10 @@ Invoke-Step "Offline file delete history-binding verifier" {
     python tools/verify_file_delete_history_binding.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline file delete pre-mutation preparation verifier" {
+    python tools/verify_file_delete_pre_mutation_preparation.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline file operation action-history verifier" {
     python tools/verify_file_operation_action_history.py --repo-root $repoRoot --cases 20000
 }
@@ -315,4 +319,4 @@ if (-not $SkipWinUI) {
     }
 }
 
-Write-Host "`nPASS: local FileOp verification completed without GitHub Actions." -ForegroundColor Green
+Write-Host "`nPASS: local FileOp verification completed without GitHub Actions."
