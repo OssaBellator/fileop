@@ -278,8 +278,10 @@ def check_repository(root: Path) -> int:
         (provider, "IFileDeleteOperationSameLeaseMutation", "Windows lease destructive facet"),
         (provider, "private const uint FileDispositionDelete = 0x00000001;", "DELETE disposition flag"),
         (provider, "private const uint FileDispositionPosixSemantics = 0x00000002;", "POSIX disposition flag"),
-        (provider, "private const int FileDispositionInformationEx = 64;", "FileDispositionInformationEx class"),
+        (provider, "private enum FileInformationClass", "native information-class enum"),
+        (provider, "FileDispositionInformationEx = 64,", "FileDispositionInformationEx class"),
         (provider, "Flags = FileDispositionDelete | FileDispositionPosixSemantics", "exact disposition flags"),
+        (provider, "FileInformationClass.FileDispositionInformationEx", "typed disposition information class"),
         (provider, "NtSetInformationFile(", "same-handle native disposition"),
         (provider, "Interlocked.CompareExchange(ref _mutationAttempted, 1, 0)", "one-shot mutation attempt"),
         (provider, "authorization.IsBoundTo(Evidence)", "exact Core authorization binding"),
@@ -315,6 +317,7 @@ def check_repository(root: Path) -> int:
         checks += forbid(mutation_body, needle, label)
 
     for needle, label in (
+        ("private const int FileDispositionInformationEx", "colliding disposition class constant"),
         ("FileDispositionIgnoreReadonly", "read-only attribute bypass"),
         ("FileDispositionOnClose", "disposition-on-close flag"),
         ("FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE", "read-only attribute bypass constant"),
