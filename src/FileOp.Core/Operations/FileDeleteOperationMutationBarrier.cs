@@ -55,8 +55,17 @@ public sealed class FileDeleteOperationMutationBarrierScope : IAsyncDisposable
 
     public bool MutationBarrierSatisfied => true;
 
-    public bool DeleteMutationAuthorized =>
-        MutationBarrierSatisfied && FinalLeaseHeld && DeleteAccessCapabilityHeld;
+    public bool DeleteMutationAuthorized
+    {
+        get
+        {
+            var lease = Volatile.Read(ref _lease);
+            return lease is not null &&
+                lease.DeleteAccessCapabilityHeld &&
+                !lease.DeleteMutationAuthorized &&
+                ReferenceEquals(lease.Evidence, FinalEvidence);
+        }
+    }
 
     public bool DeleteMutationPerformed => false;
 
