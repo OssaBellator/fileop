@@ -12,10 +12,26 @@ public enum FileDeleteProtectedLocationDecision
     Blocked,
 }
 
-public sealed record FileDeleteProtectedLocationResult(
-    FileDeleteProtectedLocationDecision Decision,
-    string Reason)
+public sealed record FileDeleteProtectedLocationResult
 {
+    public FileDeleteProtectedLocationResult(
+        FileDeleteProtectedLocationDecision decision,
+        string reason)
+    {
+        if (!Enum.IsDefined(decision))
+        {
+            throw new ArgumentOutOfRangeException(nameof(decision));
+        }
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        Decision = decision;
+        Reason = reason;
+    }
+
+    public FileDeleteProtectedLocationDecision Decision { get; }
+
+    public string Reason { get; }
+
     public bool IsBlocked => Decision == FileDeleteProtectedLocationDecision.Blocked;
 }
 
