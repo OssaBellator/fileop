@@ -214,6 +214,34 @@ public sealed class FileDeleteOperationFinalMutationLeaseScope : IAsyncDisposabl
         }
     }
 
+    /// <summary>
+    /// Transfers the privately owned final lease to the next Core-only mutation-barrier scope.
+    /// The transfer is serialized against public disposal, so a retained alias becomes inert
+    /// before the durable barrier is attempted and cannot close the transferred capability.
+    /// </summary>
+    internal async ValueTask<IFileDeleteOperationFinalMutationLease> DetachForMutationBarrierAsync()
+    {
+        await _disposeGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var lease = Volatile.Read(ref _lease)
+                ?? throw new InvalidOperationException(
+                    "Final delete lease has already been released or transferred.");
+            if (lease.DeleteMutationAuthorized || !lease.DeleteAccessCapabilityHeld)
+            {
+                throw new InvalidOperationException(
+                    "Final delete lease cannot be transferred without one live, non-authorizing delete-access capability.");
+            }
+
+            Volatile.Write(ref _lease, null);
+            return lease;
+        }
+        finally
+        {
+            _disposeGate.Release();
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _disposeGate.WaitAsync().ConfigureAwait(false);
