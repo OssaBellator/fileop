@@ -221,6 +221,8 @@ def check_repository(root: Path) -> int:
     checks = 0
     required = [
         (core, "public interface IFileDeleteProtectedLocationPolicy", "protected policy contract"),
+        (core, "if (!Enum.IsDefined(decision))", "protected policy decision invariant"),
+        (core, "ArgumentException.ThrowIfNullOrWhiteSpace(reason)", "protected policy reason invariant"),
         (core, "ReadyForAuthorizationReview", "authorization-review naming"),
         (core, "current non-reparse file identity evidence", "ready item identity invariant"),
         (core, "sourceDirectory.Identity is not null", "root identity invariant"),
@@ -249,6 +251,7 @@ def check_repository(root: Path) -> int:
         (tests, "ProtectedCanonicalRootBlocksBeforeEntryResolution", "protected short-circuit regression"),
         (tests, "MissingChangedReparseOrIdentitylessFileFailsClosed", "file identity regression"),
         (tests, "SourceRootNeedsCanonicalDirectoryIdentityAndCannotBeReparse", "root identity regression"),
+        (namespace_tests, "ProtectedLocationResultRejectsMalformedDecisionsAndReasons", "policy result invariant regression"),
         (namespace_tests, "ResidualExtendedAndDeviceNamespacesFailClosed", "extended/device namespace regression"),
         (docs, "fresh handle-resolved validation pass", "fresh validation documentation"),
         (docs, "volume/share roots", "protected root documentation"),
