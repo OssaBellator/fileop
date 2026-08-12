@@ -99,7 +99,7 @@ public sealed class WindowsFileDeleteOperationStabilityLeaseProvider : IFileDele
                 sourceDirectory,
                 leafName,
                 FileReadAttributes | Synchronize,
-                FileShare.ReadWrite,
+                FileShare.Read,
                 FileOpen,
                 FileSynchronousIoNonAlert | FileNonDirectoryFile | FileOpenReparsePoint);
             ValidateFileHandle(
