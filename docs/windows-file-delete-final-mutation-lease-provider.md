@@ -34,7 +34,9 @@ The leaf is opened root-relative with the minimum final capability used by this 
 DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
 ```
 
-The leaf uses `FileShare.Read`. That keeps independent write/delete namespace operations incompatible while the lease is held. There is no create/open-if disposition, delete-on-close option, overwrite/truncate behavior, content read, or path fallback.
+The leaf uses `FileShare.Read`. That keeps independent write/delete namespace operations incompatible while the lease is held. Because Windows sharing checks are symmetric, the fact that the existing final handle itself requested `DELETE` also means a later ordinary reader that does not advertise `FILE_SHARE_DELETE` can be rejected with a sharing violation. FileOp therefore treats this as a short-lived pre-mutation capability lease, not as a transparent long-lived read lease, and does not promise that unrelated opens can continue while it is held.
+
+There is no create/open-if disposition, delete-on-close option, overwrite/truncate behavior, content read, or path fallback.
 
 The provider stores both `SafeFileHandle` objects only inside its private lease implementation. No raw handle is exposed through Core evidence, the final scope, or any App-facing type.
 
@@ -71,7 +73,7 @@ The `DELETE` desired-access bit is a capability held on a live handle, not an ac
 
 ## Validation
 
-`WindowsFileDeleteOperationFinalMutationLeaseProviderTests` exercises the provider on real Windows temporary files. It checks exact authorization/evidence, live capability state, native delete/write sharing exclusion, parent-rename exclusion, release behavior, file replacement during the handoff, root replacement during the handoff, protected-location reevaluation, and pre-cancellation.
+`WindowsFileDeleteOperationFinalMutationLeaseProviderTests` exercises the provider on real Windows temporary files. It checks exact authorization/evidence, live capability state, native delete/write sharing exclusion, parent-rename exclusion, release behavior, file replacement during the handoff, root replacement during the handoff, protected-location reevaluation, and pre-cancellation. Content is verified only after final-lease disposal because a real `DELETE` access handle can legitimately block an ordinary reader that does not share delete access.
 
 `tools/verify_windows_file_delete_final_mutation_lease_provider.py` independently models native acquisition success/failure across randomized authorization, policy, identity, reparse/type, relative-leaf and open-result states. Its source guards pin the exact DELETE access mask, restrictive sharing, root-relative open, root-before/after validation, value-evidence construction, private live-handle lease, and absence of every mutation/disposition API listed above.
 
