@@ -38,7 +38,6 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
 
     private const uint FileDispositionDelete = 0x00000001;
     private const uint FileDispositionPosixSemantics = 0x00000002;
-    private const int FileDispositionInformationEx = 64;
 
     private readonly IFileDeleteProtectedLocationPolicy _protectedLocationPolicy;
 
@@ -536,7 +535,7 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
                 out _,
                 ref disposition,
                 checked((uint)Marshal.SizeOf<FileDispositionInformationEx>()),
-                FileDispositionInformationEx);
+                FileInformationClass.FileDispositionInformationEx);
             if (status < 0)
             {
                 throw new IOException(
@@ -598,7 +597,12 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
         out IoStatusBlock ioStatusBlock,
         ref FileDispositionInformationEx fileInformation,
         uint length,
-        int fileInformationClass);
+        FileInformationClass fileInformationClass);
+
+    private enum FileInformationClass
+    {
+        FileDispositionInformationEx = 64,
+    }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetFinalPathNameByHandleW(
