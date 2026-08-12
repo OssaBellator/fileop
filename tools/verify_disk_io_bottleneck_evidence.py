@@ -35,7 +35,7 @@ def largest_byte_disk(cues: List[DiskCue]) -> Optional[DiskCue]:
     eligible = [cue for cue in cues if cue[1] > 0]
     if not eligible:
         return None
-    return sorted(cues if False else eligible, key=lambda cue: (-cue[1], -cue[2], cue[0]))[0]
+    return sorted(eligible, key=lambda cue: (-cue[1], -cue[2], cue[0]))[0]
 
 
 def largest_owner(cues: List[OwnerCue]) -> Optional[OwnerCue]:
