@@ -13,6 +13,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Grid>
@@ -271,5 +272,9 @@
         <local:VolumeFragmentationAnalysisView
             x:Name="VolumeFragmentationAnalysis"
             Grid.Row="7" />
+
+        <local:StartupApplicationDegradationView
+            x:Name="StartupApplicationDegradation"
+            Grid.Row="8" />
     </Grid>
 </UserControl>
