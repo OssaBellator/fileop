@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using FileOp.Core.Models;
 
 namespace FileOp.Core.Operations;
@@ -12,7 +11,7 @@ public sealed record FileDeleteOperationUserAuthorizationItem(
 
 public sealed record FileDeleteOperationUserAuthorizationReceipt
 {
-    public FileDeleteOperationUserAuthorizationReceipt(
+    internal FileDeleteOperationUserAuthorizationReceipt(
         Guid authorizationId,
         FileDeleteOperationExecutionValidationResult validation,
         DateTimeOffset authorizedAtUtc)
@@ -109,4 +108,50 @@ public sealed record FileDeleteOperationUserAuthorizationReceipt
 
     public bool IsBoundTo(FileDeleteOperationExecutionValidationResult validation) =>
         ReferenceEquals(Validation, validation);
+}
+
+public interface IFileDeleteOperationUserAuthorizationIssuer
+{
+    FileDeleteOperationUserAuthorizationReceipt IssueAfterExplicitUserConfirmation(
+        FileDeleteOperationExecutionValidationResult validation);
+}
+
+public sealed class FileDeleteOperationUserAuthorizationIssuer : IFileDeleteOperationUserAuthorizationIssuer
+{
+    private readonly TimeProvider _timeProvider;
+    private readonly Func<Guid> _authorizationIdFactory;
+
+    public FileDeleteOperationUserAuthorizationIssuer()
+        : this(TimeProvider.System, Guid.NewGuid)
+    {
+    }
+
+    public FileDeleteOperationUserAuthorizationIssuer(
+        TimeProvider timeProvider,
+        Func<Guid> authorizationIdFactory)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        ArgumentNullException.ThrowIfNull(authorizationIdFactory);
+
+        _timeProvider = timeProvider;
+        _authorizationIdFactory = authorizationIdFactory;
+    }
+
+    public FileDeleteOperationUserAuthorizationReceipt IssueAfterExplicitUserConfirmation(
+        FileDeleteOperationExecutionValidationResult validation)
+    {
+        ArgumentNullException.ThrowIfNull(validation);
+
+        var authorizationId = _authorizationIdFactory();
+        if (authorizationId == Guid.Empty)
+        {
+            throw new InvalidOperationException(
+                "Delete user authorization ID source returned an empty ID.");
+        }
+
+        return new FileDeleteOperationUserAuthorizationReceipt(
+            authorizationId,
+            validation,
+            _timeProvider.GetUtcNow());
+    }
 }
