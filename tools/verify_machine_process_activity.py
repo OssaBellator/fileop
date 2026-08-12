@@ -11,6 +11,10 @@ from verify_machine_process_activity_ui import (
     check_repository as check_machine_process_activity_ui_repository,
     run_model as run_machine_process_activity_ui_model,
 )
+from verify_startup_application_degradation import (
+    check_repository as check_startup_degradation_repository,
+    run_model as run_startup_degradation_model,
+)
 
 Process = Tuple[int, int, int, int, int]
 Row = Tuple[int, int, int, int, int, int]
@@ -207,17 +211,23 @@ def main() -> int:
         parser.error("--cases must be positive")
     model_checks = run_model(args.cases, args.seed)
     ui_model_checks = run_machine_process_activity_ui_model(args.cases, args.seed ^ 0x4D504155)
+    startup_model_checks = run_startup_degradation_model(args.cases, args.seed ^ 0x510A710)
     if args.repo_root:
         root = args.repo_root.resolve()
-        source_checks = check_repository(root) + check_machine_process_activity_ui_repository(root)
+        source_checks = (
+            check_repository(root) +
+            check_machine_process_activity_ui_repository(root) +
+            check_startup_degradation_repository(root)
+        )
     else:
         source_checks = 0
     suffix = " and %s source checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: machine process activity verified with %s provider-model assertions and %s UI-model assertions across %s randomized captures%s."
+        "PASS: machine/startup activity verified with %s machine-provider assertions, %s machine-UI assertions, and %s startup-degradation assertions across %s randomized captures/histories%s."
         % (
             format(model_checks, ","),
             format(ui_model_checks, ","),
+            format(startup_model_checks, ","),
             format(args.cases, ","),
             suffix,
         )
