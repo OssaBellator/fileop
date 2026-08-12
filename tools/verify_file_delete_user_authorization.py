@@ -62,7 +62,7 @@ def bound_to(receipt: Receipt, validation: Validation) -> bool:
     return receipt.validation_instance_id == validation.instance_id
 
 
-def run_model(cases: int, seed: int) -> int:
+def run_authorization_model(cases: int, seed: int) -> int:
     checks = 0
     fixed = Validation(
         instance_id=1,
@@ -226,9 +226,9 @@ def run_model(cases: int, seed: int) -> int:
     return checks
 
 
-def run_all_models(cases: int, seed: int) -> int:
+def run_model(cases: int, seed: int) -> int:
     return (
-        run_model(cases, seed)
+        run_authorization_model(cases, seed)
         + run_delete_stability_model(cases, seed ^ 0x57AB1E)
     )
 
@@ -245,7 +245,7 @@ def forbid(text: str, needle: str, label: str) -> int:
     return 1
 
 
-def check_repository(root: Path) -> int:
+def check_authorization_repository(root: Path) -> int:
     core = (root / "src/FileOp.Core/Operations/FileDeleteOperationUserAuthorization.cs").read_text(encoding="utf-8")
     validation = (root / "src/FileOp.Core/Operations/FileDeleteOperationExecutionValidation.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationUserAuthorizationTests.cs").read_text(encoding="utf-8")
@@ -310,9 +310,9 @@ def check_repository(root: Path) -> int:
         (docs, "exact validation instance", "exact validation binding documentation"),
         (cleanup, "CleanupMutationAuthorized => false", "cleanup non-authorization retained"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "Copy/Move operation enum unchanged"),
-        (parent, "from verify_file_delete_user_authorization import (", "delete validator imports authorization child"),
-        (parent, "run_delete_authorization_models(args.cases", "delete validator runs authorization/stability models"),
-        (parent, "check_delete_authorization_repository(repo_root)", "delete validator runs authorization/stability source checks"),
+        (parent, "from verify_file_delete_user_authorization import (", "delete validator imports authorization parent"),
+        (parent, "run_delete_authorization_model(args.cases", "delete validator runs composed authorization parent"),
+        (parent, "check_delete_authorization_repository(repo_root)", "delete validator runs composed authorization source checks"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
     ]
     for text, needle, label in required:
@@ -335,8 +335,8 @@ def check_repository(root: Path) -> int:
     return checks
 
 
-def check_all_repository(root: Path) -> int:
-    return check_repository(root) + check_delete_stability_repository(root)
+def check_repository(root: Path) -> int:
+    return check_authorization_repository(root) + check_delete_stability_repository(root)
 
 
 def main() -> int:
@@ -348,8 +348,8 @@ def main() -> int:
     if args.cases < 1:
         parser.error("--cases must be positive")
 
-    model_checks = run_all_models(args.cases, args.seed)
-    source_checks = check_all_repository(args.repo_root.resolve()) if args.repo_root else 0
+    model_checks = run_model(args.cases, args.seed)
+    source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = f" and {source_checks:,} source checks" if args.repo_root else ""
     print(
         f"PASS: file delete user authorization + stability lease verified with {model_checks:,} model assertions "
