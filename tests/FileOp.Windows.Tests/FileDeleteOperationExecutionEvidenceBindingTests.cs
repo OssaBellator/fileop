@@ -137,8 +137,9 @@ public sealed class FileDeleteOperationExecutionEvidenceBindingTests
             binder.Bind(authorization, stability, history, ordinal: 0));
 
         var shortHistory = CreateHistory(authorization, entryCountOverride: 1);
+        var firstEntryStability = CreateStabilityEvidence(authorization, ordinal: 0);
         Assert.ThrowsException<InvalidOperationException>(() =>
-            binder.Bind(authorization, stability, shortHistory, ordinal: 0));
+            binder.Bind(authorization, firstEntryStability, shortHistory, ordinal: 0));
     }
 
     private static FileDeleteOperationUserAuthorizationReceipt CreateAuthorization(int entryCount)
