@@ -26,7 +26,7 @@ public sealed class WindowsFileDeleteProtectedLocationPolicy : IFileDeleteProtec
     {
     }
 
-    internal WindowsFileDeleteProtectedLocationPolicy(IEnumerable<string> protectedTrees)
+    public WindowsFileDeleteProtectedLocationPolicy(IEnumerable<string> protectedTrees)
     {
         ArgumentNullException.ThrowIfNull(protectedTrees);
         _protectedTrees = protectedTrees
