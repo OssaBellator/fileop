@@ -13,11 +13,13 @@ public sealed partial class MainWindow
         }
 
         // Reuse the existing explicit performance-capture exclusion flag so the
-        // machine sample cannot overlap DiskIo, same-size hashing, or a state-handler
-        // path that would otherwise re-enable those controls while this sample runs.
+        // machine sample cannot overlap DiskIo, fragmentation analysis, same-size
+        // hashing, or a state-handler path that would otherwise re-enable those
+        // controls while this sample runs.
         _performanceDiskIoCaptureActive = true;
         _storageOptimizationView.SetReadyForRefresh(false);
         _storageOptimizationView.SetDiskIoReadyForCapture(false);
+        _storageOptimizationView.SetVolumeFragmentationAnalysisReadyForCapture(false);
         _storageOptimizationView.SetMachineProcessActivityLoading();
         try
         {
@@ -52,6 +54,9 @@ public sealed partial class MainWindow
                     supplementaryReady);
                 _storageOptimizationView.SetDiskIoReadyForCapture(
                     supplementaryReady);
+                _storageOptimizationView.SetVolumeFragmentationAnalysisReadyForCapture(
+                    supplementaryReady &&
+                    _searchEngine.VolumeFragmentationAnalysisRoot is not null);
                 _storageOptimizationView.SetReadyForRefresh(
                     optimizeVisible &&
                     _searchEngine.StorageOptimizationAvailable &&
