@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 
+from verify_file_delete_execution_validation import (
+    check_repository as check_delete_execution_repository,
+    run_model as run_delete_execution_model,
+)
+
 
 class State(Enum):
     MISSING = auto()
@@ -275,11 +280,18 @@ def main() -> int:
     if args.cases <= 0:
         parser.error("--cases must be greater than zero")
 
-    print(f"PASS canonical execution validation properties: {check_properties(args.cases)} checks")
+    copy_move_checks = check_properties(args.cases)
+    delete_checks = run_delete_execution_model(args.cases, 0xD31E7E)
+    print(
+        f"PASS canonical execution validation properties: {copy_move_checks} Copy/Move checks; "
+        f"{delete_checks} delete checks"
+    )
     if not args.self_test_only:
+        copy_move_source = check_repository(args.repo_root.resolve())
+        delete_source = check_delete_execution_repository(args.repo_root.resolve())
         print(
             "PASS canonical execution validation source wiring: "
-            f"{check_repository(args.repo_root.resolve())} checks"
+            f"{copy_move_source} Copy/Move checks; {delete_source} delete checks"
         )
     return 0
 
