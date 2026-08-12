@@ -51,6 +51,13 @@ def run_model(cases: int, seed: int) -> int:
     return checks
 
 
+def run_all_models(cases: int, seed: int) -> tuple[int, int]:
+    return (
+        run_model(cases, seed),
+        run_system_physical_memory_ui_model(cases, 0x4D454D55),
+    )
+
+
 def require(text: str, needle: str, label: str) -> int:
     if needle not in text:
         raise AssertionError("missing %s: %s" % (label, needle))
@@ -95,8 +102,8 @@ def check_repository(root: Path) -> int:
         (docs, "deliberately does not expose those fields", "page-file/virtual boundary"),
         (docs, "not treated as wasted or recoverable RAM", "no cleanup heuristic"),
         (parent, "from verify_system_physical_memory_status import (", "parent imports memory verifier"),
-        (parent, "run_system_physical_memory_model(args.cases", "parent runs memory model"),
-        (parent, "check_system_physical_memory_repository(root)", "parent runs memory source checks"),
+        (parent, "run_system_physical_memory_models(args.cases", "parent runs combined memory models"),
+        (parent, "check_system_physical_memory_repository(root)", "parent runs combined memory source checks"),
         (gate, "verify_performance_diagnostics.py --repo-root $repoRoot --cases 50000", "existing offline gate"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
     ]
@@ -133,6 +140,13 @@ def check_repository(root: Path) -> int:
     return checks
 
 
+def check_all_repository(root: Path) -> int:
+    return (
+        check_repository(root) +
+        check_system_physical_memory_ui_repository(root)
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path)
@@ -142,15 +156,8 @@ def main() -> int:
     if args.cases < 1:
         parser.error("--cases must be positive")
 
-    model_checks = run_model(args.cases, args.seed)
-    ui_model_checks = run_system_physical_memory_ui_model(args.cases, 0x4D454D55)
-    source_checks = 0
-    if args.repo_root:
-        root = args.repo_root.resolve()
-        source_checks = (
-            check_repository(root) +
-            check_system_physical_memory_ui_repository(root)
-        )
+    model_checks, ui_model_checks = run_all_models(args.cases, args.seed)
+    source_checks = check_all_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = " and %s source/UI checks" % format(source_checks, ",") if args.repo_root else ""
     print(
         "PASS: system physical-memory status verified with %s provider-model assertions and %s UI-model assertions across %s randomized states%s."
