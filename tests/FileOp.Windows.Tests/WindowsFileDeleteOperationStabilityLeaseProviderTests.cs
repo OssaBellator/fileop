@@ -64,7 +64,7 @@ public sealed class WindowsFileDeleteOperationStabilityLeaseProviderTests
         File.Move(fixture.SourcePath, originalPath);
         await File.WriteAllTextAsync(fixture.SourcePath, "replacement");
 
-        await Assert.ThrowsExactlyAsync<IOException>(async () =>
+        await AssertThrowsAsync<IOException>(async () =>
             await fixture.CreateProvider().AcquireAsync(
                 new FileDeleteOperationStabilityLeaseRequest(authorization, 0)));
 
@@ -86,7 +86,7 @@ public sealed class WindowsFileDeleteOperationStabilityLeaseProviderTests
             Directory.CreateDirectory(fixture.RootPath);
             await File.WriteAllTextAsync(fixture.SourcePath, "replacement");
 
-            await Assert.ThrowsExactlyAsync<IOException>(async () =>
+            await AssertThrowsAsync<IOException>(async () =>
                 await fixture.CreateProvider().AcquireAsync(
                     new FileDeleteOperationStabilityLeaseRequest(authorization, 0)));
 
@@ -119,7 +119,7 @@ public sealed class WindowsFileDeleteOperationStabilityLeaseProviderTests
         var provider = new WindowsFileDeleteOperationStabilityLeaseProvider(
             new AlwaysBlockedPolicy());
 
-        await Assert.ThrowsExactlyAsync<UnauthorizedAccessException>(async () =>
+        await AssertThrowsAsync<UnauthorizedAccessException>(async () =>
             await provider.AcquireAsync(
                 new FileDeleteOperationStabilityLeaseRequest(authorization, 0)));
 
@@ -138,12 +138,27 @@ public sealed class WindowsFileDeleteOperationStabilityLeaseProviderTests
 
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.ThrowsExactlyAsync<OperationCanceledException>(async () =>
+        await AssertThrowsAsync<OperationCanceledException>(async () =>
             await fixture.CreateProvider().AcquireAsync(
                 new FileDeleteOperationStabilityLeaseRequest(authorization, 0),
                 cancellation.Token));
 
         Assert.IsTrue(File.Exists(fixture.SourcePath));
+    }
+
+    private static async Task AssertThrowsAsync<TException>(Func<Task> action)
+        where TException : Exception
+    {
+        try
+        {
+            await action();
+        }
+        catch (TException)
+        {
+            return;
+        }
+
+        Assert.Fail($"Expected {typeof(TException).Name} to be thrown.");
     }
 
     private static bool DeleteIsBlocked(string path)
