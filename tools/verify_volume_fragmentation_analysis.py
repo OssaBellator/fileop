@@ -177,6 +177,7 @@ def check_repository(root: Path) -> int:
     provider = (root / "src/FileOp.Windows/Performance/WindowsVolumeFragmentationAnalysisProvider.cs").read_text(encoding="utf-8")
     project = (root / "src/FileOp.Windows/FileOp.Windows.csproj").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/VolumeFragmentationAnalysisTests.cs").read_text(encoding="utf-8")
+    timeout_tests = (root / "tests/FileOp.Windows.Tests/VolumeFragmentationTimeoutTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/volume-fragmentation-analysis.md").read_text(encoding="utf-8")
     parent = (root / "tools/verify_performance_diagnostics.py").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
@@ -196,7 +197,10 @@ def check_repository(root: Path) -> int:
         (provider, "ManagementOperationObserver", "asynchronous WMI method invocation"),
         (provider, "observer.Cancel();", "WMI cancellation request"),
         (provider, '"DefragAnalysis"', "analysis-only WMI method"),
-        (provider, "new InvokeMethodOptions { Timeout = timeout }", "WMI method timeout"),
+        (provider, "remainingTimeout = GetRemainingTimeout", "single lookup + method timeout budget"),
+        (provider, "new InvokeMethodOptions { Timeout = timeout }", "remaining WMI method timeout"),
+        (provider, "ManagementStatus.Timedout", "WMI timeout classification"),
+        (provider, "ManagementStatus.OperationCanceled", "WMI cancellation classification"),
         (provider, "raw.ReturnCode switch", "raw provider-state mapping"),
         (provider, "Stopwatch.GetElapsedTime(started)", "analysis elapsed evidence"),
         (provider, "cancellationToken.IsCancellationRequested", "caller cancellation propagation"),
@@ -205,6 +209,8 @@ def check_repository(root: Path) -> int:
         (tests, "ProviderMapsRawReturnCodesWithoutInventingEvidence", "return-code regression"),
         (tests, "SuccessWithMalformedMetricsFailsClosed", "malformed success regression"),
         (tests, "CallerCancellationPropagatesBeforeApiCall", "caller cancellation regression"),
+        (timeout_tests, "RemainingTimeoutSubtractsLookupElapsedTime", "remaining timeout regression"),
+        (timeout_tests, "RemainingTimeoutFailsWhenLookupConsumesBudget", "exhausted lookup budget regression"),
         (docs, "optional compatibility evidence", "legacy support boundary"),
         (docs, "cancellation requested / FileOp stopped waiting", "cancellation caveat"),
         (docs, "does not turn it into an automatic action", "no recommendation promotion"),
