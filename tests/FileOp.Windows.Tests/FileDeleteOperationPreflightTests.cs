@@ -44,6 +44,34 @@ public sealed class FileDeleteOperationPreflightTests
     }
 
     [TestMethod]
+    public void ResultStatusMustMatchCapturedItemDecisions()
+    {
+        var plan = Plan(new FileOperationEntry(@"C:\Source\a.txt", "a.txt", false));
+        var sourceRoot = Inspection(@"C:\Source", FileOperationPathState.Directory);
+        var source = Inspection(@"C:\Source\a.txt", FileOperationPathState.File);
+        var blocked = new FileDeleteOperationPreflightItem(
+            plan.Intent.Entries[0],
+            source,
+            FileDeleteOperationPreflightDecision.Blocked,
+            "blocked");
+
+        Assert.ThrowsException<ArgumentException>(() =>
+            new FileDeleteOperationPreflightResult(
+                plan,
+                sourceRoot,
+                new[] { blocked },
+                FileDeleteOperationPreflightStatus.ReadyForFurtherReview,
+                "invalid"));
+        Assert.ThrowsException<ArgumentException>(() =>
+            new FileDeleteOperationPreflightResult(
+                plan,
+                sourceRoot,
+                Array.Empty<FileDeleteOperationPreflightItem>(),
+                FileDeleteOperationPreflightStatus.ReadyForFurtherReview,
+                "invalid"));
+    }
+
+    [TestMethod]
     public async Task MatchingDirectFileIsReadyForFurtherReviewButNeverAuthorized()
     {
         var entry = new FileOperationEntry(@"C:\Source\a.txt", "a.txt", false);
@@ -62,6 +90,23 @@ public sealed class FileDeleteOperationPreflightTests
         Assert.IsTrue(result.IsReadyForFurtherReview);
         Assert.IsFalse(result.DeleteMutationAuthorized);
         StringAssert.Contains(result.Summary, "not authorization to delete");
+    }
+
+    [TestMethod]
+    public async Task DirectoryEntryIsBlockedBeforeEntryProbe()
+    {
+        var probe = new FakeProbe(new Dictionary<string, FileOperationPathInspection>(StringComparer.OrdinalIgnoreCase)
+        {
+            [@"C:\Source"] = Inspection(@"C:\Source", FileOperationPathState.Directory),
+        });
+        var result = await new WindowsFileDeleteOperationPreflightValidator(probe)
+            .ValidateAsync(Plan(new FileOperationEntry(@"C:\Source\Folder", "Folder", true)));
+
+        Assert.AreEqual(FileDeleteOperationPreflightStatus.Blocked, result.Status);
+        Assert.AreEqual(1, result.BlockedCount);
+        Assert.AreEqual(1, probe.Calls);
+        StringAssert.Contains(result.Items[0].Message, "Directory deletion is not part");
+        Assert.IsFalse(result.DeleteMutationAuthorized);
     }
 
     [TestMethod]
@@ -104,6 +149,7 @@ public sealed class FileDeleteOperationPreflightTests
         Assert.AreEqual(FileDeleteOperationPreflightStatus.Blocked, result.Status);
         Assert.AreEqual(1, probe.Calls);
         Assert.AreEqual(0, result.Items.Count);
+        Assert.IsFalse(result.DeleteMutationAuthorized);
     }
 
     [TestMethod]
