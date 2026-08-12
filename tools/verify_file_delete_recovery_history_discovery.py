@@ -257,6 +257,7 @@ def check_repository(root: Path) -> int:
         (history, "public bool DeleteMutationAuthorized => false;", "history remains non-authorizing"),
         (tests, "RestartReaderReturnsOnlyRecoverySensitiveHistoriesNewestFirst", "restart discovery regression"),
         (tests, "RecoveryDiscoveryLimitIsBoundedAndPreservesNewestOrdering", "bounds/order regression"),
+        (tests, "MissingDatabaseIsNotCreatedByRecoveryReader", "missing-database no-create regression"),
         (tests, "0xF123456789ABCDEFUL", "high-bit identity regression"),
         (docs, "does not infer that a `MutationStarted` file was deleted", "restart ambiguity documentation"),
         (local_gate, "verify_file_delete_recovery_history_discovery.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
@@ -266,6 +267,7 @@ def check_repository(root: Path) -> int:
         checks += require(text, needle, label)
 
     for text, needle, label in (
+        (reader, "SqliteCacheMode.Shared", "shared-cache mode on WAL reader"),
         (reader, "CREATE TABLE", "schema creation"),
         (reader, "INSERT INTO", "history insert"),
         (reader, "UPDATE file_delete", "history update"),
