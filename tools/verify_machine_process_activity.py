@@ -16,8 +16,8 @@ from verify_startup_application_degradation import (
     run_all_models as run_startup_degradation_models,
 )
 from verify_system_cpu_activity import (
-    check_repository as check_system_cpu_activity_repository,
-    run_model as run_system_cpu_activity_model,
+    check_all_repository as check_system_cpu_activity_repository,
+    run_all_models as run_system_cpu_activity_models,
 )
 
 Process = Tuple[int, int, int, int, int]
@@ -219,7 +219,10 @@ def main() -> int:
         args.cases,
         args.seed ^ 0x510A710,
     )
-    system_cpu_model_checks = run_system_cpu_activity_model(args.cases, args.seed ^ 0xC0FFEE)
+    system_cpu_model_checks, system_cpu_ui_model_checks = run_system_cpu_activity_models(
+        args.cases,
+        args.seed ^ 0xC0FFEE,
+    )
     if args.repo_root:
         root = args.repo_root.resolve()
         source_checks = (
@@ -232,13 +235,14 @@ def main() -> int:
         source_checks = 0
     suffix = " and %s source/UI checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: machine/startup/CPU activity verified with %s machine-provider assertions, %s machine-UI assertions, %s startup-provider assertions, %s startup-UI assertions, and %s system-CPU assertions across %s randomized captures/histories/intervals%s."
+        "PASS: machine/startup/CPU activity verified with %s machine-provider assertions, %s machine-UI assertions, %s startup-provider assertions, %s startup-UI assertions, %s system-CPU assertions, and %s system-CPU-UI assertions across %s randomized captures/histories/intervals%s."
         % (
             format(model_checks, ","),
             format(ui_model_checks, ","),
             format(startup_model_checks, ","),
             format(startup_ui_model_checks, ","),
             format(system_cpu_model_checks, ","),
+            format(system_cpu_ui_model_checks, ","),
             format(args.cases, ","),
             suffix,
         )

@@ -6,6 +6,11 @@ import argparse
 import random
 from pathlib import Path
 
+from verify_system_cpu_activity_ui import (
+    check_repository as check_system_cpu_activity_ui_repository,
+    run_model as run_system_cpu_activity_ui_model,
+)
+
 
 def analyze(
     start_idle: int,
@@ -124,6 +129,13 @@ def run_model(cases: int, seed: int) -> int:
     return checks
 
 
+def run_all_models(cases: int, seed: int) -> tuple[int, int]:
+    return (
+        run_model(cases, seed),
+        run_system_cpu_activity_ui_model(cases, seed ^ 0x55AA55),
+    )
+
+
 def require(text: str, needle: str, label: str) -> int:
     if needle not in text:
         raise AssertionError("missing %s: %s" % (label, needle))
@@ -177,9 +189,10 @@ def check_repository(root: Path) -> int:
         (docs, "primary processor group", "documented >64 processor scope"),
         (docs, "separate evidence stream", "process/system provenance separation"),
         (docs, "does not universally label this evidence `whole-machine CPU`", "scope wording boundary"),
-        (parent, "from verify_system_cpu_activity import (", "machine parent imports CPU verifier"),
-        (parent, "run_system_cpu_activity_model(args.cases", "machine parent runs CPU model"),
-        (parent, "check_system_cpu_activity_repository(root)", "machine parent runs CPU source checks"),
+        (parent, "run_all_models as run_system_cpu_activity_models", "machine parent imports combined CPU models"),
+        (parent, "check_all_repository as check_system_cpu_activity_repository", "machine parent imports combined CPU source checks"),
+        (parent, "run_system_cpu_activity_models(", "machine parent runs combined CPU models"),
+        (parent, "check_system_cpu_activity_repository(root)", "machine parent runs combined CPU checks"),
         (gate, "verify_background_process_activity.py --repo-root $repoRoot --cases 50000", "existing direct machine gate"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
     ]
@@ -226,6 +239,13 @@ def check_repository(root: Path) -> int:
     return checks
 
 
+def check_all_repository(root: Path) -> int:
+    return (
+        check_repository(root) +
+        check_system_cpu_activity_ui_repository(root)
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path)
@@ -235,12 +255,17 @@ def main() -> int:
     if args.cases < 1:
         parser.error("--cases must be positive")
 
-    model_checks = run_model(args.cases, args.seed)
-    source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
-    suffix = " and %s source checks" % format(source_checks, ",") if args.repo_root else ""
+    model_checks, ui_model_checks = run_all_models(args.cases, args.seed)
+    source_checks = check_all_repository(args.repo_root.resolve()) if args.repo_root else 0
+    suffix = " and %s source/UI checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: system CPU activity verified with %s model assertions across %s randomized intervals%s."
-        % (format(model_checks, ","), format(args.cases, ","), suffix)
+        "PASS: system CPU activity verified with %s provider-model assertions and %s UI-model assertions across %s randomized intervals/states%s."
+        % (
+            format(model_checks, ","),
+            format(ui_model_checks, ","),
+            format(args.cases, ","),
+            suffix,
+        )
     )
     return 0
 
