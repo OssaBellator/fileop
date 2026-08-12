@@ -124,6 +124,7 @@ public static class FileDeleteOperationMutationBarrier
         var priorBinding = finalLeaseScope.PriorBindingEvidence;
         var finalEvidence = finalLeaseScope.FinalEvidence;
         ValidateFinalEvidence(priorBinding, finalEvidence);
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Cancellation stops here. Detach and every durability/recovery operation below use a
         // non-cancellable critical section so a caller cannot interrupt ownership settlement.
