@@ -17,8 +17,10 @@ public sealed partial class PerformanceDiagnosticsView
         DiskIoDeviceEvidenceSnapshot evidence)
     {
         ArgumentNullException.ThrowIfNull(evidence);
+        var enriched = AttachDiskIoFailurePrediction(evidence);
         _diskIoAttributionView.ApplyDeviceEvidence(
-            evidence.Rows,
-            evidence.QueryElapsed);
+            enriched.Rows,
+            enriched.QueryElapsed);
+        _diskIoAttributionView.ApplyFailurePredictionEvidence(enriched.Rows);
     }
 }
