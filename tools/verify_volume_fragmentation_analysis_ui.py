@@ -23,7 +23,11 @@ def capture_allowed(
     explicit_capture_active: bool,
     same_size_active: bool,
     storage_source: str | None,
+    native_index_available: bool | None = None,
 ) -> bool:
+    # Fragmentation analysis is volume/WMI evidence and deliberately does not
+    # depend on native-index availability once a canonical local drive exists.
+    _ = native_index_available
     return (
         optimize_visible
         and not explicit_capture_active
@@ -59,6 +63,7 @@ def run_model(cases: int, seed: int) -> int:
         optimize = bool(rng.getrandbits(1))
         active = bool(rng.getrandbits(1))
         same_size = bool(rng.getrandbits(1))
+        native_index_available = bool(rng.getrandbits(1))
         drive = chr(ord("A") + rng.randrange(26))
         source_kind = rng.randrange(4)
         source = {
@@ -67,7 +72,13 @@ def run_model(cases: int, seed: int) -> int:
             2: r"\\server\share\folder",
             3: "relative/path",
         }[source_kind]
-        allowed = capture_allowed(optimize, active, same_size, source)
+        allowed = capture_allowed(
+            optimize,
+            active,
+            same_size,
+            source,
+            native_index_available,
+        )
         assert allowed == (
             optimize
             and not active
@@ -101,13 +112,16 @@ def run_model(cases: int, seed: int) -> int:
         assert shown_metrics == metrics
         checks += 2
 
-        # Native/fallback indexing mode must not affect eligibility when the
-        # same explicit drive root is available.
-        native_mode = bool(rng.getrandbits(1))
-        assert capture_allowed(True, False, False, source) == capture_allowed(
-            True, False, False, source
+        # Toggling native-index availability alone must never change whether the
+        # same explicit drive-root analysis is eligible.
+        assert capture_allowed(
+            optimize, active, same_size, source, True
+        ) == capture_allowed(
+            optimize, active, same_size, source, False
         )
-        assert isinstance(native_mode, bool)
+        assert allowed == capture_allowed(
+            optimize, active, same_size, source, native_index_available
+        )
         checks += 2
     return checks
 
@@ -165,7 +179,7 @@ def check_repository(root: Path) -> int:
         (engine, "Path.GetPathRoot(storageRoot)", "containing drive derivation"),
         (engine, "VolumeFragmentationDriveRoot.RequireCanonical", "canonical drive boundary"),
         (engine, "CaptureVolumeFragmentationAnalysisAsync", "engine capture bridge"),
-        (engine, "MachineProcessActivityBudget" if False else "VolumeFragmentationAnalysisBudget.Default", "default analysis budget"),
+        (engine, "VolumeFragmentationAnalysisBudget.Default", "default analysis budget"),
         (engine, "_lifetimeCancellation.Token", "engine lifetime cancellation"),
         (main, "_performanceDiskIoCaptureActive", "shared explicit capture exclusion"),
         (main, "var volumeRoot = _searchEngine.VolumeFragmentationAnalysisRoot", "captured drive identity"),
