@@ -5,8 +5,8 @@ namespace FileOp.Core.Operations;
 /// <summary>
 /// Snapshot evidence that one exact user-authorization receipt, read-only stability observation,
 /// and durable delete-history entry described the same pending file at validation time.
-/// This is not a mutation capability, does not prove the stability lease is still alive, and
-/// does not replace the durable Pending -> MutationStarted barrier required before mutation.
+/// This is not a mutation capability, does not prove a stability lease was acquired or remains alive,
+/// and does not replace the durable Pending -> MutationStarted barrier required before mutation.
 /// </summary>
 public sealed class FileDeleteOperationHistoryBindingEvidence
 {
@@ -37,6 +37,8 @@ public sealed class FileDeleteOperationHistoryBindingEvidence
     public bool DeleteMutationAuthorized => false;
 
     public bool MutationBarrierSatisfied => false;
+
+    public bool StabilityLeaseAcquisitionProven => false;
 
     public bool StabilityLeaseLivenessProven => false;
 
