@@ -92,8 +92,6 @@ def run_model(cases: int, seed: int) -> int:
         checks += 2
 
         if acquired:
-            # A live read-only lease denies new write/delete sharing on the leaf and
-            # delete/rename sharing on the held root. None of those blocks is mutation.
             leaf_delete_blocked = True
             leaf_write_blocked = True
             root_rename_blocked = True
@@ -108,7 +106,6 @@ def run_model(cases: int, seed: int) -> int:
             assert evidence_bound_to_exact_receipt_and_ordinal
             checks += 6
 
-            # Disposal releases only stability holds; it still does not perform mutation.
             lease_disposed = True
             mutation_performed_by_dispose = False
             assert lease_disposed
@@ -143,6 +140,7 @@ def forbid(text: str, needle: str, label: str) -> int:
 def check_repository(root: Path) -> int:
     core = (root / "src/FileOp.Core/Operations/FileDeleteOperationStabilityLease.cs").read_text(encoding="utf-8")
     windows = (root / "src/FileOp.Windows/Operations/WindowsFileDeleteOperationStabilityLeaseProvider.cs").read_text(encoding="utf-8")
+    contract_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationStabilityLeaseContractTests.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/WindowsFileDeleteOperationStabilityLeaseProviderTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/file-delete-stability-lease.md").read_text(encoding="utf-8")
     auth = (root / "src/FileOp.Core/Operations/FileDeleteOperationUserAuthorization.cs").read_text(encoding="utf-8")
@@ -197,11 +195,15 @@ def check_repository(root: Path) -> int:
         (windows, "public bool DeleteMutationAuthorized => false;", "Windows lease non-authorization"),
         (windows, "DisposeNoThrow(_sourceFile)", "leaf handle disposal"),
         (windows, "DisposeNoThrow(_sourceDirectory)", "root handle disposal"),
+        (contract_tests, "EvidenceRequiresExactAuthorizedRootAndFileIdentity", "forged identity contract regression"),
+        (contract_tests, "EvidenceIsBoundToExactAuthorizationReceiptAndOrdinal", "exact receipt contract regression"),
+        (contract_tests, "RequestRejectsOutOfRangeOrdinal", "ordinal contract regression"),
         (tests, "LeaseBindsExactAuthorizationAndBlocksWriteDeleteAndParentRenameUntilDisposed", "lease blocking regression"),
         (tests, "FileIdentityReplacementAfterAuthorizationFailsBeforeLease", "file replacement regression"),
         (tests, "SourceRootReplacementAfterAuthorizationFailsBeforeLease", "root replacement regression"),
         (tests, "ProtectedLocationPolicyIsRecheckedAtLeaseAcquisition", "policy recheck regression"),
         (tests, "RequestRejectsWrongOrdinalAndAcquisitionHonorsPreCancellation", "ordinal/cancellation regression"),
+        (tests, "AssertThrowsAsync<", "portable async exception assertion helper"),
         (docs, "metadata/traverse access only", "read-only access documentation"),
         (docs, "does not read file contents", "no content read documentation"),
         (docs, "does not request `DELETE` access", "no delete access documentation"),
