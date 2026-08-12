@@ -260,7 +260,7 @@ def check_repository(root: Path) -> int:
 
     checks = 0
     required = [
-        (core, "public sealed record FileDeleteOperationUserAuthorizationReceipt", "authorization receipt contract"),
+        (core, "public sealed class FileDeleteOperationUserAuthorizationReceipt", "reference-identity authorization receipt contract"),
         (core, "internal FileDeleteOperationUserAuthorizationReceipt(", "non-public receipt construction"),
         (core, "authorizationId == Guid.Empty", "non-empty authorization id"),
         (core, "!validation.CanRequestAuthorizationReview", "ready validation prerequisite"),
