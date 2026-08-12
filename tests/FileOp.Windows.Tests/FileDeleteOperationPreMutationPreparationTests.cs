@@ -51,6 +51,35 @@ public sealed class FileDeleteOperationPreMutationPreparationTests
     }
 
     [TestMethod]
+    public async Task ScopeDisposalFailureRetainsOwnershipAndAllowsRetry()
+    {
+        var authorization = CreateAuthorization(entryCount: 1);
+        var lease = CreateLease(authorization, ordinal: 0, disposeFailures: 1);
+        var provider = new FakeStabilityLeaseProvider(lease);
+        await using var store = new FakeHistoryStore(CreateHistory(authorization));
+        var scope = await FileDeleteOperationPreMutationPreparation.PrepareAsync(
+            authorization,
+            0,
+            provider,
+            store);
+
+        await AssertThrowsAsync<InvalidOperationException>(async () =>
+            await scope.DisposeAsync());
+
+        Assert.AreEqual(1, lease.DisposeCount);
+        Assert.IsTrue(scope.StabilityLeaseHeld);
+        Assert.IsFalse(scope.IsDisposed);
+        Assert.AreEqual(0, store.MutationCallCount);
+
+        await scope.DisposeAsync();
+
+        Assert.AreEqual(2, lease.DisposeCount);
+        Assert.IsFalse(scope.StabilityLeaseHeld);
+        Assert.IsTrue(scope.IsDisposed);
+        Assert.AreEqual(0, store.MutationCallCount);
+    }
+
+    [TestMethod]
     public async Task ProviderEvidenceFromDifferentAuthorizationFailsBeforeHistoryReadAndReleasesLease()
     {
         var events = new List<string>();
@@ -205,7 +234,8 @@ public sealed class FileDeleteOperationPreMutationPreparationTests
     private static FakeStabilityLease CreateLease(
         FileDeleteOperationUserAuthorizationReceipt authorization,
         int ordinal,
-        bool deleteMutationAuthorized = false)
+        bool deleteMutationAuthorized = false,
+        int disposeFailures = 0)
     {
         var request = new FileDeleteOperationStabilityLeaseRequest(authorization, ordinal);
         var item = authorization.Items[ordinal];
@@ -215,7 +245,7 @@ public sealed class FileDeleteOperationPreMutationPreparationTests
             authorization.SourceDirectoryIdentity,
             item.CanonicalPath,
             item.Identity);
-        return new FakeStabilityLease(evidence, deleteMutationAuthorized);
+        return new FakeStabilityLease(evidence, deleteMutationAuthorized, disposeFailures);
     }
 
     private static FileDeleteOperationActionHistory CreateHistory(
@@ -358,12 +388,16 @@ public sealed class FileDeleteOperationPreMutationPreparationTests
 
     private sealed class FakeStabilityLease : IFileDeleteOperationStabilityLease
     {
+        private int _remainingDisposeFailures;
+
         public FakeStabilityLease(
             FileDeleteOperationStabilityLeaseEvidence evidence,
-            bool deleteMutationAuthorized)
+            bool deleteMutationAuthorized,
+            int disposeFailures)
         {
             Evidence = evidence;
             DeleteMutationAuthorized = deleteMutationAuthorized;
+            _remainingDisposeFailures = disposeFailures;
         }
 
         public FileDeleteOperationStabilityLeaseEvidence Evidence { get; }
@@ -375,6 +409,12 @@ public sealed class FileDeleteOperationPreMutationPreparationTests
         public ValueTask DisposeAsync()
         {
             DisposeCount++;
+            if (_remainingDisposeFailures > 0)
+            {
+                _remainingDisposeFailures--;
+                throw new InvalidOperationException("synthetic lease disposal failure");
+            }
+
             return ValueTask.CompletedTask;
         }
     }
