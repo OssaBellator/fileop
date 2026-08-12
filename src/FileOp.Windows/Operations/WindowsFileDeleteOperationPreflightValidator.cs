@@ -113,6 +113,13 @@ public sealed class WindowsFileDeleteOperationPreflightValidator : IFileDeleteOp
                 MissingInspection(sourcePath),
                 "Alternate data stream paths are not supported by delete preflight.");
         }
+        if (entry.IsDirectory)
+        {
+            return Blocked(
+                entry,
+                MissingInspection(sourcePath),
+                "Directory deletion is not part of this file-only delete preflight foundation; recursion and recovery policy must be designed separately.");
+        }
 
         var sourceInspection = await _probe
             .InspectAsync(sourcePath, cancellationToken)
@@ -125,11 +132,7 @@ public sealed class WindowsFileDeleteOperationPreflightValidator : IFileDeleteOp
         {
             return Blocked(entry, sourceInspection, "The source entry cannot be inspected safely.");
         }
-
-        var expectedState = entry.IsDirectory
-            ? FileOperationPathState.Directory
-            : FileOperationPathState.File;
-        if (sourceInspection.State != expectedState)
+        if (sourceInspection.State != FileOperationPathState.File)
         {
             return Blocked(entry, sourceInspection, "The source entry type changed after capture.");
         }
@@ -145,7 +148,7 @@ public sealed class WindowsFileDeleteOperationPreflightValidator : IFileDeleteOp
             entry,
             sourceInspection,
             FileDeleteOperationPreflightDecision.ReadyForFurtherReview,
-            "The captured source entry is still a direct, non-reparse child with the expected type. Further authorization and execution validation are still required before deletion can be considered.");
+            "The captured file is still a direct, non-reparse child with the expected type. Further authorization and execution validation are still required before deletion can be considered.");
     }
 
     private static bool IsUsableDirectory(
