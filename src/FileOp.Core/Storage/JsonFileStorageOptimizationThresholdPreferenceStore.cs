@@ -131,7 +131,7 @@ public sealed class JsonFileStorageOptimizationThresholdPreferenceStore :
         }
     }
 
-    private static StorageOptimizationThresholdPreference? Parse(ReadOnlySpan<byte> bytes)
+    private static StorageOptimizationThresholdPreference? Parse(ReadOnlyMemory<byte> bytes)
     {
         using var document = JsonDocument.Parse(bytes);
         if (document.RootElement.ValueKind != JsonValueKind.Object)
