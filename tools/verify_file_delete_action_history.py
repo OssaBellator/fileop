@@ -271,6 +271,22 @@ def check_repository(root: Path) -> int:
     for text, needle, label in required:
         checks += require(text, needle, label)
 
+    commit_return_pattern = (
+        "cancellationToken).ConfigureAwait(false);\n"
+        "            transaction.Commit();\n"
+        "            return history;"
+    )
+    if store.count(commit_return_pattern) != 3:
+        raise AssertionError(
+            "Begin, entry transition, and completion must materialize their resulting history inside the transaction before commit"
+        )
+    checks += 1
+    checks += forbid(
+        store,
+        "transaction.Commit();\n            return await LoadRequiredAsync",
+        "post-commit cancellable history reload",
+    )
+
     combined = core + "\n" + store
     for text, needle, label in (
         (combined, "file_operation_actions", "Copy action table reference"),
