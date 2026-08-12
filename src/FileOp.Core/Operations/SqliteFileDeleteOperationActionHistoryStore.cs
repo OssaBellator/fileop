@@ -161,8 +161,13 @@ public sealed class SqliteFileDeleteOperationActionHistoryStore : IFileDeleteOpe
                 }
             }
 
+            var history = await LoadRequiredAsync(
+                connection,
+                transaction,
+                authorization.PlanId,
+                cancellationToken).ConfigureAwait(false);
             transaction.Commit();
-            return await LoadRequiredAsync(connection, null, authorization.PlanId, cancellationToken).ConfigureAwait(false);
+            return history;
         }
         finally
         {
@@ -268,8 +273,13 @@ public sealed class SqliteFileDeleteOperationActionHistoryStore : IFileDeleteOpe
                 throw new InvalidOperationException("Delete action-history completion did not affect exactly one running operation.");
             }
 
+            history = await LoadRequiredAsync(
+                connection,
+                transaction,
+                operationId,
+                cancellationToken).ConfigureAwait(false);
             transaction.Commit();
-            return await LoadRequiredAsync(connection, null, operationId, cancellationToken).ConfigureAwait(false);
+            return history;
         }
         finally
         {
@@ -376,8 +386,13 @@ public sealed class SqliteFileDeleteOperationActionHistoryStore : IFileDeleteOpe
                     $"Delete action-history transition {expectedState} -> {nextState} did not match exactly one current entry with the required provenance.");
             }
 
+            var history = await LoadRequiredAsync(
+                connection,
+                transaction,
+                operationId,
+                cancellationToken).ConfigureAwait(false);
             transaction.Commit();
-            return await LoadRequiredAsync(connection, null, operationId, cancellationToken).ConfigureAwait(false);
+            return history;
         }
         finally
         {
