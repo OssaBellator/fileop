@@ -44,7 +44,7 @@ public sealed class WindowsCurrentFilePhysicalEvidenceReaderTests
         stream.Dispose();
         var reader = new WindowsCurrentFilePhysicalEvidenceReader();
 
-        Assert.ThrowsException<ObjectDisposedException>(() => reader.Read(stream, path));
+        Assert.Throws<ObjectDisposedException>(() => reader.Read(stream, path));
     }
 
     private sealed class TempDirectory : IDisposable

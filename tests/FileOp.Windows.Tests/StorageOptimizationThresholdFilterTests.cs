@@ -73,7 +73,7 @@ public sealed class StorageOptimizationThresholdFilterTests
             LargeFileMinimumBytes = analysis.Policy.LargeFileMinimumBytes - 1,
         };
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             StorageOptimizationThresholdFilter.Apply(analysis, thresholds));
     }
 
@@ -86,7 +86,7 @@ public sealed class StorageOptimizationThresholdFilterTests
             SameSizeMinimumBytes = analysis.Policy.SameSizeMinimumBytes - 1,
         };
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             StorageOptimizationThresholdFilter.Apply(analysis, thresholds));
     }
 
@@ -99,7 +99,7 @@ public sealed class StorageOptimizationThresholdFilterTests
             StaleAgeDays = analysis.Policy.StaleAgeDays - 1,
         };
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             StorageOptimizationThresholdFilter.Apply(analysis, thresholds));
     }
 

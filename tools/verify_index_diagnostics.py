@@ -210,7 +210,7 @@ def check_repository(root: Path) -> int:
         "CaptureNativeIndexDatabaseDiagnosticsAsync",
         "GetIndexDiagnosticsAsync(",
         "Index database probe",
-        "IndexDatabaseStatus",
+        "indexDatabaseStatus",
         "IndexingServiceErrorCode.Busy",
         "IndexingServiceErrorCode.SnapshotRequired",
     ):

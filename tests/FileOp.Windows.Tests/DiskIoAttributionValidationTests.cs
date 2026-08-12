@@ -15,7 +15,7 @@ public sealed class DiskIoAttributionValidationTests
             eventAt.AddTicks(1),
             "late.exe");
 
-        Assert.ThrowsException<InvalidDataException>(() => DiskIoAttributionAnalyzer.Analyze(
+        Assert.Throws<InvalidDataException>(() => DiskIoAttributionAnalyzer.Analyze(
             startedAt,
             startedAt.AddSeconds(5),
             [new DiskIoEventObservation(
@@ -31,16 +31,16 @@ public sealed class DiskIoAttributionValidationTests
     {
         var startedAt = new DateTimeOffset(2026, 8, 10, 10, 0, 0, TimeSpan.Zero);
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() => DiskIoAttributionAnalyzer.Analyze(
+        Assert.Throws<ArgumentOutOfRangeException>(() => DiskIoAttributionAnalyzer.Analyze(
             startedAt,
             startedAt.AddTicks(-1),
             []));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() => DiskIoAttributionAnalyzer.Analyze(
+        Assert.Throws<ArgumentOutOfRangeException>(() => DiskIoAttributionAnalyzer.Analyze(
             startedAt,
             startedAt,
             [],
             maxOwnersPerDisk: 0));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() => DiskIoAttributionAnalyzer.Analyze(
+        Assert.Throws<ArgumentOutOfRangeException>(() => DiskIoAttributionAnalyzer.Analyze(
             startedAt,
             startedAt,
             [],

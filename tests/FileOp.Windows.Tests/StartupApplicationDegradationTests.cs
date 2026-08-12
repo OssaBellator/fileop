@@ -37,13 +37,13 @@ public sealed class StartupApplicationDegradationTests
     [TestMethod]
     public void ParserRejectsWrongProviderEventChannelAndDuplicateData()
     {
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsStartupApplicationDegradationEventSource.ParseEventXml(
                 CreateEventXml(providerName: "Other-Provider")));
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsStartupApplicationDegradationEventSource.ParseEventXml(
                 CreateEventXml(eventId: 100)));
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsStartupApplicationDegradationEventSource.ParseEventXml(
                 CreateEventXml(channelName: "System")));
 
@@ -51,7 +51,7 @@ public sealed class StartupApplicationDegradationTests
             "</EventData>",
             "<Data Name=\"TotalTime\">1</Data></EventData>",
             StringComparison.Ordinal);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsStartupApplicationDegradationEventSource.ParseEventXml(duplicate));
     }
 
@@ -62,14 +62,14 @@ public sealed class StartupApplicationDegradationTests
             "<Data Name=\"Name\">example.exe</Data>",
             string.Empty,
             StringComparison.Ordinal);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsStartupApplicationDegradationEventSource.ParseEventXml(missingName));
 
         var badTotal = CreateEventXml().Replace(
             "<Data Name=\"TotalTime\">5632</Data>",
             "<Data Name=\"TotalTime\">not-a-number</Data>",
             StringComparison.Ordinal);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsStartupApplicationDegradationEventSource.ParseEventXml(badTotal));
     }
 
@@ -109,21 +109,21 @@ public sealed class StartupApplicationDegradationTests
         var older = CreateEvidence(1, RecordedAt.AddMinutes(-2));
         var newer = CreateEvidence(2, RecordedAt);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             StartupApplicationDegradationResult.Completed(
                 budget,
                 [older, newer],
                 false,
                 TimeSpan.Zero,
                 "out of order"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             StartupApplicationDegradationResult.Completed(
                 budget,
                 [newer, newer],
                 false,
                 TimeSpan.Zero,
                 "duplicate"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             StartupApplicationDegradationResult.Completed(
                 budget,
                 [newer],
@@ -140,7 +140,7 @@ public sealed class StartupApplicationDegradationTests
             TimeSpan.FromMilliseconds(750));
 
         Assert.AreEqual(TimeSpan.FromMilliseconds(1250), remaining);
-        Assert.ThrowsException<TimeoutException>(() =>
+        Assert.Throws<TimeoutException>(() =>
             WindowsStartupApplicationDegradationEventSource.GetRemainingReadTimeout(
                 TimeSpan.FromSeconds(2),
                 TimeSpan.FromSeconds(2)));
@@ -154,7 +154,7 @@ public sealed class StartupApplicationDegradationTests
         var provider = new WindowsStartupApplicationDegradationProvider(
             new FakeSource(new WindowsStartupApplicationDegradationReadResult([], false)));
 
-        Assert.ThrowsException<OperationCanceledException>(() =>
+        Assert.Throws<OperationCanceledException>(() =>
             provider.Query(
                 StartupApplicationDegradationBudget.Default,
                 cancellation.Token));

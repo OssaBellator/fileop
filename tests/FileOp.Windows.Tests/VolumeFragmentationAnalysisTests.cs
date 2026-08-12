@@ -10,26 +10,26 @@ public sealed class VolumeFragmentationAnalysisTests
     public void ContractRequiresExplicitLocalDriveRoot()
     {
         Assert.AreEqual("C:\\", VolumeFragmentationDriveRoot.RequireCanonical("c:/"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             VolumeFragmentationDriveRoot.RequireCanonical("C:\\data"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             VolumeFragmentationDriveRoot.RequireCanonical("\\\\server\\share\\"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             VolumeFragmentationDriveRoot.RequireCanonical("\\\\?\\Volume{00000000-0000-0000-0000-000000000000}\\"));
     }
 
     [TestMethod]
     public void EvidenceRejectsImpossibleMetrics()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             CreateEvidence(filePercentFragmentation: 101));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             CreateEvidence(totalFiles: 4, totalFragmentedFiles: 5));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             CreateEvidence(freeSpaceBytes: 10, largestFreeSpaceExtentBytes: 11));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             CreateEvidence(averageFragmentsPerFile: double.NaN));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             CreateEvidence(volumeSizeBytes: 100, usedSpaceBytes: 101));
     }
 
@@ -177,7 +177,7 @@ public sealed class VolumeFragmentationAnalysisTests
     [TestMethod]
     public void ResultRejectsCompletedWithoutProviderSuccessCode()
     {
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new VolumeFragmentationAnalysisResult(
                 "C:\\",
                 VolumeFragmentationAnalysisBudget.Default,

@@ -9,9 +9,9 @@ public sealed class SystemCpuActivityTests
     [TestMethod]
     public void BudgetRequiresBoundedExplicitDelay()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new SystemCpuActivityBudget(TimeSpan.FromMilliseconds(249)));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new SystemCpuActivityBudget(TimeSpan.FromMilliseconds(3001)));
 
         var budget = new SystemCpuActivityBudget(TimeSpan.FromMilliseconds(250));
@@ -59,18 +59,18 @@ public sealed class SystemCpuActivityTests
     {
         var start = Snapshot(0, 100, 300, 200);
         var regressed = Snapshot(1000, 99, 300, 200);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             SystemCpuActivityAnalyzer.Analyze(start, regressed));
 
         var impossibleIdleDelta = Snapshot(1000, 250, 400, 200);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             SystemCpuActivityAnalyzer.Analyze(start, impossibleIdleDelta));
     }
 
     [TestMethod]
     public void SnapshotRejectsIdleGreaterThanKernel()
     {
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             Snapshot(0, 201, 200, 0));
     }
 
@@ -84,13 +84,13 @@ public sealed class SystemCpuActivityTests
             TimeSpan.FromTicks(100),
             TimeSpan.FromTicks(50));
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             SystemCpuActivityResult.Unavailable(
                 budget,
                 SystemCpuActivityStatus.Completed,
                 TimeSpan.Zero,
                 "invalid"));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new SystemCpuActivityEvidence(
                 DateTimeOffset.UnixEpoch,
                 DateTimeOffset.UnixEpoch.AddSeconds(1),
@@ -239,7 +239,7 @@ public sealed class SystemCpuActivityTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
-        await Assert.ThrowsExactlyAsync<OperationCanceledException>(async () =>
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await provider.CaptureAsync(
                 SystemCpuActivityBudget.Default,
                 cancellation.Token));
@@ -266,7 +266,7 @@ public sealed class SystemCpuActivityTests
                 return Task.FromCanceled(cancellationToken);
             });
 
-        await Assert.ThrowsExactlyAsync<OperationCanceledException>(async () =>
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await provider.CaptureAsync(
                 SystemCpuActivityBudget.Default,
                 cancellation.Token));

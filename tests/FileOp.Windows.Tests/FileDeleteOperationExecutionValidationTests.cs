@@ -51,7 +51,7 @@ public sealed class FileDeleteOperationExecutionValidationTests
 
         var noIdentity = CanonicalFile(@"C:\Users\Alice\Temp\a.tmp", identity: null);
         var invalidReady = ready with { Source = noIdentity };
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationExecutionValidationResult(
                 plan,
                 root,

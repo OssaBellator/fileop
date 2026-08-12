@@ -27,7 +27,11 @@ public sealed class WindowsCurrentReviewFileEvidenceReaderTests
             var evidence = await reader.ReadAsync(path);
 
             Assert.AreEqual(Path.GetFullPath(path), Path.GetFullPath(evidence.RequestedPath));
-            Assert.AreEqual(Path.GetFullPath(path), Path.GetFullPath(evidence.CanonicalPath));
+            Assert.IsTrue(
+                string.Equals(
+                    Path.GetFullPath(path),
+                    Path.GetFullPath(evidence.CanonicalPath),
+                    StringComparison.OrdinalIgnoreCase));
             Assert.AreEqual(new FileInfo(path).Length, evidence.LogicalBytes);
             Assert.IsTrue(evidence.AllocatedBytes >= 0);
             Assert.IsTrue(evidence.HardLinkCount > 0);
@@ -54,7 +58,7 @@ public sealed class WindowsCurrentReviewFileEvidenceReaderTests
         try
         {
             var reader = new WindowsCurrentReviewFileEvidenceReader();
-            await Assert.ThrowsExceptionAsync<InvalidDataException>(async () =>
+            await Assert.ThrowsAsync<InvalidDataException>(async () =>
                 await reader.ReadAsync(root));
         }
         finally

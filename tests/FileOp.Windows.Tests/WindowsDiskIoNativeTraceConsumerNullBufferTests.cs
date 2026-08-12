@@ -24,7 +24,7 @@ public sealed class WindowsDiskIoNativeTraceConsumerNullBufferTests
             BindingFlags.Instance | BindingFlags.NonPublic)!;
         var fault = (System.Runtime.ExceptionServices.ExceptionDispatchInfo?)field.GetValue(api);
         Assert.IsNotNull(fault);
-        Assert.ThrowsException<InvalidDataException>(() => fault.Throw());
+        Assert.Throws<InvalidDataException>(() => fault.Throw());
     }
 
     private sealed class RecordingSink : IWindowsDiskIoNativeTraceCallbackSink

@@ -18,11 +18,11 @@ public sealed class VolumeFragmentationTimeoutTests
     [TestMethod]
     public void RemainingTimeoutFailsWhenLookupConsumesBudget()
     {
-        Assert.ThrowsException<TimeoutException>(() =>
+        Assert.Throws<TimeoutException>(() =>
             WindowsVolumeFragmentationApi.GetRemainingTimeout(
                 TimeSpan.FromSeconds(10),
                 TimeSpan.FromSeconds(10)));
-        Assert.ThrowsException<TimeoutException>(() =>
+        Assert.Throws<TimeoutException>(() =>
             WindowsVolumeFragmentationApi.GetRemainingTimeout(
                 TimeSpan.FromSeconds(10),
                 TimeSpan.FromSeconds(11)));

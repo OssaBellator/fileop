@@ -23,25 +23,25 @@ public sealed class PhysicalDiskFailurePredictionTests
     [TestMethod]
     public void ContractRejectsInvalidDiskAndResultShape()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new PhysicalDiskFailurePredictionEvidence(-1, 0));
 
         var evidence = new PhysicalDiskFailurePredictionEvidence(2, 0);
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new PhysicalDiskFailurePredictionResult(
                 2,
                 PhysicalDiskFailurePredictionStatus.Available,
                 null,
                 TimeSpan.Zero,
                 "invalid"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new PhysicalDiskFailurePredictionResult(
                 2,
                 PhysicalDiskFailurePredictionStatus.Unsupported,
                 evidence,
                 TimeSpan.Zero,
                 "invalid"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new PhysicalDiskFailurePredictionResult(
                 1,
                 PhysicalDiskFailurePredictionStatus.Available,
@@ -54,7 +54,7 @@ public sealed class PhysicalDiskFailurePredictionTests
     public void ParserRequiresCompleteStoragePredictFailureStructure()
     {
         var shortData = new byte[WindowsPhysicalDiskFailurePredictionParser.RequiredBytes - 1];
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsPhysicalDiskFailurePredictionParser.Parse(shortData));
     }
 

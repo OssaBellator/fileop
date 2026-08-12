@@ -178,7 +178,7 @@ public sealed class WindowsDiskIoIssuingThreadResolverTests
         var api = new WindowsDiskIoLifetimeFake();
         using var resolver = new WindowsDiskIoIssuingThreadResolver(api);
 
-        Assert.ThrowsException<InvalidDataException>(() => resolver.Resolve(100, -1));
+        Assert.Throws<InvalidDataException>(() => resolver.Resolve(100, -1));
         Assert.AreEqual(0, api.OpenThreadCalls);
     }
 
@@ -186,9 +186,9 @@ public sealed class WindowsDiskIoIssuingThreadResolverTests
     public void CacheLimitsMustBePositive()
     {
         var api = new WindowsDiskIoLifetimeFake();
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new WindowsDiskIoIssuingThreadResolver(api, 0, 1));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new WindowsDiskIoIssuingThreadResolver(api, 1, 0));
     }
 
@@ -199,7 +199,7 @@ public sealed class WindowsDiskIoIssuingThreadResolverTests
         var resolver = new WindowsDiskIoIssuingThreadResolver(api);
         resolver.Dispose();
 
-        Assert.ThrowsException<ObjectDisposedException>(() =>
+        Assert.Throws<ObjectDisposedException>(() =>
             resolver.Resolve(100, EventTime.ToFileTime()));
     }
 }

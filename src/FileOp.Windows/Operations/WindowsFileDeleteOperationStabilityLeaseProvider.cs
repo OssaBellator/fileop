@@ -18,6 +18,7 @@ namespace FileOp.Windows.Operations;
 /// </summary>
 public sealed class WindowsFileDeleteOperationStabilityLeaseProvider : IFileDeleteOperationStabilityLeaseProvider
 {
+    private const uint FileReadData = 0x0001;
     private const uint FileTraverse = 0x0020;
     private const uint FileReadAttributes = 0x0080;
     private const uint Synchronize = 0x00100000;
@@ -98,7 +99,7 @@ public sealed class WindowsFileDeleteOperationStabilityLeaseProvider : IFileDele
             sourceFile = OpenRelativeFile(
                 sourceDirectory,
                 leafName,
-                FileReadAttributes | Synchronize,
+                FileReadData | FileReadAttributes | Synchronize,
                 FileShare.Read,
                 FileOpen,
                 FileSynchronousIoNonAlert | FileNonDirectoryFile | FileOpenReparsePoint);

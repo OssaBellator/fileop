@@ -40,11 +40,12 @@ def run_model(cases: int) -> int:
 def check_repository(root: Path) -> int:
     source = (root / "src/FileOp.Windows/Performance/WindowsDiskIoNativeTraceConsumerApi.cs").read_text(encoding="utf-8")
     evidence = (root / "src/FileOp.Windows/Performance/WindowsDiskIoTraceEvidence.cs").read_text(encoding="utf-8")
+    capture_api = (root / "src/FileOp.Windows/Performance/WindowsDiskIoAttributionProvider.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/WindowsDiskIoNativeTraceEvidenceSourceTests.cs").read_text(encoding="utf-8")
     checks = 0
 
     for needle in (
-        "IWindowsDiskIoTraceEvidenceSource",
+        "IWindowsDiskIoCaptureConsumerApi",
         "ReadTraceEvidence(ulong processingHandle)",
         "EnsureOwnedHandle(processingHandle)",
         "if (_openActive)",
@@ -56,7 +57,9 @@ def check_repository(root: Path) -> int:
 
     assert "interface IWindowsDiskIoTraceEvidenceSource" in evidence
     assert "WindowsDiskIoTraceEvidence ReadTraceEvidence" in evidence
-    checks += 2
+    assert "IWindowsDiskIoCaptureConsumerApi :" in capture_api
+    assert "IWindowsDiskIoTraceEvidenceSource" in capture_api
+    checks += 4
 
     for forbidden in (
         "Stopwatch.Frequency",

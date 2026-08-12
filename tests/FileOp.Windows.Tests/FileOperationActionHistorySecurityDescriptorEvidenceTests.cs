@@ -145,7 +145,7 @@ public sealed class FileOperationActionHistorySecurityDescriptorEvidenceTests
     [TestMethod]
     public void SecurityEvidenceRejectsSaclInclusiveMask()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileSecurityDescriptorEvidence(
                 0x0000000fu,
                 "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"));

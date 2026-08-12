@@ -56,7 +56,7 @@ public sealed class WindowsDiskIoTraceConsumerLifecycleTests
                 OpenResult = new WindowsDiskIoNativeOpenResult(invalid, 0),
             };
 
-            Assert.ThrowsException<InvalidDataException>(() =>
+            Assert.Throws<InvalidDataException>(() =>
                 new WindowsDiskIoTraceConsumerLifecycle(api).Open());
             Assert.AreEqual(0, api.CloseCalls);
         }
@@ -93,7 +93,7 @@ public sealed class WindowsDiskIoTraceConsumerLifecycleTests
             OpenResult = new WindowsDiskIoNativeOpenResult(0, 87),
         };
 
-        var exception = Assert.ThrowsException<Win32Exception>(() =>
+        var exception = Assert.Throws<Win32Exception>(() =>
             new WindowsDiskIoTraceConsumerLifecycle(api).Open());
 
         Assert.AreEqual(87, exception.NativeErrorCode);
@@ -133,7 +133,7 @@ public sealed class WindowsDiskIoTraceConsumerLifecycleTests
         };
         using var consumer = new WindowsDiskIoTraceConsumerLifecycle(api).Open().Consumer!;
 
-        var exception = Assert.ThrowsException<Win32Exception>(() => consumer.Process());
+        var exception = Assert.Throws<Win32Exception>(() => consumer.Process());
 
         Assert.AreEqual((int)WindowsDiskIoTraceConsumerPolicy.ErrorNoAccess, exception.NativeErrorCode);
     }
@@ -159,7 +159,7 @@ public sealed class WindowsDiskIoTraceConsumerLifecycleTests
             consumer.Dispose();
             Assert.AreEqual(1, api.CloseCalls);
             Assert.AreEqual(99UL, api.ClosedHandle);
-            Assert.ThrowsException<ObjectDisposedException>(() => consumer.Process());
+            Assert.Throws<ObjectDisposedException>(() => consumer.Process());
         }
     }
 
@@ -173,14 +173,14 @@ public sealed class WindowsDiskIoTraceConsumerLifecycleTests
         };
         var consumer = new WindowsDiskIoTraceConsumerLifecycle(api).Open().Consumer!;
 
-        var first = Assert.ThrowsException<Win32Exception>(() => consumer.Close());
+        var first = Assert.Throws<Win32Exception>(() => consumer.Close());
         Assert.AreEqual((int)WindowsDiskIoTraceConsumerPolicy.ErrorInvalidHandle, first.NativeErrorCode);
         Assert.AreEqual(1, api.CloseCalls);
 
-        Assert.ThrowsException<InvalidOperationException>(() => consumer.Close());
+        Assert.Throws<InvalidOperationException>(() => consumer.Close());
         consumer.Dispose();
         Assert.AreEqual(1, api.CloseCalls);
-        Assert.ThrowsException<InvalidOperationException>(() => consumer.Process());
+        Assert.Throws<InvalidOperationException>(() => consumer.Process());
     }
 
     [TestMethod]

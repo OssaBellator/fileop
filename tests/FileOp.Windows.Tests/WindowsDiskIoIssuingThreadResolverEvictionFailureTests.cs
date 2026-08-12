@@ -23,7 +23,7 @@ public sealed class WindowsDiskIoIssuingThreadResolverEvictionFailureTests
         api.AddThread(100, 51, EventTime.AddSeconds(2));
         api.FailCloseHandle = oldThreadHandle;
 
-        Assert.ThrowsException<InvalidOperationException>(() =>
+        Assert.Throws<InvalidOperationException>(() =>
             resolver.Resolve(100, EventTime.AddSeconds(3).ToFileTime()));
         Assert.AreEqual(1, api.OpenThreadCalls);
         Assert.AreEqual(1, api.CloseAttempts.Count(handle => handle == oldThreadHandle));
@@ -53,7 +53,7 @@ public sealed class WindowsDiskIoIssuingThreadResolverEvictionFailureTests
         var currentThreadHandle = api.ThreadHandle(101);
         api.FailCloseHandle = oldProcessHandle;
 
-        Assert.ThrowsException<InvalidOperationException>(() =>
+        Assert.Throws<InvalidOperationException>(() =>
             resolver.Resolve(101, EventTime.AddSeconds(3).ToFileTime()));
         Assert.AreEqual(1, api.OpenProcessCalls);
         CollectionAssert.Contains(api.ClosedHandles, currentThreadHandle);

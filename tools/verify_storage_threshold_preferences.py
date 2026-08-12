@@ -210,8 +210,8 @@ def check_repository(root: Path) -> int:
     for text, needle, label in (
         (preference, "public sealed record StorageOptimizationThresholdPreference(", "typed multiplier preference"),
         (preference, "public static StorageOptimizationThresholdPreference Baseline", "baseline preference"),
-        (preference, "private static readonly int[] SupportedSizeMultipliers = [1, 2, 4, 8];", "size multiplier allow-list"),
-        (preference, "private static readonly int[] SupportedStaleAgeMultipliers = [1, 2, 4, 6];", "age multiplier allow-list"),
+        (preference, "public static IReadOnlyList<int> SupportedSizeMultipliers { get; } =\n        Array.AsReadOnly(new[] { 1, 2, 4, 8 });", "size multiplier allow-list"),
+        (preference, "public static IReadOnlyList<int> SupportedStaleAgeMultipliers { get; } =\n        Array.AsReadOnly(new[] { 1, 2, 4, 6 });", "age multiplier allow-list"),
         (preference, "analysis.Policy.LargeFileMinimumBytes", "fresh large policy resolution"),
         (preference, "analysis.Policy.SameSizeMinimumBytes", "fresh same-size policy resolution"),
         (preference, "analysis.Policy.StaleAgeDays", "fresh age policy resolution"),

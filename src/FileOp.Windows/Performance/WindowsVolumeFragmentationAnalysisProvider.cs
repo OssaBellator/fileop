@@ -57,7 +57,7 @@ internal sealed class WindowsVolumeFragmentationApi : IWindowsVolumeFragmentatio
         using var searcher = new ManagementObjectSearcher(
             scope,
             new ObjectQuery("SELECT Name FROM Win32_Volume"),
-            new EnumerationOptions
+            new System.Management.EnumerationOptions
             {
                 ReturnImmediately = true,
                 Rewindable = false,

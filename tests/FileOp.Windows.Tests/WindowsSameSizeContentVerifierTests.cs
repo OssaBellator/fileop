@@ -156,7 +156,7 @@ public sealed class WindowsSameSizeContentVerifierTests
         cancellation.Cancel();
         var verifier = new WindowsSameSizeContentVerifier();
 
-        await Assert.ThrowsExceptionAsync<OperationCanceledException>(async () =>
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await verifier.VerifyAsync(
                 Group(
                     1024,

@@ -24,18 +24,18 @@ public sealed class FileSecurityDescriptorEvidenceTests
     [TestMethod]
     public void OtherSecurityInformationMasksAreRejected()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileSecurityDescriptorEvidence(0x0000000fu, A));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileSecurityDescriptorEvidence(0x00000003u, A));
     }
 
     [TestMethod]
     public void InvalidSha256DigestsAreRejected()
     {
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileSecurityDescriptorEvidence(0x7u, "abcd"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileSecurityDescriptorEvidence(0x7u, new string('z', 64)));
     }
 

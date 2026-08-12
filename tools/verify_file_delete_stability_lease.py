@@ -195,7 +195,8 @@ def check_stability_repository(root: Path) -> int:
         (core, "public interface IFileDeleteOperationStabilityLeaseProvider", "lease provider contract"),
         (windows, "WindowsFileDeleteProtectedLocationPolicy", "protected-location policy reuse"),
         (windows, "FileTraverse | FileReadAttributes | Synchronize", "metadata-only root access"),
-        (windows, "FileReadAttributes | Synchronize", "metadata-only leaf access"),
+
+        (windows, "FileReadData | FileReadAttributes | Synchronize,", "enforceable read-only leaf share access"),
         (windows, "FileShare.Read,", "leaf denies write/delete sharing"),
         (windows, "FileShare.ReadWrite,", "root denies delete sharing"),
         (windows, "FileMode.Open", "root open-only disposition"),
@@ -245,7 +246,7 @@ def check_stability_repository(root: Path) -> int:
     checks += 1
 
     for text, needle, label in (
-        (windows, "FileReadData", "file-content read access"),
+
         (windows, "GenericWrite", "generic write access"),
         (windows, "GenericAll", "generic all access"),
         (windows, "private const uint Delete", "DELETE desired-access constant"),

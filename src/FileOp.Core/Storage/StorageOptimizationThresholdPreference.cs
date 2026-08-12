@@ -49,6 +49,64 @@ public static class StorageOptimizationThresholdPreferencePolicy
         return thresholds;
     }
 
+    public static StorageOptimizationThresholdPreference FromThresholds(
+        StorageOptimizationAnalysis analysis,
+        StorageOptimizationDisplayThresholds thresholds)
+    {
+        ArgumentNullException.ThrowIfNull(analysis);
+        StorageOptimizationThresholdFilter.ValidateAgainstAnalysis(analysis, thresholds);
+
+        return new StorageOptimizationThresholdPreference(
+            FindMultiplier(
+                analysis.Policy.LargeFileMinimumBytes,
+                thresholds.LargeFileMinimumBytes,
+                SupportedSizeMultipliers),
+            FindMultiplier(
+                analysis.Policy.SameSizeMinimumBytes,
+                thresholds.SameSizeMinimumBytes,
+                SupportedSizeMultipliers),
+            FindMultiplier(
+                analysis.Policy.StaleAgeDays,
+                thresholds.StaleAgeDays,
+                SupportedStaleAgeMultipliers));
+    }
+
+    private static int FindMultiplier(
+        long baseline,
+        long threshold,
+        IReadOnlyList<int> supportedMultipliers)
+    {
+        foreach (var multiplier in supportedMultipliers)
+        {
+            if (SaturatingMultiply(baseline, multiplier) == threshold)
+            {
+                return multiplier;
+            }
+        }
+
+        throw new ArgumentException(
+            "Threshold is not representable by a supported policy-relative multiplier.",
+            nameof(threshold));
+    }
+
+    private static int FindMultiplier(
+        int baseline,
+        int threshold,
+        IReadOnlyList<int> supportedMultipliers)
+    {
+        foreach (var multiplier in supportedMultipliers)
+        {
+            if (SaturatingMultiply(baseline, multiplier) == threshold)
+            {
+                return multiplier;
+            }
+        }
+
+        throw new ArgumentException(
+            "Threshold is not representable by a supported policy-relative multiplier.",
+            nameof(threshold));
+    }
+
     public static long SaturatingMultiply(long value, int multiplier)
     {
         if (value < 0)

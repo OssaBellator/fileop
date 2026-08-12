@@ -39,7 +39,7 @@ public sealed class PhysicalDiskDeviceContextTests
     [TestMethod]
     public void BusValueAboveReservedMaximumFailsClosed()
     {
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsPhysicalDiskPropertyParser.ParseDeviceDescriptor(
                 0,
                 BuildDescriptor(0x80)));
@@ -50,19 +50,19 @@ public sealed class PhysicalDiskDeviceContextTests
     {
         var undersized = BuildDescriptor();
         BinaryPrimitives.WriteUInt32LittleEndian(undersized.AsSpan(4, 4), 35);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsPhysicalDiskPropertyParser.ParseDeviceDescriptor(0, undersized));
 
         var insideHeader = BuildDescriptor(vendor: "ACME");
         BinaryPrimitives.WriteUInt32LittleEndian(insideHeader.AsSpan(12, 4), 8);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsPhysicalDiskPropertyParser.ParseDeviceDescriptor(0, insideHeader));
 
         var outside = BuildDescriptor(vendor: "ACME");
         BinaryPrimitives.WriteUInt32LittleEndian(
             outside.AsSpan(12, 4),
             checked((uint)outside.Length));
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsPhysicalDiskPropertyParser.ParseDeviceDescriptor(0, outside));
     }
 
@@ -73,14 +73,14 @@ public sealed class PhysicalDiskDeviceContextTests
         var offset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(
             unterminated.AsSpan(12, 4)));
         unterminated[offset + 4] = (byte)'X';
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsPhysicalDiskPropertyParser.ParseDeviceDescriptor(0, unterminated));
 
         var nonPrintable = BuildDescriptor(vendor: "ACME");
         offset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(
             nonPrintable.AsSpan(12, 4)));
         nonPrintable[offset + 1] = 0x01;
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsPhysicalDiskPropertyParser.ParseDeviceDescriptor(0, nonPrintable));
     }
 
@@ -94,12 +94,12 @@ public sealed class PhysicalDiskDeviceContextTests
             BuildBooleanDescriptor(false),
             "TRIM"));
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsPhysicalDiskPropertyParser.ParseBooleanDescriptor(new byte[8], "TRIM"));
 
         var invalidSize = BuildBooleanDescriptor(true);
         BinaryPrimitives.WriteUInt32LittleEndian(invalidSize.AsSpan(4, 4), 100);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsPhysicalDiskPropertyParser.ParseBooleanDescriptor(
                 invalidSize,
                 "seek-penalty"));
@@ -118,7 +118,7 @@ public sealed class PhysicalDiskDeviceContextTests
         Assert.IsNull(unsupported.Value);
         Assert.AreEqual(PhysicalDiskCapabilityStatus.Unavailable, unavailable.Status);
         Assert.IsNull(unavailable.Value);
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new PhysicalDiskBooleanCapability(
                 PhysicalDiskCapabilityStatus.Unsupported,
                 false,
@@ -139,7 +139,7 @@ public sealed class PhysicalDiskDeviceContextTests
         Assert.AreEqual(2, result.PhysicalDiskNumber);
         Assert.AreSame(context, result.Context);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new PhysicalDiskDeviceContextResult(
                 3,
                 PhysicalDiskDeviceContextStatus.Available,

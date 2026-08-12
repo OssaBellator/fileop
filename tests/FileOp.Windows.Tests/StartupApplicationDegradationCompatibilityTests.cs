@@ -19,7 +19,7 @@ public sealed class StartupApplicationDegradationCompatibilityTests
         Assert.IsNull(parsed.FriendlyName);
         Assert.IsNull(parsed.Version);
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.ThrowsExactly<InvalidDataException>(() =>
             WindowsStartupApplicationDegradationEventSource.ParseEventXml(
                 CreateEventXml(componentName: "   ")));
     }
@@ -28,12 +28,13 @@ public sealed class StartupApplicationDegradationCompatibilityTests
     public void ParserRejectsOversizedCompatibilityXml()
     {
         var xml = CreateEventXml(
+            componentName: "example.exe",
             friendlyName: new string('x',
                 WindowsStartupApplicationDegradationEventSource.MaximumEventXmlCharacters));
 
         Assert.IsTrue(
             xml.Length > WindowsStartupApplicationDegradationEventSource.MaximumEventXmlCharacters);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.ThrowsExactly<InvalidDataException>(() =>
             WindowsStartupApplicationDegradationEventSource.ParseEventXml(xml));
     }
 

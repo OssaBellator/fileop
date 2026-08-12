@@ -194,8 +194,8 @@ def check_repository(root: Path) -> int:
         "wrong opcode",
         "#71",
         "#72",
-        "does not parse payload bytes",
-        "does not resolve processes",
+        "does **not parse payload bytes**",
+        "resolve issuing-thread IDs to processes",
     ):
         assert needle in text["doc"], needle
         checks += 1

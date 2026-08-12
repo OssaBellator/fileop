@@ -8,7 +8,7 @@ public sealed class DiskIoDeviceEvidenceTimingTests
     [TestMethod]
     public void SnapshotRejectsNegativeElapsedTime()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new DiskIoDeviceEvidenceSnapshot(
                 Array.Empty<DiskIoPhysicalDiskDeviceEvidence>(),
                 TimeSpan.FromTicks(-1)));

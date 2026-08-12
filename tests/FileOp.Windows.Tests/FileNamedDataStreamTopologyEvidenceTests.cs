@@ -24,16 +24,16 @@ public sealed class FileNamedDataStreamTopologyEvidenceTests
         Assert.AreEqual(1, evidence.FormatVersion);
         Assert.AreEqual(2, evidence.NamedStreamCount);
         Assert.AreEqual(new string('a', 64), evidence.Sha256HexDigest);
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileNamedDataStreamTopologyEvidence(2, 0, upper));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileNamedDataStreamTopologyEvidence(1, -1, upper));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileNamedDataStreamTopologyEvidence(
                 1,
                 FileNamedDataStreamTopologyEvidence.MaximumNamedStreamCount + 1,
                 upper));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileNamedDataStreamTopologyEvidence(1, 0, new string('z', 64)));
     }
 

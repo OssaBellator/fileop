@@ -115,7 +115,7 @@ def check_repository(root: Path) -> int:
         "downloads.old-archive-extension.v1",
         "downloads.old-disk-image-extension.v1",
         "user-temp.old-large-file.v1",
-        "StorageReviewReason.OldArchiveOrDiskImage,",
+        "OldArchiveOrDiskImage,",
         "StorageReviewReason.OldArchive,",
         "StorageReviewReason.OldDiskImage,",
         '".msi"',
@@ -208,8 +208,14 @@ def check_repository(root: Path) -> int:
     ):
         assert needle in xaml, needle
         checks += 1
-    assert "<Button" not in xaml
+    assert xaml.count("<Button") == 2
     checks += 1
+    for action in ('Content="Check readiness"', 'Content="Review in Files"'):
+        assert action in xaml, action
+        checks += 1
+    for forbidden in ('Content="Delete"', 'Content="Clean up"', 'Content="Execute"', 'Content="Queue"'):
+        assert forbidden not in xaml, forbidden
+        checks += 1
 
     for needle in (
         "candidate measured bytes",

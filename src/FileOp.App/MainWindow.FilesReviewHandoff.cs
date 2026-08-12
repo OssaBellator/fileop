@@ -145,10 +145,10 @@ public sealed partial class MainWindow
             return;
         }
 
-        var currentRoot = _searchEngine.StorageRootPath;
+        var currentRootAfterLoad = _searchEngine.StorageRootPath;
         if (!ReferenceEquals(review, _storageKnownLocationReview) ||
-            currentRoot is null ||
-            !PathsEqual(currentRoot, root) ||
+            currentRootAfterLoad is null ||
+            !PathsEqual(currentRootAfterLoad, root) ||
             _searchEngine.State.Mode != DesktopSearchMode.Native ||
             _searchEngine.State.IsBusy ||
             !_searchEngine.StorageOptimizationAvailable)

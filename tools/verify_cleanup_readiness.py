@@ -288,7 +288,7 @@ def check_repository(root: Path) -> int:
     checks += require(gate, "verify_cleanup_readiness.py --repo-root $repoRoot --cases 50000")
     for needle in (
         "does not yet provide a reviewed delete executor",
-        "does not prove that this is the same physical file object that was indexed earlier",
+        "does **not** prove that this is the same physical file object that was indexed earlier",
         "CleanupMutationAuthorized` is always `false`",
     ):
         checks += require(docs, needle)

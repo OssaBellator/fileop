@@ -32,7 +32,7 @@ public sealed class FileDeleteOperationStabilityLeaseContractTests
         Assert.IsFalse(request.DeleteMutationAuthorized);
         Assert.IsFalse(evidence.DeleteMutationAuthorized);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationStabilityLeaseEvidence(
                 request,
                 authorization.CanonicalSourceDirectoryPath,
@@ -42,7 +42,7 @@ public sealed class FileDeleteOperationStabilityLeaseContractTests
                 item.CanonicalPath,
                 item.Identity));
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationStabilityLeaseEvidence(
                 request,
                 authorization.CanonicalSourceDirectoryPath,
@@ -81,9 +81,9 @@ public sealed class FileDeleteOperationStabilityLeaseContractTests
     {
         var authorization = CreateAuthorization();
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileDeleteOperationStabilityLeaseRequest(authorization, -1));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileDeleteOperationStabilityLeaseRequest(authorization, authorization.Items.Count));
     }
 

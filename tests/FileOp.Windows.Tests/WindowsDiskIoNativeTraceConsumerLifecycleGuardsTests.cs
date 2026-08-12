@@ -15,7 +15,7 @@ public sealed class WindowsDiskIoNativeTraceConsumerLifecycleGuardsTests
             .GetField("_openActive", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(api, true);
 
-        var exception = Assert.ThrowsException<InvalidOperationException>(() =>
+        var exception = Assert.Throws<InvalidOperationException>(() =>
             api.OpenRealtime(
                 WindowsDiskIoSystemSessionPolicy.SessionName,
                 WindowsDiskIoTraceConsumerPolicy.ProcessTraceMode));
@@ -31,7 +31,7 @@ public sealed class WindowsDiskIoNativeTraceConsumerLifecycleGuardsTests
             .GetField("_processActive", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(api, true);
 
-        var exception = Assert.ThrowsException<InvalidOperationException>(() =>
+        var exception = Assert.Throws<InvalidOperationException>(() =>
             api.OpenRealtime(
                 WindowsDiskIoSystemSessionPolicy.SessionName,
                 WindowsDiskIoTraceConsumerPolicy.ProcessTraceMode));

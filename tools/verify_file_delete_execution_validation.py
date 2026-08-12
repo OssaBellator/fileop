@@ -117,7 +117,7 @@ def run_model(cases: int, seed: int) -> int:
     assert validate_delete(root, file, is_directory=False, protected_trees=protected_trees) == READY
     assert validate_delete(root, file, is_directory=True, protected_trees=protected_trees) == BLOCKED
     assert validate_delete(root, file.__class__(file.requested, r"C:\Other\a.tmp", "file", identity=(1, 11)), is_directory=False, protected_trees=protected_trees) == BLOCKED
-    assert protected(r"C:\", protected_trees)
+    assert protected("C:\\", protected_trees)
     assert protected(r"C:\Windows\Temp\a.tmp", protected_trees)
     assert protected(r"C:\$Recycle.Bin\x.bin", protected_trees)
     assert protected(r"\\?\Volume{00000000-0000-0000-0000-000000000000}\Users\A\a.tmp", protected_trees)

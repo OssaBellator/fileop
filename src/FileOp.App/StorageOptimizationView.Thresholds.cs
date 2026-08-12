@@ -196,7 +196,7 @@ public sealed partial class StorageOptimizationView
                 $"same-size ≥ {ByteFormatter.Format(analysis.Policy.SameSizeMinimumBytes)}, stale ≥ {analysis.Policy.StaleAgeDays:N0} days. " +
                 $"Current view: large ≥ {ByteFormatter.Format(thresholds.LargeFileMinimumBytes)}, " +
                 $"same-size ≥ {ByteFormatter.Format(thresholds.SameSizeMinimumBytes)}, stale ≥ {thresholds.StaleAgeDays:N0} days. " +
-                "The remembered preference stores only supported multipliers. These controls only narrow the already bounded result; they do not rerun the helper or imply evidence below its baseline.";
+                "The remembered preference stores only supported multipliers. This view only narrows the already bounded result; it does not rerun the helper or imply evidence below its baseline.";
         }
     }
 

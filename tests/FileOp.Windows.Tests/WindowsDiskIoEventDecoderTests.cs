@@ -126,14 +126,14 @@ public sealed class WindowsDiskIoEventDecoderTests
     {
         var payload = CreateReadWritePayload(8, 1, 2, 3, 4, 5, 6);
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoEventDecoder.TryDecodeCompletion(
                 WindowsDiskIoEventDecoder.DiskIoProviderId,
                 WindowsDiskIoEventDecoder.ReadEventType,
                 pointerSize: 0,
                 payload,
                 out _));
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoEventDecoder.TryDecodeCompletion(
                 WindowsDiskIoEventDecoder.DiskIoProviderId,
                 WindowsDiskIoEventDecoder.ReadEventType,
@@ -149,7 +149,7 @@ public sealed class WindowsDiskIoEventDecoderTests
     {
         var payload = new byte[truncatedLength];
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoEventDecoder.TryDecodeCompletion(
                 WindowsDiskIoEventDecoder.DiskIoProviderId,
                 WindowsDiskIoEventDecoder.ReadEventType,
@@ -165,7 +165,7 @@ public sealed class WindowsDiskIoEventDecoderTests
     {
         var payload = new byte[truncatedLength];
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoEventDecoder.TryDecodeCompletion(
                 WindowsDiskIoEventDecoder.DiskIoProviderId,
                 WindowsDiskIoEventDecoder.FlushEventType,

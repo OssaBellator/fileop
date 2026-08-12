@@ -36,7 +36,7 @@ public sealed class DiskIoResponseTimingOwnerTests
             Owner = new DiskIoProcessIdentity(0, StartedAt.AddMinutes(-1), "worker.exe"),
         };
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             DiskIoResponseTimingAnalyzer.Analyze(StartedAt, EndedAt, [timing]));
     }
 
@@ -48,7 +48,7 @@ public sealed class DiskIoResponseTimingOwnerTests
             Owner = new DiskIoProcessIdentity(71, StartedAt.AddMilliseconds(101), "worker.exe"),
         };
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             DiskIoResponseTimingAnalyzer.Analyze(StartedAt, EndedAt, [timing]));
     }
 
@@ -60,7 +60,7 @@ public sealed class DiskIoResponseTimingOwnerTests
             Owner = new DiskIoProcessIdentity(71, StartedAt.AddMinutes(-1), "   "),
         };
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             DiskIoResponseTimingAnalyzer.Analyze(StartedAt, EndedAt, [timing]));
     }
 
