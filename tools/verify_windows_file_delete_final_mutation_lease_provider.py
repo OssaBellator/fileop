@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the non-mutating Windows final delete-capability lease provider."""
+"""Verify Windows final DELETE-capability acquisition remains non-mutating."""
 from __future__ import annotations
 
 import argparse
@@ -162,28 +162,33 @@ def check_repository(root: Path) -> int:
     plan = (root / "src/FileOp.Core/Operations/FileOperationPlan.cs").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
 
+    mutation_class_marker = "private sealed class FinalMutationLease :"
+    if mutation_class_marker not in provider:
+        raise AssertionError("missing private final-lease implementation")
+    acquisition = provider[: provider.index(mutation_class_marker)]
+
     checks = 0
     for text, needle, label in (
         (provider, "public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider", "concrete Windows provider"),
         (provider, "IFileDeleteOperationFinalMutationLeaseProvider", "final provider interface"),
-        (provider, "private const uint Delete = 0x00010000;", "DELETE access constant"),
-        (provider, "Delete | FileReadAttributes | Synchronize", "minimum final leaf access mask"),
-        (provider, "FileShare.Read,", "restrictive leaf sharing"),
-        (provider, "FileOpen,", "open-existing disposition"),
-        (provider, "FileSynchronousIoNonAlert | FileNonDirectoryFile | FileOpenReparsePoint", "file-only non-reparse open options"),
-        (provider, "RootDirectory = rootDirectory.DangerousGetHandle()", "root-relative leaf open"),
-        (provider, "EnsureAllowedByProtectedLocationPolicy(expectedRootPath, \"source directory\")", "root protected policy"),
-        (provider, "EnsureAllowedByProtectedLocationPolicy(expectedSourcePath, \"source file\")", "file protected policy"),
-        (provider, "ValidateDirectoryHandle(\n                sourceDirectory,\n                expectedRootPath,\n                expectedRootIdentity);", "root identity validation"),
-        (provider, "ValidateFileHandle(\n                sourceFile,\n                expectedSourcePath,\n                expectedSourceIdentity);", "leaf identity validation"),
-        (provider, "(information.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0", "reparse refusal"),
-        (provider, "new FileDeleteOperationFinalMutationLeaseEvidence(", "value evidence construction"),
-        (provider, "private sealed class FinalMutationLease : IFileDeleteOperationFinalMutationLease", "private-handle live lease"),
+        (acquisition, "private const uint Delete = 0x00010000;", "DELETE access constant"),
+        (acquisition, "Delete | FileReadAttributes | Synchronize", "minimum final leaf access mask"),
+        (acquisition, "FileShare.Read,", "restrictive leaf sharing"),
+        (acquisition, "FileOpen,", "open-existing disposition"),
+        (acquisition, "FileSynchronousIoNonAlert | FileNonDirectoryFile | FileOpenReparsePoint", "file-only non-reparse open options"),
+        (acquisition, "RootDirectory = rootDirectory.DangerousGetHandle()", "root-relative leaf open"),
+        (acquisition, "EnsureAllowedByProtectedLocationPolicy(expectedRootPath, \"source directory\")", "root protected policy"),
+        (acquisition, "EnsureAllowedByProtectedLocationPolicy(expectedSourcePath, \"source file\")", "file protected policy"),
+        (acquisition, "ValidateDirectoryHandle(", "root identity validation"),
+        (acquisition, "ValidateFileHandle(", "leaf identity validation"),
+        (acquisition, "(information.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0", "reparse refusal"),
+        (acquisition, "new FileDeleteOperationFinalMutationLeaseEvidence(", "value evidence construction"),
+        (provider, "IFileDeleteOperationSameLeaseMutation", "separately reviewed nested mutation facet"),
         (provider, "IsLive(_sourceDirectory) && IsLive(_sourceFile)", "live capability state"),
-        (provider, "public bool DeleteMutationAuthorized => false;", "provider remains non-authorizing"),
+        (provider, "public bool DeleteMutationAuthorized => false;", "provider lease remains non-authorizing"),
         (provider, "DisposeNoThrow(_sourceFile);", "leaf release"),
         (provider, "DisposeNoThrow(_sourceDirectory);", "root release"),
-        (provider, "Task.Run(() => Acquire(request, cancellationToken), cancellationToken)", "token forwarded into native reacquisition"),
+        (acquisition, "Task.Run(() => Acquire(request, cancellationToken), cancellationToken)", "token forwarded into native reacquisition"),
         (tests, "FinalLeaseBindsExactAuthorizationAndHoldsDeleteCapabilityWithoutMutationAuthority", "native capability regression"),
         (tests, "FileReplacementDuringReadOnlyToFinalHandoffIsRejectedByFinalProvider", "file handoff race regression"),
         (tests, "RootReplacementDuringReadOnlyToFinalHandoffIsRejectedByFinalProvider", "root handoff race regression"),
@@ -193,38 +198,46 @@ def check_repository(root: Path) -> int:
         (tests, "DeleteIsBlocked", "native delete sharing probe"),
         (tests, "WriteOpenIsBlocked", "write sharing probe"),
         (tests, "DirectoryRenameIsBlocked", "root rename sharing probe"),
+        (docs, "acquisition path remains non-mutating", "non-mutating acquisition documentation"),
         (docs, "successful `NtCreateFile` request containing `DELETE`", "capability proof documentation"),
-        (docs, "does not perform deletion", "no mutation documentation"),
-        (docs, "Windows sharing checks are symmetric", "DELETE sharing impact disclosure"),
-        (contract_verifier, "reviewed_provider = \"src/FileOp.Windows/Operations/WindowsFileDeleteOperationFinalMutationLeaseProvider.cs\"", "evolved #136 production-provider guard"),
+        (docs, "IFileDeleteOperationSameLeaseMutation", "separate mutation facet documentation"),
+        (contract_verifier, "reviewed_provider = \"src/FileOp.Windows/Operations/WindowsFileDeleteOperationFinalMutationLeaseProvider.cs\"", "reviewed production-provider guard"),
         (gate, "verify_windows_file_delete_final_mutation_lease_provider.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "generic Delete remains absent"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 unchanged"),
     ):
         checks += require(text, needle, label)
 
-    if provider.count("cancellationToken.ThrowIfCancellationRequested();") < 4:
+    if acquisition.count("cancellationToken.ThrowIfCancellationRequested();") < 4:
         raise AssertionError("final provider must retain cancellation checkpoints before and during native reacquisition")
     checks += 1
 
-    first_root_validation = provider.index("ValidateDirectoryHandle(")
-    relative_open = provider.index("sourceFile = OpenRelativeFile(")
-    second_root_validation = provider.index("ValidateDirectoryHandle(", first_root_validation + 1)
+    first_root_validation = acquisition.index("ValidateDirectoryHandle(")
+    relative_open = acquisition.index("sourceFile = OpenRelativeFile(")
+    second_root_validation = acquisition.index("ValidateDirectoryHandle(", first_root_validation + 1)
     if not first_root_validation < relative_open < second_root_validation:
         raise AssertionError("final provider must validate root before and after the root-relative leaf open")
     checks += 1
 
+    # #144 may add the separately gated native disposition to the private lease, but acquisition
+    # itself must remain incapable of mutating or settling action history.
     for needle, label in (
-        ("SetFileInformationByHandle", "file disposition mutation"),
-        ("NtSetInformationFile", "native disposition mutation"),
-        ("DeleteFileW", "path delete"),
-        ("File.Delete(", "managed file delete"),
-        ("Directory.Delete(", "managed directory delete"),
-        ("FileDisposition", "delete disposition class"),
-        ("DeleteOnClose", "delete-on-close option"),
-        ("CommitDeletedAsync(", "delete settlement"),
-        ("MarkMutationStartedAsync(", "durable barrier transition"),
-        ("FileDeleteOperationMutationBarrier", "barrier production consumer"),
+        ("NtSetInformationFile", "native disposition mutation in acquisition"),
+        ("FileDisposition", "file disposition class in acquisition"),
+        ("DeleteFileW", "path delete in acquisition"),
+        ("File.Delete(", "managed file delete in acquisition"),
+        ("Directory.Delete(", "managed directory delete in acquisition"),
+        ("CommitDeletedAsync(", "delete settlement in acquisition"),
+        ("MarkMutationStartedAsync(", "durable barrier transition in acquisition"),
+        ("FileDeleteOperationMutationBarrier", "barrier production consumer in acquisition"),
+    ):
+        checks += forbid(acquisition, needle, label)
+
+    for needle, label in (
+        ("DeleteFileW", "path delete API in reviewed provider"),
+        ("File.Delete(", "managed file delete in reviewed provider"),
+        ("Directory.Delete(", "managed directory delete in reviewed provider"),
+        ("DeleteOnClose", "delete-on-close acquisition option"),
     ):
         checks += forbid(provider, needle, label)
 
@@ -259,7 +272,7 @@ def main() -> int:
     source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = f" and {source_checks:,} source/test checks" if args.repo_root else ""
     print(
-        f"PASS: Windows final delete-capability provider verified with {model_checks:,} model assertions "
+        f"PASS: Windows final delete-capability acquisition verified with {model_checks:,} model assertions "
         f"across {args.cases:,} randomized native-acquisition states{suffix}."
     )
     return 0
