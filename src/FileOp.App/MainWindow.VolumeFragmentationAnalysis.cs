@@ -28,6 +28,7 @@ public sealed partial class MainWindow
         _storageOptimizationView.SetReadyForRefresh(false);
         _storageOptimizationView.SetDiskIoReadyForCapture(false);
         _storageOptimizationView.SetMachineProcessActivityReadyForCapture(false);
+        _storageOptimizationView.SetStartupApplicationDegradationReadyForCapture(false);
         _storageOptimizationView.SetVolumeFragmentationAnalysisLoading(volumeRoot);
         try
         {
@@ -76,6 +77,8 @@ public sealed partial class MainWindow
                 _storageOptimizationView.SetVolumeFragmentationAnalysisReadyForCapture(
                     supplementaryReady &&
                     _searchEngine.VolumeFragmentationAnalysisRoot is not null);
+                _storageOptimizationView.SetStartupApplicationDegradationReadyForCapture(
+                    supplementaryReady);
                 _storageOptimizationView.SetReadyForRefresh(
                     optimizeVisible &&
                     _searchEngine.StorageOptimizationAvailable &&
