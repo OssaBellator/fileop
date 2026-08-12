@@ -2,35 +2,34 @@ namespace FileOp.App;
 
 public sealed partial class MainWindow
 {
-    internal async Task CapturePerformanceMachineProcessActivityAsync()
+    internal async Task CapturePerformanceStartupApplicationDegradationAsync()
     {
-        if (_closed ||
-            _storageViewMode != StorageViewMode.Optimize ||
-            _storageSameSizeVerificationActive ||
-            _performanceDiskIoCaptureActive)
+        if (_closed || _storageViewMode != StorageViewMode.Optimize)
         {
             return;
         }
+        if (_storageSameSizeVerificationActive || _performanceDiskIoCaptureActive)
+        {
+            _storageOptimizationView.SetStartupApplicationDegradationBusy(
+                "Another explicit Performance/Storage diagnostic is already active. Startup degradation history was not read.");
+            return;
+        }
 
-        // Reuse the existing explicit performance-capture exclusion flag so the
-        // machine sample cannot overlap DiskIo, fragmentation/startup-history
-        // analysis, same-size hashing, or a state-handler path that would
-        // otherwise re-enable those controls while this sample runs.
         _performanceDiskIoCaptureActive = true;
         _storageOptimizationView.SetReadyForRefresh(false);
         _storageOptimizationView.SetDiskIoReadyForCapture(false);
+        _storageOptimizationView.SetMachineProcessActivityReadyForCapture(false);
         _storageOptimizationView.SetVolumeFragmentationAnalysisReadyForCapture(false);
-        _storageOptimizationView.SetStartupApplicationDegradationReadyForCapture(false);
-        _storageOptimizationView.SetMachineProcessActivityLoading();
+        _storageOptimizationView.SetStartupApplicationDegradationLoading();
         try
         {
-            var result = await _searchEngine.CaptureMachineProcessActivityAsync();
+            var result = await _searchEngine.CaptureStartupApplicationDegradationAsync();
             if (_closed)
             {
                 return;
             }
 
-            _storageOptimizationView.ApplyMachineProcessActivity(result);
+            _storageOptimizationView.ApplyStartupApplicationDegradation(result);
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
         {
@@ -39,8 +38,8 @@ public sealed partial class MainWindow
         {
             if (!_closed)
             {
-                _storageOptimizationView.SetMachineProcessActivityUnavailable(
-                    $"Machine process activity capture failed: {exception.Message}");
+                _storageOptimizationView.SetStartupApplicationDegradationUnavailable(
+                    $"Startup degradation compatibility history failed: {exception.Message}");
             }
         }
         finally
