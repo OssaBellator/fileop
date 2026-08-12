@@ -7,6 +7,11 @@ import math
 import random
 from pathlib import Path
 
+from verify_volume_fragmentation_analysis_ui import (
+    check_repository as check_volume_fragmentation_ui_repository,
+    run_model as run_volume_fragmentation_ui_model,
+)
+
 
 def classify_return_code(code: int) -> str:
     if code == 0:
@@ -265,11 +270,26 @@ def main() -> int:
         parser.error("--cases must be positive")
 
     model_checks = run_model(args.cases, args.seed)
-    source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
-    suffix = " and %s source checks" % format(source_checks, ",") if args.repo_root else ""
+    ui_model_checks = run_volume_fragmentation_ui_model(
+        args.cases,
+        args.seed ^ 0xF6A6A11,
+    )
+    source_checks = 0
+    if args.repo_root:
+        root = args.repo_root.resolve()
+        source_checks = (
+            check_repository(root) +
+            check_volume_fragmentation_ui_repository(root)
+        )
+    suffix = " and %s source/UI checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: volume fragmentation analysis verified with %s model assertions across %s randomized cases%s."
-        % (format(model_checks, ","), format(args.cases, ","), suffix)
+        "PASS: volume fragmentation analysis verified with %s provider-model assertions and %s UI-model assertions across %s randomized cases%s."
+        % (
+            format(model_checks, ","),
+            format(ui_model_checks, ","),
+            format(args.cases, ","),
+            suffix,
+        )
     )
     return 0
 
