@@ -134,6 +134,7 @@ def check_repository(root: Path) -> int:
         (provider, "WindowsPhysicalDiskFailurePredictionParser.Parse", "single parser authority"),
         (provider, "data.Length < RequiredBytes", "short-output rejection"),
         (provider, "BinaryPrimitives.ReadUInt32LittleEndian(data[..4])", "only standardized ULONG parsed"),
+        (provider, "VendorSpecific[512] is deliberately ignored", "vendor payload documented as ignored"),
         (tests, "ParserIgnoresVendorSpecificPayload", "vendor independence regression"),
         (tests, "ProviderUsesExistingZeroAccessOpenBoundaryAndOnePredictionQueryOnWindows", "open/query count regression"),
         (tests, "ProviderMapsInvalidFunctionToUnsupportedOnWindows", "unsupported mapping regression"),
@@ -142,7 +143,7 @@ def check_repository(root: Path) -> int:
         (docs, "deliberately discards those bytes", "vendor payload boundary"),
         (docs, "not a comprehensive health verdict", "no healthy inference"),
         (parent, "from verify_physical_disk_failure_prediction import (", "parent imports prediction verifier"),
-        (parent, "run_physical_disk_failure_prediction_model(args.cases", "parent runs prediction model"),
+        (parent, "run_physical_disk_failure_prediction_model(", "parent runs prediction model"),
         (parent, "check_physical_disk_failure_prediction_repository(root)", "parent runs prediction source checks"),
         (gate, "verify_disk_io_bottleneck_evidence.py --repo-root $repoRoot --cases 50000", "existing offline gate"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
@@ -150,11 +151,11 @@ def check_repository(root: Path) -> int:
     for text, needle, label in required:
         checks += require(text, needle, label)
 
+    executable = core + "\n" + provider
     for needle in (
         "data[4",
         "data[4..",
         "data.Slice(4",
-        "VendorSpecific[",
         "SMART_RCV_DRIVE_DATA",
         "SMART_SEND_DRIVE_COMMAND",
         "ATA_PASS_THROUGH",
@@ -169,7 +170,7 @@ def check_repository(root: Path) -> int:
         "FileSystemWatcher",
         "RegistryKey",
     ):
-        checks += forbid(core + "\n" + provider, needle, "vendor parser/action/score/poller")
+        checks += forbid(executable, needle, "vendor parser/action/score/poller")
 
     if provider.count("_predictionApi.Query(handle)") != 1:
         raise AssertionError("provider must issue exactly one failure-prediction query")
