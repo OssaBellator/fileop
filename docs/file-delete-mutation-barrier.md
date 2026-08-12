@@ -83,6 +83,14 @@ It attempts `MarkMutationRecoveryRequiredAsync` while the final lease is still h
 
 If recovery persistence itself fails, the earlier durable `MutationStarted` row remains the restart-time signal. The existing read-only recovery-history discovery can surface that state after restart. FileOp does not automatically retry or resume a delete from durable history.
 
+## Failed cleanup ownership
+
+A failed barrier claim must not lose the only reference to a live final capability merely because releasing that capability also throws.
+
+If a post-detach failure path cannot release the final lease, Core throws `FileDeleteOperationFinalLeaseReleaseException`. This is a **cleanup-only exception**: it privately retains the same lease, reports `DeleteMutationAuthorized == false`, exposes no handle/request/lease/mutation method, and offers only `RetryFinalLeaseReleaseAsync` / `DisposeAsync` to retry release.
+
+The cleanup owner clears its private lease reference only after provider disposal succeeds. A failed retry therefore remains retriable; a successful retry makes subsequent retries idempotent. This applies whether the durable history was proven still `Pending`, was already `MutationStarted`/`RecoveryRequired`, or could not be classified reliably. The cleanup exception intentionally does not convert any durable state into mutation authority.
+
 ## Barrier scope lifetime
 
 The returned barrier scope privately owns the final lease and serializes disposal.
@@ -107,8 +115,8 @@ The next separately reviewed native slice can implement a Windows final-lease pr
 
 ## Validation without GitHub Actions
 
-`tools/verify_file_delete_mutation_barrier.py` independently models cancellation, ownership transfer, successful barrier authority, pre/post-persistence failures, recovery marking, ambiguous inspection, capability release, and disposal retry across randomized lifecycle states.
+`tools/verify_file_delete_mutation_barrier.py` independently models cancellation, ownership transfer, successful barrier authority, pre/post-persistence failures, recovery marking, ambiguous inspection, capability release, failed-release cleanup ownership, cleanup retry, and barrier-scope disposal retry across randomized lifecycle states.
 
-Its source guards require the shared detach/disposal gate, non-cancellable post-detach durability calls, exact history/capability validation, recovery-before-release behavior, unchanged protocol v8, absence of generic Delete, and absence of production consumers or mutation APIs.
+Its source guards require the shared detach/disposal gate, non-cancellable post-detach durability calls, exact history/capability validation, recovery-before-release behavior, cleanup-only ownership on release failure, unchanged protocol v8, absence of generic Delete, and absence of production consumers or mutation APIs.
 
-Focused .NET tests cover successful ownership transfer, retained-alias disposal, cancellation on both sides of the transfer boundary, barrier exceptions before and after persistence, invalid returned history, recovery-persistence failure, and retryable barrier-scope disposal.
+Focused .NET tests cover successful ownership transfer, retained-alias disposal, cancellation on both sides of the transfer boundary, barrier exceptions before and after persistence, invalid returned history, recovery-persistence failure, retryable barrier-scope disposal, and retriable cleanup-only ownership when a failed barrier path cannot release its detached final capability.
