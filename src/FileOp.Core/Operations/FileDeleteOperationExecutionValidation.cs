@@ -76,10 +76,26 @@ public sealed record FileDeleteOperationExecutionValidationResult
         {
             throw new ArgumentOutOfRangeException(nameof(status));
         }
+        if (!string.Equals(
+                sourceDirectory.RequestedPath,
+                plan.Intent.SourceDirectoryPath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "Delete execution-validation source-directory evidence must belong to the exact captured plan.",
+                nameof(sourceDirectory));
+        }
 
         var itemSnapshot = items.ToArray();
-        foreach (var item in itemSnapshot)
+        if (itemSnapshot.Length != 0 && itemSnapshot.Length != plan.Intent.Entries.Count)
         {
+            throw new ArgumentException(
+                "Delete execution-validation item evidence must be empty for a root-level block or cover every captured plan entry.",
+                nameof(items));
+        }
+        for (var index = 0; index < itemSnapshot.Length; index++)
+        {
+            var item = itemSnapshot[index];
             ArgumentNullException.ThrowIfNull(item);
             ArgumentNullException.ThrowIfNull(item.Entry);
             ArgumentNullException.ThrowIfNull(item.Source);
@@ -87,6 +103,23 @@ public sealed record FileDeleteOperationExecutionValidationResult
             if (!Enum.IsDefined(item.Decision))
             {
                 throw new ArgumentOutOfRangeException(nameof(items));
+            }
+
+            var plannedEntry = plan.Intent.Entries[index];
+            if (item.Entry != plannedEntry)
+            {
+                throw new ArgumentException(
+                    "Delete execution-validation items must preserve the exact captured plan entries and order.",
+                    nameof(items));
+            }
+            if (!string.Equals(
+                    item.Source.RequestedPath,
+                    plannedEntry.Path,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    "Delete execution-validation source evidence must belong to the corresponding captured plan entry.",
+                    nameof(items));
             }
             if (item.Decision == FileDeleteOperationExecutionValidationDecision.ReadyForAuthorizationReview &&
                 (item.Entry.IsDirectory ||
