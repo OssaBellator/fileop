@@ -219,6 +219,7 @@ def check_repository(root: Path) -> int:
         (core, "historyEntry.SourceIdentity != authorizedItem.Identity", "file identity binding"),
         (core, "public bool DeleteMutationAuthorized => false;", "non-authorizing evidence"),
         (core, "public bool MutationBarrierSatisfied => false;", "barrier not implied"),
+        (core, "public bool StabilityLeaseAcquisitionProven => false;", "lease acquisition not implied"),
         (core, "public bool StabilityLeaseLivenessProven => false;", "lease liveness not implied"),
         (tests, "ExactPendingHistoryAndStabilityEvidenceBindWithoutGrantingMutationAuthority", "valid binding regression"),
         (tests, "StabilityEvidenceFromDifferentReceiptFailsClosed", "receipt substitution regression"),
