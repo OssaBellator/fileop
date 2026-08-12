@@ -47,15 +47,13 @@ internal sealed class WindowsVolumeFragmentationApi : IWindowsVolumeFragmentatio
         }
         cancellationToken.ThrowIfCancellationRequested();
 
-        var connectionOptions = new ConnectionOptions
-        {
-            Timeout = timeout,
-        };
-        var scope = new ManagementScope(@"\\.\root\cimv2", connectionOptions);
+        var operationStarted = Stopwatch.GetTimestamp();
+        var scope = new ManagementScope(@"\\.\root\cimv2");
 
-        // Do not call ManagementScope.Connect() explicitly here. System.Management
-        // documents ManagementOptions.Timeout as having no effect on Connect(). Let
-        // the bounded query bind the local scope as part of the WMI operation instead.
+        // Do not call ManagementScope.Connect() explicitly. System.Management
+        // documents ManagementOptions.Timeout as having no effect on Connect().
+        // The semi-synchronous enumeration below carries the first phase of the
+        // single FileOp analysis budget.
         using var searcher = new ManagementObjectSearcher(
             scope,
             new ObjectQuery("SELECT Name FROM Win32_Volume"),
@@ -97,10 +95,15 @@ internal sealed class WindowsVolumeFragmentationApi : IWindowsVolumeFragmentatio
                 $"Win32_Volume did not expose the requested local volume root {canonicalVolumeRoot}.");
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
+        var remainingTimeout = GetRemainingTimeout(
+            timeout,
+            Stopwatch.GetElapsedTime(operationStarted));
+
         using (target)
         using (var output = await InvokeDefragAnalysisAsync(
             target,
-            timeout,
+            remainingTimeout,
             cancellationToken).ConfigureAwait(false))
         {
             var returnCode = ReadUInt32(output, "ReturnValue");
@@ -140,6 +143,26 @@ internal sealed class WindowsVolumeFragmentationApi : IWindowsVolumeFragmentatio
         }
     }
 
+    internal static TimeSpan GetRemainingTimeout(TimeSpan timeout, TimeSpan elapsed)
+    {
+        if (timeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeout));
+        }
+        if (elapsed < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(elapsed));
+        }
+
+        var remaining = timeout - elapsed;
+        if (remaining <= TimeSpan.Zero)
+        {
+            throw new TimeoutException(
+                "The Win32_Volume lookup consumed FileOp's entire fragmentation-analysis timeout before DefragAnalysis could start.");
+        }
+        return remaining;
+    }
+
     private static async Task<ManagementBaseObject> InvokeDefragAnalysisAsync(
         ManagementObject volume,
         TimeSpan timeout,
@@ -161,6 +184,13 @@ internal sealed class WindowsVolumeFragmentationApi : IWindowsVolumeFragmentatio
             {
                 Interlocked.Exchange(ref output, null)?.Dispose();
                 completion.TrySetCanceled(cancellationToken);
+                return;
+            }
+            if (eventArgs.Status == ManagementStatus.Timedout)
+            {
+                Interlocked.Exchange(ref output, null)?.Dispose();
+                completion.TrySetException(new TimeoutException(
+                    "Asynchronous Win32_Volume.DefragAnalysis timed out."));
                 return;
             }
             if (eventArgs.Status != ManagementStatus.NoError)
@@ -347,13 +377,11 @@ public sealed class WindowsVolumeFragmentationAnalysisProvider
         }
         catch (OperationCanceledException) when (timeoutCancellation.IsCancellationRequested)
         {
-            return VolumeFragmentationAnalysisResult.Unavailable(
-                canonicalRoot,
-                budget,
-                VolumeFragmentationAnalysisStatus.Cancelled,
-                null,
-                Stopwatch.GetElapsedTime(started),
-                $"Win32_Volume.DefragAnalysis exceeded FileOp's explicit {budget.Timeout.TotalSeconds:N0}-second analysis timeout and cancellation was requested.");
+            return TimedOut(canonicalRoot, budget, started);
+        }
+        catch (TimeoutException)
+        {
+            return TimedOut(canonicalRoot, budget, started);
         }
         catch (UnauthorizedAccessException exception)
         {
@@ -373,7 +401,9 @@ public sealed class WindowsVolumeFragmentationAnalysisProvider
                 ManagementStatus.InvalidClass or
                 ManagementStatus.InvalidMethod or
                 ManagementStatus.MethodNotImplemented => VolumeFragmentationAnalysisStatus.Unsupported,
-                ManagementStatus.CallCanceled => VolumeFragmentationAnalysisStatus.Cancelled,
+                ManagementStatus.CallCanceled or
+                ManagementStatus.OperationCanceled or
+                ManagementStatus.Timedout => VolumeFragmentationAnalysisStatus.Cancelled,
                 _ => VolumeFragmentationAnalysisStatus.Unavailable,
             };
             return Failure(
@@ -401,6 +431,18 @@ public sealed class WindowsVolumeFragmentationAnalysisProvider
                 exception.Message);
         }
     }
+
+    private static VolumeFragmentationAnalysisResult TimedOut(
+        string canonicalRoot,
+        VolumeFragmentationAnalysisBudget budget,
+        long started) =>
+        VolumeFragmentationAnalysisResult.Unavailable(
+            canonicalRoot,
+            budget,
+            VolumeFragmentationAnalysisStatus.Cancelled,
+            null,
+            Stopwatch.GetElapsedTime(started),
+            $"Win32_Volume.DefragAnalysis exhausted FileOp's explicit {budget.Timeout.TotalSeconds:N0}-second lookup + analysis budget; cancellation was requested where the WMI operation supported it and FileOp stopped waiting.");
 
     private static VolumeFragmentationAnalysisResult Failure(
         string canonicalRoot,
