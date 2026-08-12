@@ -12,6 +12,10 @@ from verify_file_delete_action_history import (
     run_model as run_delete_history_model,
     run_sqlite_model as run_delete_history_sqlite_model,
 )
+from verify_file_delete_execution_binding import (
+    check_binding_repository as check_delete_binding_repository,
+    run_binding_model as run_delete_binding_model,
+)
 
 
 @dataclass(frozen=True)
@@ -134,6 +138,7 @@ def run_stability_model(cases: int, seed: int) -> int:
 def run_model(cases: int, seed: int) -> int:
     return (
         run_stability_model(cases, seed)
+        + run_delete_binding_model(cases, seed ^ 0xB1D125)
         + run_delete_history_model(cases, seed ^ 0xD31E7E51)
         + run_delete_history_sqlite_model(cases, seed ^ 0xD31B244F)
     )
@@ -270,7 +275,11 @@ def check_stability_repository(root: Path) -> int:
 
 
 def check_repository(root: Path) -> int:
-    return check_stability_repository(root) + check_delete_history_repository(root)
+    return (
+        check_stability_repository(root)
+        + check_delete_binding_repository(root)
+        + check_delete_history_repository(root)
+    )
 
 
 def main() -> int:
@@ -286,8 +295,8 @@ def main() -> int:
     source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = f" and {source_checks:,} source checks" if args.repo_root else ""
     print(
-        f"PASS: file delete stability lease + action history verified with {model_checks:,} model/SQLite assertions "
-        f"across {args.cases:,} randomized states{suffix}."
+        f"PASS: file delete stability lease + execution binding + action history verified with {model_checks:,} "
+        f"model/SQLite assertions across {args.cases:,} randomized states{suffix}."
     )
     return 0
 
