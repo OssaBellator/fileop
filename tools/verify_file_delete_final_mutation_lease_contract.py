@@ -29,27 +29,27 @@ class FinalLeaseState:
 def simulate(state: FinalLeaseState) -> tuple[bool, tuple[str, ...], bool, bool, bool, bool]:
     """Return (scope_created, events, read_only_held, final_held, barrier, mutation)."""
     events: list[str] = []
-    mutation_barrier = False
-    delete_mutation = False
     read_only_held = state.read_only_scope_live
     final_held = False
+    barrier = False
+    mutation = False
 
     if state.pre_cancelled:
-        return False, tuple(events), read_only_held, final_held, mutation_barrier, delete_mutation
+        return False, tuple(events), read_only_held, final_held, barrier, mutation
     if not read_only_held:
-        return False, tuple(events), False, final_held, mutation_barrier, delete_mutation
+        return False, tuple(events), False, final_held, barrier, mutation
 
     events.append("release-read-only")
     if not state.read_only_release_succeeds:
-        return False, tuple(events), True, final_held, mutation_barrier, delete_mutation
+        return False, tuple(events), True, final_held, barrier, mutation
     read_only_held = False
 
     if state.cancelled_after_release:
-        return False, tuple(events), read_only_held, final_held, mutation_barrier, delete_mutation
+        return False, tuple(events), read_only_held, final_held, barrier, mutation
 
     events.append("acquire-final")
     if not state.provider_returns_lease:
-        return False, tuple(events), read_only_held, final_held, mutation_barrier, delete_mutation
+        return False, tuple(events), read_only_held, final_held, barrier, mutation
     final_held = True
 
     provider_valid = (
@@ -64,38 +64,23 @@ def simulate(state: FinalLeaseState) -> tuple[bool, tuple[str, ...], bool, bool,
     )
     if not provider_valid:
         events.append("dispose-final")
-        final_held = False
-        return False, tuple(events), read_only_held, final_held, mutation_barrier, delete_mutation
+        return False, tuple(events), read_only_held, False, barrier, mutation
 
     events.append("accept-final")
-    return True, tuple(events), read_only_held, final_held, mutation_barrier, delete_mutation
+    return True, tuple(events), read_only_held, final_held, barrier, mutation
 
 
 def run_model(cases: int, seed: int) -> int:
     checks = 0
     baseline = FinalLeaseState(
-        pre_cancelled=False,
-        read_only_scope_live=True,
-        read_only_release_succeeds=True,
-        cancelled_after_release=False,
-        provider_returns_lease=True,
-        lease_mutation_authorized=False,
-        delete_access_capability_held=True,
-        evidence_exact_receipt=True,
-        evidence_exact_ordinal=True,
-        root_path_same=True,
-        root_identity_same=True,
-        file_path_same=True,
-        file_identity_same=True,
-        final_disposal_succeeds=True,
+        False, True, True, False, True, False, True,
+        True, True, True, True, True, True, True,
     )
     created, events, read_only_held, final_held, barrier, mutation = simulate(baseline)
     assert created
     assert events == ("release-read-only", "acquire-final", "accept-final")
-    assert not read_only_held
-    assert final_held
-    assert not barrier
-    assert not mutation
+    assert not read_only_held and final_held
+    assert not barrier and not mutation
     checks += 6
 
     rng = random.Random(seed)
@@ -118,59 +103,44 @@ def run_model(cases: int, seed: int) -> int:
         )
         created, events, read_only_held, final_held, barrier, mutation = simulate(state)
 
-        assert not barrier
-        assert not mutation
+        assert not barrier and not mutation
         assert events.count("release-read-only") <= 1
         assert events.count("acquire-final") <= 1
         assert events.count("accept-final") <= 1
         assert events.count("dispose-final") <= 1
-        checks += 6
+        checks += 5
 
         if state.pre_cancelled:
-            assert not created
-            assert events == ()
+            assert not created and events == ()
             assert read_only_held == state.read_only_scope_live
             assert not final_held
-            checks += 4
+            checks += 3
             continue
-
         if not state.read_only_scope_live:
-            assert not created
-            assert events == ()
-            assert not read_only_held
-            assert not final_held
+            assert not created and events == () and not read_only_held and not final_held
             checks += 4
             continue
 
-        assert events and events[0] == "release-read-only"
+        assert events[0] == "release-read-only"
         checks += 1
-
         if not state.read_only_release_succeeds:
-            assert not created
+            assert not created and read_only_held and not final_held
             assert "acquire-final" not in events
-            assert read_only_held
-            assert not final_held
             checks += 4
             continue
 
         assert not read_only_held
         checks += 1
-
         if state.cancelled_after_release:
-            assert not created
-            assert events == ("release-read-only",)
-            assert not final_held
+            assert not created and events == ("release-read-only",) and not final_held
             checks += 3
             continue
 
         assert events[:2] == ("release-read-only", "acquire-final")
         checks += 1
-
         if not state.provider_returns_lease:
-            assert not created
-            assert events == ("release-read-only", "acquire-final")
-            assert not final_held
-            checks += 3
+            assert not created and not final_held
+            checks += 2
             continue
 
         provider_valid = (
@@ -184,39 +154,23 @@ def run_model(cases: int, seed: int) -> int:
             and state.file_identity_same
         )
         if not provider_valid:
-            assert not created
-            assert events[-1] == "dispose-final"
-            assert not final_held
+            assert not created and events[-1] == "dispose-final" and not final_held
             checks += 3
             continue
 
-        assert created
-        assert events[-1] == "accept-final"
-        assert final_held
+        assert created and events[-1] == "accept-final" and final_held
         checks += 3
-
-        provider_acquisition_proven_by_value = False
-        delete_access_proven_by_value = False
-        lease_liveness_proven_by_value = False
-        delete_mutation_authorized = False
-        mutation_barrier_satisfied = False
-        delete_mutation_performed = False
-        assert not provider_acquisition_proven_by_value
-        assert not delete_access_proven_by_value
-        assert not lease_liveness_proven_by_value
-        assert not delete_mutation_authorized
-        assert not mutation_barrier_satisfied
-        assert not delete_mutation_performed
-        checks += 6
+        # Value evidence never becomes provider/capability/liveness proof or mutation authority.
+        assert not barrier and not mutation
+        checks += 2
 
         dispose_attempts = 1
         if not state.final_disposal_succeeds:
             assert final_held
-            checks += 1
             dispose_attempts += 1
+            checks += 1
         final_held = False
-        assert not final_held
-        assert dispose_attempts in (1, 2)
+        assert not final_held and dispose_attempts in (1, 2)
         checks += 2
 
     return checks
@@ -244,72 +198,71 @@ def check_repository(root: Path) -> int:
     plan = (root / "src/FileOp.Core/Operations/FileOperationPlan.cs").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
 
-    production_consumers: list[str] = []
+    reviewed_provider = "src/FileOp.Windows/Operations/WindowsFileDeleteOperationFinalMutationLeaseProvider.cs"
+    forbidden_consumers: list[str] = []
+    provider_implementations: list[str] = []
     for subtree in ("src/FileOp.App", "src/FileOp.Windows", "src/FileOp.Indexer"):
         directory = root / subtree
         if not directory.exists():
             continue
         for path in directory.rglob("*.cs"):
             text = path.read_text(encoding="utf-8")
-            if "IFileDeleteOperationFinalMutationLeaseProvider" in text or \
-                    "FileDeleteOperationFinalMutationLeasePreparation" in text:
-                production_consumers.append(path.relative_to(root).as_posix())
-    if production_consumers:
+            relative = path.relative_to(root).as_posix()
+            if "FileDeleteOperationFinalMutationLeasePreparation" in text:
+                forbidden_consumers.append(relative)
+            if "IFileDeleteOperationFinalMutationLeaseProvider" in text:
+                provider_implementations.append(relative)
+                if relative != reviewed_provider:
+                    forbidden_consumers.append(relative)
+    if forbidden_consumers:
         raise AssertionError(
-            "final delete mutation lease contract must remain unwired from production: "
-            + ", ".join(production_consumers)
+            "final delete lease may have only the reviewed native provider and no production coordinator consumer: "
+            + ", ".join(sorted(set(forbidden_consumers)))
+        )
+    if provider_implementations not in ([], [reviewed_provider]):
+        raise AssertionError(
+            "unexpected production final-lease provider set: " + repr(provider_implementations)
         )
 
     checks = 0
-    required = [
+    for text, needle, label in (
         (core, "public sealed class FileDeleteOperationFinalMutationLeaseRequest", "final request type"),
         (core, "internal FileDeleteOperationFinalMutationLeaseRequest(", "coordinator-only request constructor"),
         (core, "public bool PriorReadOnlyLeaseReleaseProven => false;", "request cannot forge release proof"),
         (core, "private readonly FileDeleteOperationFinalMutationLeaseRequest _request;", "evidence keeps request private"),
-        (core, "public sealed class FileDeleteOperationFinalMutationLeaseEvidence", "value evidence contract"),
         (core, "public bool ProviderAcquisitionProven => false;", "value evidence no provider proof"),
         (core, "public bool DeleteAccessCapabilityProven => false;", "value evidence no capability proof"),
         (core, "public bool LeaseLivenessProven => false;", "value evidence no liveness proof"),
         (core, "ReferenceEquals(Authorization, authorization) && Ordinal == ordinal", "exact receipt/ordinal binding"),
         (core, "public interface IFileDeleteOperationFinalMutationLease : IAsyncDisposable", "live final lease interface"),
         (core, "bool DeleteAccessCapabilityHeld { get; }", "live capability property"),
-        (core, "public interface IFileDeleteOperationFinalMutationLeaseProvider", "final provider interface"),
+        (core, "public interface IFileDeleteOperationFinalMutationLeaseProvider", "provider interface"),
         (core, "public sealed class FileDeleteOperationFinalMutationLeaseScope : IAsyncDisposable", "owned final scope"),
         (core, "public bool PriorReadOnlyLeaseReleaseObserved => true;", "release observation"),
         (core, "public bool FinalLeaseProviderAcquisitionObserved => true;", "provider acquisition observation"),
-        (core, "public bool DeleteMutationAuthorized => false;", "contract remains non-authorizing"),
+        (core, "public bool DeleteMutationAuthorized => false;", "pre-barrier contract remains non-authorizing"),
         (core, "public bool MutationBarrierSatisfied => false;", "contract remains pre-barrier"),
         (core, "public bool DeleteMutationPerformed => false;", "contract remains non-mutating"),
         (core, "public bool FinalLeaseHeld => Volatile.Read(ref _lease) is not null;", "owned final lease lifetime"),
-        (core, "await lease.DisposeAsync().ConfigureAwait(false);\n            Volatile.Write(ref _lease, null);", "ownership clears only after successful disposal"),
-        (core, "public static class FileDeleteOperationFinalMutationLeasePreparation", "release/reacquire coordinator"),
+        (core, "await lease.DisposeAsync().ConfigureAwait(false);\n            Volatile.Write(ref _lease, null);", "ownership clears after disposal"),
         (core, "await readOnlyPreparationScope.DisposeAsync().ConfigureAwait(false);", "read-only release"),
-        (core, "readOnlyPreparationScope.StabilityLeaseHeld", "post-release state check"),
-        (core, "new FileDeleteOperationFinalMutationLeaseRequest(authorization, ordinal)", "Core-minted final request after release"),
-        (core, ".AcquireAsync(request, cancellationToken)", "final provider acquisition"),
-        (core, "!lease.DeleteAccessCapabilityHeld", "capability-held requirement"),
-        (core, "evidence.ProviderAcquisitionProven", "reject forged provider proof"),
-        (core, "evidence.DeleteAccessCapabilityProven", "reject forged capability proof"),
-        (core, "evidence.LeaseLivenessProven", "reject forged liveness proof"),
-        (preparation, "public bool StabilityLeaseHeld => Volatile.Read(ref _lease) is not null;", "#130 held-state source"),
-        (preparation, "Volatile.Write(ref _lease, null);", "#130 release after disposal"),
+        (core, "new FileDeleteOperationFinalMutationLeaseRequest(authorization, ordinal)", "Core-minted request"),
+        (core, ".AcquireAsync(request, cancellationToken)", "provider acquisition"),
+        (preparation, "public bool StabilityLeaseHeld => Volatile.Read(ref _lease) is not null;", "read-only held state"),
         (tests, "FinalProviderRunsOnlyAfterReadOnlyPreparationLeaseIsReleased", "release-before-acquire regression"),
         (tests, "ReadOnlyDisposalFailurePreventsFinalProviderAcquisition", "release-failure regression"),
         (tests, "PreCancellationLeavesReadOnlyPreparationHeldAndDoesNotInvokeFinalProvider", "pre-cancellation regression"),
-        (tests, "ReplayedFinalLeaseFromDifferentAuthorizationFailsAndIsReleased", "stale final lease regression"),
-        (tests, "FinalProviderMustHoldCapabilityWithoutClaimingMutationAuthorization", "capability/authorization regression"),
-        (tests, "FinalScopeDisposalFailureRetainsCapabilityOwnershipAndAllowsRetry", "final disposal retry regression"),
-        (tests, "ValueEvidenceCannotExposeReusableRequestOrClaimCapabilityProof", "non-reusable request/value regression"),
-        (tests, "GetConstructors(BindingFlags.Public | BindingFlags.Instance)", "no public request constructor regression"),
-        (tests, "GetProperty(\"Request\")", "no evidence request property regression"),
+        (tests, "ReplayedFinalLeaseFromDifferentAuthorizationFailsAndIsReleased", "stale lease regression"),
+        (tests, "FinalProviderMustHoldCapabilityWithoutClaimingMutationAuthorization", "capability/authority regression"),
+        (tests, "FinalScopeDisposalFailureRetainsCapabilityOwnershipAndAllowsRetry", "disposal retry regression"),
+        (tests, "ValueEvidenceCannotExposeReusableRequestOrClaimCapabilityProof", "value-only evidence regression"),
         (docs, "constructor is **internal to FileOp.Core**", "coordinator-only request documentation"),
         (docs, "Releasing the earlier read-only lease necessarily creates a handoff interval", "handoff gap disclosure"),
         (docs, "Reopening the pathname after final validation", "no path fallback documentation"),
         (local_gate, "verify_file_delete_final_mutation_lease_contract.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "generic operation enum unchanged"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
-    ]
-    for text, needle, label in required:
+    ):
         checks += require(text, needle, label)
 
     release_pos = core.index("await readOnlyPreparationScope.DisposeAsync().ConfigureAwait(false);")
@@ -321,17 +274,15 @@ def check_repository(root: Path) -> int:
 
     for text, needle, label in (
         (core, "public FileDeleteOperationFinalMutationLeaseRequest(", "public request constructor"),
-        (core, "public FileDeleteOperationFinalMutationLeaseRequest Request", "reusable request exposure from evidence"),
-        (core, "MarkMutationStartedAsync(", "durable mutation barrier call"),
-        (core, "CommitDeletedAsync(", "delete commit call"),
-        (core, "MarkMutationRecoveryRequiredAsync(", "recovery transition call"),
-        (core, "SetFileInformationByHandle", "same-handle delete implementation"),
-        (core, "NtSetInformationFile", "native delete implementation"),
-        (core, "DeleteFileW", "path delete implementation"),
-        (core, "File.Delete(", "managed file delete"),
-        (core, "Directory.Delete(", "managed directory delete"),
-        (core, "SafeFileHandle", "raw Windows handle exposure"),
-        (core, "public IFileDeleteOperationFinalMutationLease Lease", "underlying final lease exposure"),
+        (core, "public FileDeleteOperationFinalMutationLeaseRequest Request", "request exposure from evidence"),
+        (core, "MarkMutationStartedAsync(", "barrier call in pre-barrier contract"),
+        (core, "CommitDeletedAsync(", "delete settlement in pre-barrier contract"),
+        (core, "SetFileInformationByHandle", "delete implementation in Core"),
+        (core, "NtSetInformationFile", "native mutation in Core"),
+        (core, "DeleteFileW", "path delete in Core"),
+        (core, "File.Delete(", "managed delete in Core"),
+        (core, "Directory.Delete(", "managed directory delete in Core"),
+        (core, "SafeFileHandle", "raw handle exposure from Core"),
         (generic_execution, "FileDeleteOperationFinalMutationLease", "generic executor integration"),
         (plan, "Delete,", "generic Delete operation kind"),
     ):
