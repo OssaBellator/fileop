@@ -60,7 +60,7 @@ The CPU strip is explicitly labeled `Windows system CPU interval`. For a complet
 
 A zero-total interval displays `No percentage`; it does not invent 0%. Unsupported or unavailable CPU evidence clears only the CPU summary and leaves a valid process report intact.
 
-The system CPU percentage is interval context, not a pressure/health score and not a per-process percentage. The UI does not apply thresholds, traffic-light labels, recommendations or rankings to it.
+The system CPU percentage is interval context, not a scored assessment of pressure or health and not a per-process percentage. The UI does not apply thresholds, traffic-light labels, recommendations or rankings to it.
 
 The process-only `Apply(MachineProcessActivityResult)` presentation seam remains available for compatibility. It renders the same process evidence and explicitly marks system CPU context as not attached rather than fabricating a value.
 
@@ -89,7 +89,7 @@ This slice does not:
 - enumerate or mutate startup registrations;
 - stop, suspend, kill, reprioritize or restart processes;
 - disable services or tasks;
-- create an impact/health/pressure/performance score;
+- create a scored impact, health, pressure or performance assessment;
 - alter Disk I/O ranking or device evidence;
 - add an indexing-helper operation or protocol change.
 
