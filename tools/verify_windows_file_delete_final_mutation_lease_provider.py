@@ -14,15 +14,18 @@ class NativeAcquireState:
     request_valid: bool
     root_allowed: bool
     file_allowed: bool
+    cancel_after_policy: bool
     root_safe: bool
     root_path_exact: bool
     root_identity_exact: bool
+    cancel_after_root: bool
     relative_leaf_safe: bool
     ntcreate_succeeds: bool
     file_safe: bool
     file_path_exact: bool
     file_identity_exact: bool
     root_still_exact: bool
+    cancel_after_leaf: bool
 
 
 def acquire(state: NativeAcquireState) -> tuple[bool, bool, bool, tuple[str, ...]]:
@@ -33,9 +36,13 @@ def acquire(state: NativeAcquireState) -> tuple[bool, bool, bool, tuple[str, ...
         return False, False, mutation, tuple(events)
     if not state.root_allowed or not state.file_allowed:
         return False, False, mutation, tuple(events)
+    if state.cancel_after_policy:
+        return False, False, mutation, tuple(events)
 
     events.append("open-root")
     if not (state.root_safe and state.root_path_exact and state.root_identity_exact):
+        return False, False, mutation, tuple(events)
+    if state.cancel_after_root:
         return False, False, mutation, tuple(events)
 
     events.append("open-relative-leaf-with-delete")
@@ -47,6 +54,8 @@ def acquire(state: NativeAcquireState) -> tuple[bool, bool, bool, tuple[str, ...
     events.append("revalidate-root")
     if not state.root_still_exact:
         return False, False, mutation, tuple(events)
+    if state.cancel_after_leaf:
+        return False, False, mutation, tuple(events)
 
     events.append("return-live-lease")
     return True, True, mutation, tuple(events)
@@ -54,8 +63,9 @@ def acquire(state: NativeAcquireState) -> tuple[bool, bool, bool, tuple[str, ...
 
 def run_model(cases: int, seed: int) -> int:
     baseline = NativeAcquireState(
-        False, True, True, True, True, True, True,
-        True, True, True, True, True, True,
+        False, True, True, True, False,
+        True, True, True, False,
+        True, True, True, True, True, True, False,
     )
     lease, capability, mutation, events = acquire(baseline)
     assert lease and capability and not mutation
@@ -74,15 +84,18 @@ def run_model(cases: int, seed: int) -> int:
             request_valid=rng.random() >= 0.05,
             root_allowed=rng.random() >= 0.04,
             file_allowed=rng.random() >= 0.04,
+            cancel_after_policy=rng.random() < 0.04,
             root_safe=rng.random() >= 0.05,
             root_path_exact=rng.random() >= 0.05,
             root_identity_exact=rng.random() >= 0.05,
+            cancel_after_root=rng.random() < 0.04,
             relative_leaf_safe=rng.random() >= 0.04,
             ntcreate_succeeds=rng.random() >= 0.05,
             file_safe=rng.random() >= 0.05,
             file_path_exact=rng.random() >= 0.05,
             file_identity_exact=rng.random() >= 0.05,
             root_still_exact=rng.random() >= 0.05,
+            cancel_after_leaf=rng.random() < 0.04,
         )
         lease, capability, mutation, events = acquire(state)
 
@@ -101,18 +114,20 @@ def run_model(cases: int, seed: int) -> int:
                 state.request_valid,
                 state.root_allowed,
                 state.file_allowed,
+                not state.cancel_after_policy,
                 state.root_safe,
                 state.root_path_exact,
                 state.root_identity_exact,
+                not state.cancel_after_root,
                 state.relative_leaf_safe,
                 state.ntcreate_succeeds,
                 state.file_safe,
                 state.file_path_exact,
                 state.file_identity_exact,
                 state.root_still_exact,
+                not state.cancel_after_leaf,
             ))
             checks += 3
-            # Disposal removes capability and still performs no mutation.
             capability = False
             assert not capability and not mutation
             checks += 2
@@ -167,6 +182,7 @@ def check_repository(root: Path) -> int:
         (provider, "public bool DeleteMutationAuthorized => false;", "provider remains non-authorizing"),
         (provider, "DisposeNoThrow(_sourceFile);", "leaf release"),
         (provider, "DisposeNoThrow(_sourceDirectory);", "root release"),
+        (provider, "Task.Run(() => Acquire(request, cancellationToken), cancellationToken)", "token forwarded into native reacquisition"),
         (tests, "FinalLeaseBindsExactAuthorizationAndHoldsDeleteCapabilityWithoutMutationAuthority", "native capability regression"),
         (tests, "FileReplacementDuringReadOnlyToFinalHandoffIsRejectedByFinalProvider", "file handoff race regression"),
         (tests, "RootReplacementDuringReadOnlyToFinalHandoffIsRejectedByFinalProvider", "root handoff race regression"),
@@ -177,12 +193,17 @@ def check_repository(root: Path) -> int:
         (tests, "DirectoryRenameIsBlocked", "root rename sharing probe"),
         (docs, "successful `NtCreateFile` request containing `DELETE`", "capability proof documentation"),
         (docs, "does not perform deletion", "no mutation documentation"),
+        (docs, "Windows sharing checks are symmetric", "DELETE sharing impact disclosure"),
         (contract_verifier, "reviewed_provider = \"src/FileOp.Windows/Operations/WindowsFileDeleteOperationFinalMutationLeaseProvider.cs\"", "evolved #136 production-provider guard"),
         (gate, "verify_windows_file_delete_final_mutation_lease_provider.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "generic Delete remains absent"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 unchanged"),
     ):
         checks += require(text, needle, label)
+
+    if provider.count("cancellationToken.ThrowIfCancellationRequested();") < 4:
+        raise AssertionError("final provider must retain cancellation checkpoints before and during native reacquisition")
+    checks += 1
 
     first_root_validation = provider.index("ValidateDirectoryHandle(")
     relative_open = provider.index("sourceFile = OpenRelativeFile(")
@@ -191,7 +212,6 @@ def check_repository(root: Path) -> int:
         raise AssertionError("final provider must validate root before and after the root-relative leaf open")
     checks += 1
 
-    # The production provider may acquire DELETE access, but it may not consume that access.
     for needle, label in (
         ("SetFileInformationByHandle", "file disposition mutation"),
         ("NtSetInformationFile", "native disposition mutation"),
@@ -206,7 +226,6 @@ def check_repository(root: Path) -> int:
     ):
         checks += forbid(provider, needle, label)
 
-    # No application/indexer wiring and no second Windows consumer yet.
     consumers: list[str] = []
     for subtree in ("src/FileOp.App", "src/FileOp.Indexer"):
         directory = root / subtree
