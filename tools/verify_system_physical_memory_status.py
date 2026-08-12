@@ -101,8 +101,9 @@ def check_repository(root: Path) -> int:
         (docs, "approximate percentage of physical memory in use", "documented Windows load semantics"),
         (docs, "deliberately does not expose those fields", "page-file/virtual boundary"),
         (docs, "not treated as wasted or recoverable RAM", "no cleanup heuristic"),
+        (docs, "`EmptyWorkingSet`, `SetProcessWorkingSetSize`", "explicit reclamation API prohibition"),
         (parent, "from verify_system_physical_memory_status import (", "parent imports memory verifier"),
-        (parent, "run_system_physical_memory_models(args.cases", "parent runs combined memory models"),
+        (parent, "run_system_physical_memory_models(", "parent runs combined memory models"),
         (parent, "check_system_physical_memory_repository(root)", "parent runs combined memory source checks"),
         (gate, "verify_performance_diagnostics.py --repo-root $repoRoot --cases 50000", "existing offline gate"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
@@ -121,7 +122,7 @@ def check_repository(root: Path) -> int:
     ):
         checks += forbid(core, needle, "page-file/virtual public evidence")
 
-    combined = core + "\n" + provider + "\n" + docs
+    application_code = core + "\n" + provider
     for needle in (
         "EmptyWorkingSet",
         "SetProcessWorkingSetSize",
@@ -132,7 +133,7 @@ def check_repository(root: Path) -> int:
         "DispatcherQueueTimer",
         "FileSystemWatcher",
     ):
-        checks += forbid(combined, needle, "memory action/score/poller")
+        checks += forbid(application_code, needle, "memory action/score/poller")
 
     if provider.count("GlobalMemoryStatusEx(ref native)") != 1:
         raise AssertionError("physical-memory provider must issue exactly one native query")
