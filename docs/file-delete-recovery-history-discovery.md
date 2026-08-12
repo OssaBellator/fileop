@@ -31,7 +31,7 @@ Candidate IDs and complete histories are read inside one SQLite read transaction
 
 ## Restart and consent boundary
 
-Discovery does **not** infer that a `MutationStarted` file was deleted. That state means only that the durable pre-mutation barrier was crossed before the previous process stopped reporting a settled outcome.
+The reader does not infer that a `MutationStarted` file was deleted. That state means only that the durable pre-mutation barrier was crossed before the previous process stopped reporting a settled outcome.
 
 The returned history contains audit provenance such as authorization ID and timestamp, but it does not reconstruct the old session-only `FileDeleteOperationUserAuthorizationReceipt`, does not satisfy receipt reference binding, and does not authorize automatic retry or recovery mutation.
 
