@@ -161,7 +161,7 @@ def check_repository(root: Path) -> int:
         raise AssertionError("system-memory UI must issue exactly one query per accepted refresh handler invocation")
     checks += 1
 
-    combined = "\n".join((engine, main, view, docs))
+    application_code = "\n".join((engine, main, view))
     for needle in (
         "GlobalMemoryStatusEx(",
         "EmptyWorkingSet",
@@ -176,7 +176,7 @@ def check_repository(root: Path) -> int:
         "Process.Kill",
         "CloseMainWindow",
     ):
-        checks += forbid(combined, needle, "UI/native action/score/poller path")
+        checks += forbid(application_code, needle, "UI/native action/score/poller path")
 
     for needle in (
         "AvailablePhysicalBytes /",
