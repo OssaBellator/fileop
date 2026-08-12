@@ -36,6 +36,10 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
     private const uint FileOpen = 1;
     private const uint ObjCaseInsensitive = 0x00000040;
 
+    private const uint FileDispositionDelete = 0x00000001;
+    private const uint FileDispositionPosixSemantics = 0x00000002;
+    private const int FileDispositionInformationEx = 64;
+
     private readonly IFileDeleteProtectedLocationPolicy _protectedLocationPolicy;
 
     public WindowsFileDeleteOperationFinalMutationLeaseProvider(
@@ -523,15 +527,20 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
                     "The same-handle delete disposition may be attempted only once for a final lease.");
             }
 
-            var disposition = new FileDispositionInformation { DeleteFile = true };
-            if (!SetFileInformationByHandle(
-                    sourceFile!,
-                    FileInfoByHandleClass.FileDispositionInfo,
-                    ref disposition,
-                    checked((uint)Marshal.SizeOf<FileDispositionInformation>())))
+            var disposition = new FileDispositionInformationEx
             {
-                throw Win32IOException(
-                    "Marking the exact authorized final-delete handle for deletion");
+                Flags = FileDispositionDelete | FileDispositionPosixSemantics,
+            };
+            var status = NtSetInformationFile(
+                sourceFile!,
+                out _,
+                ref disposition,
+                checked((uint)Marshal.SizeOf<FileDispositionInformationEx>()),
+                FileDispositionInformationEx);
+            if (status < 0)
+            {
+                throw new IOException(
+                    $"NtSetInformationFile(FileDispositionInformationEx) for the exact authorized final-delete handle failed with NTSTATUS 0x{unchecked((uint)status):X8}.");
             }
 
             return ValueTask.CompletedTask;
@@ -583,6 +592,14 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
         IntPtr eaBuffer,
         uint eaLength);
 
+    [DllImport("ntdll.dll")]
+    private static extern int NtSetInformationFile(
+        SafeFileHandle fileHandle,
+        out IoStatusBlock ioStatusBlock,
+        ref FileDispositionInformationEx fileInformation,
+        uint length,
+        int fileInformationClass);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetFinalPathNameByHandleW(
         SafeFileHandle hFile,
@@ -596,24 +613,10 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
         SafeFileHandle hFile,
         out ByHandleFileInformation lpFileInformation);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetFileInformationByHandle(
-        SafeFileHandle hFile,
-        FileInfoByHandleClass fileInformationClass,
-        ref FileDispositionInformation fileInformation,
-        uint bufferSize);
-
-    private enum FileInfoByHandleClass
-    {
-        FileDispositionInfo = 4,
-    }
-
     [StructLayout(LayoutKind.Sequential)]
-    private struct FileDispositionInformation
+    private struct FileDispositionInformationEx
     {
-        [MarshalAs(UnmanagedType.U1)]
-        public bool DeleteFile;
+        public uint Flags;
     }
 
     [StructLayout(LayoutKind.Sequential)]
