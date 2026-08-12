@@ -15,6 +15,10 @@ from verify_physical_disk_device_context import (
     check_repository as check_physical_disk_repository,
     run_model as run_physical_disk_model,
 )
+from verify_physical_disk_failure_prediction import (
+    check_repository as check_physical_disk_failure_prediction_repository,
+    run_model as run_physical_disk_failure_prediction_model,
+)
 
 P95Cue = Tuple[int, int, int]
 DiskCue = Tuple[int, int, int]
@@ -31,7 +35,7 @@ def largest_byte_disk(cues: List[DiskCue]) -> Optional[DiskCue]:
     eligible = [cue for cue in cues if cue[1] > 0]
     if not eligible:
         return None
-    return sorted(eligible, key=lambda cue: (-cue[1], -cue[2], cue[0]))[0]
+    return sorted(cues if False else eligible, key=lambda cue: (-cue[1], -cue[2], cue[0]))[0]
 
 
 def largest_owner(cues: List[OwnerCue]) -> Optional[OwnerCue]:
@@ -264,22 +268,28 @@ def main() -> int:
     model_checks = run_model(args.cases, args.seed)
     physical_model_checks = run_physical_disk_model(args.cases, args.seed ^ 0x50445953)
     nvme_model_checks = run_nvme_health_model(args.cases, args.seed ^ 0x4E564D45)
+    failure_prediction_model_checks = run_physical_disk_failure_prediction_model(
+        args.cases,
+        args.seed ^ 0xFA117E,
+    )
     if args.repo_root:
         root = args.repo_root.resolve()
         source_checks = (
             check_repository(root)
             + check_physical_disk_repository(root)
             + check_nvme_health_repository(root)
+            + check_physical_disk_failure_prediction_repository(root)
         )
     else:
         source_checks = 0
     suffix = " and %s source checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: DiskIo bottleneck evidence verified with %s model assertions, physical-disk context with %s, and standardized NVMe health with %s across %s randomized cases%s."
+        "PASS: DiskIo bottleneck evidence verified with %s model assertions, physical-disk context with %s, standardized NVMe health with %s, and physical-disk failure prediction with %s across %s randomized cases%s."
         % (
             format(model_checks, ","),
             format(physical_model_checks, ","),
             format(nvme_model_checks, ","),
+            format(failure_prediction_model_checks, ","),
             format(args.cases, ","),
             suffix,
         )
