@@ -7,6 +7,11 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
+from verify_file_delete_stability_lease import (
+    check_repository as check_delete_stability_repository,
+    run_model as run_delete_stability_model,
+)
+
 
 @dataclass(frozen=True)
 class Validation:
@@ -221,6 +226,13 @@ def run_model(cases: int, seed: int) -> int:
     return checks
 
 
+def run_all_models(cases: int, seed: int) -> int:
+    return (
+        run_model(cases, seed)
+        + run_delete_stability_model(cases, seed ^ 0x57AB1E)
+    )
+
+
 def require(text: str, needle: str, label: str) -> int:
     if needle not in text:
         raise AssertionError(f"missing {label}: {needle}")
@@ -244,18 +256,18 @@ def check_repository(root: Path) -> int:
     parent = (root / "tools/verify_file_delete_execution_validation.py").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
 
-    production_consumers = []
-    for subtree in ("src/FileOp.App", "src/FileOp.Windows", "src/FileOp.Indexer"):
+    production_producers = []
+    for subtree in ("src/FileOp.App", "src/FileOp.Indexer"):
         directory = root / subtree
         if directory.exists():
             for path in directory.rglob("*.cs"):
                 text = path.read_text(encoding="utf-8")
-                if "FileDeleteOperationUserAuthorization" in text:
-                    production_consumers.append(path.relative_to(root).as_posix())
-    if production_consumers:
+                if "FileDeleteOperationUserAuthorizationIssuer" in text:
+                    production_producers.append(path.relative_to(root).as_posix())
+    if production_producers:
         raise AssertionError(
-            "user authorization must remain unwired from production in this slice: "
-            + ", ".join(production_consumers)
+            "user authorization issuance must remain unwired from App/Indexer in this slice: "
+            + ", ".join(production_producers)
         )
 
     checks = 0
@@ -299,8 +311,8 @@ def check_repository(root: Path) -> int:
         (cleanup, "CleanupMutationAuthorized => false", "cleanup non-authorization retained"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "Copy/Move operation enum unchanged"),
         (parent, "from verify_file_delete_user_authorization import (", "delete validator imports authorization child"),
-        (parent, "run_delete_authorization_model(args.cases", "delete validator runs authorization model"),
-        (parent, "check_delete_authorization_repository(repo_root)", "delete validator runs authorization source checks"),
+        (parent, "run_delete_authorization_models(args.cases", "delete validator runs authorization/stability models"),
+        (parent, "check_delete_authorization_repository(repo_root)", "delete validator runs authorization/stability source checks"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
     ]
     for text, needle, label in required:
@@ -323,6 +335,10 @@ def check_repository(root: Path) -> int:
     return checks
 
 
+def check_all_repository(root: Path) -> int:
+    return check_repository(root) + check_delete_stability_repository(root)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path)
@@ -332,11 +348,11 @@ def main() -> int:
     if args.cases < 1:
         parser.error("--cases must be positive")
 
-    model_checks = run_model(args.cases, args.seed)
-    source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
+    model_checks = run_all_models(args.cases, args.seed)
+    source_checks = check_all_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = f" and {source_checks:,} source checks" if args.repo_root else ""
     print(
-        f"PASS: file delete user authorization verified with {model_checks:,} model assertions "
+        f"PASS: file delete user authorization + stability lease verified with {model_checks:,} model assertions "
         f"across {args.cases:,} randomized states{suffix}."
     )
     return 0
