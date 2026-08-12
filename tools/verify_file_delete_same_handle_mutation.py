@@ -264,8 +264,11 @@ def check_repository(root: Path) -> int:
     ):
         checks += forbid(provider, needle, label)
 
-    if provider.count("NtSetInformationFile(") != 2:
-        raise AssertionError("reviewed provider must contain one NtSetInformationFile call plus one declaration")
+    if provider.count("var status = NtSetInformationFile(") != 1:
+        raise AssertionError("reviewed provider must contain exactly one NtSetInformationFile call")
+    checks += 1
+    if provider.count("private static extern int NtSetInformationFile(") != 1:
+        raise AssertionError("reviewed provider must contain exactly one NtSetInformationFile declaration")
     checks += 1
     if provider.count("FileDispositionForceImageSectionCheck") != 2:
         raise AssertionError("FORCE_IMAGE_SECTION_CHECK must appear exactly once as a constant and once in flags")
