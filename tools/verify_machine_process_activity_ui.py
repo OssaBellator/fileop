@@ -124,7 +124,7 @@ def check_repository(root: Path) -> int:
         (performance_xaml, 'x:Name="MachineProcessActivity"', "named machine view"),
         (view_xaml, 'Content="Capture machine activity"', "explicit capture action"),
         (view_xaml, 'Text="Current machine process activity"', "neutral current-activity heading"),
-        (view_xaml, "Process start time is context only", "start-time interpretation boundary"),
+        (view_xaml, "FileOp does not derive per-process CPU percentages", "process/system interpretation boundary"),
         (view_xaml, "CPU-time Δ", "CPU delta column"),
         (view, "report.OtherMatchedProcessorTime", "hidden CPU evidence"),
         (view, "report.CaptureProcessProcessorTime", "observer CPU evidence"),
@@ -147,7 +147,7 @@ def check_repository(root: Path) -> int:
     refresh = method_body(performance_base, "private void RefreshButton_Click")
     checks += forbid(refresh, "MachineProcess", "ordinary Performance refresh invoking machine sample")
 
-    apply = method_body(view, "public void Apply(MachineProcessActivityResult result)")
+    apply = method_body(view, "public void Apply(")
     checks += forbid(apply, ".OrderBy", "UI-side row ranking")
     checks += forbid(apply, ".Take(", "UI-side row promotion/truncation")
 
