@@ -32,11 +32,11 @@ def issue_receipt(
     validation: Validation,
     *,
     explicit_user_confirmation: bool,
-    authorization_id: int,
+    generated_authorization_id: int,
 ) -> Receipt | None:
     if not explicit_user_confirmation:
         return None
-    if authorization_id == 0:
+    if generated_authorization_id == 0:
         return None
     if not validation.ready:
         return None
@@ -45,7 +45,7 @@ def issue_receipt(
     if not validation.item_identities or any(identity is None for identity in validation.item_identities):
         return None
     return Receipt(
-        authorization_id=authorization_id,
+        authorization_id=generated_authorization_id,
         validation_instance_id=validation.instance_id,
         plan_id=validation.plan_id,
         root_identity=validation.root_identity,
@@ -69,14 +69,21 @@ def run_model(cases: int, seed: int) -> int:
     fixed_receipt = issue_receipt(
         fixed,
         explicit_user_confirmation=True,
-        authorization_id=99,
+        generated_authorization_id=99,
+    )
+    second_receipt = issue_receipt(
+        fixed,
+        explicit_user_confirmation=True,
+        generated_authorization_id=100,
     )
     assert fixed_receipt is not None
+    assert second_receipt is not None
+    assert fixed_receipt.authorization_id != second_receipt.authorization_id
     assert fixed_receipt.user_authorized_attempt
     assert not fixed_receipt.delete_mutation_authorized
     assert bound_to(fixed_receipt, fixed)
-    assert issue_receipt(fixed, explicit_user_confirmation=False, authorization_id=100) is None
-    assert issue_receipt(fixed, explicit_user_confirmation=True, authorization_id=0) is None
+    assert issue_receipt(fixed, explicit_user_confirmation=False, generated_authorization_id=101) is None
+    assert issue_receipt(fixed, explicit_user_confirmation=True, generated_authorization_id=0) is None
     assert not bound_to(
         fixed_receipt,
         Validation(
@@ -87,7 +94,7 @@ def run_model(cases: int, seed: int) -> int:
             item_identities=fixed.item_identities,
         ),
     )
-    checks += 6
+    checks += 8
 
     rng = random.Random(seed)
     for case in range(cases):
@@ -106,11 +113,11 @@ def run_model(cases: int, seed: int) -> int:
             root_identity=root_identity,
             item_identities=items,
         )
-        authorization_id = 1_000_000 + case
+        generated_authorization_id = 1_000_000 + case
         receipt = issue_receipt(
             validation,
             explicit_user_confirmation=confirmation,
-            authorization_id=authorization_id,
+            generated_authorization_id=generated_authorization_id,
         )
         should_issue = (
             confirmation
@@ -125,12 +132,12 @@ def run_model(cases: int, seed: int) -> int:
         assert issue_receipt(
             validation,
             explicit_user_confirmation=False,
-            authorization_id=authorization_id,
+            generated_authorization_id=generated_authorization_id,
         ) is None
         assert issue_receipt(
             validation,
             explicit_user_confirmation=True,
-            authorization_id=0,
+            generated_authorization_id=0,
         ) is None
         checks += 2
 
@@ -144,12 +151,12 @@ def run_model(cases: int, seed: int) -> int:
         assert issue_receipt(
             blocked,
             explicit_user_confirmation=True,
-            authorization_id=authorization_id,
+            generated_authorization_id=generated_authorization_id,
         ) is None
         checks += 1
 
         if receipt is not None:
-            assert receipt.authorization_id == authorization_id
+            assert receipt.authorization_id == generated_authorization_id
             assert receipt.plan_id == validation.plan_id
             assert receipt.root_identity == validation.root_identity
             assert receipt.item_identities == validation.item_identities
@@ -157,6 +164,17 @@ def run_model(cases: int, seed: int) -> int:
             assert not receipt.delete_mutation_authorized
             assert bound_to(receipt, validation)
             checks += 7
+
+            separately_generated = issue_receipt(
+                validation,
+                explicit_user_confirmation=True,
+                generated_authorization_id=generated_authorization_id + cases + 1,
+            )
+            assert separately_generated is not None
+            assert separately_generated.authorization_id != receipt.authorization_id
+            assert bound_to(separately_generated, validation)
+            assert not separately_generated.delete_mutation_authorized
+            checks += 4
 
             equivalent_revalidation = Validation(
                 instance_id=validation.instance_id + cases + 1,
@@ -232,17 +250,18 @@ def check_repository(root: Path) -> int:
         if directory.exists():
             for path in directory.rglob("*.cs"):
                 text = path.read_text(encoding="utf-8")
-                if "FileDeleteOperationUserAuthorizationReceipt" in text:
+                if "FileDeleteOperationUserAuthorization" in text:
                     production_consumers.append(path.relative_to(root).as_posix())
     if production_consumers:
         raise AssertionError(
-            "user authorization receipt must remain unwired from production in this slice: "
+            "user authorization must remain unwired from production in this slice: "
             + ", ".join(production_consumers)
         )
 
     checks = 0
     required = [
         (core, "public sealed record FileDeleteOperationUserAuthorizationReceipt", "authorization receipt contract"),
+        (core, "internal FileDeleteOperationUserAuthorizationReceipt(", "non-public receipt construction"),
         (core, "authorizationId == Guid.Empty", "non-empty authorization id"),
         (core, "!validation.CanRequestAuthorizationReview", "ready validation prerequisite"),
         (core, "validation.Status != FileDeleteOperationExecutionValidationStatus.ReadyForAuthorizationReview", "ready status prerequisite"),
@@ -259,14 +278,21 @@ def check_repository(root: Path) -> int:
         (core, "public bool UserAuthorizedAttempt => true;", "explicit user-consent semantic"),
         (core, "public bool DeleteMutationAuthorized => false;", "hard non-mutation authorization"),
         (core, "ReferenceEquals(Validation, validation)", "exact validation instance binding"),
+        (core, "public interface IFileDeleteOperationUserAuthorizationIssuer", "issuer contract"),
+        (core, "IssueAfterExplicitUserConfirmation", "explicit-confirmation issuer method"),
+        (core, "TimeProvider.System, Guid.NewGuid", "production time/id sources"),
+        (core, "_authorizationIdFactory();", "issuer-owned authorization id"),
+        (core, "_timeProvider.GetUtcNow()", "issuer-owned UTC observation"),
+        (core, "authorization ID source returned an empty ID", "invalid id-source rejection"),
         (validation, "public bool DeleteMutationAuthorized => false;", "validation non-authorization retained"),
         (tests, "ReadyValidationCanRecordUserConsentWithoutGrantingMutationAuthority", "positive consent regression"),
         (tests, "BlockedValidationCannotRecordUserAuthorization", "blocked validation regression"),
         (tests, "ReceiptIsBoundToExactValidationInstanceNotEquivalentRevalidation", "revalidation invalidation regression"),
-        (tests, "SeparateExplicitConfirmationsNeedSeparateNonEmptyAuthorizationIds", "authorization id regression"),
+        (tests, "IssuerOwnsFreshAuthorizationIdAndUtcObservation", "source-owned id/time regression"),
         (tests, "ReceiptSnapshotsExactOrderedIdentityEvidence", "identity snapshot regression"),
         (docs, "explicit user confirmation", "explicit confirmation documentation"),
         (docs, "absence of a receipt", "decline/cancel documentation"),
+        (docs, "issuer owns", "source-owned provenance documentation"),
         (docs, "not a mutation lease", "lease boundary documentation"),
         (docs, "no time window", "no fake time-safety documentation"),
         (docs, "exact validation instance", "exact validation binding documentation"),
@@ -274,7 +300,7 @@ def check_repository(root: Path) -> int:
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "Copy/Move operation enum unchanged"),
         (parent, "from verify_file_delete_user_authorization import (", "delete validator imports authorization child"),
         (parent, "run_delete_authorization_model(args.cases", "delete validator runs authorization model"),
-        (parent, "check_delete_authorization_repository(args.repo_root.resolve())", "delete validator runs authorization source checks"),
+        (parent, "check_delete_authorization_repository(repo_root)", "delete validator runs authorization source checks"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
     ]
     for text, needle, label in required:
