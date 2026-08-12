@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 
+from verify_file_delete_preflight import (
+    check_repository as check_delete_preflight_repository,
+    run_model as run_delete_preflight_model,
+)
+
 
 class PathState(Enum):
     MISSING = auto()
@@ -256,9 +261,16 @@ def main() -> int:
     if args.cases <= 0:
         parser.error('--cases must be greater than zero')
 
-    print(f'PASS file operation preflight properties: {check_properties(args.cases)} checks')
+    copy_move_model = check_properties(args.cases)
+    delete_model = run_delete_preflight_model(args.cases, 0xDE1E7E)
+    print(f'PASS file operation preflight properties: {copy_move_model} Copy/Move checks; {delete_model} delete checks')
     if not args.self_test_only:
-        print(f'PASS file operation preflight source wiring: {check_repository(args.repo_root.resolve())} checks')
+        copy_move_source = check_repository(args.repo_root.resolve())
+        delete_source = check_delete_preflight_repository(args.repo_root.resolve())
+        print(
+            f'PASS file operation preflight source wiring: {copy_move_source} Copy/Move checks; '
+            f'{delete_source} delete checks'
+        )
     return 0
 
 
