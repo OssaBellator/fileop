@@ -23,10 +23,8 @@ public sealed partial class DiskIoAttributionView
             {
                 continue;
             }
-            if (_deviceEvidenceRowsPanel.Children[index] is not Border
-                {
-                    Child: StackPanel content,
-                })
+            if (_deviceEvidenceRowsPanel.Children[index] is not Border border ||
+                border.Child is not StackPanel content)
             {
                 throw new InvalidOperationException(
                     "Failure-prediction annotations require the existing device-evidence row shape.");
