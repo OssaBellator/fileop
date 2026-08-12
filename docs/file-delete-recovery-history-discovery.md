@@ -27,7 +27,7 @@ The reader excludes pending-only operations, pre-barrier failures with no recove
 
 The SQL predicate is based on exact persisted entry states. Results are ordered by `started_utc_ticks DESC, operation_id DESC` and bounded to at most 4,096 operations, with a default limit of 100.
 
-Candidate IDs and complete histories are read inside one SQLite read transaction. Each materialized `FileDeleteOperationActionHistory` must still validate structurally and must report `IsRecoverySensitive == true` and `DeleteMutationAuthorized == false` before it can be returned.
+Schema validation, candidate IDs and complete histories are read inside one deferred SQLite read transaction so they share one snapshot. Each materialized `FileDeleteOperationActionHistory` must still validate structurally and must report `IsRecoverySensitive == true` and `DeleteMutationAuthorized == false` before it can be returned.
 
 ## Restart and consent boundary
 
@@ -45,10 +45,14 @@ The SQLite reader:
 
 - uses `SqliteOpenMode.ReadOnly`;
 - enables `PRAGMA query_only=ON`;
+- uses the provider/default private-cache behavior rather than opting into `Cache=Shared` on the WAL database;
+- starts a deferred transaction and performs schema validation plus all candidate hydration inside that read snapshot;
 - reads and validates schema version 1 but never creates or upgrades schema;
 - uses only `SELECT` statements against delete action-history tables;
 - exposes no `MarkMutationStartedAsync`, `CommitDeletedAsync`, `MarkMutationRecoveryRequiredAsync`, `CompleteAsync`, or other state transition;
 - exposes no filesystem handle or mutation primitive.
+
+A missing database is not initialized by the reader: opening it in read-only mode fails and leaves the path absent.
 
 High-bit volume serial and file-reference values are reconstructed with unchecked signed-to-unsigned conversion, matching the durable writer's exact 64-bit encoding.
 
@@ -60,6 +64,6 @@ This slice adds no `DELETE` desired access, delete-capable lease, filesystem del
 
 `tools/verify_file_delete_recovery_history_discovery.py` is standard-library-only. Its randomized model verifies exact recovery classification, deterministic newest-first ordering, bounds, exclusion of safe histories, and the absence of mutation/retry/deletion inference. Its real SQLite model exercises the exact recovery-state query and high-bit identity round-trip.
 
-Focused .NET regressions create histories with the concrete writable SQLite store, dispose that writer to model a restart boundary, then reopen only the read-only recovery reader. They cover non-terminal `MutationStarted`, non-terminal `RecoveryRequired`, terminal `RecoveryRequired`, safe-state exclusion, high-bit identities, newest-first limits, invalid limits, and disposed-reader refusal.
+Focused .NET regressions create histories with the concrete writable SQLite store, dispose that writer to model a restart boundary, then reopen only the read-only recovery reader. They cover non-terminal `MutationStarted`, non-terminal `RecoveryRequired`, terminal `RecoveryRequired`, safe-state exclusion, high-bit identities, newest-first limits, invalid limits, missing-database no-create behavior, and disposed-reader refusal.
 
 The verifier is part of `tools/test-local.ps1 -OfflineOnly`, so this slice can be validated without GitHub Actions or the .NET SDK. Native/.NET execution remains an additional local Windows validation layer when that runtime is available.
