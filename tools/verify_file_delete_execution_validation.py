@@ -151,12 +151,10 @@ def run_model(cases: int, seed: int) -> int:
         assert result in {READY, BLOCKED}
         checks += 2
 
-        # Delete authorization is immutable across all validation outcomes.
         delete_mutation_authorized = False
         assert not delete_mutation_authorized
         checks += 1
 
-        # Ready evidence must fail if the current canonical file identity disappears.
         if expected_ready:
             identityless = source_value.__class__(
                 source_value.requested,
@@ -173,7 +171,6 @@ def run_model(cases: int, seed: int) -> int:
             ) == BLOCKED
             checks += 1
 
-        # Canonical-parent escape is always blocked independently of requested path.
         escaped_value = source_value.__class__(
             source_value.requested,
             rf"D:\Escaped\{name}",
@@ -208,7 +205,8 @@ def check_repository(root: Path) -> int:
     core = (root / "src/FileOp.Core/Operations/FileDeleteOperationExecutionValidation.cs").read_text(encoding="utf-8")
     windows = (root / "src/FileOp.Windows/Operations/WindowsFileDeleteOperationExecutionValidator.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationExecutionValidationTests.cs").read_text(encoding="utf-8")
-    namespace_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteProtectedLocationPolicyTests.cs").read_text(encoding="utf-8")
+    policy_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteProtectedLocationPolicyTests.cs").read_text(encoding="utf-8")
+    requested_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationExecutionRequestedPathTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/file-delete-execution-validation.md").read_text(encoding="utf-8")
     delete_preflight = (root / "src/FileOp.Core/Operations/FileDeleteOperationPreflight.cs").read_text(encoding="utf-8")
     generic_execution = (root / "src/FileOp.Core/Operations/FileOperationExecution.cs").read_text(encoding="utf-8")
@@ -238,6 +236,9 @@ def check_repository(root: Path) -> int:
         (windows, '"System Volume Information"', "volume metadata protection"),
         (windows, "Filesystem volume/share roots are protected", "volume-root protection"),
         (windows, "Residual extended/device namespace paths are blocked", "extended/device namespace protection"),
+        (windows, "Path.GetDirectoryName(requestedSource)", "requested direct-child validation"),
+        (windows, "Path.GetFileName(requestedSource)", "requested leaf validation"),
+        (windows, "leafName.Contains(Path.VolumeSeparatorChar)", "requested ADS rejection"),
         (windows, "sourceDirectory.Identity is null", "root identity check"),
         (windows, "source.Identity is null", "file identity check"),
         (windows, "canonicalSourceParent", "canonical parent validation"),
@@ -251,8 +252,9 @@ def check_repository(root: Path) -> int:
         (tests, "ProtectedCanonicalRootBlocksBeforeEntryResolution", "protected short-circuit regression"),
         (tests, "MissingChangedReparseOrIdentitylessFileFailsClosed", "file identity regression"),
         (tests, "SourceRootNeedsCanonicalDirectoryIdentityAndCannotBeReparse", "root identity regression"),
-        (namespace_tests, "ProtectedLocationResultRejectsMalformedDecisionsAndReasons", "policy result invariant regression"),
-        (namespace_tests, "ResidualExtendedAndDeviceNamespacesFailClosed", "extended/device namespace regression"),
+        (policy_tests, "ProtectedLocationResultRejectsMalformedDecisionsAndReasons", "policy result invariant regression"),
+        (policy_tests, "ResidualExtendedAndDeviceNamespacesFailClosed", "extended/device namespace regression"),
+        (requested_tests, "RequestedPathMustRemainDirectChildWithCapturedLeafAndNoAds", "requested path regression"),
         (docs, "fresh handle-resolved validation pass", "fresh validation documentation"),
         (docs, "volume/share roots", "protected root documentation"),
         (docs, "mutation-time identity/handle lease", "TOCTOU boundary documentation"),
