@@ -1,8 +1,8 @@
 # Windows final file-delete capability lease provider
 
-`WindowsFileDeleteOperationFinalMutationLeaseProvider` is the concrete Windows implementation of the final lease contract defined by #136 and consumed only through the Core release/reacquire coordinator.
+`WindowsFileDeleteOperationFinalMutationLeaseProvider` is the concrete Windows implementation of the final lease contract defined by #136. Its **acquisition path remains non-mutating**: `AcquireAsync` only reacquires and validates the exact authorized root/file under a live DELETE-capable handle set.
 
-It is deliberately a **capability-acquisition** component, not a delete implementation. It does not perform deletion.
+The private final lease now also implements the separately reviewed #144 same-lease mutation facet. That destructive facet is not reachable from the acquisition request or value evidence. Core can invoke it only after the exact lease has crossed the durable mutation barrier and Core has minted `FileDeleteOperationMutationAuthorization`.
 
 ## What successful acquisition proves
 
@@ -22,61 +22,58 @@ For the exact authorized file it:
 
 The native capability proof is the successful `NtCreateFile` request containing `DELETE` in `desiredAccess`. If Windows rejects that requested access or any evidence check fails, no final lease is returned.
 
-The value-only `FileDeleteOperationFinalMutationLeaseEvidence` still reports provider acquisition, delete-access proof, and liveness proof as false. Those properties deliberately cannot substitute for the live provider object.
+The value-only `FileDeleteOperationFinalMutationLeaseEvidence` still reports provider acquisition, delete-access proof, and liveness proof as false. Those properties deliberately cannot substitute for the live provider object or mint mutation authority.
 
 ## Handle and sharing boundary
 
 The root is opened with traverse/read-attributes/synchronize access and `FileShare.ReadWrite`, deliberately omitting delete sharing so renaming/deleting that directory is incompatible while it remains held.
 
-The leaf is opened root-relative with the minimum final capability used by this slice:
+The leaf is opened root-relative with:
 
 ```text
 DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
 ```
 
-The leaf uses `FileShare.Read`. That keeps independent write/delete namespace operations incompatible while the lease is held. Because Windows sharing checks are symmetric, the fact that the existing final handle itself requested `DELETE` also means a later ordinary reader that does not advertise `FILE_SHARE_DELETE` can be rejected with a sharing violation. FileOp therefore treats this as a short-lived pre-mutation capability lease, not as a transparent long-lived read lease, and does not promise that unrelated opens can continue while it is held.
+and `FileShare.Read`. This keeps independent write/delete namespace operations incompatible while the lease is held. Because Windows sharing checks are symmetric, an already-open reader must itself have advertised delete sharing before this final DELETE-capability handle can coexist with it.
 
-There is no create/open-if disposition, delete-on-close option, overwrite/truncate behavior, content read, or path fallback.
+There is no create/open-if disposition, overwrite/truncate behavior, content read, or absolute-path fallback for the leaf.
 
-The provider stores both `SafeFileHandle` objects only inside its private lease implementation. No raw handle is exposed through Core evidence, the final scope, or any App-facing type.
-
-`DeleteAccessCapabilityHeld` is true only while both private handles remain live. `DeleteMutationAuthorized` remains false for the provider lease. Disposal closes the leaf/root handles and makes the capability-held property false; disposal itself does not change the file.
+Both `SafeFileHandle` objects remain private. No raw handle is exposed through Core evidence, the final scope, mutation authorization, result evidence, or any App-facing type. `DeleteAccessCapabilityHeld` is true only while both handles remain live. `DeleteMutationAuthorized` remains false on the provider lease itself.
 
 ## Release/reacquire race protection
 
-The earlier read-only stability lease must be released before Core can mint the final provider request. That handoff necessarily creates a namespace race window.
+The earlier read-only stability lease must be released before Core can mint the final provider request. The final provider therefore does not trust pre-release path observations across that gap.
 
-The final provider does not trust the pre-release path observation across that gap. It reacquires the root and file and requires the final handle path/type/reparse/identity evidence to match the exact session authorization again.
+It reacquires the root and file, requires final handle path/type/reparse/identity evidence to match the exact session authorization, opens the leaf relative to the held root using `OBJECT_ATTRIBUTES.RootDirectory`, and validates the root again after the leaf opens.
 
-Native tests deliberately replace the file and the entire source root **during that handoff**, immediately before the concrete final provider runs. Both replacements must be rejected by final-provider identity validation.
+Native tests deliberately replace the file and the entire source root during this handoff. Both replacements must be rejected by final-provider identity validation.
 
-The leaf is opened through the held root using `OBJECT_ATTRIBUTES.RootDirectory`; the provider does not reopen the authorized leaf by an absolute pathname after validating the root. The root is checked again after the leaf opens.
+## Destructive facet after #144
 
-## What this provider does not do
+Acquisition still performs no mutation. Only the private `FinalMutationLease` also implements `IFileDeleteOperationSameLeaseMutation`.
 
-Production code in this slice contains no:
+Immediately before mutation that facet requires the exact Core-minted post-barrier authorization, rechecks protected-location policy for root and file, revalidates both already-held handles, and enforces one mutation attempt per lease. It then uses `NtSetInformationFile(FileDispositionInformationEx)` on the already-held file handle with exactly:
 
-- `SetFileInformationByHandle`;
-- `NtSetInformationFile`;
-- `DeleteFileW`;
-- `File.Delete` or `Directory.Delete`;
-- file-disposition information class;
-- delete-on-close option;
-- rename, move, replacement, truncate, recycle-bin, or overwrite operation;
-- `MarkMutationStartedAsync` or `CommitDeletedAsync` call;
-- `FileDeleteOperationMutationBarrierScope` production consumer;
-- generic `FileOperationKind.Delete` or executor integration;
-- App/Indexer/Files/Storage wiring;
-- protocol change.
+```text
+FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS | FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK
+```
 
-The `DELETE` desired-access bit is a capability held on a live handle, not an action. A later separately reviewed primitive must consume the same live handle capability after the durable mutation barrier; it must not reopen the path and it must settle action history around the actual mutation.
+It does not reopen the pathname. It does not use `DeleteFileW`, `File.Delete`, `Directory.Delete`, rename/move/truncate, read-only-attribute bypass, or disposition-on-close acquisition flags.
+
+The POSIX flag is intentional: if an older read handle that shared delete remains open, ordinary disposition could leave the authorized path merely delete-pending after FileOp closes its handle. POSIX disposition removes the namespace link when FileOp's successful mutation handle closes while the older compatible handle can continue accessing its already-open stream.
+
+`FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK` keeps this behavior conservative for mapped executable/image sections. Without the flag, POSIX disposition can permit unlinking an active image. FileOp instead requires Windows to reject that case so Core enters its recovery-sensitive failure path rather than forcing removal of an in-use image. See `docs/file-delete-same-handle-mutation.md` for the complete mutation/settlement/recovery contract.
+
+## Still outside this provider
+
+The provider does not call `MarkMutationStartedAsync`, `CommitDeletedAsync`, or any action-history store. It does not create the durable barrier or decide durable settlement. Those remain Core-owned ordering decisions.
+
+There is still no generic `FileOperationKind.Delete` / executor integration, App/Indexer/Files/Storage cleanup wiring, directory delete, recycle-bin behavior, batch orchestration, or protocol change.
 
 ## Validation
 
-`WindowsFileDeleteOperationFinalMutationLeaseProviderTests` exercises the provider on real Windows temporary files. It checks exact authorization/evidence, live capability state, native delete/write sharing exclusion, parent-rename exclusion, release behavior, file replacement during the handoff, root replacement during the handoff, protected-location reevaluation, and pre-cancellation. Content is verified only after final-lease disposal because a real `DELETE` access handle can legitimately block an ordinary reader that does not share delete access.
+`WindowsFileDeleteOperationFinalMutationLeaseProviderTests` continues to pin acquisition: exact authorization/evidence, live capability state, native sharing exclusion, handoff replacement refusal, protected-location reevaluation, and cancellation.
 
-`tools/verify_windows_file_delete_final_mutation_lease_provider.py` independently models native acquisition success/failure across randomized authorization, policy, identity, reparse/type, relative-leaf and open-result states. Its source guards pin the exact DELETE access mask, restrictive sharing, root-relative open, root-before/after validation, value-evidence construction, private live-handle lease, and absence of every mutation/disposition API listed above.
+`tools/verify_windows_file_delete_final_mutation_lease_provider.py` continues to model acquisition and now explicitly checks that the acquisition section itself contains no disposition call. The separately reviewed nested mutation facet is guarded by `tools/verify_file_delete_same_handle_mutation.py`, `FileDeleteOperationMutationCommitTests`, and `WindowsFileDeleteOperationSameHandleMutationTests`.
 
-The existing #136 verifier is evolved only enough to permit this one reviewed Windows provider implementation; it still rejects any production call to `FileDeleteOperationFinalMutationLeasePreparation` and any unreviewed second provider.
-
-Both verifiers are part of `tools/test-local.ps1 -OfflineOnly`. The complete Windows local gate remains mandatory before this provider can merge.
+All portable verifiers are part of `tools/test-local.ps1 -OfflineOnly`. The complete Windows local gate remains mandatory before the #144 mutation slice can leave draft or merge.

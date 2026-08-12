@@ -69,6 +69,47 @@ public sealed class FileDeleteOperationMutationBarrierScope : IAsyncDisposable
 
     public bool DeleteMutationPerformed => false;
 
+    /// <summary>
+    /// Transfers the exact barrier-owned lease into the destructive Core lifecycle. Cancellation
+    /// is still honored while waiting for this ownership gate and immediately before transfer.
+    /// After transfer, retained public aliases are inert and cannot release or reuse the lease.
+    /// </summary>
+    internal async ValueTask<FileDeleteOperationMutationLeaseTransfer> DetachLeaseForMutationAsync(
+        CancellationToken cancellationToken)
+    {
+        await _disposeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var lease = Volatile.Read(ref _lease)
+                ?? throw new InvalidOperationException(
+                    "Delete mutation barrier ownership is no longer available for destructive transfer.");
+            if (lease.DeleteMutationAuthorized ||
+                !lease.DeleteAccessCapabilityHeld ||
+                !ReferenceEquals(lease.Evidence, FinalEvidence))
+            {
+                throw new InvalidOperationException(
+                    "Delete mutation transfer requires the exact live non-authorizing final capability.");
+            }
+            if (lease is not IFileDeleteOperationSameLeaseMutation mutation)
+            {
+                throw new InvalidOperationException(
+                    "The final delete lease does not expose the reviewed same-lease mutation facet.");
+            }
+
+            var authorization = new FileDeleteOperationMutationAuthorization(this);
+            Volatile.Write(ref _lease, null);
+            return new FileDeleteOperationMutationLeaseTransfer(
+                lease,
+                mutation,
+                authorization);
+        }
+        finally
+        {
+            _disposeGate.Release();
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _disposeGate.WaitAsync().ConfigureAwait(false);
