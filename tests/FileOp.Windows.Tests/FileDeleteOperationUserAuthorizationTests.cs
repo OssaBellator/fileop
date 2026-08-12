@@ -10,20 +10,18 @@ public sealed class FileDeleteOperationUserAuthorizationTests
     public void ReadyValidationCanRecordUserConsentWithoutGrantingMutationAuthority()
     {
         var validation = CreateReadyValidation();
-        var localTime = new DateTimeOffset(2026, 8, 12, 15, 30, 0, TimeSpan.FromHours(10));
         var authorizationId = Guid.NewGuid();
+        var authorizedAt = new DateTimeOffset(2026, 8, 12, 5, 30, 0, TimeSpan.Zero);
+        var issuer = CreateIssuer(authorizationId, authorizedAt);
 
-        var receipt = new FileDeleteOperationUserAuthorizationReceipt(
-            authorizationId,
-            validation,
-            localTime);
+        var receipt = issuer.IssueAfterExplicitUserConfirmation(validation);
 
         Assert.AreEqual(authorizationId, receipt.AuthorizationId);
         Assert.AreSame(validation, receipt.Validation);
         Assert.AreSame(validation.Plan, receipt.Plan);
         Assert.AreEqual(validation.Plan.Id, receipt.PlanId);
         Assert.AreEqual(validation.ValidatedAtUtc, receipt.ValidatedAtUtc);
-        Assert.AreEqual(localTime.ToUniversalTime(), receipt.AuthorizedAtUtc);
+        Assert.AreEqual(authorizedAt, receipt.AuthorizedAtUtc);
         Assert.AreEqual(validation.SourceDirectory.CanonicalPath, receipt.CanonicalSourceDirectoryPath);
         Assert.AreEqual(validation.SourceDirectory.Identity!.Value, receipt.SourceDirectoryIdentity);
         Assert.AreEqual(validation.Items.Count, receipt.Items.Count);
@@ -55,22 +53,18 @@ public sealed class FileDeleteOperationUserAuthorizationTests
             FileDeleteOperationExecutionValidationStatus.Blocked,
             DateTimeOffset.UtcNow,
             "root unavailable");
+        var issuer = CreateIssuer(Guid.NewGuid(), DateTimeOffset.UtcNow);
 
         Assert.ThrowsException<ArgumentException>(() =>
-            new FileDeleteOperationUserAuthorizationReceipt(
-                Guid.NewGuid(),
-                blocked,
-                DateTimeOffset.UtcNow));
+            issuer.IssueAfterExplicitUserConfirmation(blocked));
     }
 
     [TestMethod]
     public void ReceiptIsBoundToExactValidationInstanceNotEquivalentRevalidation()
     {
         var original = CreateReadyValidation();
-        var receipt = new FileDeleteOperationUserAuthorizationReceipt(
-            Guid.NewGuid(),
-            original,
-            DateTimeOffset.UtcNow);
+        var receipt = CreateIssuer(Guid.NewGuid(), DateTimeOffset.UtcNow)
+            .IssueAfterExplicitUserConfirmation(original);
         var equivalentRevalidation = new FileDeleteOperationExecutionValidationResult(
             original.Plan,
             original.SourceDirectory,
@@ -85,40 +79,41 @@ public sealed class FileDeleteOperationUserAuthorizationTests
     }
 
     [TestMethod]
-    public void SeparateExplicitConfirmationsNeedSeparateNonEmptyAuthorizationIds()
+    public void IssuerOwnsFreshAuthorizationIdAndUtcObservation()
     {
         var validation = CreateReadyValidation();
         var firstId = Guid.NewGuid();
         var secondId = Guid.NewGuid();
-        var first = new FileDeleteOperationUserAuthorizationReceipt(
-            firstId,
-            validation,
-            DateTimeOffset.UtcNow);
-        var second = new FileDeleteOperationUserAuthorizationReceipt(
-            secondId,
-            validation,
-            DateTimeOffset.UtcNow);
+        var issuedIds = new Queue<Guid>([firstId, secondId]);
+        var authorizedAt = new DateTimeOffset(2026, 8, 12, 5, 45, 0, TimeSpan.Zero);
+        var issuer = new FileDeleteOperationUserAuthorizationIssuer(
+            new FixedTimeProvider(authorizedAt),
+            () => issuedIds.Dequeue());
 
+        var first = issuer.IssueAfterExplicitUserConfirmation(validation);
+        var second = issuer.IssueAfterExplicitUserConfirmation(validation);
+
+        Assert.AreEqual(firstId, first.AuthorizationId);
+        Assert.AreEqual(secondId, second.AuthorizationId);
         Assert.AreNotEqual(first.AuthorizationId, second.AuthorizationId);
+        Assert.AreEqual(authorizedAt, first.AuthorizedAtUtc);
+        Assert.AreEqual(authorizedAt, second.AuthorizedAtUtc);
         Assert.IsTrue(first.UserAuthorizedAttempt);
         Assert.IsTrue(second.UserAuthorizedAttempt);
         Assert.IsFalse(first.DeleteMutationAuthorized);
         Assert.IsFalse(second.DeleteMutationAuthorized);
-        Assert.ThrowsException<ArgumentException>(() =>
-            new FileDeleteOperationUserAuthorizationReceipt(
-                Guid.Empty,
-                validation,
-                DateTimeOffset.UtcNow));
+
+        var invalidIssuer = CreateIssuer(Guid.Empty, authorizedAt);
+        Assert.ThrowsException<InvalidOperationException>(() =>
+            invalidIssuer.IssueAfterExplicitUserConfirmation(validation));
     }
 
     [TestMethod]
     public void ReceiptSnapshotsExactOrderedIdentityEvidence()
     {
         var validation = CreateReadyValidation();
-        var receipt = new FileDeleteOperationUserAuthorizationReceipt(
-            Guid.NewGuid(),
-            validation,
-            DateTimeOffset.UtcNow);
+        var receipt = CreateIssuer(Guid.NewGuid(), DateTimeOffset.UtcNow)
+            .IssueAfterExplicitUserConfirmation(validation);
 
         Assert.AreEqual(new FileIdentity(7, 100), receipt.SourceDirectoryIdentity);
         CollectionAssert.AreEqual(
@@ -128,6 +123,13 @@ public sealed class FileDeleteOperationUserAuthorizationTests
             new[] { "a.tmp", "b.tmp" },
             receipt.Items.Select(static item => item.Entry.Name).ToArray());
     }
+
+    private static FileDeleteOperationUserAuthorizationIssuer CreateIssuer(
+        Guid authorizationId,
+        DateTimeOffset authorizedAt) =>
+        new(
+            new FixedTimeProvider(authorizedAt),
+            () => authorizationId);
 
     private static FileDeleteOperationExecutionValidationResult CreateReadyValidation()
     {
@@ -178,5 +180,10 @@ public sealed class FileDeleteOperationUserAuthorizationTests
             FileDeleteOperationExecutionValidationStatus.ReadyForAuthorizationReview,
             DateTimeOffset.UtcNow,
             "ready for explicit user authorization review");
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow.ToUniversalTime();
     }
 }
