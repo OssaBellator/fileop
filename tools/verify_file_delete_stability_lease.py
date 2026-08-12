@@ -7,6 +7,12 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
+from verify_file_delete_action_history import (
+    check_repository as check_delete_history_repository,
+    run_model as run_delete_history_model,
+    run_sqlite_model as run_delete_history_sqlite_model,
+)
+
 
 @dataclass(frozen=True)
 class LeaseState:
@@ -37,7 +43,7 @@ def can_acquire(state: LeaseState) -> bool:
     )
 
 
-def run_model(cases: int, seed: int) -> int:
+def run_stability_model(cases: int, seed: int) -> int:
     checks = 0
     fixed = LeaseState(
         user_authorized=True,
@@ -125,6 +131,14 @@ def run_model(cases: int, seed: int) -> int:
     return checks
 
 
+def run_model(cases: int, seed: int) -> int:
+    return (
+        run_stability_model(cases, seed)
+        + run_delete_history_model(cases, seed ^ 0xD31E7E51)
+        + run_delete_history_sqlite_model(cases, seed ^ 0xD31B244F)
+    )
+
+
 def require(text: str, needle: str, label: str) -> int:
     if needle not in text:
         raise AssertionError(f"missing {label}: {needle}")
@@ -137,7 +151,7 @@ def forbid(text: str, needle: str, label: str) -> int:
     return 1
 
 
-def check_repository(root: Path) -> int:
+def check_stability_repository(root: Path) -> int:
     core = (root / "src/FileOp.Core/Operations/FileDeleteOperationStabilityLease.cs").read_text(encoding="utf-8")
     windows = (root / "src/FileOp.Windows/Operations/WindowsFileDeleteOperationStabilityLeaseProvider.cs").read_text(encoding="utf-8")
     contract_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationStabilityLeaseContractTests.cs").read_text(encoding="utf-8")
@@ -211,7 +225,7 @@ def check_repository(root: Path) -> int:
         (docs, "not a mutation lease", "stability versus mutation boundary"),
         (auth, "public bool DeleteMutationAuthorized => false;", "authorization remains non-mutating"),
         (auth_parent, "from verify_file_delete_stability_lease import (", "authorization verifier imports stability child"),
-        (auth_parent, "run_delete_stability_model(cases, seed ^ 0x57AB1E)", "authorization verifier runs stability model"),
+        (auth_parent, "run_delete_stability_model(cases, seed ^ 0x57AB1E)", "authorization verifier runs stability parent"),
         (auth_parent, "check_delete_stability_repository(root)", "authorization verifier runs stability source checks"),
         (cleanup, "CleanupMutationAuthorized => false", "cleanup remains non-authorizing"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "Copy/Move operation enum unchanged"),
@@ -255,6 +269,10 @@ def check_repository(root: Path) -> int:
     return checks
 
 
+def check_repository(root: Path) -> int:
+    return check_stability_repository(root) + check_delete_history_repository(root)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path)
@@ -268,7 +286,7 @@ def main() -> int:
     source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = f" and {source_checks:,} source checks" if args.repo_root else ""
     print(
-        f"PASS: file delete stability lease verified with {model_checks:,} model assertions "
+        f"PASS: file delete stability lease + action history verified with {model_checks:,} model/SQLite assertions "
         f"across {args.cases:,} randomized states{suffix}."
     )
     return 0
