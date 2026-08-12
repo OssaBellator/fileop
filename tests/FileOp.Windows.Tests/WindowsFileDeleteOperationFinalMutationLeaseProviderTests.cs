@@ -53,9 +53,6 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProviderTests
                 fixture.RootPath,
                 fixture.RootPath + ".moved"));
             Assert.IsTrue(File.Exists(fixture.SourcePath));
-            Assert.AreEqual(
-                "authorized-content",
-                await File.ReadAllTextAsync(fixture.SourcePath));
         }
         finally
         {
@@ -64,6 +61,9 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProviderTests
 
         Assert.IsFalse(scope.FinalLeaseHeld);
         Assert.IsFalse(scope.DeleteAccessCapabilityHeld);
+        Assert.AreEqual(
+            "authorized-content",
+            await File.ReadAllTextAsync(fixture.SourcePath));
         await File.AppendAllTextAsync(fixture.SourcePath, "-after-dispose");
         Assert.AreEqual(
             "authorized-content-after-dispose",
