@@ -29,6 +29,7 @@ public sealed class FileDeleteOperationHistoryBindingTests
         Assert.AreEqual(history.Entries[1], binding.HistoryEntry);
         Assert.IsFalse(binding.DeleteMutationAuthorized);
         Assert.IsFalse(binding.MutationBarrierSatisfied);
+        Assert.IsFalse(binding.StabilityLeaseAcquisitionProven);
         Assert.IsFalse(binding.StabilityLeaseLivenessProven);
         Assert.IsTrue(binding.IsBoundTo(authorization, stability, history, 1));
     }
