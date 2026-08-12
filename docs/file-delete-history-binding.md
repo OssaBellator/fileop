@@ -17,10 +17,11 @@ The binding fails closed unless:
 - the durable operation is non-terminal;
 - the selected durable entry is still `Pending`.
 
-The returned `FileDeleteOperationHistoryBindingEvidence` is deliberately **snapshot evidence only**. It does not prove that the read-only stability lease is still alive, does not imply that `MutationStarted` was persisted, and does not authorize deletion. The following properties are therefore hard-coded false:
+The returned `FileDeleteOperationHistoryBindingEvidence` is deliberately **snapshot evidence only**. `FileDeleteOperationStabilityLeaseEvidence` is itself a value-validation object with a public constructor, so this binding does not prove that a stability-lease provider actually acquired handles and does not prove that any such lease is still alive. It also does not imply that `MutationStarted` was persisted and does not authorize deletion. The following properties are therefore hard-coded false:
 
 - `DeleteMutationAuthorized`;
 - `MutationBarrierSatisfied`;
+- `StabilityLeaseAcquisitionProven`;
 - `StabilityLeaseLivenessProven`.
 
 A future mutation executor must still acquire/revalidate its separately reviewed same-handle mutation binding and perform the exact durable `Pending -> MutationStarted` transition immediately before mutation. If the durable state changes concurrently, the history store's exact-row predicate must refuse that transition; this binding is not a concurrency substitute.
