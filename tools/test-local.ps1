@@ -239,6 +239,10 @@ Invoke-Step "Offline final file delete mutation-lease contract verifier" {
     python tools/verify_file_delete_final_mutation_lease_contract.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline file delete mutation-barrier verifier" {
+    python tools/verify_file_delete_mutation_barrier.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline file delete recovery-history discovery verifier" {
     python tools/verify_file_delete_recovery_history_discovery.py --repo-root $repoRoot --cases 50000
 }
