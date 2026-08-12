@@ -169,6 +169,12 @@ def check_repository(root: Path) -> int:
         )
 
     checks = 0
+    root_validation_call = (
+        "ValidateDirectoryHandle(\n"
+        "                sourceDirectory,\n"
+        "                expectedRootPath,\n"
+        "                expectedRootIdentity);"
+    )
     required = [
         (core, "public sealed class FileDeleteOperationStabilityLeaseRequest", "stability request contract"),
         (core, "ReferenceEquals(Authorization, authorization) && Ordinal == ordinal", "exact receipt/ordinal evidence binding"),
@@ -188,7 +194,6 @@ def check_repository(root: Path) -> int:
         (windows, "FileNonDirectoryFile", "file-only relative open"),
         (windows, "GetFinalPathNameByHandleW", "handle final-path validation"),
         (windows, "GetFileInformationByHandle", "handle identity validation"),
-        (windows, "ValidateDirectoryHandle(\n                sourceDirectory,\n                expectedRootPath,\n                expectedRootIdentity);", "root post-leaf revalidation"),
         (windows, "public bool DeleteMutationAuthorized => false;", "Windows lease non-authorization"),
         (windows, "DisposeNoThrow(_sourceFile)", "leaf handle disposal"),
         (windows, "DisposeNoThrow(_sourceDirectory)", "root handle disposal"),
@@ -204,8 +209,8 @@ def check_repository(root: Path) -> int:
         (docs, "not a mutation lease", "stability versus mutation boundary"),
         (auth, "public bool DeleteMutationAuthorized => false;", "authorization remains non-mutating"),
         (auth_parent, "from verify_file_delete_stability_lease import (", "authorization verifier imports stability child"),
-        (auth_parent, "run_delete_stability_model(args.cases", "authorization verifier runs stability model"),
-        (auth_parent, "check_delete_stability_repository(repo_root)", "authorization verifier runs stability source checks"),
+        (auth_parent, "run_delete_stability_model(cases, seed ^ 0x57AB1E)", "authorization verifier runs stability model"),
+        (auth_parent, "check_delete_stability_repository(root)", "authorization verifier runs stability source checks"),
         (cleanup, "CleanupMutationAuthorized => false", "cleanup remains non-authorizing"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "Copy/Move operation enum unchanged"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
@@ -216,6 +221,12 @@ def check_repository(root: Path) -> int:
     ]
     for text, needle, label in required:
         checks += require(text, needle, label)
+
+    if windows.count(root_validation_call) < 2:
+        raise AssertionError(
+            "delete stability provider must validate the held root before and after the relative leaf open"
+        )
+    checks += 1
 
     for text, needle, label in (
         (windows, "FileReadData", "file-content read access"),
