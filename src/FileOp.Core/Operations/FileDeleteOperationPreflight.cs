@@ -118,6 +118,15 @@ public sealed record FileDeleteOperationPreflightResult
             {
                 throw new ArgumentOutOfRangeException(nameof(items));
             }
+            if (item.Decision == FileDeleteOperationPreflightDecision.ReadyForFurtherReview &&
+                (item.Entry.IsDirectory ||
+                 item.Source.State != FileOperationPathState.File ||
+                 item.Source.IsReparsePoint))
+            {
+                throw new ArgumentException(
+                    "Ready delete preflight items require current non-reparse file evidence.",
+                    nameof(items));
+            }
         }
 
         var blockedCount = itemSnapshot.Count(static item =>
