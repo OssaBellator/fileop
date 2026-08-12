@@ -170,7 +170,7 @@ def check_repository(root: Path) -> int:
     for needle in (
         'Text = "View thresholds"',
         'DisplayMemberPath = "Label"',
-        "Session-only stricter filters",
+        "Stricter view filters are remembered as policy-relative multipliers",
         "does not rerun the helper",
         "StorageOptimizationThresholdFilter.ValidateAgainstAnalysis",
         "StorageOptimizationThresholdFilter.Apply",
