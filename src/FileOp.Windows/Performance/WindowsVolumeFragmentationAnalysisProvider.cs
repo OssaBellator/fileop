@@ -52,9 +52,10 @@ internal sealed class WindowsVolumeFragmentationApi : IWindowsVolumeFragmentatio
             Timeout = timeout,
         };
         var scope = new ManagementScope(@"\\.\root\cimv2", connectionOptions);
-        scope.Connect();
-        cancellationToken.ThrowIfCancellationRequested();
 
+        // Do not call ManagementScope.Connect() explicitly here. System.Management
+        // documents ManagementOptions.Timeout as having no effect on Connect(). Let
+        // the bounded query bind the local scope as part of the WMI operation instead.
         using var searcher = new ManagementObjectSearcher(
             scope,
             new ObjectQuery("SELECT Name FROM Win32_Volume"),
@@ -385,9 +386,12 @@ public sealed class WindowsVolumeFragmentationAnalysisProvider
         catch (Exception exception) when (
             exception is COMException or
             FileNotFoundException or
+            FormatException or
+            InvalidCastException or
             InvalidDataException or
             InvalidOperationException or
-            NotSupportedException)
+            NotSupportedException or
+            OverflowException)
         {
             return Failure(
                 canonicalRoot,
