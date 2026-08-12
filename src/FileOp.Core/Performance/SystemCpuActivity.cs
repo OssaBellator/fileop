@@ -201,7 +201,7 @@ public static class SystemCpuActivityAnalyzer
         }
 
         var totalDelta = (UInt128)kernelDelta + userDelta;
-        if (totalDelta > long.MaxValue || idleDelta > long.MaxValue)
+        if (totalDelta > (UInt128)long.MaxValue || idleDelta > (ulong)long.MaxValue)
         {
             throw new InvalidDataException(
                 "System CPU interval exceeds FileOp's TimeSpan evidence range.");
