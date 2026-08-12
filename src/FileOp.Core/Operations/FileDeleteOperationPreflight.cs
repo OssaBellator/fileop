@@ -102,10 +102,32 @@ public sealed record FileDeleteOperationPreflightResult
         ArgumentNullException.ThrowIfNull(sourceDirectory);
         ArgumentNullException.ThrowIfNull(items);
         ArgumentException.ThrowIfNullOrWhiteSpace(summary);
+        if (!Enum.IsDefined(status))
+        {
+            throw new ArgumentOutOfRangeException(nameof(status));
+        }
+
+        var itemSnapshot = items.ToArray();
+        foreach (var item in itemSnapshot)
+        {
+            ArgumentNullException.ThrowIfNull(item);
+        }
+
+        var blockedCount = itemSnapshot.Count(static item =>
+            item.Decision == FileDeleteOperationPreflightDecision.Blocked);
+        var expectedStatus = itemSnapshot.Length > 0 && blockedCount == 0
+            ? FileDeleteOperationPreflightStatus.ReadyForFurtherReview
+            : FileDeleteOperationPreflightStatus.Blocked;
+        if (status != expectedStatus)
+        {
+            throw new ArgumentException(
+                "Delete preflight status must match its captured item decisions.",
+                nameof(status));
+        }
 
         Plan = plan;
         SourceDirectory = sourceDirectory;
-        Items = Array.AsReadOnly(items.ToArray());
+        Items = Array.AsReadOnly(itemSnapshot);
         Status = status;
         Summary = summary;
     }
