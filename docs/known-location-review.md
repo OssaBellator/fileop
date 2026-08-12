@@ -34,7 +34,7 @@ If the upstream stale-large list reaches `MaxStaleLargeFiles`, the location is m
 
 Downloads is resolved as the current user's Windows known folder rather than guessed as `%USERPROFILE%\\Downloads`. This matters because Windows known folders can be redirected.
 
-The first Downloads rules are extension allow-lists applied **only after** a file is already in the native stale-large source set.
+The Downloads rules are extension allow-lists applied **only after** a file is already in the native stale-large source set. The richer provenance split below changes the explanation attached to existing candidates; it does not widen the set of extensions that become candidates.
 
 ### Rule `downloads.old-package-extension.v1`
 
@@ -49,21 +49,32 @@ Recognized package formats:
 
 ### Rule `downloads.old-archive-extension.v1`
 
-Recognized archive/disk-image formats:
+Recognized archive formats:
 
 - `.zip`
 - `.7z`
 - `.rar`
-- `.iso`
 - `.tar`
 - `.gz`
 - `.tgz`
 - `.bz2`
 - `.xz`
 
+These candidates carry explicit archive-extension review provenance.
+
+### Rule `downloads.old-disk-image-extension.v1`
+
+Recognized disk-image format:
+
+- `.iso`
+
+`.iso` remains within the existing review candidate set; this refinement only gives it disk-image-specific provenance instead of the older combined archive/disk-image reason.
+
+`.img`, `.vhd`, and `.vhdx` are not added by this refinement. File extensions outside the reviewed allow-lists remain ignored.
+
 `.exe` is intentionally **not** classified as an installer. An executable name or location is not sufficient provenance to infer what it is or whether it is disposable.
 
-Unrecognized Downloads extensions are ignored by this first rule set.
+Package, archive or disk-image extension evidence does not establish safe deletion. FileOp does not inspect signatures, package metadata, executable version resources, archive contents, disk-image contents or other file content to strengthen these rules.
 
 ## User Temp provenance
 
@@ -127,7 +138,8 @@ This slice does not:
 - label anything junk;
 - expose a `SafeToDelete` or equivalent boolean;
 - classify `.exe` as an installer;
-- inspect signatures, MSI metadata or executable version resources;
+- add `.img`, `.vhd` or `.vhdx` to the Downloads review candidate set;
+- inspect signatures, MSI/package metadata, executable version resources, archive contents or disk-image contents;
 - scan known folders outside the shared native index;
 - lower the native Optimize thresholds;
 - aggregate across volumes;
@@ -139,10 +151,13 @@ A future destructive workflow still needs explicit user selection plus the exist
 
 ## Validation without GitHub Actions
 
-`tools/verify_known_location_review.py` models extension/provenance classification, `.exe` exclusion, measured-byte semantics and saturated totals. Its source guards pin:
+`tools/verify_known_location_review.py` models extension/provenance classification, exact preservation of the pre-refinement candidate extension set, `.exe`/`.img`/`.vhd`/`.vhdx` exclusion, measured-byte semantics and saturated totals. Its source guards pin:
 
-- explicit rule IDs and allow-lists;
-- absence of `SafeToDelete` and delete APIs;
+- separate versioned package/archive/disk-image rule IDs;
+- `.iso` disk-image provenance while preserving candidate membership;
+- archive provenance for the existing archive allow-list;
+- absence of candidate-set widening and absence of `SafeToDelete`/delete APIs;
+- explicit archive/disk-image UI wording while retaining review-only language;
 - the exact Downloads known-folder resolver boundary;
 - use of the existing `AnalyzeStorageOptimizationAsync` path rather than crawling;
 - active-volume scope disclosure;
@@ -151,4 +166,4 @@ A future destructive workflow still needs explicit user selection plus the exist
 - unchanged protocol v8;
 - inclusion in `tools/test-local.ps1 -OfflineOnly`.
 
-Focused .NET tests cover Core classification, `.exe` exclusion, Temp provenance, cap disclosure and saturation. Native Windows/.NET/WinUI execution is not claimed from the current sandbox.
+Focused .NET tests cover package/archive/disk-image classification and rule IDs, unchanged candidate membership, `.exe` exclusion, Temp provenance, cap disclosure and saturation. Native Windows/.NET/WinUI execution is not claimed from the current sandbox.
