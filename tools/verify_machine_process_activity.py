@@ -7,6 +7,11 @@ import random
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from verify_machine_process_activity_ui import (
+    check_repository as check_machine_process_activity_ui_repository,
+    run_model as run_machine_process_activity_ui_model,
+)
+
 Process = Tuple[int, int, int, int, int]
 Row = Tuple[int, int, int, int, int, int]
 
@@ -201,11 +206,21 @@ def main() -> int:
     if args.cases < 1:
         parser.error("--cases must be positive")
     model_checks = run_model(args.cases, args.seed)
-    source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
+    ui_model_checks = run_machine_process_activity_ui_model(args.cases, args.seed ^ 0x4D504155)
+    if args.repo_root:
+        root = args.repo_root.resolve()
+        source_checks = check_repository(root) + check_machine_process_activity_ui_repository(root)
+    else:
+        source_checks = 0
     suffix = " and %s source checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: machine process activity verified with %s model assertions across %s randomized captures%s."
-        % (format(model_checks, ","), format(args.cases, ","), suffix)
+        "PASS: machine process activity verified with %s provider-model assertions and %s UI-model assertions across %s randomized captures%s."
+        % (
+            format(model_checks, ","),
+            format(ui_model_checks, ","),
+            format(args.cases, ","),
+            suffix,
+        )
     )
     return 0
 
