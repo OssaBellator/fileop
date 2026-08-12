@@ -36,9 +36,6 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
     private const uint FileOpen = 1;
     private const uint ObjCaseInsensitive = 0x00000040;
 
-    private const uint FileDispositionDelete = 0x00000001;
-    private const uint FileDispositionPosixSemantics = 0x00000002;
-
     private readonly IFileDeleteProtectedLocationPolicy _protectedLocationPolicy;
 
     public WindowsFileDeleteOperationFinalMutationLeaseProvider(
@@ -452,6 +449,9 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
         IFileDeleteOperationFinalMutationLease,
         IFileDeleteOperationSameLeaseMutation
     {
+        private const uint FileDispositionDelete = 0x00000001;
+        private const uint FileDispositionPosixSemantics = 0x00000002;
+
         private readonly IFileDeleteProtectedLocationPolicy _protectedLocationPolicy;
         private SafeFileHandle? _sourceDirectory;
         private SafeFileHandle? _sourceFile;
