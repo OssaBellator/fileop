@@ -55,12 +55,14 @@ Acquisition still performs no mutation. Only the private `FinalMutationLease` al
 Immediately before mutation that facet requires the exact Core-minted post-barrier authorization, rechecks protected-location policy for root and file, revalidates both already-held handles, and enforces one mutation attempt per lease. It then uses `NtSetInformationFile(FileDispositionInformationEx)` on the already-held file handle with exactly:
 
 ```text
-FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS
+FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS | FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK
 ```
 
 It does not reopen the pathname. It does not use `DeleteFileW`, `File.Delete`, `Directory.Delete`, rename/move/truncate, read-only-attribute bypass, or disposition-on-close acquisition flags.
 
-The POSIX flag is intentional: if an older read handle that shared delete remains open, ordinary disposition could leave the authorized path merely delete-pending after FileOp closes its handle. POSIX disposition removes the namespace link when FileOp's successful mutation handle closes while the older compatible handle can continue accessing its already-open stream. See `docs/file-delete-same-handle-mutation.md` for the complete mutation/settlement/recovery contract.
+The POSIX flag is intentional: if an older read handle that shared delete remains open, ordinary disposition could leave the authorized path merely delete-pending after FileOp closes its handle. POSIX disposition removes the namespace link when FileOp's successful mutation handle closes while the older compatible handle can continue accessing its already-open stream.
+
+`FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK` keeps this behavior conservative for mapped executable/image sections. Without the flag, POSIX disposition can permit unlinking an active image. FileOp instead requires Windows to reject that case so Core enters its recovery-sensitive failure path rather than forcing removal of an in-use image. See `docs/file-delete-same-handle-mutation.md` for the complete mutation/settlement/recovery contract.
 
 ## Still outside this provider
 
