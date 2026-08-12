@@ -319,4 +319,4 @@ if (-not $SkipWinUI) {
     }
 }
 
-Write-Host "`nPASS: local FileOp verification completed without GitHub Actions."
+Write-Host "`nPASS: local FileOp verification completed without GitHub Actions." -ForegroundColor Green
