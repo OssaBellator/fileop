@@ -14,9 +14,37 @@ public sealed partial class StorageOptimizationView
     private ComboBox? _staleAgeComboBox;
     private TextBlock? _thresholdStatusText;
     private StorageOptimizationDisplayThresholds? _displayThresholds;
+    private StorageOptimizationThresholdPreference _thresholdPreference =
+        StorageOptimizationThresholdPreference.Baseline;
     private bool _thresholdPanelInitialized;
     private bool _thresholdControlsUpdating;
     private bool _thresholdAnalysisLoading;
+
+    public event EventHandler<StorageOptimizationThresholdPreferenceChangedEventArgs>?
+        ThresholdPreferenceChanged;
+
+    public void ApplyThresholdPreference(StorageOptimizationThresholdPreference? preference)
+    {
+        _thresholdPreference = preference is not null &&
+            StorageOptimizationThresholdPreferencePolicy.IsSupported(preference)
+            ? preference
+            : StorageOptimizationThresholdPreference.Baseline;
+
+        if (_analysis is { } analysis)
+        {
+            _displayThresholds = StorageOptimizationThresholdPreferencePolicy.Resolve(
+                analysis,
+                _thresholdPreference);
+            ApplyThresholdOverlay();
+        }
+    }
+
+    private void PrepareThresholdsForAnalysis(StorageOptimizationAnalysis analysis)
+    {
+        _displayThresholds = StorageOptimizationThresholdPreferencePolicy.Resolve(
+            analysis,
+            _thresholdPreference);
+    }
 
     private void EnsureThresholdPanel()
     {
@@ -46,7 +74,7 @@ public sealed partial class StorageOptimizationView
 
         _thresholdStatusText = new TextBlock
         {
-            Text = "Threshold presets become available after Optimize analysis loads.",
+            Text = "Threshold controls become available after Optimize analysis loads.",
             Opacity = 0.7,
             TextWrapping = TextWrapping.Wrap,
         };
@@ -58,7 +86,7 @@ public sealed partial class StorageOptimizationView
         });
         panel.Children.Add(new TextBlock
         {
-            Text = "Session-only stricter filters for the already bounded native analysis. FileOp will not let these controls request evidence below the helper's analysis baseline.",
+            Text = "Stricter view filters are remembered as policy-relative multipliers. FileOp re-derives them from each fresh native analysis and never lets them request evidence below the helper baseline.",
             Opacity = 0.68,
             TextWrapping = TextWrapping.Wrap,
         });
@@ -122,7 +150,13 @@ public sealed partial class StorageOptimizationView
             stale.Value);
         StorageOptimizationThresholdFilter.ValidateAgainstAnalysis(_analysis, thresholds);
         _displayThresholds = thresholds;
+        _thresholdPreference = StorageOptimizationThresholdPreferencePolicy.FromThresholds(
+            _analysis,
+            thresholds);
         ApplyThresholdOverlay();
+        ThresholdPreferenceChanged?.Invoke(
+            this,
+            new StorageOptimizationThresholdPreferenceChangedEventArgs(_thresholdPreference));
     }
 
     private void ApplyThresholdOverlay()
@@ -135,7 +169,8 @@ public sealed partial class StorageOptimizationView
         }
 
         EnsureThresholdControls(analysis);
-        var thresholds = _displayThresholds ?? StorageOptimizationDisplayThresholds.FromAnalysis(analysis);
+        var thresholds = _displayThresholds ??
+            StorageOptimizationThresholdPreferencePolicy.Resolve(analysis, _thresholdPreference);
         var filtered = StorageOptimizationThresholdFilter.Apply(analysis, thresholds);
 
         LargestFilesList.ItemsSource = filtered.LargestFiles
@@ -158,7 +193,7 @@ public sealed partial class StorageOptimizationView
                 $"same-size ≥ {ByteFormatter.Format(analysis.Policy.SameSizeMinimumBytes)}, stale ≥ {analysis.Policy.StaleAgeDays:N0} days. " +
                 $"Current view: large ≥ {ByteFormatter.Format(thresholds.LargeFileMinimumBytes)}, " +
                 $"same-size ≥ {ByteFormatter.Format(thresholds.SameSizeMinimumBytes)}, stale ≥ {thresholds.StaleAgeDays:N0} days. " +
-                "These controls only narrow the already bounded result; they do not rerun the helper or imply evidence below its baseline.";
+                "The remembered preference stores only supported multipliers. These controls only narrow the already bounded result; they do not rerun the helper or imply evidence below its baseline.";
         }
     }
 
@@ -169,7 +204,8 @@ public sealed partial class StorageOptimizationView
             return false;
         }
 
-        var thresholds = _displayThresholds ?? StorageOptimizationDisplayThresholds.FromAnalysis(analysis);
+        var thresholds = _displayThresholds ??
+            StorageOptimizationThresholdPreferencePolicy.Resolve(analysis, _thresholdPreference);
         StorageOptimizationThresholdFilter.ValidateAgainstAnalysis(analysis, thresholds);
         ApplyThresholdSameSizeRows(analysis, thresholds);
         UpdateThresholdControlEnabledState();
@@ -209,15 +245,10 @@ public sealed partial class StorageOptimizationView
         }
 
         var baseline = StorageOptimizationDisplayThresholds.FromAnalysis(analysis);
-        var current = _displayThresholds;
-        if (current is null ||
-            current.LargeFileMinimumBytes < baseline.LargeFileMinimumBytes ||
-            current.SameSizeMinimumBytes < baseline.SameSizeMinimumBytes ||
-            current.StaleAgeDays < baseline.StaleAgeDays)
-        {
-            current = baseline;
-            _displayThresholds = current;
-        }
+        var current = _displayThresholds ??
+            StorageOptimizationThresholdPreferencePolicy.Resolve(analysis, _thresholdPreference);
+        StorageOptimizationThresholdFilter.ValidateAgainstAnalysis(analysis, current);
+        _displayThresholds = current;
 
         var largeOptions = BuildSizeOptions(
             baseline.LargeFileMinimumBytes,
@@ -314,4 +345,16 @@ public sealed partial class StorageOptimizationView
         value > int.MaxValue / multiplier
             ? int.MaxValue
             : value * multiplier;
+}
+
+public sealed class StorageOptimizationThresholdPreferenceChangedEventArgs : EventArgs
+{
+    public StorageOptimizationThresholdPreferenceChangedEventArgs(
+        StorageOptimizationThresholdPreference preference)
+    {
+        ArgumentNullException.ThrowIfNull(preference);
+        Preference = preference;
+    }
+
+    public StorageOptimizationThresholdPreference Preference { get; }
 }
