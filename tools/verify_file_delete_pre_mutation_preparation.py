@@ -126,17 +126,33 @@ def run_model(cases: int, seed: int) -> int:
         assert result.scope_holds_lease
         checks += 3
 
-        # The returned scope owns the lease. First disposal releases it; repeated
-        # disposal is a no-op and never crosses the mutation barrier.
+        # The returned scope owns the lease. If a disposal attempt fails, ownership
+        # must remain held so the scope does not falsely report release and can retry.
         dispose_count = 0
         held = result.scope_holds_lease
-        for attempt in range(rng.randint(2, 5)):
-            if held:
-                dispose_count += 1
-                held = False
+        first_dispose_fails = rng.random() < 0.10
+        dispose_count += 1
+        if first_dispose_fails:
+            assert held
             assert dispose_count == 1
-            assert not held
             checks += 2
+            dispose_count += 1
+            held = False
+        else:
+            held = False
+
+        assert not held
+        assert dispose_count == (2 if first_dispose_fails else 1)
+        checks += 2
+
+        # Successful disposal is idempotent; later calls neither re-dispose nor cross
+        # the mutation boundary.
+        settled_dispose_count = dispose_count
+        for _attempt in range(rng.randint(1, 4)):
+            assert dispose_count == settled_dispose_count
+            assert not held
+            assert result.mutation_barrier_calls == 0
+            checks += 3
 
     return checks
 
@@ -185,8 +201,9 @@ def check_repository(root: Path) -> int:
         (core, ".GetAsync(authorization.PlanId, cancellationToken)", "history store read"),
         (core, "FileDeleteOperationHistoryBinding.Validate(", "exact history binding reuse"),
         (core, "return new FileDeleteOperationPreMutationPreparationScope(binding, lease);", "lease ownership transfer"),
-        (core, "Interlocked.Exchange(ref _lease, null)", "idempotent scope disposal"),
-        (core, "await lease.DisposeAsync().ConfigureAwait(false);", "failure cleanup"),
+        (core, "await _disposeGate.WaitAsync().ConfigureAwait(false);", "serialized scope disposal"),
+        (core, "await lease.DisposeAsync().ConfigureAwait(false);\n            _lease = null;", "clear ownership only after successful disposal"),
+        (core, "await lease.DisposeAsync().ConfigureAwait(false);", "preparation-failure cleanup"),
         (core, "public bool DeleteMutationAuthorized => false;", "non-authorizing scope"),
         (core, "public bool MutationBarrierSatisfied => false;", "pre-barrier scope"),
         (core, "public bool StabilityLeaseProviderAcquisitionObserved => true;", "provider acquisition observation"),
@@ -217,6 +234,7 @@ def check_repository(root: Path) -> int:
     checks += 1
 
     for text, needle, label in (
+        (core, "Interlocked.Exchange(ref _lease, null)", "ownership cleared before disposal success"),
         (core, "MarkMutationStartedAsync(", "durable mutation barrier transition"),
         (core, "CommitDeletedAsync(", "delete commit transition"),
         (core, "MarkMutationRecoveryRequiredAsync(", "post-barrier recovery transition"),
