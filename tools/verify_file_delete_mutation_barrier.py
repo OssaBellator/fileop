@@ -16,6 +16,7 @@ class BarrierState:
     mark_outcome: int
     recovery_succeeds: bool
     release_succeeds: bool
+    cleanup_retry_succeeds: bool
     barrier_scope_disposal_succeeds: bool
 
 
@@ -26,19 +27,20 @@ class BarrierState:
 # 3 = throw after durable MutationStarted
 # 4 = throw and inspection cannot prove Pending or MutationStarted
 
-def simulate(state: BarrierState) -> tuple[bool, tuple[str, ...], bool, bool, bool, bool, bool]:
-    """Return (scope, events, old_scope_held, lease_held, barrier, authority, mutation)."""
+def simulate(state: BarrierState) -> tuple[bool, tuple[str, ...], bool, bool, bool, bool, bool, bool]:
+    """Return (scope, events, old_scope_held, lease_held, cleanup_owner, barrier, authority, mutation)."""
     events: list[str] = []
     old_scope_held = state.final_scope_live
     lease_held = state.final_scope_live and state.capability_held
+    cleanup_owner = False
     barrier = False
     authority = False
     mutation = False
 
     if state.pre_cancelled:
-        return False, tuple(events), old_scope_held, lease_held, barrier, authority, mutation
+        return False, tuple(events), old_scope_held, lease_held, cleanup_owner, barrier, authority, mutation
     if not state.final_scope_live or not state.capability_held:
-        return False, tuple(events), old_scope_held, lease_held, barrier, authority, mutation
+        return False, tuple(events), old_scope_held, lease_held, cleanup_owner, barrier, authority, mutation
 
     events.append("detach")
     old_scope_held = False
@@ -49,7 +51,7 @@ def simulate(state: BarrierState) -> tuple[bool, tuple[str, ...], bool, bool, bo
         events.append("validate-started")
         barrier = True
         authority = True
-        return True, tuple(events), old_scope_held, lease_held, barrier, authority, mutation
+        return True, tuple(events), old_scope_held, lease_held, cleanup_owner, barrier, authority, mutation
 
     if state.mark_outcome == 0:
         events.append("inspect-pending")
@@ -69,7 +71,9 @@ def simulate(state: BarrierState) -> tuple[bool, tuple[str, ...], bool, bool, bo
     events.append("release-final")
     if state.release_succeeds:
         lease_held = False
-    return False, tuple(events), old_scope_held, lease_held, barrier, authority, mutation
+    else:
+        cleanup_owner = True
+    return False, tuple(events), old_scope_held, lease_held, cleanup_owner, barrier, authority, mutation
 
 
 def run_model(cases: int, seed: int) -> int:
@@ -81,17 +85,19 @@ def run_model(cases: int, seed: int) -> int:
         mark_outcome=1,
         recovery_succeeds=True,
         release_succeeds=True,
+        cleanup_retry_succeeds=True,
         barrier_scope_disposal_succeeds=True,
     )
-    scope, events, old_held, lease_held, barrier, authority, mutation = simulate(baseline)
+    scope, events, old_held, lease_held, cleanup_owner, barrier, authority, mutation = simulate(baseline)
     assert scope
     assert events == ("detach", "mark-started", "validate-started")
     assert not old_held
     assert lease_held
+    assert not cleanup_owner
     assert barrier
     assert authority
     assert not mutation
-    checks += 7
+    checks += 8
 
     rng = random.Random(seed)
     for _ in range(cases):
@@ -102,9 +108,10 @@ def run_model(cases: int, seed: int) -> int:
             mark_outcome=rng.randrange(5),
             recovery_succeeds=rng.random() >= 0.10,
             release_succeeds=rng.random() >= 0.08,
+            cleanup_retry_succeeds=rng.random() >= 0.08,
             barrier_scope_disposal_succeeds=rng.random() >= 0.08,
         )
-        scope, events, old_held, lease_held, barrier, authority, mutation = simulate(state)
+        scope, events, old_held, lease_held, cleanup_owner, barrier, authority, mutation = simulate(state)
 
         assert not mutation
         assert events.count("detach") <= 1
@@ -118,7 +125,8 @@ def run_model(cases: int, seed: int) -> int:
             assert events == ()
             assert old_held == state.final_scope_live
             assert lease_held == (state.final_scope_live and state.capability_held)
-            checks += 4
+            assert not cleanup_owner
+            checks += 5
             continue
 
         if not state.final_scope_live or not state.capability_held:
@@ -126,7 +134,8 @@ def run_model(cases: int, seed: int) -> int:
             assert events == ()
             assert old_held == state.final_scope_live
             assert lease_held == (state.final_scope_live and state.capability_held)
-            checks += 4
+            assert not cleanup_owner
+            checks += 5
             continue
 
         assert events[0] == "detach"
@@ -139,11 +148,11 @@ def run_model(cases: int, seed: int) -> int:
             assert barrier
             assert authority
             assert lease_held
+            assert not cleanup_owner
             assert "release-final" not in events
             assert "mark-recovery" not in events
-            checks += 6
+            checks += 7
 
-            # Successful barrier-scope disposal clears authority only after release succeeds.
             dispose_attempts = 1
             if not state.barrier_scope_disposal_succeeds:
                 assert lease_held
@@ -179,7 +188,19 @@ def run_model(cases: int, seed: int) -> int:
             checks += 2
 
         assert lease_held == (not state.release_succeeds)
-        checks += 1
+        assert cleanup_owner == (not state.release_succeeds)
+        assert not lease_held or cleanup_owner
+        checks += 3
+
+        if cleanup_owner:
+            events = events + ("retry-final-release",)
+            if state.cleanup_retry_succeeds:
+                lease_held = False
+                cleanup_owner = False
+            assert events[-1] == "retry-final-release"
+            assert cleanup_owner == (not state.cleanup_retry_succeeds)
+            assert lease_held == (not state.cleanup_retry_succeeds)
+            checks += 3
 
     return checks
 
@@ -199,7 +220,9 @@ def forbid(text: str, needle: str, label: str) -> int:
 def check_repository(root: Path) -> int:
     final_lease = (root / "src/FileOp.Core/Operations/FileDeleteOperationFinalMutationLease.cs").read_text(encoding="utf-8")
     barrier = (root / "src/FileOp.Core/Operations/FileDeleteOperationMutationBarrier.cs").read_text(encoding="utf-8")
+    cleanup_exception = (root / "src/FileOp.Core/Operations/FileDeleteOperationFinalLeaseReleaseException.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationMutationBarrierTests.cs").read_text(encoding="utf-8")
+    cleanup_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationMutationBarrierCleanupOwnershipTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/file-delete-mutation-barrier.md").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
     plan = (root / "src/FileOp.Core/Operations/FileOperationPlan.cs").read_text(encoding="utf-8")
@@ -240,7 +263,14 @@ def check_repository(root: Path) -> int:
         (barrier, "TryValidateBarrierHistory(", "durable MutationStarted validation"),
         (barrier, "ValidateStaticHistoryProvenance", "exact operation provenance validation"),
         (barrier, "ValidateLiveLease(finalEvidence, lease);", "capability recheck after durable transition"),
+        (barrier, "new FileDeleteOperationFinalLeaseReleaseException(", "failed cleanup retains explicit owner"),
         (barrier, "await lease.DisposeAsync().ConfigureAwait(false);\n            Volatile.Write(ref _lease, null);", "barrier-scope disposal retry ownership"),
+        (cleanup_exception, "public sealed class FileDeleteOperationFinalLeaseReleaseException : Exception, IAsyncDisposable", "cleanup-only exception"),
+        (cleanup_exception, "private IFileDeleteOperationFinalMutationLease? _lease;", "private cleanup capability ownership"),
+        (cleanup_exception, "public bool FinalLeaseReleasePending => Volatile.Read(ref _lease) is not null;", "cleanup pending state"),
+        (cleanup_exception, "public bool DeleteMutationAuthorized => false;", "cleanup never authorizes mutation"),
+        (cleanup_exception, "public async ValueTask RetryFinalLeaseReleaseAsync()", "explicit release retry"),
+        (cleanup_exception, "await lease.DisposeAsync().ConfigureAwait(false);\n            Volatile.Write(ref _lease, null);", "cleanup ownership clears only after successful release"),
         (tests, "SuccessfulClaimTransfersFinalLeaseAndCreatesLiveBarrierAuthority", "successful transfer regression"),
         (tests, "RetainedFinalScopeAliasCannotDisposeLeaseAfterTransfer", "retained alias regression"),
         (tests, "CancellationBeforeDetachLeavesFinalScopeUntouched", "pre-cancellation regression"),
@@ -250,9 +280,11 @@ def check_repository(root: Path) -> int:
         (tests, "InvalidReturnedBarrierHistoryMarksRecoveryBeforeLeaseRelease", "invalid return recovery regression"),
         (tests, "RecoveryPersistenceFailureLeavesDurableMutationStartedSignal", "recovery failure regression"),
         (tests, "BarrierScopeDisposalFailureRetainsAuthorityUntilRetrySucceeds", "barrier disposal retry regression"),
+        (cleanup_tests, "FailedBarrierReleaseRetainsCleanupOnlyLeaseOwnershipUntilRetrySucceeds", "failed cleanup ownership regression"),
         (docs, "Cancellation is honored only before ownership transfer", "cancellation boundary documentation"),
         (docs, "durable `MutationStarted`", "restart recovery signal documentation"),
         (docs, "does not perform deletion", "no-delete documentation"),
+        (docs, "cleanup-only exception", "cleanup ownership documentation"),
         (gate, "verify_file_delete_mutation_barrier.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "generic delete remains absent"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 unchanged"),
@@ -280,6 +312,9 @@ def check_repository(root: Path) -> int:
         (barrier, "Directory.Delete(", "managed directory deletion"),
         (barrier, "SafeFileHandle", "raw handle exposure"),
         (barrier, "FileOperationKind.Delete", "generic delete integration"),
+        (cleanup_exception, "SafeFileHandle", "raw handle exposure from cleanup exception"),
+        (cleanup_exception, "CommitDeletedAsync", "delete settlement from cleanup exception"),
+        (cleanup_exception, "MutationBarrierSatisfied => true", "cleanup exception barrier authority"),
         (protocol, "FileDeleteOperationMutationBarrier", "protocol transport"),
     ):
         checks += forbid(text, needle, label)
