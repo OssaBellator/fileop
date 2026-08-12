@@ -296,12 +296,16 @@ public static class FileDeleteOperationMutationBarrier
         catch (Exception disposalException)
         {
             failures.Add(disposalException);
+            return new FileDeleteOperationFinalLeaseReleaseException(
+                "Delete mutation barrier recovery failed to release the detached final capability; cleanup ownership is retained for retry.",
+                failures,
+                lease);
         }
 
         return failures.Count == 1
             ? failures[0]
             : new AggregateException(
-                "Delete mutation barrier recovery/release encountered one or more failures; durable history remains the restart-time signal.",
+                "Delete mutation barrier recovery encountered one or more failures; durable history remains the restart-time signal.",
                 failures);
     }
 
@@ -318,14 +322,15 @@ public static class FileDeleteOperationMutationBarrier
         catch (Exception disposalException)
         {
             failures.Add(disposalException);
+            return new FileDeleteOperationFinalLeaseReleaseException(
+                message + " Final capability release failed; cleanup ownership is retained for retry.",
+                failures,
+                lease);
         }
 
-        if (failures.Count == 1)
-        {
-            return failures[0];
-        }
-
-        return new AggregateException(message, failures);
+        return failures.Count == 1
+            ? failures[0]
+            : new AggregateException(message, failures);
     }
 
     private static void ValidateFinalEvidence(
