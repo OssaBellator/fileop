@@ -12,14 +12,15 @@ internal sealed partial class DesktopSearchEngine
     {
         get
         {
-            if (_disposed || string.IsNullOrWhiteSpace(StorageRootPath))
+            var storageRootPath = StorageRootPath;
+            if (_disposed || string.IsNullOrWhiteSpace(storageRootPath))
             {
                 return null;
             }
 
             try
             {
-                var storageRoot = Path.GetFullPath(StorageRootPath);
+                var storageRoot = Path.GetFullPath(storageRootPath);
                 var driveRoot = Path.GetPathRoot(storageRoot);
                 return string.IsNullOrWhiteSpace(driveRoot)
                     ? null
