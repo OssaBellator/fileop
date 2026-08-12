@@ -228,7 +228,7 @@ def check_repository(root: Path) -> int:
         (barrier, "public sealed class FileDeleteOperationMutationBarrierScope : IAsyncDisposable", "barrier scope"),
         (barrier, "private IFileDeleteOperationFinalMutationLease? _lease;", "private live capability ownership"),
         (barrier, "public bool MutationBarrierSatisfied => true;", "durable barrier evidence"),
-        (barrier, "MutationBarrierSatisfied && FinalLeaseHeld && DeleteAccessCapabilityHeld", "authority requires live capability"),
+        (barrier, "lease.DeleteAccessCapabilityHeld &&\n                !lease.DeleteMutationAuthorized &&\n                ReferenceEquals(lease.Evidence, FinalEvidence)", "authority requires exact live provider contract"),
         (barrier, "public bool DeleteMutationPerformed => false;", "no mutation performed"),
         (barrier, "cancellationToken.ThrowIfCancellationRequested();", "pre-transfer cancellation"),
         (barrier, "var lease = await finalLeaseScope.DetachLeaseAsync().ConfigureAwait(false);", "atomic transfer consumption"),
