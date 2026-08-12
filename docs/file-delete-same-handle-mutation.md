@@ -29,7 +29,7 @@ The selected entry can become `Committed` while the containing operation remains
 The Windows final lease uses `NtSetInformationFile` with `FileDispositionInformationEx` on the same private file handle acquired with DELETE access. The only disposition flags in this slice are:
 
 ```text
-FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS
+FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS | FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK
 ```
 
 No pathname is reopened for mutation. There is no `DeleteFileW`, `File.Delete`, `Directory.Delete`, rename, move, truncate, recycle-bin path, read-only-attribute bypass, or disposition-on-close acquisition flag.
@@ -39,6 +39,8 @@ No pathname is reopened for mutation. There is no `DeleteFileW`, `File.Delete`, 
 The final lease intentionally permits an already-open reader when that reader advertised delete sharing. With ordinary non-POSIX delete disposition, closing only FileOp's deleting handle can leave the file merely delete-pending until every other open handle closes. Durable `Committed` history at that point would overstate what happened to the authorized pathname.
 
 `FILE_DISPOSITION_POSIX_SEMANTICS` removes the authorized namespace link when FileOp closes its successful mutation handle while compatible pre-existing handles may continue accessing the underlying streams. Native regression coverage keeps a delete-sharing reader open, performs the full barrier/mutation/commit pipeline, requires the pathname to be absent, and then proves the earlier reader can still consume its already-open stream.
+
+`FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK` deliberately keeps mapped executable/image sections conservative under POSIX semantics. Without that flag, Windows can allow the namespace link to be removed even while an image section is active. FileOp prefers the mutation to fail and enter its recovery-sensitive failure path rather than aggressively unlink an in-use mapped image.
 
 This is namespace-link deletion evidence for the exact authorized path. If the same physical file has other hard-link names, those other namespace links are not implied to be removed.
 
@@ -69,6 +71,6 @@ A post-barrier failure is conservatively recovery-sensitive even when the native
 
 `WindowsFileDeleteOperationSameHandleMutationTests` exercises the real Windows provider, protected-location recheck, SQLite action history, and complete authorization/preparation/final-lease/barrier/mutation flow on temporary files. The held-reader regression distinguishes POSIX namespace removal from an ordinary delete-pending state.
 
-`tools/verify_file_delete_same_handle_mutation.py` independently models mutation, release, commit, inspection, recovery, and cleanup ownership across randomized states. Its repository guards require the Core-only authorization, destructive transfer under the barrier ownership gate, exact `DELETE | POSIX` native flags, same-handle/no-reopen implementation, native/fake lifecycle tests, no App/Indexer consumers, generic Delete still absent, and protocol v8 unchanged.
+`tools/verify_file_delete_same_handle_mutation.py` independently models mutation, release, commit, inspection, recovery, and cleanup ownership across randomized states. Its repository guards require the Core-only authorization, destructive transfer under the barrier ownership gate, exact `DELETE | POSIX | FORCE_IMAGE_SECTION_CHECK` native flags, same-handle/no-reopen implementation, native/fake lifecycle tests, no App/Indexer consumers, generic Delete still absent, and protocol v8 unchanged.
 
 The verifier is part of `tools/test-local.ps1 -OfflineOnly`. Because this slice introduces the first real production filesystem mutation API, the complete Windows local gate is mandatory before the pull request can leave draft or merge.
