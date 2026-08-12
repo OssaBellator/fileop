@@ -38,7 +38,7 @@ public sealed class FileDeleteOperationStabilityLeaseContractTests
                 authorization.CanonicalSourceDirectoryPath,
                 new FileIdentity(
                     authorization.SourceDirectoryIdentity.VolumeSerialNumber,
-                    authorization.SourceDirectoryIdentity.FileIndex + 1),
+                    authorization.SourceDirectoryIdentity.FileReferenceNumber + 1),
                 item.CanonicalPath,
                 item.Identity));
 
@@ -48,7 +48,9 @@ public sealed class FileDeleteOperationStabilityLeaseContractTests
                 authorization.CanonicalSourceDirectoryPath,
                 authorization.SourceDirectoryIdentity,
                 item.CanonicalPath,
-                new FileIdentity(item.Identity.VolumeSerialNumber, item.Identity.FileIndex + 1)));
+                new FileIdentity(
+                    item.Identity.VolumeSerialNumber,
+                    item.Identity.FileReferenceNumber + 1)));
     }
 
     [TestMethod]
