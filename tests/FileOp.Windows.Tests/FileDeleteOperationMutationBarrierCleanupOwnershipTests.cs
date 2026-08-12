@@ -148,33 +148,72 @@ public sealed class FileDeleteOperationMutationBarrierCleanupOwnershipTests
         }
 
         public FileDeleteOperationActionHistory Current { get; }
+
         public int MarkMutationStartedCount { get; private set; }
 
-        public ValueTask<FileDeleteOperationActionHistory?> GetAsync(Guid operationId, CancellationToken cancellationToken = default)
+        public ValueTask<FileDeleteOperationActionHistory?> GetAsync(
+            Guid operationId,
+            CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return new ValueTask<FileDeleteOperationActionHistory?>(Current);
         }
 
-        public ValueTask<FileDeleteOperationActionHistory> MarkMutationStartedAsync(Guid operationId, int ordinal, CancellationToken cancellationToken = default)
+        public ValueTask<FileDeleteOperationActionHistory> MarkMutationStartedAsync(
+            Guid operationId,
+            int ordinal,
+            CancellationToken cancellationToken = default)
         {
             MarkMutationStartedCount++;
             throw new InvalidOperationException("synthetic barrier failure before persistence");
         }
 
-        public ValueTask<FileDeleteOperationActionHistory> BeginAsync(FileDeleteOperationUserAuthorizationReceipt authorization, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<FileDeleteOperationActionHistory> CommitDeletedAsync(Guid operationId, int ordinal, FileIdentity deletedSourceIdentity, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<FileDeleteOperationActionHistory> MarkFailedAsync(Guid operationId, int ordinal, FileOperationFailure failure, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<FileDeleteOperationActionHistory> MarkMutationRecoveryRequiredAsync(Guid operationId, int ordinal, FileOperationFailure failure, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<FileDeleteOperationActionHistory> CompleteAsync(Guid operationId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<FileDeleteOperationActionHistory> BeginAsync(
+            FileDeleteOperationUserAuthorizationReceipt authorization,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public ValueTask<FileDeleteOperationActionHistory> CommitDeletedAsync(
+            Guid operationId,
+            int ordinal,
+            FileIdentity deletedSourceIdentity,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public ValueTask<FileDeleteOperationActionHistory> MarkFailedAsync(
+            Guid operationId,
+            int ordinal,
+            FileOperationFailure failure,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public ValueTask<FileDeleteOperationActionHistory> MarkMutationRecoveryRequiredAsync(
+            Guid operationId,
+            int ordinal,
+            FileOperationFailure failure,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public ValueTask<FileDeleteOperationActionHistory> CompleteAsync(
+            Guid operationId,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class ReadOnlyProvider : IFileDeleteOperationStabilityLeaseProvider
     {
         private readonly IFileDeleteOperationStabilityLease _lease;
-        public ReadOnlyProvider(IFileDeleteOperationStabilityLease lease) => _lease = lease;
-        public ValueTask<IFileDeleteOperationStabilityLease> AcquireAsync(FileDeleteOperationStabilityLeaseRequest request, CancellationToken cancellationToken = default)
+
+        public ReadOnlyProvider(IFileDeleteOperationStabilityLease lease)
+        {
+            _lease = lease;
+        }
+
+        public ValueTask<IFileDeleteOperationStabilityLease> AcquireAsync(
+            FileDeleteOperationStabilityLeaseRequest request,
+            CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return new ValueTask<IFileDeleteOperationStabilityLease>(_lease);
@@ -183,17 +222,30 @@ public sealed class FileDeleteOperationMutationBarrierCleanupOwnershipTests
 
     private sealed class ReadOnlyLease : IFileDeleteOperationStabilityLease
     {
-        public ReadOnlyLease(FileDeleteOperationStabilityLeaseEvidence evidence) => Evidence = evidence;
+        public ReadOnlyLease(FileDeleteOperationStabilityLeaseEvidence evidence)
+        {
+            Evidence = evidence;
+        }
+
         public FileDeleteOperationStabilityLeaseEvidence Evidence { get; }
+
         public bool DeleteMutationAuthorized => false;
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class FinalProvider : IFileDeleteOperationFinalMutationLeaseProvider
     {
         private readonly FailingFinalLease _lease;
-        public FinalProvider(FailingFinalLease lease) => _lease = lease;
-        public ValueTask<IFileDeleteOperationFinalMutationLease> AcquireAsync(FileDeleteOperationFinalMutationLeaseRequest request, CancellationToken cancellationToken = default)
+
+        public FinalProvider(FailingFinalLease lease)
+        {
+            _lease = lease;
+        }
+
+        public ValueTask<IFileDeleteOperationFinalMutationLease> AcquireAsync(
+            FileDeleteOperationFinalMutationLeaseRequest request,
+            CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             _lease.AttachEvidence(new FileDeleteOperationFinalMutationLeaseEvidence(
@@ -211,12 +263,26 @@ public sealed class FileDeleteOperationMutationBarrierCleanupOwnershipTests
         private int _remainingDisposeFailures;
         private bool _held = true;
         private FileDeleteOperationFinalMutationLeaseEvidence? _evidence;
-        public FailingFinalLease(int disposeFailures) => _remainingDisposeFailures = disposeFailures;
-        public FileDeleteOperationFinalMutationLeaseEvidence Evidence => _evidence ?? throw new InvalidOperationException("Final evidence has not been attached.");
+
+        public FailingFinalLease(int disposeFailures)
+        {
+            _remainingDisposeFailures = disposeFailures;
+        }
+
+        public FileDeleteOperationFinalMutationLeaseEvidence Evidence =>
+            _evidence ?? throw new InvalidOperationException("Final evidence has not been attached.");
+
         public bool DeleteAccessCapabilityHeld => _held;
+
         public bool DeleteMutationAuthorized => false;
+
         public int DisposeCount { get; private set; }
-        public void AttachEvidence(FileDeleteOperationFinalMutationLeaseEvidence evidence) => _evidence = evidence;
+
+        public void AttachEvidence(FileDeleteOperationFinalMutationLeaseEvidence evidence)
+        {
+            _evidence = evidence;
+        }
+
         public ValueTask DisposeAsync()
         {
             DisposeCount++;
@@ -225,6 +291,7 @@ public sealed class FileDeleteOperationMutationBarrierCleanupOwnershipTests
                 _remainingDisposeFailures--;
                 throw new InvalidOperationException("synthetic detached final release failure");
             }
+
             _held = false;
             return ValueTask.CompletedTask;
         }
