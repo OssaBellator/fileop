@@ -45,10 +45,11 @@ public sealed class WindowsFileDeleteOperationSameHandleMutationTests
 
         var persisted = await historyStore.GetAsync(authorization.PlanId);
         Assert.IsNotNull(persisted);
+        var persistedHistory = persisted!;
         Assert.AreEqual(
             FileDeleteOperationActionEntryState.Committed,
-            persisted.Entries[0].State);
-        Assert.IsNull(persisted.TerminalState);
+            persistedHistory.Entries[0].State);
+        Assert.IsNull(persistedHistory.TerminalState);
     }
 
     [TestMethod]
@@ -78,9 +79,13 @@ public sealed class WindowsFileDeleteOperationSameHandleMutationTests
             result.CommittedHistory.Entries[0].State);
 
         reader.Position = 0;
-        var buffer = new byte[Encoding.UTF8.GetByteCount(content)];
-        var read = await reader.ReadAsync(buffer.AsMemory());
-        Assert.AreEqual(content, Encoding.UTF8.GetString(buffer, 0, read));
+        using var textReader = new StreamReader(
+            reader,
+            Encoding.UTF8,
+            detectEncodingFromByteOrderMarks: true,
+            bufferSize: 1024,
+            leaveOpen: true);
+        Assert.AreEqual(content, await textReader.ReadToEndAsync());
     }
 
     [TestMethod]
@@ -105,9 +110,11 @@ public sealed class WindowsFileDeleteOperationSameHandleMutationTests
         Assert.IsTrue(barrier.FinalLeaseHeld);
         Assert.IsTrue(barrier.DeleteAccessCapabilityHeld);
         Assert.IsTrue(barrier.DeleteMutationAuthorized);
+        var persisted = await historyStore.GetAsync(authorization.PlanId);
+        Assert.IsNotNull(persisted);
         Assert.AreEqual(
             FileDeleteOperationActionEntryState.MutationStarted,
-            (await historyStore.GetAsync(authorization.PlanId))!.Entries[0].State);
+            persisted!.Entries[0].State);
 
         await barrier.DisposeAsync();
     }
@@ -132,12 +139,13 @@ public sealed class WindowsFileDeleteOperationSameHandleMutationTests
         Assert.IsFalse(barrier.FinalLeaseHeld);
         var persisted = await historyStore.GetAsync(authorization.PlanId);
         Assert.IsNotNull(persisted);
+        var persistedHistory = persisted!;
         Assert.AreEqual(
             FileDeleteOperationActionEntryState.RecoveryRequired,
-            persisted.Entries[0].State);
+            persistedHistory.Entries[0].State);
         Assert.AreEqual(
             "DeleteSameLeaseMutationFailed",
-            persisted.Entries[0].Failure!.Code);
+            persistedHistory.Entries[0].Failure!.Code);
     }
 
     private static async Task AssertThrowsAsync<TException>(Func<Task> action)
