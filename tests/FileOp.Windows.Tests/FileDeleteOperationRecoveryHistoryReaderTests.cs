@@ -127,6 +127,19 @@ public sealed class FileDeleteOperationRecoveryHistoryReaderTests
     }
 
     [TestMethod]
+    public async Task MissingDatabaseIsNotCreatedByRecoveryReader()
+    {
+        using var fixture = new HistoryFixture();
+        Assert.IsFalse(File.Exists(fixture.DatabasePath));
+        await using var reader = new SqliteFileDeleteOperationRecoveryHistoryReader(fixture.DatabasePath);
+
+        await AssertThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(async () =>
+            await reader.GetRecoveryCandidatesAsync());
+
+        Assert.IsFalse(File.Exists(fixture.DatabasePath));
+    }
+
+    [TestMethod]
     public async Task DisposedRecoveryReaderFailsClosed()
     {
         using var fixture = new HistoryFixture();
