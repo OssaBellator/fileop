@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify explicit current machine-process activity presentation."""
+"""Verify explicit current machine-process and system-CPU presentation."""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +17,25 @@ def present(rows: list[tuple[int, int, int]], hidden_cpu: int, incomplete: bool)
     return list(rows), hidden_cpu, incomplete
 
 
+def present_bundle(
+    rows: list[tuple[int, int, int]],
+    hidden_cpu: int,
+    incomplete: bool,
+    system_cpu_status: str,
+    busy_percent: float | None,
+    busy_time: int,
+    total_time: int,
+    idle_time: int,
+):
+    shown_rows, shown_hidden_cpu, shown_incomplete = present(rows, hidden_cpu, incomplete)
+    return (
+        shown_rows,
+        shown_hidden_cpu,
+        shown_incomplete,
+        (system_cpu_status, busy_percent, busy_time, total_time, idle_time),
+    )
+
+
 def run_model(cases: int, seed: int) -> int:
     rng = random.Random(seed)
     checks = 0
@@ -25,7 +44,11 @@ def run_model(cases: int, seed: int) -> int:
     assert not capture_allowed(False, False, False)
     assert not capture_allowed(True, True, False)
     assert not capture_allowed(True, False, True)
-    checks += 4
+    completed = present_bundle([(1, 2, 3)], 4, False, "Completed", 50.0, 5, 10, 5)
+    unavailable = present_bundle([(1, 2, 3)], 4, False, "Unavailable", None, 0, 0, 0)
+    assert completed[:3] == unavailable[:3]
+    assert unavailable[3][0] == "Unavailable"
+    checks += 6
 
     for _ in range(cases):
         optimize = bool(rng.getrandbits(1))
@@ -57,6 +80,47 @@ def run_model(cases: int, seed: int) -> int:
         assert len(starts) == len(shown_rows)
         assert len(images) == len(shown_rows)
         checks += 2
+
+        system_cpu_status = rng.choice(("Completed", "Unsupported", "Unavailable"))
+        total_time = rng.randint(0, 10_000_000)
+        idle_time = rng.randint(0, total_time) if total_time else 0
+        busy_time = total_time - idle_time
+        busy_percent = None if total_time == 0 else busy_time * 100.0 / total_time
+        bundle = present_bundle(
+            rows,
+            hidden_cpu,
+            incomplete,
+            system_cpu_status,
+            busy_percent,
+            busy_time,
+            total_time,
+            idle_time,
+        )
+        assert bundle[0] == rows
+        assert bundle[1] == hidden_cpu
+        assert bundle[2] == incomplete
+        assert bundle[3] == (
+            system_cpu_status,
+            busy_percent,
+            busy_time,
+            total_time,
+            idle_time,
+        )
+        checks += 4
+
+        # CPU interval status/values are supplementary and cannot change process presentation.
+        changed_cpu = present_bundle(
+            rows,
+            hidden_cpu,
+            incomplete,
+            "Unavailable" if system_cpu_status == "Completed" else "Completed",
+            None if busy_percent is not None else 73.25,
+            rng.randint(0, 10_000_000),
+            rng.randint(0, 10_000_000),
+            rng.randint(0, 10_000_000),
+        )
+        assert changed_cpu[:3] == bundle[:3]
+        checks += 1
     return checks
 
 
@@ -108,35 +172,62 @@ def check_repository(root: Path) -> int:
     checks = 2
 
     required = [
-        (engine, "new WindowsMachineProcessActivityProvider()", "engine-owned Windows provider"),
-        (engine, "MachineProcessActivityBudget.Default", "default bounded budget"),
+        (engine, "new WindowsMachineProcessActivityProvider()", "engine-owned process provider"),
+        (engine, "new WindowsSystemCpuActivityProvider()", "engine-owned system CPU provider"),
+        (engine, "MachineProcessActivityBudget.Default", "default process budget"),
+        (engine, "SystemCpuActivityBudget.Default", "default system CPU budget"),
+        (engine, "Task.WhenAll(processTask, systemCpuTask)", "concurrent bounded captures"),
+        (engine, "CaptureSystemCpuActivitySafelyAsync", "supplementary CPU failure isolation"),
+        (engine, "Supplementary Windows system CPU interval failed", "unexpected CPU failure mapping"),
         (engine, "_lifetimeCancellation.Token", "window/engine lifetime cancellation"),
         (main, "_storageSameSizeVerificationActive", "same-size exclusion"),
         (main, "_performanceDiskIoCaptureActive", "shared explicit capture exclusion"),
         (main, "_performanceDiskIoCaptureActive = true;", "capture lock acquisition"),
         (main, "_performanceDiskIoCaptureActive = false;", "capture lock release"),
         (main, "CaptureMachineProcessActivityAsync", "engine capture invocation"),
+        (main, "capture.ProcessActivity", "process bundle forwarding"),
+        (main, "capture.SystemCpuActivity", "system CPU bundle forwarding"),
         (main, "finally", "capture lock finally"),
-        (storage, "SetMachineProcessActivityLoading", "storage host loading forwarding"),
+        (storage, "SystemCpuActivityResult systemCpuActivity", "storage CPU forwarding"),
         (storage, "_sameSizeVerificationControlsBlocked = true", "same-size UI exclusion"),
-        (performance, "MachineProcessActivity.SetLoading()", "performance loading forwarding"),
+        (performance, "SystemCpuActivityResult systemCpuActivity", "performance CPU forwarding"),
+        (performance, "MachineProcessActivity.Apply(result, systemCpuActivity)", "combined view apply"),
         (performance_xaml, "MachineProcessActivityView", "machine view in Performance visual tree"),
         (performance_xaml, 'x:Name="MachineProcessActivity"', "named machine view"),
         (view_xaml, 'Content="Capture machine activity"', "explicit capture action"),
         (view_xaml, 'Text="Current machine process activity"', "neutral current-activity heading"),
-        (view_xaml, "Process start time is context only", "start-time interpretation boundary"),
-        (view_xaml, "CPU-time Δ", "CPU delta column"),
-        (view, "report.OtherMatchedProcessorTime", "hidden CPU evidence"),
+        (view_xaml, "Windows system CPU interval", "separate CPU interval heading"),
+        (view_xaml, 'x:Name="SystemCpuBusyText"', "busy percentage field"),
+        (view_xaml, 'x:Name="SystemCpuTimeText"', "CPU time delta field"),
+        (view_xaml, 'x:Name="SystemCpuWallText"', "observation interval field"),
+        (view_xaml, 'x:Name="SystemCpuOverheadText"', "provider overhead field"),
+        (view_xaml, "CPU-time Δ", "process CPU delta column"),
+        (view, "public void Apply(MachineProcessActivityResult result)", "process-only compatibility seam"),
+        (view, "SystemCpuActivityResult systemCpuActivity", "combined presentation seam"),
+        (view, "ApplySystemCpu(systemCpuActivity)", "CPU presentation path"),
+        (view, "report.OtherMatchedProcessorTime", "hidden process CPU evidence"),
         (view, "report.CaptureProcessProcessorTime", "observer CPU evidence"),
-        (view, "report.EvidenceMayBeIncomplete", "incomplete evidence wording"),
-        (view, "CPU percentage is intentionally not inferred", "no fake CPU percent wording"),
+        (view, "report.EvidenceMayBeIncomplete", "incomplete process evidence wording"),
+        (view, "evidence.BusyPercent", "provider-derived CPU percentage"),
+        (view, "evidence.BusyProcessorTimeDelta", "raw busy CPU time"),
+        (view, "evidence.IdleProcessorTimeDelta", "raw idle CPU time"),
+        (view, "evidence.TotalProcessorTimeDelta", "raw total CPU time"),
+        (view, "evidence.ObservationWallDuration", "CPU observation wall duration"),
+        (view, "result.ProviderOverheadDuration", "CPU provider overhead"),
+        (view, "does not treat visible process deltas as a decomposition of Windows busy time", "process/system provenance wording"),
+        (view, "Process CPU percentage is intentionally not inferred", "no fake process CPU percent wording"),
         (view, "window.CapturePerformanceMachineProcessActivityAsync()", "MainWindow-owned async route"),
-        (docs, "not part of the ordinary Performance diagnostics refresh", "separate refresh documentation"),
+        (docs, "starts both bounded captures concurrently", "documented concurrent capture"),
+        (docs, "separate observation boundaries", "documented provenance separation"),
         (docs, "does **not** re-sort or promote rows", "no UI ranking documentation"),
+        (docs, "Unsupported or unavailable CPU evidence clears only the CPU summary", "supplementary failure boundary"),
         (docs, "Process start time is displayed only as stable identity/context", "no startup inference documentation"),
+        (docs, "primary processor group", "processor-group scope caveat"),
         (parent, "from verify_machine_process_activity_ui import (", "parent imports UI verifier"),
         (parent, "run_machine_process_activity_ui_model(args.cases", "parent runs UI model"),
         (parent, "check_machine_process_activity_ui_repository(root)", "parent runs UI source checks"),
+        (parent, "from verify_system_cpu_activity import (", "parent imports CPU foundation verifier"),
+        (parent, "run_system_cpu_activity_model(args.cases", "parent runs CPU foundation model"),
         (wrapper, "from verify_machine_process_activity import main", "stable wrapper delegation"),
         (gate, "verify_background_process_activity.py --repo-root $repoRoot --cases 50000", "direct offline gate"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
@@ -147,9 +238,13 @@ def check_repository(root: Path) -> int:
     refresh = method_body(performance_base, "private void RefreshButton_Click")
     checks += forbid(refresh, "MachineProcess", "ordinary Performance refresh invoking machine sample")
 
-    apply = method_body(view, "public void Apply(MachineProcessActivityResult result)")
-    checks += forbid(apply, ".OrderBy", "UI-side row ranking")
-    checks += forbid(apply, ".Take(", "UI-side row promotion/truncation")
+    process_apply = method_body(view, "private void ApplyProcess(MachineProcessActivityResult result)")
+    checks += forbid(process_apply, ".OrderBy", "UI-side row ranking")
+    checks += forbid(process_apply, ".Take(", "UI-side row promotion/truncation")
+
+    cpu_apply = method_body(view, "private void ApplySystemCpu(SystemCpuActivityResult result)")
+    checks += forbid(cpu_apply, "BusyProcessorTimeDelta.Ticks * 100", "UI-side CPU percentage recomputation")
+    checks += forbid(cpu_apply, "Math.Clamp", "UI-side CPU percentage clamping")
 
     combined = engine + "\n" + main + "\n" + storage + "\n" + view + "\n" + docs
     for needle in (
@@ -166,11 +261,12 @@ def check_repository(root: Path) -> int:
         "ProcessorAffinity =",
         "health score",
         "impact score",
+        "pressure score",
     ):
         checks += forbid(combined, needle, "poller/startup heuristic/process control/score")
 
-    checks += forbid(view, "ProcessorTimeDelta.TotalSeconds /", "CPU percentage inference")
-    checks += forbid(view, "100 *", "CPU percentage inference")
+    checks += forbid(view, "ProcessorTimeDelta.TotalSeconds /", "process CPU percentage inference")
+    checks += forbid(view, "ProcessorTimeDelta.Ticks * 100", "process CPU percentage inference")
     return checks
 
 
@@ -187,7 +283,7 @@ def main() -> int:
     source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = " and %s source/UI checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: machine process activity UI verified with %s model assertions across %s randomized states%s."
+        "PASS: machine process/system CPU UI verified with %s model assertions across %s randomized states%s."
         % (format(model_checks, ","), format(args.cases, ","), suffix)
     )
     return 0
