@@ -153,32 +153,7 @@ public static class DiskIoDeviceEvidenceCollector
     public static DiskIoDeviceEvidenceSnapshot Query(
         IReadOnlyList<uint> physicalDiskNumbers,
         IPhysicalDiskDeviceContextProvider deviceContextProvider,
-        INvmeHealthEvidenceProvider nvmeHealthProvider) =>
-        QueryCore(
-            physicalDiskNumbers,
-            deviceContextProvider,
-            nvmeHealthProvider,
-            failurePredictionProvider: null);
-
-    public static DiskIoDeviceEvidenceSnapshot Query(
-        IReadOnlyList<uint> physicalDiskNumbers,
-        IPhysicalDiskDeviceContextProvider deviceContextProvider,
-        INvmeHealthEvidenceProvider nvmeHealthProvider,
-        IPhysicalDiskFailurePredictionProvider failurePredictionProvider)
-    {
-        ArgumentNullException.ThrowIfNull(failurePredictionProvider);
-        return QueryCore(
-            physicalDiskNumbers,
-            deviceContextProvider,
-            nvmeHealthProvider,
-            failurePredictionProvider);
-    }
-
-    private static DiskIoDeviceEvidenceSnapshot QueryCore(
-        IReadOnlyList<uint> physicalDiskNumbers,
-        IPhysicalDiskDeviceContextProvider deviceContextProvider,
-        INvmeHealthEvidenceProvider nvmeHealthProvider,
-        IPhysicalDiskFailurePredictionProvider? failurePredictionProvider)
+        INvmeHealthEvidenceProvider nvmeHealthProvider)
     {
         ArgumentNullException.ThrowIfNull(physicalDiskNumbers);
         ArgumentNullException.ThrowIfNull(deviceContextProvider);
@@ -208,7 +183,6 @@ public static class DiskIoDeviceEvidenceCollector
                     number,
                     DiskIoDeviceEvidenceQueryStatus.DiskNumberOutOfRange,
                     null,
-                    null,
                     null);
                 continue;
             }
@@ -218,7 +192,6 @@ public static class DiskIoDeviceEvidenceCollector
                     number,
                     DiskIoDeviceEvidenceQueryStatus.QueryBudgetExceeded,
                     null,
-                    null,
                     null);
                 continue;
             }
@@ -226,18 +199,55 @@ public static class DiskIoDeviceEvidenceCollector
             var queryNumber = checked((int)number);
             var deviceContext = deviceContextProvider.Query(queryNumber);
             var nvmeHealth = nvmeHealthProvider.Query(queryNumber);
-            var failurePrediction = failurePredictionProvider?.Query(queryNumber);
             rows[index] = new DiskIoPhysicalDiskDeviceEvidence(
                 number,
                 DiskIoDeviceEvidenceQueryStatus.Queried,
                 deviceContext,
-                nvmeHealth,
-                failurePrediction);
+                nvmeHealth);
             queriedCount++;
         }
 
         return new DiskIoDeviceEvidenceSnapshot(
             rows,
             Stopwatch.GetElapsedTime(queryStart));
+    }
+
+    public static DiskIoDeviceEvidenceSnapshot AttachFailurePrediction(
+        DiskIoDeviceEvidenceSnapshot snapshot,
+        IPhysicalDiskFailurePredictionProvider failurePredictionProvider)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(failurePredictionProvider);
+
+        var started = Stopwatch.GetTimestamp();
+        var rows = new DiskIoPhysicalDiskDeviceEvidence[snapshot.Count];
+        for (var index = 0; index < snapshot.Count; index++)
+        {
+            var row = snapshot[index];
+            if (!row.QueryAttempted)
+            {
+                rows[index] = row;
+                continue;
+            }
+            if (row.FailurePrediction is not null)
+            {
+                throw new ArgumentException(
+                    $"Physical disk {row.PhysicalDiskNumber} already has failure-prediction evidence.",
+                    nameof(snapshot));
+            }
+
+            var queryNumber = checked((int)row.PhysicalDiskNumber);
+            var failurePrediction = failurePredictionProvider.Query(queryNumber);
+            rows[index] = new DiskIoPhysicalDiskDeviceEvidence(
+                row.PhysicalDiskNumber,
+                row.QueryStatus,
+                row.DeviceContext,
+                row.NvmeHealth,
+                failurePrediction);
+        }
+
+        return new DiskIoDeviceEvidenceSnapshot(
+            rows,
+            snapshot.QueryElapsed + Stopwatch.GetElapsedTime(started));
     }
 }
