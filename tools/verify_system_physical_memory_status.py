@@ -6,6 +6,11 @@ import argparse
 import random
 from pathlib import Path
 
+from verify_system_physical_memory_status_ui import (
+    check_repository as check_system_physical_memory_ui_repository,
+    run_model as run_system_physical_memory_ui_model,
+)
+
 
 def valid_memory(total: int, available: int, load: int) -> bool:
     return total > 0 and 0 <= available <= total and 0 <= load <= 100
@@ -44,6 +49,13 @@ def run_model(cases: int, seed: int) -> int:
         checks += 3
 
     return checks
+
+
+def run_all_models(cases: int, seed: int) -> tuple[int, int]:
+    return (
+        run_model(cases, seed),
+        run_system_physical_memory_ui_model(cases, 0x4D454D55),
+    )
 
 
 def require(text: str, needle: str, label: str) -> int:
@@ -89,9 +101,10 @@ def check_repository(root: Path) -> int:
         (docs, "approximate percentage of physical memory in use", "documented Windows load semantics"),
         (docs, "deliberately does not expose those fields", "page-file/virtual boundary"),
         (docs, "not treated as wasted or recoverable RAM", "no cleanup heuristic"),
+        (docs, "`EmptyWorkingSet`, `SetProcessWorkingSetSize`", "explicit reclamation API prohibition"),
         (parent, "from verify_system_physical_memory_status import (", "parent imports memory verifier"),
-        (parent, "run_system_physical_memory_model(args.cases", "parent runs memory model"),
-        (parent, "check_system_physical_memory_repository(root)", "parent runs memory source checks"),
+        (parent, "run_system_physical_memory_models(", "parent runs combined memory models"),
+        (parent, "check_system_physical_memory_repository(root)", "parent runs combined memory source checks"),
         (gate, "verify_performance_diagnostics.py --repo-root $repoRoot --cases 50000", "existing offline gate"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
     ]
@@ -109,7 +122,7 @@ def check_repository(root: Path) -> int:
     ):
         checks += forbid(core, needle, "page-file/virtual public evidence")
 
-    combined = core + "\n" + provider + "\n" + docs
+    application_code = core + "\n" + provider
     for needle in (
         "EmptyWorkingSet",
         "SetProcessWorkingSetSize",
@@ -120,12 +133,19 @@ def check_repository(root: Path) -> int:
         "DispatcherQueueTimer",
         "FileSystemWatcher",
     ):
-        checks += forbid(combined, needle, "memory action/score/poller")
+        checks += forbid(application_code, needle, "memory action/score/poller")
 
     if provider.count("GlobalMemoryStatusEx(ref native)") != 1:
         raise AssertionError("physical-memory provider must issue exactly one native query")
     checks += 1
     return checks
+
+
+def check_all_repository(root: Path) -> int:
+    return (
+        check_repository(root) +
+        check_system_physical_memory_ui_repository(root)
+    )
 
 
 def main() -> int:
@@ -137,12 +157,17 @@ def main() -> int:
     if args.cases < 1:
         parser.error("--cases must be positive")
 
-    model_checks = run_model(args.cases, args.seed)
-    source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
-    suffix = " and %s source checks" % format(source_checks, ",") if args.repo_root else ""
+    model_checks, ui_model_checks = run_all_models(args.cases, args.seed)
+    source_checks = check_all_repository(args.repo_root.resolve()) if args.repo_root else 0
+    suffix = " and %s source/UI checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: system physical-memory status verified with %s model assertions across %s randomized snapshots%s."
-        % (format(model_checks, ","), format(args.cases, ","), suffix)
+        "PASS: system physical-memory status verified with %s provider-model assertions and %s UI-model assertions across %s randomized states%s."
+        % (
+            format(model_checks, ","),
+            format(ui_model_checks, ","),
+            format(args.cases, ","),
+            suffix,
+        )
     )
     return 0
 

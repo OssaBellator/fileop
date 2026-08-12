@@ -7,6 +7,10 @@ import random
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from verify_system_physical_memory_status import (
+    check_all_repository as check_system_physical_memory_repository,
+    run_all_models as run_system_physical_memory_models,
+)
 from verify_volume_fragmentation_analysis import (
     check_repository as check_volume_fragmentation_repository,
     run_model as run_volume_fragmentation_model,
@@ -246,17 +250,23 @@ def main() -> int:
 
     model_checks = run_model(args.cases)
     fragmentation_model_checks = run_volume_fragmentation_model(args.cases, 0xD3F6A6)
+    memory_model_checks, memory_ui_model_checks = run_system_physical_memory_models(
+        args.cases,
+        0x4D454D,
+    )
     repository_checks = 0
     if args.repo_root is not None:
         root = args.repo_root.resolve()
         repository_checks = (
             check_repository(root) +
-            check_volume_fragmentation_repository(root)
+            check_volume_fragmentation_repository(root) +
+            check_system_physical_memory_repository(root)
         )
     suffix = f" and {repository_checks:,} source/UI checks" if args.repo_root else ""
     print(
         "PASS: measurable performance diagnostics verified with "
-        f"{model_checks:,} capacity assertions and {fragmentation_model_checks:,} fragmentation-analysis assertions "
+        f"{model_checks:,} capacity assertions, {fragmentation_model_checks:,} fragmentation-analysis assertions, "
+        f"{memory_model_checks:,} physical-memory assertions, and {memory_ui_model_checks:,} physical-memory UI assertions "
         f"across {args.cases:,} randomized cases{suffix}."
     )
     return 0
