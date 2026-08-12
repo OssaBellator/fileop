@@ -6,6 +6,11 @@ import argparse
 import random
 from pathlib import Path
 
+from verify_system_physical_memory_status_ui import (
+    check_repository as check_system_physical_memory_ui_repository,
+    run_model as run_system_physical_memory_ui_model,
+)
+
 
 def valid_memory(total: int, available: int, load: int) -> bool:
     return total > 0 and 0 <= available <= total and 0 <= load <= 100
@@ -138,11 +143,23 @@ def main() -> int:
         parser.error("--cases must be positive")
 
     model_checks = run_model(args.cases, args.seed)
-    source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
-    suffix = " and %s source checks" % format(source_checks, ",") if args.repo_root else ""
+    ui_model_checks = run_system_physical_memory_ui_model(args.cases, 0x4D454D55)
+    source_checks = 0
+    if args.repo_root:
+        root = args.repo_root.resolve()
+        source_checks = (
+            check_repository(root) +
+            check_system_physical_memory_ui_repository(root)
+        )
+    suffix = " and %s source/UI checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: system physical-memory status verified with %s model assertions across %s randomized snapshots%s."
-        % (format(model_checks, ","), format(args.cases, ","), suffix)
+        "PASS: system physical-memory status verified with %s provider-model assertions and %s UI-model assertions across %s randomized states%s."
+        % (
+            format(model_checks, ","),
+            format(ui_model_checks, ","),
+            format(args.cases, ","),
+            suffix,
+        )
     )
     return 0
 
