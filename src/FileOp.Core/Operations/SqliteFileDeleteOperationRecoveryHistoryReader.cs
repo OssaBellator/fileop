@@ -62,8 +62,8 @@ public sealed class SqliteFileDeleteOperationRecoveryHistoryReader :
 
         cancellationToken.ThrowIfCancellationRequested();
         using var connection = OpenReadOnlyConnection();
-        ValidateSchema(connection);
-        using var transaction = connection.BeginTransaction();
+        using var transaction = connection.BeginTransaction(deferred: true);
+        ValidateSchema(connection, transaction);
 
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -137,11 +137,14 @@ public sealed class SqliteFileDeleteOperationRecoveryHistoryReader :
         return connection;
     }
 
-    private static void ValidateSchema(SqliteConnection connection)
+    private static void ValidateSchema(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
     {
         try
         {
             using var command = connection.CreateCommand();
+            command.Transaction = transaction;
             command.CommandText =
                 "SELECT version FROM file_delete_action_history_schema_info WHERE singleton = 1;";
             var value = command.ExecuteScalar();
