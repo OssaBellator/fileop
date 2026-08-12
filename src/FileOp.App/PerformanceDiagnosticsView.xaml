@@ -1,9 +1,11 @@
 <UserControl
     x:Class="FileOp.App.PerformanceDiagnosticsView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:FileOp.App">
     <Grid RowSpacing="16">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -260,5 +262,9 @@
                 </ListView>
             </Grid>
         </Border>
+
+        <local:MachineProcessActivityView
+            x:Name="MachineProcessActivity"
+            Grid.Row="6" />
     </Grid>
 </UserControl>
