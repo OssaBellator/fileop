@@ -9,7 +9,7 @@ public sealed record FileDeleteOperationUserAuthorizationItem(
     string CanonicalPath,
     FileIdentity Identity);
 
-public sealed record FileDeleteOperationUserAuthorizationReceipt
+public sealed class FileDeleteOperationUserAuthorizationReceipt
 {
     internal FileDeleteOperationUserAuthorizationReceipt(
         Guid authorizationId,
