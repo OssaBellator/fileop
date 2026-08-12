@@ -90,6 +90,6 @@ public sealed record StartupApplicationDegradationDisplayRow(
             evidence.IncidentAt.ToLocalTime().ToString("g"),
             $"{evidence.TotalTimeMilliseconds:N0} ms",
             $"{evidence.DegradationTimeMilliseconds:N0} ms",
-            $"#{evidence.RecordId:N0}{eventVersion}");
+            $"#{evidence.RecordId}{eventVersion}");
     }
 }
