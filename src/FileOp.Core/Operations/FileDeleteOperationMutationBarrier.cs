@@ -129,65 +129,61 @@ public static class FileDeleteOperationMutationBarrier
         var lease = await finalLeaseScope.DetachForMutationBarrierAsync().ConfigureAwait(false);
         if (finalLeaseScope.FinalLeaseHeld || finalLeaseScope.DeleteAccessCapabilityHeld)
         {
-            await ReleaseBeforeBarrierFailureAsync(
-                    lease,
-                    new InvalidOperationException(
-                        "Final delete lease ownership transfer did not make the old scope inert."))
-                .ConfigureAwait(false);
+            var transferException = new InvalidOperationException(
+                "Final delete lease ownership transfer did not make the old scope inert.");
+            await ReleaseBeforeBarrierFailureAsync(lease, transferException).ConfigureAwait(false);
+            throw transferException;
+        }
+        if (lease.DeleteMutationAuthorized || !lease.DeleteAccessCapabilityHeld)
+        {
+            var capabilityException = new InvalidOperationException(
+                "Transferred final delete lease no longer holds one non-authorizing delete-access capability.");
+            await ReleaseBeforeBarrierFailureAsync(lease, capabilityException).ConfigureAwait(false);
+            throw capabilityException;
         }
 
+        FileDeleteOperationActionHistory barrierHistory;
         try
         {
-            if (lease.DeleteMutationAuthorized || !lease.DeleteAccessCapabilityHeld)
-            {
-                throw new InvalidOperationException(
-                    "Transferred final delete lease no longer holds one non-authorizing delete-access capability.");
-            }
-
-            var barrierHistory = await historyStore
+            barrierHistory = await historyStore
                 .MarkMutationStartedAsync(authorization.PlanId, ordinal, cancellationToken)
                 .ConfigureAwait(false);
-
-            try
-            {
-                ValidateBarrierHistory(priorBinding, finalEvidence, barrierHistory);
-                if (lease.DeleteMutationAuthorized || !lease.DeleteAccessCapabilityHeld)
-                {
-                    throw new InvalidOperationException(
-                        "Final delete capability was lost or became mutation-authorizing while crossing the durable barrier.");
-                }
-            }
-            catch (Exception validationException)
-            {
-                await MarkRecoveryAndReleaseAsync(
-                        historyStore,
-                        authorization.PlanId,
-                        ordinal,
-                        finalEvidence.CanonicalSourcePath,
-                        lease,
-                        validationException)
-                    .ConfigureAwait(false);
-                throw new InvalidOperationException(
-                    "Delete mutation barrier returned inconsistent current history and was marked recovery-required.",
-                    validationException);
-            }
-
-            return new FileDeleteOperationMutationBarrierScope(
-                priorBinding,
-                finalEvidence,
-                barrierHistory,
-                lease);
         }
-        catch (Exception transitionException) when (
-            transitionException is not InvalidOperationException invalid ||
-            !string.Equals(
-                invalid.Message,
-                "Delete mutation barrier returned inconsistent current history and was marked recovery-required.",
-                StringComparison.Ordinal))
+        catch (Exception transitionException)
         {
             await ReleaseBeforeBarrierFailureAsync(lease, transitionException).ConfigureAwait(false);
             throw;
         }
+
+        try
+        {
+            ValidateBarrierHistory(priorBinding, finalEvidence, barrierHistory);
+            if (lease.DeleteMutationAuthorized || !lease.DeleteAccessCapabilityHeld)
+            {
+                throw new InvalidOperationException(
+                    "Final delete capability was lost or became mutation-authorizing while crossing the durable barrier.");
+            }
+        }
+        catch (Exception validationException)
+        {
+            await MarkRecoveryAndReleaseAsync(
+                    historyStore,
+                    authorization.PlanId,
+                    ordinal,
+                    finalEvidence.CanonicalSourcePath,
+                    lease,
+                    validationException)
+                .ConfigureAwait(false);
+            throw new InvalidOperationException(
+                "Delete mutation barrier returned inconsistent current history and was marked recovery-required.",
+                validationException);
+        }
+
+        return new FileDeleteOperationMutationBarrierScope(
+            priorBinding,
+            finalEvidence,
+            barrierHistory,
+            lease);
     }
 
     private static void ValidateBarrierHistory(
