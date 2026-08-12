@@ -76,9 +76,9 @@ def run_model(cases: int, seed: int) -> int:
         assert remapped_more == more
         checks += 2
 
-        duplicate = list(visible)
-        duplicate[-1] = duplicate[0]
-        assert not valid_result(duplicate, max_events, more)
+        duplicate = list(visible) + [visible[0]]
+        duplicate_budget = max(max_events, len(duplicate))
+        assert not valid_result(duplicate, duplicate_budget, False)
         checks += 1
 
         out_of_order = list(visible)
