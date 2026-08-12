@@ -42,16 +42,16 @@ public sealed class FileDeleteOperationPreMutationPreparationScope : IAsyncDispo
 
     public bool HistoryStoreReadObserved => true;
 
-    public bool StabilityLeaseHeld => _lease is not null;
+    public bool StabilityLeaseHeld => Volatile.Read(ref _lease) is not null;
 
-    public bool IsDisposed => _lease is null;
+    public bool IsDisposed => !StabilityLeaseHeld;
 
     public async ValueTask DisposeAsync()
     {
         await _disposeGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            var lease = _lease;
+            var lease = Volatile.Read(ref _lease);
             if (lease is null)
             {
                 return;
@@ -61,7 +61,7 @@ public sealed class FileDeleteOperationPreMutationPreparationScope : IAsyncDispo
             // implementation throws, the scope must not falsely claim that its held
             // resource was released; a later caller may retry disposal.
             await lease.DisposeAsync().ConfigureAwait(false);
-            _lease = null;
+            Volatile.Write(ref _lease, null);
         }
         finally
         {
