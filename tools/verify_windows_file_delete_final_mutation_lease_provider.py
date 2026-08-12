@@ -155,6 +155,7 @@ def check_repository(root: Path) -> int:
     provider_path = root / "src/FileOp.Windows/Operations/WindowsFileDeleteOperationFinalMutationLeaseProvider.cs"
     provider = provider_path.read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/WindowsFileDeleteOperationFinalMutationLeaseProviderTests.cs").read_text(encoding="utf-8")
+    cancellation_tests = (root / "tests/FileOp.Windows.Tests/WindowsFileDeleteOperationFinalMutationLeaseProviderCancellationTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/windows-file-delete-final-mutation-lease-provider.md").read_text(encoding="utf-8")
     contract_verifier = (root / "tools/verify_file_delete_final_mutation_lease_contract.py").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
@@ -187,7 +188,8 @@ def check_repository(root: Path) -> int:
         (tests, "FileReplacementDuringReadOnlyToFinalHandoffIsRejectedByFinalProvider", "file handoff race regression"),
         (tests, "RootReplacementDuringReadOnlyToFinalHandoffIsRejectedByFinalProvider", "root handoff race regression"),
         (tests, "ProtectedLocationPolicyIsRecheckedByFinalProviderAfterReadOnlyRelease", "protected policy regression"),
-        (tests, "ConcreteProviderHonorsPreCancellationBeforeNativeAcquisition", "provider cancellation regression"),
+        (tests, "ConcreteProviderHonorsPreCancellationBeforeNativeAcquisition", "provider pre-cancellation regression"),
+        (cancellation_tests, "CancellationRaisedDuringPolicyEvaluationReturnsNoFinalLeaseOrMutation", "provider in-flight cancellation regression"),
         (tests, "DeleteIsBlocked", "native delete sharing probe"),
         (tests, "WriteOpenIsBlocked", "write sharing probe"),
         (tests, "DirectoryRenameIsBlocked", "root rename sharing probe"),
