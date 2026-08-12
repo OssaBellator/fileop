@@ -38,6 +38,16 @@ public sealed partial class MachineProcessActivityView : UserControl
             "System CPU interval was not retained because the combined explicit machine-activity action failed.";
     }
 
+    public void Apply(MachineProcessActivityResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        CaptureButton.IsEnabled = true;
+        ResetSystemCpuSummary();
+        SystemCpuStatusText.Text =
+            "System CPU interval context was not attached to this process-only presentation.";
+        ApplyProcess(result);
+    }
+
     public void Apply(
         MachineProcessActivityResult result,
         SystemCpuActivityResult systemCpuActivity)
@@ -46,7 +56,11 @@ public sealed partial class MachineProcessActivityView : UserControl
         ArgumentNullException.ThrowIfNull(systemCpuActivity);
         CaptureButton.IsEnabled = true;
         ApplySystemCpu(systemCpuActivity);
+        ApplyProcess(result);
+    }
 
+    private void ApplyProcess(MachineProcessActivityResult result)
+    {
         if (result.Status != MachineProcessActivityStatus.Completed ||
             result.Report is not { } report)
         {
