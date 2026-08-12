@@ -12,6 +12,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Grid>
@@ -266,5 +267,9 @@
         <local:MachineProcessActivityView
             x:Name="MachineProcessActivity"
             Grid.Row="6" />
+
+        <local:VolumeFragmentationAnalysisView
+            x:Name="VolumeFragmentationAnalysis"
+            Grid.Row="7" />
     </Grid>
 </UserControl>
