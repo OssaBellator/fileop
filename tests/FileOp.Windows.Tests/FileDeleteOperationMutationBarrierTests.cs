@@ -355,7 +355,7 @@ public sealed class FileDeleteOperationMutationBarrierTests
         bool corruptSourcePane = false)
     {
         var previous = history.Entries[0];
-        var mutationStarted = state == FileDeleteOperationActionEntryState.Pending
+        DateTimeOffset? mutationStarted = state == FileDeleteOperationActionEntryState.Pending
             ? null
             : previous.MutationStartedAtUtc ?? history.AuthorizedAtUtc.AddSeconds(1);
         var completed = state == FileDeleteOperationActionEntryState.RecoveryRequired
