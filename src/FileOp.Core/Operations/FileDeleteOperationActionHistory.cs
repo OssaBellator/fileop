@@ -189,9 +189,9 @@ public sealed class FileDeleteOperationActionHistory
                 break;
 
             case FileDeleteOperationActionTerminalState.Failed:
-                if (hasRecovery || entries.Any(static entry => entry.State is FileDeleteOperationActionEntryState.Pending or FileDeleteOperationActionEntryState.MutationStarted))
+                if (hasRecovery)
                 {
-                    throw new ArgumentException("Failed delete action history cannot contain pending or recovery-sensitive entries.", nameof(terminalState));
+                    throw new ArgumentException("Failed delete action history cannot contain a recovery-sensitive entry.", nameof(terminalState));
                 }
                 if (!entries.Any(static entry => entry.State == FileDeleteOperationActionEntryState.Failed))
                 {
