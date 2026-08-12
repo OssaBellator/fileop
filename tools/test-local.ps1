@@ -59,6 +59,10 @@ Invoke-Step "Offline Storage threshold overlay verifier" {
     python tools/verify_storage_threshold_overlay.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline Storage threshold preference verifier" {
+    python tools/verify_storage_threshold_preferences.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline known-location review verifier" {
     python tools/verify_known_location_review.py --repo-root $repoRoot --cases 50000
 }
