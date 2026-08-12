@@ -13,6 +13,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <Grid Grid.Row="0" Padding="14,10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
@@ -23,7 +24,7 @@
                 <StackPanel Spacing="3">
                     <TextBlock Text="Current machine process activity" FontSize="16" FontWeight="SemiBold" />
                     <TextBlock
-                        Text="Explicit bounded two-frame sample. Rows are stable PID + process-start identities ranked by measured CPU-time delta, then end working/private memory. Process start time is context only; FileOp does not classify foreground/background state or reconstruct boot impact."
+                        Text="Explicit bounded process sample plus separate Windows system CPU interval context. Process rows remain stable PID + process-start identities ranked by measured CPU-time delta; FileOp does not derive per-process CPU percentages or reconstruct boot impact."
                         Opacity="0.68"
                         TextWrapping="Wrap" />
                 </StackPanel>
@@ -40,7 +41,39 @@
                        Opacity="0.78"
                        TextWrapping="Wrap" />
 
-            <Grid Grid.Row="2" Padding="14,6,14,10" ColumnSpacing="12">
+            <StackPanel Grid.Row="2" Padding="14,0,14,10" Spacing="6">
+                <TextBlock Text="Windows system CPU interval" FontWeight="SemiBold" />
+                <TextBlock x:Name="SystemCpuStatusText"
+                           Text="System CPU interval has not been captured yet."
+                           Opacity="0.72"
+                           TextWrapping="Wrap" />
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Spacing="2">
+                        <TextBlock Text="Busy share" Opacity="0.62" />
+                        <TextBlock x:Name="SystemCpuBusyText" Text="—" FontSize="17" FontWeight="SemiBold" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="2">
+                        <TextBlock Text="Busy / total CPU time" Opacity="0.62" />
+                        <TextBlock x:Name="SystemCpuTimeText" Text="—" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="2">
+                        <TextBlock Text="Observed wall interval" Opacity="0.62" />
+                        <TextBlock x:Name="SystemCpuWallText" Text="—" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="3" Spacing="2">
+                        <TextBlock Text="CPU probe overhead" Opacity="0.62" />
+                        <TextBlock x:Name="SystemCpuOverheadText" Text="—" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+
+            <Grid Grid.Row="3" Padding="14,6,14,10" ColumnSpacing="12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
@@ -65,7 +98,7 @@
                 </StackPanel>
             </Grid>
 
-            <Grid Grid.Row="3" Padding="14,8" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,1" ColumnSpacing="10">
+            <Grid Grid.Row="4" Padding="14,8" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,1" ColumnSpacing="10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="1.5*" />
                     <ColumnDefinition Width="110" />
@@ -82,7 +115,7 @@
                 <TextBlock Grid.Column="5" Text="Process start" FontWeight="SemiBold" Margin="10,0,0,0" />
             </Grid>
 
-            <ListView x:Name="RowsList" Grid.Row="4" SelectionMode="None">
+            <ListView x:Name="RowsList" Grid.Row="5" SelectionMode="None">
                 <ListView.ItemTemplate>
                     <DataTemplate>
                         <Grid Padding="12,8" ColumnSpacing="10">
