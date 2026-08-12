@@ -37,8 +37,9 @@ def classify(
     leaf = ntpath.basename(normalized_entry)
     if not leaf or leaf.casefold() != entry_name.casefold() or ':' in leaf:
         return BLOCKED
-    expected = "directory" if is_directory else "file"
-    if source_state != expected or source_reparse:
+    if is_directory:
+        return BLOCKED
+    if source_state != "file" or source_reparse:
         return BLOCKED
     return READY
 
@@ -61,7 +62,8 @@ def run_model(cases: int, seed: int) -> int:
     assert classify(**(base | {"entry_path": r"C:\Source\a.txt:stream", "entry_name": "a.txt:stream"})) == BLOCKED
     assert classify(**(base | {"root_reparse": True})) == BLOCKED
     assert classify(**(base | {"source_reparse": True})) == BLOCKED
-    checks += 6
+    assert classify(**(base | {"is_directory": True, "entry_path": r"C:\Source\Folder", "entry_name": "Folder", "source_state": "directory"})) == BLOCKED
+    checks += 7
 
     rng = random.Random(seed)
     states = ("file", "directory", "missing", "inaccessible", "error")
@@ -94,14 +96,14 @@ def run_model(cases: int, seed: int) -> int:
             source_state=source_state,
             source_reparse=source_reparse,
         )
-        expected_state = "directory" if is_directory else "file"
         expected_ready = (
             root_state == "directory"
             and not root_reparse
             and direct
             and exact_name
             and not ads
-            and source_state == expected_state
+            and not is_directory
+            and source_state == "file"
             and not source_reparse
         )
         assert (result == READY) == expected_ready
@@ -163,20 +165,27 @@ def check_repository(root: Path) -> int:
         (core, "public sealed record FileDeleteOperationPlan", "delete plan"),
         (core, "FileDeleteOperationPreflightDecision", "delete decision"),
         (core, "ReadyForFurtherReview", "non-execution ready naming"),
+        (core, "status must match its captured item decisions", "result-status invariant"),
         (core, "public bool DeleteMutationAuthorized => false;", "hard non-authorization"),
         (core, "IFileDeleteOperationPreflightValidator", "delete validator contract"),
         (windows, "WindowsFileOperationPathProbe", "existing read-only probe reuse"),
         (windows, "Path.GetDirectoryName(sourcePath)", "direct-child validation"),
         (windows, "Path.GetFileName(sourcePath)", "leaf-name validation"),
         (windows, "leafName.Contains(Path.VolumeSeparatorChar)", "ADS rejection"),
+        (windows, "if (entry.IsDirectory)", "directory rejection"),
+        (windows, "Directory deletion is not part of this file-only delete preflight foundation", "directory scope wording"),
+        (windows, "sourceInspection.State != FileOperationPathState.File", "file-only type check"),
         (windows, "sourceInspection.IsReparsePoint", "source reparse rejection"),
         (windows, "This is read-only evidence and is not authorization to delete", "runtime non-authorization wording"),
+        (tests, "ResultStatusMustMatchCapturedItemDecisions", "result invariant regression"),
         (tests, "MatchingDirectFileIsReadyForFurtherReviewButNeverAuthorized", "authorization regression"),
+        (tests, "DirectoryEntryIsBlockedBeforeEntryProbe", "directory rejection regression"),
         (tests, "MissingChangedOrReparseSourceFailsClosed", "fail-closed regression"),
         (tests, "EntryMustRemainExactDirectChildWithCapturedLeafName", "path regression"),
         (tests, "CallerCancellationPropagatesBeforeProbe", "cancellation regression"),
         (docs, "does not add `Delete` to `FileOperationKind`", "separate contract documentation"),
         (docs, "not authorization to delete", "documentation authorization boundary"),
+        (docs, "Directory entries are blocked before an entry probe", "directory scope documentation"),
         (docs, "Storage cleanup readiness remains non-authorizing", "cleanup boundary"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "Copy/Move enum unchanged"),
         (cleanup, "CleanupMutationAuthorized => false", "cleanup remains non-authorizing"),
