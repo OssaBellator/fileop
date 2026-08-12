@@ -59,6 +59,21 @@ public sealed class DiskIoDeviceFailurePredictionTests
     }
 
     [TestMethod]
+    public void AttachmentFailsClosedOnNullPredictionResult()
+    {
+        var baseSnapshot = new DiskIoDeviceEvidenceSnapshot(
+            [CreateQueriedRow(4)],
+            TimeSpan.Zero);
+        var provider = new NullFailurePredictionProvider();
+
+        Assert.ThrowsException<ArgumentNullException>(() =>
+            DiskIoDeviceEvidenceCollector.AttachFailurePrediction(
+                baseSnapshot,
+                provider));
+        Assert.AreEqual(1, provider.Calls);
+    }
+
+    [TestMethod]
     public void AttachmentRefusesToQueryAnAlreadyEnrichedSnapshot()
     {
         var prediction = CreateFailurePredictionResult(1);
@@ -176,6 +191,18 @@ public sealed class DiskIoDeviceFailurePredictionTests
             return CreateFailurePredictionResult(
                 checked(physicalDiskNumber + offset),
                 raw: physicalDiskNumber == 0 ? 0u : 9u);
+        }
+    }
+
+    private sealed class NullFailurePredictionProvider
+        : IPhysicalDiskFailurePredictionProvider
+    {
+        public int Calls { get; private set; }
+
+        public PhysicalDiskFailurePredictionResult Query(int physicalDiskNumber)
+        {
+            Calls++;
+            return null!;
         }
     }
 }
