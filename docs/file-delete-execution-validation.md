@@ -24,6 +24,19 @@ The delete validator resolves the captured source directory and then each eligib
 
 Canonical-parent mismatch blocks even when the requested path still appears to be under the captured source directory. This prevents a requested-path alias/reparse change from being treated as current containment evidence.
 
+## Exact result provenance
+
+`FileDeleteOperationExecutionValidationResult` also binds its evidence back to the exact immutable `FileDeleteOperationPlan`; a later authorization-review layer must not be able to combine a plan with independently substituted validation rows.
+
+The Core result requires:
+
+- the canonical source-directory observation's requested path to match the plan's captured source directory;
+- either zero item rows for a root-level block, or exactly one row for every captured plan entry;
+- non-empty item evidence to preserve the plan's original entry order and exact `FileOperationEntry` values;
+- each item's canonical source observation to carry the requested path of that same captured entry.
+
+Partial, reordered, duplicated/substituted, cross-entry and cross-plan evidence therefore cannot construct a valid authorization-review result. A protected or otherwise invalid root may still fail before entry resolution and return an itemless blocked result, but even that root observation must belong to the plan it reports about.
+
 ## Protected-location policy
 
 `WindowsFileDeleteProtectedLocationPolicy` blocks review of:
@@ -72,7 +85,9 @@ Storage cleanup readiness also remains non-authorizing and is not consumed by th
 
 ## Validation
 
-`tools/verify_file_delete_execution_validation.py` models canonical containment, identity requirements, file-only scope, protected locations, residual extended/device path blocking and immutable non-authorization. Source guards require reuse of the existing canonical resolver and forbid executor wiring plus filesystem mutation primitives.
+`tools/verify_file_delete_execution_validation.py` models canonical containment, identity requirements, exact plan/result provenance, file-only scope, protected locations, residual extended/device path blocking and immutable non-authorization. At 50,000 randomized states it performs **456,090 assertions** after the provenance hardening.
+
+The existing Copy/Move execution-validation model contributes **150,009 assertions** at the same case count, for **606,099 directly composed execution-validation assertions** before source checks. Source guards require reuse of the existing canonical resolver, exact result provenance regressions and absence of executor wiring plus filesystem mutation primitives.
 
 The existing `tools/verify_file_operation_execution_validation.py` imports and runs the delete child, so `tools/test-local.ps1 -OfflineOnly` keeps one direct execution-validation gate entry for the existing Copy/Move validation plus this delete-specific read-only authorization-review boundary.
 
