@@ -53,12 +53,15 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
         ValidateRequest(request);
 
         return new ValueTask<IFileDeleteOperationFinalMutationLease>(
-            Task.Run(() => Acquire(request), cancellationToken));
+            Task.Run(() => Acquire(request, cancellationToken), cancellationToken));
     }
 
     private IFileDeleteOperationFinalMutationLease Acquire(
-        FileDeleteOperationFinalMutationLeaseRequest request)
+        FileDeleteOperationFinalMutationLeaseRequest request,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var authorization = request.Authorization;
         var expectedRootPath = NormalizeForComparison(
             authorization.CanonicalSourceDirectoryPath);
@@ -89,6 +92,7 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
 
         EnsureAllowedByProtectedLocationPolicy(expectedRootPath, "source directory");
         EnsureAllowedByProtectedLocationPolicy(expectedSourcePath, "source file");
+        cancellationToken.ThrowIfCancellationRequested();
 
         SafeFileHandle? sourceDirectory = null;
         SafeFileHandle? sourceFile = null;
@@ -99,6 +103,7 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
                 sourceDirectory,
                 expectedRootPath,
                 expectedRootIdentity);
+            cancellationToken.ThrowIfCancellationRequested();
 
             sourceFile = OpenRelativeFile(
                 sourceDirectory,
@@ -118,6 +123,7 @@ public sealed class WindowsFileDeleteOperationFinalMutationLeaseProvider :
                 sourceDirectory,
                 expectedRootPath,
                 expectedRootIdentity);
+            cancellationToken.ThrowIfCancellationRequested();
 
             var evidence = new FileDeleteOperationFinalMutationLeaseEvidence(
                 request,
