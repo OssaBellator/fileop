@@ -6,6 +6,11 @@ import argparse
 import random
 from pathlib import Path
 
+from verify_startup_application_degradation_ui import (
+    check_repository as check_startup_degradation_ui_repository,
+    run_model as run_startup_degradation_ui_model,
+)
+
 Event = tuple[int, int, int, int]
 
 
@@ -93,6 +98,13 @@ def run_model(cases: int, seed: int) -> int:
     return checks
 
 
+def run_all_models(cases: int, seed: int) -> tuple[int, int]:
+    return (
+        run_model(cases, seed),
+        run_startup_degradation_ui_model(cases, 0x510A71A),
+    )
+
+
 def require(text: str, needle: str, label: str) -> int:
     if needle not in text:
         raise AssertionError("missing %s: %s" % (label, needle))
@@ -152,9 +164,10 @@ def check_repository(root: Path) -> int:
         (docs, "not proof", "empty-result boundary"),
         (docs, "does **not** assume `DegradationTime <= TotalTime`", "no duration heuristic"),
         (docs, "does not inspect or mutate", "no registration heuristic"),
-        (parent, "from verify_startup_application_degradation import (", "parent imports startup verifier"),
-        (parent, "run_startup_degradation_model(args.cases", "parent runs startup model"),
-        (parent, "check_startup_degradation_repository(root)", "parent runs startup source checks"),
+        (parent, "run_all_models as run_startup_degradation_models", "parent imports combined startup models"),
+        (parent, "check_all_repository as check_startup_degradation_repository", "parent imports combined startup source checks"),
+        (parent, "run_startup_degradation_models(", "parent runs combined startup models"),
+        (parent, "check_startup_degradation_repository(root)", "parent runs combined startup source checks"),
         (wrapper, "from verify_machine_process_activity import main", "stable machine wrapper"),
         (gate, "verify_background_process_activity.py --repo-root $repoRoot --cases 50000", "existing offline gate"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
@@ -193,6 +206,13 @@ def check_repository(root: Path) -> int:
     return checks
 
 
+def check_all_repository(root: Path) -> int:
+    return (
+        check_repository(root) +
+        check_startup_degradation_ui_repository(root)
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path)
@@ -202,12 +222,17 @@ def main() -> int:
     if args.cases < 1:
         parser.error("--cases must be positive")
 
-    model_checks = run_model(args.cases, args.seed)
-    source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
-    suffix = " and %s source checks" % format(source_checks, ",") if args.repo_root else ""
+    model_checks, ui_model_checks = run_all_models(args.cases, args.seed)
+    source_checks = check_all_repository(args.repo_root.resolve()) if args.repo_root else 0
+    suffix = " and %s source/UI checks" % format(source_checks, ",") if args.repo_root else ""
     print(
-        "PASS: startup application degradation compatibility evidence verified with %s model assertions across %s randomized histories%s."
-        % (format(model_checks, ","), format(args.cases, ","), suffix)
+        "PASS: startup application degradation verified with %s provider-model assertions and %s UI-model assertions across %s randomized histories/states%s."
+        % (
+            format(model_checks, ","),
+            format(ui_model_checks, ","),
+            format(args.cases, ","),
+            suffix,
+        )
     )
     return 0
 
