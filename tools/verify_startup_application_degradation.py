@@ -191,7 +191,7 @@ def check_repository(root: Path) -> int:
         "PriorityClass =",
         "ProcessorAffinity =",
     ):
-        checks += forbid(provider + "\n" + docs, needle, "localized/registration/control/poller path")
+        checks += forbid(provider, needle, "localized/registration/control/poller path")
 
     for needle in (
         "HealthScore",

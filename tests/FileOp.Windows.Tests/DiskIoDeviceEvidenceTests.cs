@@ -30,7 +30,7 @@ public sealed class DiskIoDeviceEvidenceTests
         var device = new FakeDeviceContextProvider();
         var nvme = new FakeNvmeHealthProvider();
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             DiskIoDeviceEvidenceCollector.Query(
                 [1u, 2u, 1u],
                 device,
@@ -93,7 +93,7 @@ public sealed class DiskIoDeviceEvidenceTests
         var device = new FakeDeviceContextProvider(offset: 1);
         var nvme = new FakeNvmeHealthProvider();
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             DiskIoDeviceEvidenceCollector.Query(
                 [3u],
                 device,
@@ -106,13 +106,13 @@ public sealed class DiskIoDeviceEvidenceTests
         var device = CreateDeviceContextResult(0);
         var nvme = CreateNvmeResult(0);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DiskIoPhysicalDiskDeviceEvidence(
                 uint.MaxValue,
                 DiskIoDeviceEvidenceQueryStatus.DiskNumberOutOfRange,
                 device,
                 nvme));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DiskIoPhysicalDiskDeviceEvidence(
                 0,
                 DiskIoDeviceEvidenceQueryStatus.QueryBudgetExceeded,

@@ -196,7 +196,7 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
     {
         var input = CreateMatchingInput();
         var wrongOperation = new FileOperationRecoveryContentVerification(Guid.NewGuid(), input.Content.Items);
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             FileOperationRecoveryEvidenceAssessor.Assess(
                 input.Inspection,
                 wrongOperation,
@@ -207,7 +207,7 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
         var missingNamedStreams = new FileOperationRecoveryNamedDataStreamTopologyVerification(
             input.Inspection.OperationId,
             Array.Empty<FileOperationRecoveryNamedDataStreamTopologyVerificationItem>());
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             FileOperationRecoveryEvidenceAssessor.Assess(
                 input.Inspection,
                 input.Content,
@@ -220,7 +220,7 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
         var alteredTopology = new FileOperationRecoveryNamedDataStreamTopologyVerification(
             input.Inspection.OperationId,
             new[] { alteredTopologyItem });
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             FileOperationRecoveryEvidenceAssessor.Assess(
                 input.Inspection,
                 input.Content,
@@ -242,7 +242,7 @@ public sealed class FileOperationRecoveryEvidenceAssessmentTests
         Assert.AreEqual(2, assessment.Items.Count);
         Assert.AreEqual(0, assessment.Items[0].Ordinal);
         Assert.AreEqual(1, assessment.Items[1].Ordinal);
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileOperationRecoveryEvidenceAssessment(Guid.NewGuid(), new[] { earlier, earlier }));
     }
 

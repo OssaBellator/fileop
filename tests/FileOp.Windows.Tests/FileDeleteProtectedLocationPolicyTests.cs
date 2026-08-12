@@ -9,11 +9,11 @@ public sealed class FileDeleteProtectedLocationPolicyTests
     [TestMethod]
     public void ProtectedLocationResultRejectsMalformedDecisionsAndReasons()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileDeleteProtectedLocationResult(
                 (FileDeleteProtectedLocationDecision)999,
                 "invalid"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteProtectedLocationResult(
                 FileDeleteProtectedLocationDecision.Blocked,
                 " "));

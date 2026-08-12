@@ -25,11 +25,11 @@ Probe name
 Probe scope
 ```
 
-Native-index and profile-fallback samples therefore remain separate. FileOp does not merge measurements from unlike sources into one distribution.
+Native-index and profile-fallback samples therefore remain separate. FileOp does not merge measurements from unlike sources into one distribution. A source-mode or normalized root change starts a fresh window, so evidence from the prior source/root is not carried into the new scope.
 
 ## Capacity and lifetime
 
-Each exact probe/scope keeps the most recent **20 explicit diagnostics samples** in memory for the current app session. When a 21st sample arrives, the oldest sample for that probe/scope is discarded.
+Each exact probe/scope keeps the most recent **20 explicit diagnostics samples** in memory for the current app session. When a 21st sample arrives, the oldest sample for that probe/scope is discarded. With only the exact Search and Storage probe kinds retained, each active source/root scope holds at most 40 elapsed-time samples.
 
 The history is:
 

@@ -144,15 +144,15 @@ public sealed class DiskIoAttributionTests
     [TestMethod]
     public void InvalidProviderEvidenceFailsClosed()
     {
-        Assert.ThrowsException<InvalidDataException>(() => DiskIoAttributionAnalyzer.Analyze(
+        Assert.Throws<InvalidDataException>(() => DiskIoAttributionAnalyzer.Analyze(
             StartedAt,
             EndedAt,
             [Event(0, DiskIoOperationKind.Read, -1, null, 1)]));
-        Assert.ThrowsException<InvalidDataException>(() => DiskIoAttributionAnalyzer.Analyze(
+        Assert.Throws<InvalidDataException>(() => DiskIoAttributionAnalyzer.Analyze(
             StartedAt,
             EndedAt,
             [Event(0, DiskIoOperationKind.Flush, 1, null, 1)]));
-        Assert.ThrowsException<InvalidDataException>(() => DiskIoAttributionAnalyzer.Analyze(
+        Assert.Throws<InvalidDataException>(() => DiskIoAttributionAnalyzer.Analyze(
             StartedAt,
             EndedAt,
             [new DiskIoEventObservation(
@@ -161,7 +161,7 @@ public sealed class DiskIoAttributionTests
                 DiskIoOperationKind.Read,
                 1,
                 null)]));
-        Assert.ThrowsException<InvalidDataException>(() => DiskIoAttributionAnalyzer.Analyze(
+        Assert.Throws<InvalidDataException>(() => DiskIoAttributionAnalyzer.Analyze(
             StartedAt,
             EndedAt,
             [Event(0, DiskIoOperationKind.Read, 1, Owner(0, null, null), 1)]));

@@ -23,11 +23,11 @@ public sealed class SystemPhysicalMemoryStatusTests
     [TestMethod]
     public void ContractRejectsImpossiblePhysicalMemoryEvidence()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new SystemPhysicalMemoryStatus(0, 0, 0));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new SystemPhysicalMemoryStatus(100, 101, 0));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new SystemPhysicalMemoryStatus(100, 50, 101));
     }
 
@@ -35,13 +35,13 @@ public sealed class SystemPhysicalMemoryStatusTests
     public void ResultRequiresEvidenceOnlyWhenAvailable()
     {
         var status = new SystemPhysicalMemoryStatus(100, 25, 75);
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new SystemPhysicalMemoryStatusResult(
                 SystemPhysicalMemoryStatusAvailability.Available,
                 null,
                 TimeSpan.Zero,
                 "invalid"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new SystemPhysicalMemoryStatusResult(
                 SystemPhysicalMemoryStatusAvailability.Unavailable,
                 status,

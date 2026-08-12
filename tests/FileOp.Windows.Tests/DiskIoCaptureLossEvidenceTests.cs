@@ -53,7 +53,7 @@ public sealed class DiskIoCaptureLossEvidenceTests
         var budget = new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 10, 4);
         var report = Report(budget);
 
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             report,
             DiskIoCaptureStopReason.DurationElapsed,
@@ -70,7 +70,7 @@ public sealed class DiskIoCaptureLossEvidenceTests
         var budget = new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 10, 4);
         var report = Report(budget);
 
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             report,
             DiskIoCaptureStopReason.DurationElapsed,
@@ -87,7 +87,7 @@ public sealed class DiskIoCaptureLossEvidenceTests
         var budget = new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 10, 4);
         var report = Report(budget);
 
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             report,
             DiskIoCaptureStopReason.DurationElapsed,

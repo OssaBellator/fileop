@@ -36,7 +36,7 @@ public sealed class FileDeleteOperationExecutionValidationProvenanceTests
         Assert.IsTrue(valid.CanRequestAuthorizationReview);
         Assert.IsFalse(valid.DeleteMutationAuthorized);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationExecutionValidationResult(
                 plan,
                 root,
@@ -45,7 +45,7 @@ public sealed class FileDeleteOperationExecutionValidationProvenanceTests
                 DateTimeOffset.UtcNow,
                 "partial evidence"));
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationExecutionValidationResult(
                 plan,
                 root,
@@ -59,7 +59,7 @@ public sealed class FileDeleteOperationExecutionValidationProvenanceTests
             "other.tmp",
             false);
         var substituted = Ready(substitutedEntry, new FileIdentity(1, 13));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationExecutionValidationResult(
                 plan,
                 root,
@@ -77,7 +77,7 @@ public sealed class FileDeleteOperationExecutionValidationProvenanceTests
                 IsLeafReparsePoint: false,
                 new FileIdentity(1, 11)),
         };
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationExecutionValidationResult(
                 plan,
                 root,
@@ -90,7 +90,7 @@ public sealed class FileDeleteOperationExecutionValidationProvenanceTests
             @"C:\Users\Alice\Other",
             @"C:\Users\Alice\Temp",
             new FileIdentity(1, 10));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationExecutionValidationResult(
                 plan,
                 wrongRequestedRoot,

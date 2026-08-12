@@ -16,7 +16,7 @@ public sealed class WindowsDiskIoTraceConsumerConcurrencyTests
             consumer.Process());
         Assert.AreEqual(1, api.ProcessCalls);
 
-        Assert.ThrowsException<InvalidOperationException>(() => consumer.Process());
+        Assert.Throws<InvalidOperationException>(() => consumer.Process());
         Assert.AreEqual(1, api.ProcessCalls);
     }
 

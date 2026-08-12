@@ -26,12 +26,12 @@ public sealed class WindowsDiskIoTraceMetadataTests
     [TestMethod]
     public void AmbiguousOrMissingPointerFlagsFailClosed()
     {
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoTraceMetadata.FromEventHeaderFlags(
                 has32BitHeaderFlag: false,
                 has64BitHeaderFlag: false,
                 performanceCounterFrequency: 10_000_000));
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoTraceMetadata.FromEventHeaderFlags(
                 has32BitHeaderFlag: true,
                 has64BitHeaderFlag: true,
@@ -41,13 +41,13 @@ public sealed class WindowsDiskIoTraceMetadataTests
     [TestMethod]
     public void InvalidPointerSizeOrFrequencyFailsClosed()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new WindowsDiskIoTraceMetadata(0, 10_000_000));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new WindowsDiskIoTraceMetadata(16, 10_000_000));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new WindowsDiskIoTraceMetadata(8, 0));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new WindowsDiskIoTraceMetadata(8, -1));
     }
 
@@ -83,7 +83,7 @@ public sealed class WindowsDiskIoTraceMetadataTests
     {
         var metadata = new WindowsDiskIoTraceMetadata(8, 1);
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             metadata.ConvertHighResolutionResponseTime(ulong.MaxValue));
     }
 

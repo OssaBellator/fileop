@@ -133,7 +133,7 @@ public sealed class DiskIoInvestigationSummaryTests
             providerOverheadDuration: null,
             detail: "unsupported");
 
-        Assert.ThrowsException<InvalidOperationException>(() =>
+        Assert.Throws<InvalidOperationException>(() =>
             DiskIoInvestigationSummaryAnalyzer.Analyze(result));
     }
 
@@ -146,11 +146,11 @@ public sealed class DiskIoInvestigationSummaryTests
             TimeSpan.FromMilliseconds(1),
             null,
             TimeSpan.FromMilliseconds(1));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DiskIoObservedP95Cue(0, DiskIoOperationKind.Read, immature));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new DiskIoObservedByteDiskCue(0, 0, 1, 0, null));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new DiskIoObservedOwnerBytesCue(
                 0,
                 new DiskIoProcessIdentity(0, StartedAt, "bad.exe"),
@@ -165,7 +165,7 @@ public sealed class DiskIoInvestigationSummaryTests
             TimeSpan.FromMilliseconds(5),
             TimeSpan.FromMilliseconds(5));
         var cue = new DiskIoObservedP95Cue(0, DiskIoOperationKind.Read, mature);
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DiskIoInvestigationSummary(
                 0,
                 false,

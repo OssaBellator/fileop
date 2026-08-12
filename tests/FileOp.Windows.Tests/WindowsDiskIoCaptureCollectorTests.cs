@@ -135,12 +135,12 @@ public sealed class WindowsDiskIoCaptureCollectorTests
     public void ConfigurationIsRequiredAndSingleShot()
     {
         using var collector = new WindowsDiskIoCaptureCollector(1);
-        Assert.ThrowsException<InvalidOperationException>(() => collector.OnBuffer(new IntPtr(1)));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<InvalidOperationException>(() => collector.OnBuffer(new IntPtr(1)));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             collector.Configure(0, WindowStart, WindowStart.AddSeconds(1)));
 
         collector.Configure(1, WindowStart, WindowStart.AddSeconds(1));
-        Assert.ThrowsException<InvalidOperationException>(() =>
+        Assert.Throws<InvalidOperationException>(() =>
             collector.Configure(1, WindowStart, WindowStart.AddSeconds(1)));
     }
 
@@ -164,7 +164,7 @@ public sealed class WindowsDiskIoCaptureCollectorTests
         return EventRecordFixture.Create(
             WindowsDiskIoEventDecoder.DiskIoProviderId,
             WindowsDiskIoEventDecoder.ReadEventType,
-            WindowsDiskIoEventRecordBridge.EventHeaderFlagClassic | widthFlag,
+            checked((ushort)(WindowsDiskIoEventRecordBridge.EventHeaderFlagClassic | widthFlag)),
             timestamp,
             payload);
     }

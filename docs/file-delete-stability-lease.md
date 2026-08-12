@@ -25,14 +25,14 @@ The provider therefore holds at most one file leaf plus its parent per lease rat
 2. open the canonical parent with `CreateFileW` using metadata/traverse access only (`FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE`), `OPEN_EXISTING`, backup-semantics + open-reparse-point flags, and read/write sharing **without delete sharing**;
 3. verify parent type, non-reparse state, final handle path, and stable `FileIdentity` against the consent receipt;
 4. open the exact one-component leaf relative to the held parent with `NtCreateFile(RootDirectory=...)`;
-5. request only `FILE_READ_ATTRIBUTES | SYNCHRONIZE` for the leaf, use `FILE_OPEN`, `FILE_NON_DIRECTORY_FILE`, synchronous non-alert semantics, and `FILE_OPEN_REPARSE_POINT`;
+5. request `FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE` for the leaf so its read-only handle participates in Windows share enforcement, use `FILE_OPEN`, `FILE_NON_DIRECTORY_FILE`, synchronous non-alert semantics, and `FILE_OPEN_REPARSE_POINT`;
 6. verify leaf type, non-reparse state, final handle path, and stable `FileIdentity` against the consent receipt;
 7. revalidate the held parent again after the relative leaf open;
 8. return a lease retaining both handles until disposal.
 
 The leaf uses `FileShare.Read`. It therefore **denies write and delete sharing** while the lease is alive. An incompatible existing writer causes lease acquisition to fail closed, and a newly opened writer/delete/rename cannot become compatible after acquisition. The parent handle likewise omits delete sharing so the authorized parent itself cannot be renamed/deleted while held.
 
-The provider does not read file contents. It does not request `FILE_READ_DATA`, write access, generic write/all access, or `DELETE` access. It uses no create/open-if disposition.
+The provider does not read file contents or expose its handle. It requests `FILE_READ_DATA` only so the retained read-only handle participates in Windows share enforcement; it does not request write access, generic write/all access, or `DELETE` access. It uses no create/open-if disposition.
 
 ## What this lease does and does not freeze
 
@@ -68,6 +68,6 @@ Protocol remains v8.
 
 When reached through the existing authorization parent, the deterministic nested seed contributes **540,077 stability assertions**. Combined with **456,643** authorization assertions, **456,090** canonical delete-validation assertions, and **150,009** existing Copy/Move execution-validation assertions, the repository's existing single direct execution-validation gate now carries **1,602,819 randomized assertions across 50,000 cases** before source checks.
 
-Source guards require metadata-only access, root-relative `NtCreateFile`, exact final-path/identity checks, post-leaf root revalidation, protected-location reuse, `FileShare.Read` on the leaf, no `DELETE`/write/content-read/create/mutation API, no generic executor/history integration, unchanged Copy/Move operation enum, cleanup non-authorization, and protocol v8.
+Source guards require metadata-only root access, the minimum read-only leaf access needed for enforceable Windows sharing, root-relative `NtCreateFile`, exact final-path/identity checks, post-leaf root revalidation, protected-location reuse, `FileShare.Read` on the leaf, no `DELETE`/write/content-read API/create/mutation API, no generic executor/history integration, unchanged Copy/Move operation enum, cleanup non-authorization, and protocol v8.
 
 Focused Windows regressions exercise real sharing/identity behavior. They are included automatically by the repository's full `FileOp.Windows.Tests` local Windows gate. Native Windows/.NET execution is not claimed in the current sandbox.

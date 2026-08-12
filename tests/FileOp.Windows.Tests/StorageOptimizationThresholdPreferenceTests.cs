@@ -63,20 +63,27 @@ public sealed class StorageOptimizationThresholdPreferenceTests
     }
 
     [TestMethod]
-    public void SupportedThresholdsRoundTripToMultipliers()
+    public void SaturatedThresholdsDoNotImplyAUniqueMultiplier()
     {
         var analysis = Analysis(new StorageOptimizationPolicy(
-            LargeFileMinimumBytes: 100,
-            SameSizeMinimumBytes: 50,
-            StaleAgeDays: 20));
-        var preference = new StorageOptimizationThresholdPreference(8, 4, 6);
-        var thresholds = StorageOptimizationThresholdPreferencePolicy.Resolve(analysis, preference);
+            LargeFileMinimumBytes: long.MaxValue / 2 + 1,
+            SameSizeMinimumBytes: long.MaxValue / 4 + 1,
+            StaleAgeDays: int.MaxValue / 2 + 1));
+        var lowerPreference = new StorageOptimizationThresholdPreference(2, 4, 2);
+        var higherPreference = new StorageOptimizationThresholdPreference(8, 8, 6);
 
-        var roundTrip = StorageOptimizationThresholdPreferencePolicy.FromThresholds(
+        var lowerThresholds = StorageOptimizationThresholdPreferencePolicy.Resolve(
             analysis,
-            thresholds);
+            lowerPreference);
+        var higherThresholds = StorageOptimizationThresholdPreferencePolicy.Resolve(
+            analysis,
+            higherPreference);
 
-        Assert.AreEqual(preference, roundTrip);
+        Assert.AreEqual(higherThresholds, lowerThresholds);
+        Assert.AreNotEqual(higherPreference, lowerPreference);
+        Assert.AreEqual(long.MaxValue, higherThresholds.LargeFileMinimumBytes);
+        Assert.AreEqual(long.MaxValue, higherThresholds.SameSizeMinimumBytes);
+        Assert.AreEqual(int.MaxValue, higherThresholds.StaleAgeDays);
     }
 
     [TestMethod]

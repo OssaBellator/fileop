@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using FileOp.Core.Operations;
@@ -133,7 +134,7 @@ public sealed class WindowsFileDeleteOperationStabilityLeaseProviderTests
         await File.WriteAllTextAsync(fixture.SourcePath, "authorized-content");
         var authorization = await fixture.AuthorizeAsync();
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new FileDeleteOperationStabilityLeaseRequest(authorization, 1));
 
         using var cancellation = new CancellationTokenSource();
@@ -163,20 +164,23 @@ public sealed class WindowsFileDeleteOperationStabilityLeaseProviderTests
 
     private static bool DeleteIsBlocked(string path)
     {
-        try
+        // Probe the documented Windows delete-sharing contract directly. Managed
+        // File.Delete can select a different disposition path on newer runtimes.
+        if (DeleteFileW(path))
         {
-            File.Delete(path);
             return false;
         }
-        catch (IOException)
-        {
-            return true;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return true;
-        }
+
+        Assert.AreEqual(
+            32, // ERROR_SHARING_VIOLATION.
+            Marshal.GetLastPInvokeError(),
+            "The stability lease should reject a native delete through sharing semantics.");
+        return true;
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteFileW(string lpFileName);
 
     private static bool WriteOpenIsBlocked(string path)
     {

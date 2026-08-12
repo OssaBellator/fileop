@@ -76,21 +76,21 @@ public sealed class WindowsDiskIoNativeTraceConsumerApiTests
     public void RealtimeOpenBufferRejectsMissingRequiredPointers()
     {
         var nonzero = new IntPtr(1);
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
                 IntPtr.Zero,
                 1,
                 nonzero,
                 nonzero,
                 IntPtr.Zero));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
                 nonzero,
                 1,
                 IntPtr.Zero,
                 nonzero,
                 IntPtr.Zero));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             WindowsDiskIoTraceLogfileBuffer.CreateForRealtimeOpen(
                 nonzero,
                 1,
@@ -123,7 +123,7 @@ public sealed class WindowsDiskIoNativeTraceConsumerApiTests
         InvokeEventCallback(api, new IntPtr(123));
 
         Assert.AreEqual(0u, InvokeBufferCallback(api, new IntPtr(789)));
-        var actual = Assert.ThrowsException<InvalidOperationException>(() =>
+        var actual = Assert.Throws<InvalidOperationException>(() =>
             InvokeThrowCallbackFault(api));
         Assert.AreSame(expected, actual);
     }
@@ -138,7 +138,7 @@ public sealed class WindowsDiskIoNativeTraceConsumerApiTests
 
         Assert.AreEqual(0, sink.EventCalls);
         Assert.AreEqual(0u, InvokeBufferCallback(api, new IntPtr(789)));
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             InvokeThrowCallbackFault(api));
     }
 
@@ -150,7 +150,7 @@ public sealed class WindowsDiskIoNativeTraceConsumerApiTests
         var api = new WindowsDiskIoNativeTraceConsumerApi(sink);
 
         Assert.AreEqual(0u, InvokeBufferCallback(api, new IntPtr(789)));
-        var actual = Assert.ThrowsException<IOException>(() =>
+        var actual = Assert.Throws<IOException>(() =>
             InvokeThrowCallbackFault(api));
         Assert.AreSame(expected, actual);
     }

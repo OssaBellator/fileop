@@ -22,7 +22,7 @@ public sealed class WindowsDiskIoTimingProvenanceValidatorTests
     [TestMethod]
     public void CountMismatchFailsClosed()
     {
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoTimingProvenanceValidator.Validate(
                 [Observation(Owner(41))],
                 Array.Empty<DiskIoResponseTimingObservation>()));
@@ -34,15 +34,15 @@ public sealed class WindowsDiskIoTimingProvenanceValidatorTests
         var owner = Owner(41);
         var observation = Observation(owner);
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoTimingProvenanceValidator.Validate(
                 [observation],
                 [Timing(owner) with { Timestamp = At.AddTicks(1) }]));
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoTimingProvenanceValidator.Validate(
                 [observation],
                 [Timing(owner) with { PhysicalDiskNumber = 8 }]));
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoTimingProvenanceValidator.Validate(
                 [observation],
                 [Timing(owner) with { Operation = DiskIoOperationKind.Write }]));
@@ -53,7 +53,7 @@ public sealed class WindowsDiskIoTimingProvenanceValidatorTests
     {
         var observation = Observation(Owner(41));
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoTimingProvenanceValidator.Validate(
                 [observation],
                 [Timing(Owner(42))]));
@@ -62,11 +62,11 @@ public sealed class WindowsDiskIoTimingProvenanceValidatorTests
     [TestMethod]
     public void ResolvedAndUnresolvedOwnerMismatchFailsClosed()
     {
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoTimingProvenanceValidator.Validate(
                 [Observation(Owner(41))],
                 [Timing(owner: null)]));
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoTimingProvenanceValidator.Validate(
                 [Observation(owner: null)],
                 [Timing(Owner(41))]));

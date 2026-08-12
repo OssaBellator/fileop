@@ -55,7 +55,7 @@ public sealed class FileDeleteOperationUserAuthorizationTests
             "root unavailable");
         var issuer = CreateIssuer(Guid.NewGuid(), DateTimeOffset.UtcNow);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             issuer.IssueAfterExplicitUserConfirmation(blocked));
     }
 
@@ -106,7 +106,7 @@ public sealed class FileDeleteOperationUserAuthorizationTests
         Assert.IsFalse(second.DeleteMutationAuthorized);
 
         var invalidIssuer = CreateIssuer(Guid.Empty, authorizedAt);
-        Assert.ThrowsException<InvalidOperationException>(() =>
+        Assert.Throws<InvalidOperationException>(() =>
             invalidIssuer.IssueAfterExplicitUserConfirmation(validation));
     }
 

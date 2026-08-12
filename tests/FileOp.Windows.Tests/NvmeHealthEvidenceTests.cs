@@ -81,11 +81,11 @@ public sealed class NvmeHealthEvidenceTests
     [TestMethod]
     public void NormalizedSpareValuesOutsideOneHundredFailClosed()
     {
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsNvmeHealthQueryCodec.ParseHealthLog(
                 0,
                 BuildHealthLog(spare: 101)));
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsNvmeHealthQueryCodec.ParseHealthLog(
                 0,
                 BuildHealthLog(spareThreshold: 101)));
@@ -103,7 +103,7 @@ public sealed class NvmeHealthEvidenceTests
 
         var wrongVersion = (byte[])response.Clone();
         BinaryPrimitives.WriteUInt32LittleEndian(wrongVersion.AsSpan(0, 4), 49);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsNvmeHealthQueryCodec.ParseHealthResponse(
                 2,
                 wrongVersion,
@@ -111,7 +111,7 @@ public sealed class NvmeHealthEvidenceTests
 
         var wrongSize = (byte[])response.Clone();
         BinaryPrimitives.WriteUInt32LittleEndian(wrongSize.AsSpan(4, 4), 49);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsNvmeHealthQueryCodec.ParseHealthResponse(
                 2,
                 wrongSize,
@@ -119,7 +119,7 @@ public sealed class NvmeHealthEvidenceTests
 
         var wrongProtocol = (byte[])response.Clone();
         BinaryPrimitives.WriteUInt32LittleEndian(wrongProtocol.AsSpan(8, 4), 2);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsNvmeHealthQueryCodec.ParseHealthResponse(
                 2,
                 wrongProtocol,
@@ -127,7 +127,7 @@ public sealed class NvmeHealthEvidenceTests
 
         var shortOffset = (byte[])response.Clone();
         BinaryPrimitives.WriteUInt32LittleEndian(shortOffset.AsSpan(24, 4), 39);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsNvmeHealthQueryCodec.ParseHealthResponse(
                 2,
                 shortOffset,
@@ -135,13 +135,13 @@ public sealed class NvmeHealthEvidenceTests
 
         var excessiveOffset = (byte[])response.Clone();
         BinaryPrimitives.WriteUInt32LittleEndian(excessiveOffset.AsSpan(24, 4), uint.MaxValue);
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsNvmeHealthQueryCodec.ParseHealthResponse(
                 2,
                 excessiveOffset,
                 excessiveOffset.Length));
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsNvmeHealthQueryCodec.ParseHealthResponse(
                 2,
                 response,
@@ -170,13 +170,13 @@ public sealed class NvmeHealthEvidenceTests
         Assert.AreEqual(1, result.PhysicalDiskNumber);
         Assert.AreSame(evidence, result.Evidence);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new NvmeHealthEvidenceResult(
                 2,
                 NvmeHealthEvidenceStatus.Available,
                 evidence,
                 "mismatched"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new NvmeHealthEvidenceResult(
                 1,
                 NvmeHealthEvidenceStatus.Available,

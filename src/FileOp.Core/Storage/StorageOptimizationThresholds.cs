@@ -57,9 +57,7 @@ public static class StorageOptimizationThresholdFilter
             .Where(file => file.MeasuredBytes >= thresholds.LargeFileMinimumBytes)
             .ToArray();
         var staleFiles = analysis.StaleLargeFiles
-            .Where(file =>
-                file.MeasuredBytes >= thresholds.LargeFileMinimumBytes &&
-                file.LastWriteTime.ToUniversalTime() <= staleCutoff)
+            .Where(file => file.LastWriteTime.ToUniversalTime() <= staleCutoff)
             .ToArray();
         var sameSizeGroups = analysis.SameSizeCandidateGroups
             .Where(group => group.LogicalBytesPerFile >= thresholds.SameSizeMinimumBytes)

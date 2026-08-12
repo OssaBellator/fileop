@@ -23,23 +23,23 @@ public sealed class DiskIoCaptureTests
     [TestMethod]
     public void InvalidBudgetValuesFailClosed()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() => new DiskIoCaptureBudget(
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DiskIoCaptureBudget(
             DiskIoCaptureBudget.MinimumDuration - TimeSpan.FromTicks(1),
             1,
             1));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() => new DiskIoCaptureBudget(
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DiskIoCaptureBudget(
             DiskIoCaptureBudget.MaximumDuration + TimeSpan.FromTicks(1),
             1,
             1));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() => new DiskIoCaptureBudget(
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DiskIoCaptureBudget(
             DiskIoCaptureBudget.DefaultDuration,
             0,
             1));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() => new DiskIoCaptureBudget(
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DiskIoCaptureBudget(
             DiskIoCaptureBudget.DefaultDuration,
             DiskIoCaptureBudget.MaximumObservations + 1,
             1));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() => new DiskIoCaptureBudget(
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DiskIoCaptureBudget(
             DiskIoCaptureBudget.DefaultDuration,
             1,
             0));
@@ -108,7 +108,7 @@ public sealed class DiskIoCaptureTests
     {
         var budget = new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 3, 4);
 
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             Report(budget, acceptedEvents: 2, duration: TimeSpan.FromMilliseconds(900)),
             DiskIoCaptureStopReason.ObservationLimitReached,
@@ -117,7 +117,7 @@ public sealed class DiskIoCaptureTests
             null,
             "Limit reason without a full limit."));
 
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             Report(budget, acceptedEvents: 2, duration: TimeSpan.FromMilliseconds(900)),
             DiskIoCaptureStopReason.DurationElapsed,
@@ -131,7 +131,7 @@ public sealed class DiskIoCaptureTests
             StartedAt.AddSeconds(2),
             [],
             budget.MaxOwnersPerDisk);
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             tooLong,
             DiskIoCaptureStopReason.DurationElapsed,
@@ -145,7 +145,7 @@ public sealed class DiskIoCaptureTests
             StartedAt.Add(budget.Duration),
             [],
             maxOwnersPerDisk: budget.MaxOwnersPerDisk + 1);
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             wrongOwners,
             DiskIoCaptureStopReason.DurationElapsed,
@@ -172,7 +172,7 @@ public sealed class DiskIoCaptureTests
             budget.MaxOwnersPerDisk,
             []);
 
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             negativeDuration,
             DiskIoCaptureStopReason.ObservationLimitReached,
@@ -180,7 +180,7 @@ public sealed class DiskIoCaptureTests
             0,
             null,
             "Negative manual duration."));
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             negativeEvents,
             DiskIoCaptureStopReason.DurationElapsed,
@@ -196,7 +196,7 @@ public sealed class DiskIoCaptureTests
         var budget = new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 10, 4);
         var report = Report(budget, acceptedEvents: 1, duration: budget.Duration);
 
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             report,
             DiskIoCaptureStopReason.DurationElapsed,
@@ -204,7 +204,7 @@ public sealed class DiskIoCaptureTests
             null,
             null,
             "No-loss state without explicit zero count."));
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             report,
             DiskIoCaptureStopReason.DurationElapsed,
@@ -212,7 +212,7 @@ public sealed class DiskIoCaptureTests
             0,
             null,
             "Observed loss without positive count."));
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Completed(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Completed(
             budget,
             report,
             DiskIoCaptureStopReason.DurationElapsed,
@@ -243,7 +243,7 @@ public sealed class DiskIoCaptureTests
         Assert.IsNull(permission.LostEventCount);
         Assert.IsFalse(permission.EvidenceMayBeIncomplete);
         Assert.AreEqual(DiskIoCaptureStatus.SessionUnavailable, busy.Status);
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() => DiskIoCaptureResult.Unavailable(
+        Assert.Throws<ArgumentOutOfRangeException>(() => DiskIoCaptureResult.Unavailable(
             budget,
             DiskIoCaptureStatus.Completed,
             null,
@@ -255,12 +255,12 @@ public sealed class DiskIoCaptureTests
     {
         var budget = DiskIoCaptureBudget.Default;
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() => DiskIoCaptureResult.Unavailable(
+        Assert.Throws<ArgumentOutOfRangeException>(() => DiskIoCaptureResult.Unavailable(
             budget,
             DiskIoCaptureStatus.Unsupported,
             TimeSpan.FromTicks(-1),
             "unsupported"));
-        Assert.ThrowsException<ArgumentException>(() => DiskIoCaptureResult.Unavailable(
+        Assert.Throws<ArgumentException>(() => DiskIoCaptureResult.Unavailable(
             budget,
             DiskIoCaptureStatus.Unsupported,
             null,

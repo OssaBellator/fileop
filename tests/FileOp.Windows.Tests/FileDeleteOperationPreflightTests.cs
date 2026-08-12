@@ -22,7 +22,7 @@ public sealed class FileDeleteOperationPreflightTests
 
         Assert.AreEqual(1, intent.Entries.Count);
         Assert.AreEqual("a.txt", intent.Entries[0].Name);
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationIntent(
                 "left",
                 Guid.NewGuid(),
@@ -34,7 +34,7 @@ public sealed class FileDeleteOperationPreflightTests
     public void PlanRejectsEmptyIdAndNormalizesQueuedTimestamp()
     {
         var intent = Intent(new FileOperationEntry(@"C:\Source\a.txt", "a.txt", false));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationPlan(Guid.Empty, DateTimeOffset.UtcNow, intent));
 
         var local = new DateTimeOffset(2026, 8, 12, 12, 0, 0, TimeSpan.FromHours(10));
@@ -55,14 +55,14 @@ public sealed class FileDeleteOperationPreflightTests
             FileDeleteOperationPreflightDecision.Blocked,
             "blocked");
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationPreflightResult(
                 plan,
                 sourceRoot,
                 new[] { blocked },
                 FileDeleteOperationPreflightStatus.ReadyForFurtherReview,
                 "invalid"));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationPreflightResult(
                 plan,
                 sourceRoot,
@@ -77,7 +77,7 @@ public sealed class FileDeleteOperationPreflightTests
             Inspection(directoryEntry.Path, FileOperationPathState.Directory),
             FileDeleteOperationPreflightDecision.ReadyForFurtherReview,
             "invalid ready directory");
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationPreflightResult(
                 directoryPlan,
                 sourceRoot,
@@ -90,7 +90,7 @@ public sealed class FileDeleteOperationPreflightTests
             Inspection(@"C:\Source\a.txt", FileOperationPathState.File, reparse: true),
             FileDeleteOperationPreflightDecision.ReadyForFurtherReview,
             "invalid ready reparse");
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileDeleteOperationPreflightResult(
                 plan,
                 sourceRoot,

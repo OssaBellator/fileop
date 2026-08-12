@@ -50,6 +50,7 @@ def check_repository(root: Path) -> int:
         "model": root / "src/FileOp.Core/Performance/PerformanceDiagnostics.cs",
         "index_model": root / "src/FileOp.Core/Performance/IndexDatabaseDiagnostics.cs",
         "engine": root / "src/FileOp.App/DesktopSearchEngine.PerformanceDiagnostics.cs",
+        "capacity": root / "src/FileOp.App/DesktopSearchEngine.VolumeCapacity.cs",
         "view": root / "src/FileOp.App/PerformanceDiagnosticsView.xaml",
         "view_code": root / "src/FileOp.App/PerformanceDiagnosticsView.xaml.cs",
         "optimize_view": root / "src/FileOp.App/StorageOptimizationView.xaml",
@@ -108,12 +109,20 @@ def check_repository(root: Path) -> int:
         "Index database probe",
         "MeasureTimerOverheadMicroseconds",
         "for (var sample = 0; sample < 128; sample++)",
-        "DriveInfo(volumeRoot)",
-        "AvailableFreeSpace",
+        "ReadVolumeCapacity(root)",
         "!state.IsBusy",
         "state.Mode is DesktopSearchMode.Native or DesktopSearchMode.Fallback",
     ):
         assert needle in text["engine"], needle
+        checks += 1
+
+    for needle in (
+        "DriveInfo(volumeRoot)",
+        "drive.IsReady",
+        "drive.TotalSize",
+        "drive.AvailableFreeSpace",
+    ):
+        assert needle in text["capacity"], needle
         checks += 1
 
     for needle in (

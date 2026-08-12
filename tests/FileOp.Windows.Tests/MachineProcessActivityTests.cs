@@ -119,7 +119,7 @@ public sealed class MachineProcessActivityTests
         var start = Frame(StartAt, Snapshot(identity, 100, 100, 100, 1));
         var end = Frame(EndAt, Snapshot(identity, 99, 100, 100, 1));
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             MachineProcessActivityAnalyzer.Analyze(
                 budget,
                 start,
@@ -190,11 +190,11 @@ public sealed class MachineProcessActivityTests
     [TestMethod]
     public void ContractsRejectImpossibleFrames()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new MachineProcessActivityBudget(TimeSpan.FromMilliseconds(100), 10, 10));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new MachineProcessIdentity(0, StartAt, "bad.exe"));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new MachineProcessCounterSnapshot(
                 Identity(1, StartAt.AddMinutes(-1), "bad.exe"),
                 TimeSpan.FromMilliseconds(-1),
@@ -203,7 +203,7 @@ public sealed class MachineProcessActivityTests
                 0));
 
         var future = Identity(1, StartAt.AddSeconds(1), "future.exe");
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new MachineProcessActivityFrame(
                 StartAt,
                 1,
@@ -213,7 +213,7 @@ public sealed class MachineProcessActivityTests
 
         var oldPid = Identity(2, StartAt.AddMinutes(-2), "old.exe");
         var reusedPid = Identity(2, StartAt.AddMinutes(-1), "new.exe");
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new MachineProcessActivityFrame(
                 StartAt,
                 2,

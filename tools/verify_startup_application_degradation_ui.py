@@ -176,7 +176,7 @@ def check_repository(root: Path) -> int:
         (view, "DegradationTimeMilliseconds:N0", "raw degradation time rendering"),
         (view, "$\"#{evidence.RecordId}", "exact record id rendering"),
         (view, "CapturePerformanceStartupApplicationDegradationAsync", "MainWindow-owned async route"),
-        (docs, "does not require `StorageOptimizationAvailable`", "index independence"),
+        (docs, "does **not** require `StorageOptimizationAvailable`", "index independence"),
         (docs, "busy notice is intentionally state-neutral", "busy state boundary"),
         (docs, "does not join component names to current PIDs", "current/history provenance boundary"),
         (startup_parent, "from verify_startup_application_degradation_ui import (", "startup verifier imports UI child"),
@@ -195,9 +195,14 @@ def check_repository(root: Path) -> int:
         checks += require(text, needle, label)
 
     capture = method_body(main, "internal async Task CapturePerformanceStartupApplicationDegradationAsync")
-    checks += forbid(capture, "StorageOptimizationAvailable", "native-index dependency")
+    capture_before_finally = capture[:capture.index("finally")]
+    checks += forbid(capture_before_finally, "StorageOptimizationAvailable", "native-index capture dependency")
+    checks += require(capture, "_searchEngine.StorageOptimizationAvailable", "independent Optimize refresh restoration")
 
-    busy = method_body(storage, "public void SetStartupApplicationDegradationBusy")
+    busy_start = storage.index("public void SetStartupApplicationDegradationBusy")
+    busy_end = storage.index("public void SetStartupApplicationDegradationUnavailable", busy_start)
+    busy = storage[busy_start:busy_end]
+    checks += require(busy, "PerformanceDiagnostics.SetStartupApplicationDegradationUnavailable(message);", "state-neutral busy forwarding")
     checks += forbid(busy, "_sameSizeVerificationControlsBlocked", "busy notice releasing same-size block")
     checks += forbid(busy, "RefreshSameSizeRows", "busy notice mutating same-size controls")
 

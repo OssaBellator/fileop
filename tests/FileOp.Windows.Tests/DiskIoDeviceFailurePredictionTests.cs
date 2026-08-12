@@ -51,7 +51,7 @@ public sealed class DiskIoDeviceFailurePredictionTests
             TimeSpan.Zero);
         var provider = new FakeFailurePredictionProvider(offset: 1);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             DiskIoDeviceEvidenceCollector.AttachFailurePrediction(
                 baseSnapshot,
                 provider));
@@ -66,7 +66,7 @@ public sealed class DiskIoDeviceFailurePredictionTests
             TimeSpan.Zero);
         var provider = new NullFailurePredictionProvider();
 
-        Assert.ThrowsException<ArgumentNullException>(() =>
+        Assert.Throws<ArgumentNullException>(() =>
             DiskIoDeviceEvidenceCollector.AttachFailurePrediction(
                 baseSnapshot,
                 provider));
@@ -87,7 +87,7 @@ public sealed class DiskIoDeviceFailurePredictionTests
             TimeSpan.Zero);
         var provider = new FakeFailurePredictionProvider();
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             DiskIoDeviceEvidenceCollector.AttachFailurePrediction(
                 baseSnapshot,
                 provider));
@@ -99,14 +99,14 @@ public sealed class DiskIoDeviceFailurePredictionTests
     {
         var prediction = CreateFailurePredictionResult(0);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DiskIoPhysicalDiskDeviceEvidence(
                 0,
                 DiskIoDeviceEvidenceQueryStatus.QueryBudgetExceeded,
                 null,
                 null,
                 prediction));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DiskIoPhysicalDiskDeviceEvidence(
                 uint.MaxValue,
                 DiskIoDeviceEvidenceQueryStatus.DiskNumberOutOfRange,

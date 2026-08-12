@@ -7,6 +7,7 @@ namespace FileOp.Windows.Tests;
 [TestClass]
 public sealed class IndexDiagnosticsV8CompatibilityTests
 {
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     [TestMethod]
     public void NewClientAcceptsLegacyV8DiagnosticsWithoutFreshnessFields()
     {
@@ -29,7 +30,7 @@ public sealed class IndexDiagnosticsV8CompatibilityTests
 
         var response = JsonSerializer.Deserialize<IndexingIndexDiagnosticsResponse>(
             json,
-            IndexingServiceJson.SerializerOptions);
+            SerializerOptions);
 
         Assert.IsNotNull(response);
         Assert.AreEqual(42, response.Diagnostics.IndexedItemCount);
@@ -54,11 +55,11 @@ public sealed class IndexDiagnosticsV8CompatibilityTests
             "wal",
             new IndexJournalCheckpointDiagnostics(7, 900, updatedAt),
             new IndexJournalFreshnessDiagnostics(7, 900, updatedAt, 7, 500, 1_000)));
-        var json = JsonSerializer.Serialize(response, IndexingServiceJson.SerializerOptions);
+        var json = JsonSerializer.Serialize(response, SerializerOptions);
 
         var legacy = JsonSerializer.Deserialize<LegacyIndexDiagnosticsResponse>(
             json,
-            IndexingServiceJson.SerializerOptions);
+            SerializerOptions);
 
         Assert.IsNotNull(legacy);
         Assert.AreEqual(42, legacy.Diagnostics.IndexedItemCount);

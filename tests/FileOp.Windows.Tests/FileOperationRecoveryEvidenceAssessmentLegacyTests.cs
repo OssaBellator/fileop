@@ -127,7 +127,7 @@ public sealed class FileOperationRecoveryEvidenceAssessmentLegacyTests
     public void AssessmentItemRejectsStatusThatContradictsDimensionMasks()
     {
         var inspection = CreateSameObjectInspection();
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new FileOperationRecoveryEvidenceAssessmentItem(
                 0,
                 inspection,

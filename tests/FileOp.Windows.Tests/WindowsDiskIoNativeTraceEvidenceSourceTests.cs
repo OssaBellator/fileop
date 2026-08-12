@@ -37,7 +37,7 @@ public sealed class WindowsDiskIoNativeTraceEvidenceSourceTests
         using var fixture = NativeStateFixture.Create();
         SetField(fixture.Api, "_processActive", true);
 
-        var exception = Assert.ThrowsException<InvalidOperationException>(() =>
+        var exception = Assert.Throws<InvalidOperationException>(() =>
             fixture.Api.ReadTraceEvidence(fixture.Handle));
 
         StringAssert.Contains(exception.Message, "ProcessTrace");
@@ -49,7 +49,7 @@ public sealed class WindowsDiskIoNativeTraceEvidenceSourceTests
         using var fixture = NativeStateFixture.Create();
         SetField(fixture.Api, "_openActive", true);
 
-        var exception = Assert.ThrowsException<InvalidOperationException>(() =>
+        var exception = Assert.Throws<InvalidOperationException>(() =>
             fixture.Api.ReadTraceEvidence(fixture.Handle));
 
         StringAssert.Contains(exception.Message, "OpenTraceW");
@@ -60,11 +60,11 @@ public sealed class WindowsDiskIoNativeTraceEvidenceSourceTests
     {
         using var fixture = NativeStateFixture.Create();
 
-        Assert.ThrowsException<InvalidOperationException>(() =>
+        Assert.Throws<InvalidOperationException>(() =>
             fixture.Api.ReadTraceEvidence(fixture.Handle + 1));
 
         SetField(fixture.Api, "_openedHandle", 0UL);
-        Assert.ThrowsException<InvalidOperationException>(() =>
+        Assert.Throws<InvalidOperationException>(() =>
             fixture.Api.ReadTraceEvidence(fixture.Handle));
     }
 

@@ -140,11 +140,13 @@ def check_repository(root: Path) -> int:
     capture_handler = method_body(
         text["main"],
         "private async void StorageOptimizationView_PerformanceDiskIoCaptureRequested")
-    assert "CaptureDiskIoAttributionAsync" in capture_handler
-    assert "StorageOptimizationAvailable" not in capture_handler
-    assert "State.IsBusy" not in capture_handler
+    capture_before_finally = capture_handler[:capture_handler.index("finally")]
+    assert "CaptureDiskIoAttributionAsync" in capture_before_finally
+    assert "StorageOptimizationAvailable" not in capture_before_finally
+    assert "State.IsBusy" not in capture_before_finally
     assert "_storageGate" not in capture_handler
-    checks += 4
+    assert "_searchEngine.StorageOptimizationAvailable" in capture_handler
+    checks += 5
 
     state_handler = method_body(text["main"], "private void HandleStorageOptimizationEngineState")
     assert "SetDiskIoReadyForCapture" in state_handler

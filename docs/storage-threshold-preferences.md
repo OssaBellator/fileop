@@ -32,12 +32,14 @@ The persisted values are semantic multipliers, not frozen numeric thresholds.
 For every new `StorageOptimizationAnalysis`, FileOp derives the display thresholds again from that analysis's current `StorageOptimizationPolicy`:
 
 ```text
-large display minimum    = current native large-file baseline × remembered multiplier
+large display minimum     = current native large-file baseline × remembered multiplier
 same-size display minimum = current native same-size baseline × remembered multiplier
 stale-age display minimum = current native stale-age baseline × remembered multiplier
 ```
 
 Multiplication saturates at the corresponding numeric maximum instead of overflowing. The resulting thresholds are then passed through the existing `StorageOptimizationThresholdFilter.ValidateAgainstAnalysis(...)` same-or-stricter check before any filtering occurs.
+
+Numeric saturation can make two supported multipliers resolve to the same displayed byte/day value near the numeric maximum. FileOp therefore keeps the selected multiplier attached to each UI option and never reverse-infers a multiplier from a saturated numeric threshold. This preserves the user's semantic preference so it can re-resolve correctly if a later native policy no longer saturates at the same value.
 
 This means a helper policy change between sessions automatically changes the numeric display thresholds. Stale raw byte/day values are never reused.
 
@@ -78,10 +80,10 @@ Allowing the user to request smaller/younger evidence than the helper currently 
 
 ## Validation without GitHub Actions
 
-`tools/verify_storage_threshold_preferences.py` models supported multiplier persistence, fresh-policy re-resolution, saturation, invalid-preference baseline fallback, strict v1 JSON parsing, and candidate-filter equivalence. Its source guards require the local-app-data/versioned-file boundary, late-load and stale-save generation checks, serialized saves, fresh-analysis policy resolution, unchanged protocol v8, and absence of helper rerun/hash/timer behavior.
+`tools/verify_storage_threshold_preferences.py` models supported multiplier persistence, fresh-policy re-resolution, saturation, semantic multiplier aliasing at saturation, invalid-preference baseline fallback, strict v1 JSON parsing, and candidate-filter equivalence. Its source guards require the local-app-data/versioned-file boundary, multiplier-bearing UI options, direct semantic preference construction, late-load and stale-save generation checks, serialized saves, fresh-analysis policy resolution, unchanged protocol v8, and absence of helper rerun/hash/timer behavior. It explicitly rejects numeric-to-semantic `FromThresholds` reverse inference.
 
 The existing `tools/verify_storage_threshold_overlay.py` continues to validate the underlying same-or-stricter display overlay and its no-helper-rerun boundary.
 
-Focused .NET tests cover preference resolution against changing policies, unsupported fallback, saturation, supported threshold round-trip, valid save/load replacement, malformed/unknown/unsupported/oversized file fallback, unsupported-save refusal, and cancellation.
+Focused .NET tests cover preference resolution against changing policies, unsupported fallback, saturation, saturated numeric aliasing between distinct semantic multipliers, valid save/load replacement, malformed/unknown/unsupported/oversized file fallback, unsupported-save refusal, and cancellation.
 
 Both portable verifiers remain reachable through `tools/test-local.ps1 -OfflineOnly`, so GitHub Actions are not required for this validation layer. Native/.NET/WinUI execution remains an additional local Windows gate when that runtime is available.

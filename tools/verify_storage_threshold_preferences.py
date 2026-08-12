@@ -118,6 +118,16 @@ def run_model(cases: int, seed: int) -> int:
     assert parse_preference(encode_preference(preference)) == preference
     checks += 3
 
+    # Numeric saturation can make distinct semantic multipliers resolve to the same
+    # displayed threshold. The persisted preference therefore must never be inferred
+    # backwards from the numeric threshold alone.
+    saturated_policy = (LONG_MAX // 2 + 1, LONG_MAX // 4 + 1, INT_MAX // 2 + 1)
+    lower_preference = (2, 4, 2)
+    higher_preference = (8, 8, 6)
+    assert lower_preference != higher_preference
+    assert resolve(saturated_policy, lower_preference) == resolve(saturated_policy, higher_preference)
+    checks += 2
+
     invalid_documents = (
         b"not json",
         b"{}",
@@ -210,8 +220,8 @@ def check_repository(root: Path) -> int:
     for text, needle, label in (
         (preference, "public sealed record StorageOptimizationThresholdPreference(", "typed multiplier preference"),
         (preference, "public static StorageOptimizationThresholdPreference Baseline", "baseline preference"),
-        (preference, "private static readonly int[] SupportedSizeMultipliers = [1, 2, 4, 8];", "size multiplier allow-list"),
-        (preference, "private static readonly int[] SupportedStaleAgeMultipliers = [1, 2, 4, 6];", "age multiplier allow-list"),
+        (preference, "public static IReadOnlyList<int> SupportedSizeMultipliers { get; } =\n        Array.AsReadOnly(new[] { 1, 2, 4, 8 });", "size multiplier allow-list"),
+        (preference, "public static IReadOnlyList<int> SupportedStaleAgeMultipliers { get; } =\n        Array.AsReadOnly(new[] { 1, 2, 4, 6 });", "age multiplier allow-list"),
         (preference, "analysis.Policy.LargeFileMinimumBytes", "fresh large policy resolution"),
         (preference, "analysis.Policy.SameSizeMinimumBytes", "fresh same-size policy resolution"),
         (preference, "analysis.Policy.StaleAgeDays", "fresh age policy resolution"),
@@ -229,7 +239,14 @@ def check_repository(root: Path) -> int:
         (store, "File.Move(temporaryPath, _path, overwrite: true);", "same-directory replacement"),
         (view, "Environment.SpecialFolder.LocalApplicationData", "per-user local application data"),
         (view, '"storage-optimization-thresholds.v1.json"', "versioned preference filename"),
+        (view, "private sealed record SizeThresholdOption(long Value, int Multiplier, string Label);", "semantic size option"),
+        (view, "private sealed record AgeThresholdOption(int Value, int Multiplier, string Label);", "semantic age option"),
+        (view, "_thresholdPreference = new StorageOptimizationThresholdPreference(", "direct semantic preference construction"),
         (view, "StorageOptimizationThresholdPreferencePolicy.Resolve(\n                analysis,\n                _thresholdPreference);", "fresh-analysis preference resolution"),
+        (view, "option.Multiplier == _thresholdPreference.LargeFileMultiplier", "large semantic selection"),
+        (view, "option.Multiplier == _thresholdPreference.SameSizeMultiplier", "same-size semantic selection"),
+        (view, "option.Multiplier == _thresholdPreference.StaleAgeMultiplier", "stale semantic selection"),
+        (view, ".GroupBy(static option => option.Value)", "saturated numeric option collapse"),
         (view, "Interlocked.Increment(ref _thresholdPreferenceGeneration)", "user-change generation"),
         (view, "Volatile.Read(ref _thresholdPreferenceGeneration)", "late-load/save generation guard"),
         (view, "await _thresholdPreferenceSaveGate.WaitAsync();", "serialized preference saves"),
@@ -237,10 +254,12 @@ def check_repository(root: Path) -> int:
         (view, "_ = SaveThresholdPreferenceAsync(_thresholdPreference, generation);", "selection preference save"),
         (view, "does not rerun the helper", "no-rerun UI boundary"),
         (tests, "SamePreferenceReResolvesAgainstFreshPolicy", "fresh policy regression"),
+        (tests, "SaturatedThresholdsDoNotImplyAUniqueMultiplier", "saturated semantic regression"),
         (tests, "CorruptUnknownUnsupportedAndOversizedPreferencesFallBackToNoPreference", "invalid preference regression"),
         (tests, "PreferenceStoreRoundTripsAndLatestSaveWins", "store replacement regression"),
         (docs, "never persists raw byte or day thresholds", "raw threshold persistence boundary"),
         (docs, "does not implement helper-policy transport", "helper transport remains open"),
+        (docs, "never reverse-infers a multiplier from a saturated numeric threshold", "saturation semantic boundary"),
         (overlay_verifier, "remembered as policy-relative multipliers", "existing overlay verifier updated for persistence"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 unchanged"),
         (gate, "verify_storage_threshold_preferences.py --repo-root $repoRoot --cases 50000", "offline preference gate"),
@@ -248,6 +267,7 @@ def check_repository(root: Path) -> int:
         checks += require(text, needle, label)
 
     for text, needle, label in (
+        (preference, "FromThresholds(", "ambiguous numeric-to-semantic reverse inference"),
         (store, "LargeFileMinimumBytes", "raw large threshold persistence"),
         (store, "SameSizeMinimumBytes", "raw same-size threshold persistence"),
         (store, "StaleAgeDays", "raw stale-age persistence"),

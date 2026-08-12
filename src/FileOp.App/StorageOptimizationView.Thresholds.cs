@@ -8,8 +8,8 @@ namespace FileOp.App;
 
 public sealed partial class StorageOptimizationView
 {
-    private sealed record SizeThresholdOption(long Value, string Label);
-    private sealed record AgeThresholdOption(int Value, string Label);
+    private sealed record SizeThresholdOption(long Value, int Multiplier, string Label);
+    private sealed record AgeThresholdOption(int Value, int Multiplier, string Label);
 
     private ComboBox? _largeThresholdComboBox;
     private ComboBox? _sameSizeThresholdComboBox;
@@ -148,15 +148,13 @@ public sealed partial class StorageOptimizationView
             return;
         }
 
-        var thresholds = new StorageOptimizationDisplayThresholds(
-            large.Value,
-            sameSize.Value,
-            stale.Value);
-        StorageOptimizationThresholdFilter.ValidateAgainstAnalysis(_analysis, thresholds);
-        _displayThresholds = thresholds;
-        _thresholdPreference = StorageOptimizationThresholdPreferencePolicy.FromThresholds(
+        _thresholdPreference = new StorageOptimizationThresholdPreference(
+            large.Multiplier,
+            sameSize.Multiplier,
+            stale.Multiplier);
+        _displayThresholds = StorageOptimizationThresholdPreferencePolicy.Resolve(
             _analysis,
-            thresholds);
+            _thresholdPreference);
         var generation = Interlocked.Increment(ref _thresholdPreferenceGeneration);
         ApplyThresholdOverlay();
         _ = SaveThresholdPreferenceAsync(_thresholdPreference, generation);
@@ -196,7 +194,7 @@ public sealed partial class StorageOptimizationView
                 $"same-size ≥ {ByteFormatter.Format(analysis.Policy.SameSizeMinimumBytes)}, stale ≥ {analysis.Policy.StaleAgeDays:N0} days. " +
                 $"Current view: large ≥ {ByteFormatter.Format(thresholds.LargeFileMinimumBytes)}, " +
                 $"same-size ≥ {ByteFormatter.Format(thresholds.SameSizeMinimumBytes)}, stale ≥ {thresholds.StaleAgeDays:N0} days. " +
-                "The remembered preference stores only supported multipliers. These controls only narrow the already bounded result; they do not rerun the helper or imply evidence below its baseline.";
+                "The remembered preference stores only supported multipliers. This view only narrows the already bounded result; it does not rerun the helper or imply evidence below its baseline.";
         }
     }
 
@@ -247,34 +245,33 @@ public sealed partial class StorageOptimizationView
             return;
         }
 
-        var baseline = StorageOptimizationDisplayThresholds.FromAnalysis(analysis);
         var current = _displayThresholds ??
             StorageOptimizationThresholdPreferencePolicy.Resolve(analysis, _thresholdPreference);
         StorageOptimizationThresholdFilter.ValidateAgainstAnalysis(analysis, current);
         _displayThresholds = current;
 
         var largeOptions = BuildSizeOptions(
-            baseline.LargeFileMinimumBytes,
-            current.LargeFileMinimumBytes);
+            analysis.Policy.LargeFileMinimumBytes,
+            _thresholdPreference.LargeFileMultiplier);
         var sameSizeOptions = BuildSizeOptions(
-            baseline.SameSizeMinimumBytes,
-            current.SameSizeMinimumBytes);
+            analysis.Policy.SameSizeMinimumBytes,
+            _thresholdPreference.SameSizeMultiplier);
         var staleOptions = BuildAgeOptions(
-            baseline.StaleAgeDays,
-            current.StaleAgeDays);
+            analysis.Policy.StaleAgeDays,
+            _thresholdPreference.StaleAgeMultiplier);
 
         _thresholdControlsUpdating = true;
         try
         {
             _largeThresholdComboBox.ItemsSource = largeOptions;
             _largeThresholdComboBox.SelectedItem = largeOptions.First(option =>
-                option.Value == current.LargeFileMinimumBytes);
+                option.Multiplier == _thresholdPreference.LargeFileMultiplier);
             _sameSizeThresholdComboBox.ItemsSource = sameSizeOptions;
             _sameSizeThresholdComboBox.SelectedItem = sameSizeOptions.First(option =>
-                option.Value == current.SameSizeMinimumBytes);
+                option.Multiplier == _thresholdPreference.SameSizeMultiplier);
             _staleAgeComboBox.ItemsSource = staleOptions;
             _staleAgeComboBox.SelectedItem = staleOptions.First(option =>
-                option.Value == current.StaleAgeDays);
+                option.Multiplier == _thresholdPreference.StaleAgeMultiplier);
         }
         finally
         {
@@ -376,45 +373,34 @@ public sealed partial class StorageOptimizationView
 
     private static IReadOnlyList<SizeThresholdOption> BuildSizeOptions(
         long baseline,
-        long current)
+        int currentMultiplier)
     {
-        var values = new SortedSet<long>
-        {
-            baseline,
-            Math.Max(baseline, current),
-            SaturatingMultiply(baseline, 2),
-            SaturatingMultiply(baseline, 4),
-            SaturatingMultiply(baseline, 8),
-        };
-        return values
-            .Select(static value => new SizeThresholdOption(value, ByteFormatter.Format(value)))
+        return StorageOptimizationThresholdPreferencePolicy.SupportedSizeMultipliers
+            .Select(multiplier => new SizeThresholdOption(
+                StorageOptimizationThresholdPreferencePolicy.SaturatingMultiply(baseline, multiplier),
+                multiplier,
+                ByteFormatter.Format(
+                    StorageOptimizationThresholdPreferencePolicy.SaturatingMultiply(baseline, multiplier))))
+            .GroupBy(static option => option.Value)
+            .Select(group =>
+                group.FirstOrDefault(option => option.Multiplier == currentMultiplier) ?? group.First())
+            .OrderBy(static option => option.Value)
             .ToArray();
     }
 
     private static IReadOnlyList<AgeThresholdOption> BuildAgeOptions(
         int baseline,
-        int current)
+        int currentMultiplier)
     {
-        var values = new SortedSet<int>
-        {
-            baseline,
-            Math.Max(baseline, current),
-            SaturatingMultiply(baseline, 2),
-            SaturatingMultiply(baseline, 4),
-            SaturatingMultiply(baseline, 6),
-        };
-        return values
-            .Select(static value => new AgeThresholdOption(value, $"{value:N0} days"))
+        return StorageOptimizationThresholdPreferencePolicy.SupportedStaleAgeMultipliers
+            .Select(multiplier => new AgeThresholdOption(
+                StorageOptimizationThresholdPreferencePolicy.SaturatingMultiply(baseline, multiplier),
+                multiplier,
+                $"{StorageOptimizationThresholdPreferencePolicy.SaturatingMultiply(baseline, multiplier):N0} days"))
+            .GroupBy(static option => option.Value)
+            .Select(group =>
+                group.FirstOrDefault(option => option.Multiplier == currentMultiplier) ?? group.First())
+            .OrderBy(static option => option.Value)
             .ToArray();
     }
-
-    private static long SaturatingMultiply(long value, int multiplier) =>
-        value > long.MaxValue / multiplier
-            ? long.MaxValue
-            : value * multiplier;
-
-    private static int SaturatingMultiply(int value, int multiplier) =>
-        value > int.MaxValue / multiplier
-            ? int.MaxValue
-            : value * multiplier;
 }

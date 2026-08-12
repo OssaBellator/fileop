@@ -63,21 +63,21 @@ public sealed class StorageOptimizationAnalyticsTests
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (File.Exists(databasePath))
+            if (System.IO.File.Exists(databasePath))
             {
-                File.Delete(databasePath);
+                System.IO.File.Delete(databasePath);
             }
 
             var wal = databasePath + "-wal";
             var shm = databasePath + "-shm";
-            if (File.Exists(wal))
+            if (System.IO.File.Exists(wal))
             {
-                File.Delete(wal);
+                System.IO.File.Delete(wal);
             }
 
-            if (File.Exists(shm))
+            if (System.IO.File.Exists(shm))
             {
-                File.Delete(shm);
+                System.IO.File.Delete(shm);
             }
         }
     }

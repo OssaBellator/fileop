@@ -131,7 +131,7 @@ public sealed class WindowsDiskIoTraceSessionControllerTests
             StartedTraceId = 0,
         };
 
-        var exception = Assert.ThrowsException<Win32Exception>(() =>
+        var exception = Assert.Throws<Win32Exception>(() =>
             new WindowsDiskIoTraceSessionController(api).Start());
 
         Assert.AreEqual(87, exception.NativeErrorCode);
@@ -147,7 +147,7 @@ public sealed class WindowsDiskIoTraceSessionControllerTests
             StartedTraceId = 0,
         };
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             new WindowsDiskIoTraceSessionController(api).Start());
         Assert.AreEqual(0, api.StopCalls);
     }
@@ -187,12 +187,12 @@ public sealed class WindowsDiskIoTraceSessionControllerTests
         };
         var session = new WindowsDiskIoTraceSessionController(api).Start().Session!;
 
-        var first = Assert.ThrowsException<Win32Exception>(() => session.Stop());
+        var first = Assert.Throws<Win32Exception>(() => session.Stop());
         Assert.AreEqual((int)WindowsDiskIoSystemSessionPolicy.ErrorAccessDenied, first.NativeErrorCode);
         Assert.AreEqual(1, api.StopCalls);
         Assert.IsTrue(session.StopAttempted);
 
-        Assert.ThrowsException<InvalidOperationException>(() => session.Stop());
+        Assert.Throws<InvalidOperationException>(() => session.Stop());
         session.Dispose();
         Assert.AreEqual(1, api.StopCalls);
     }

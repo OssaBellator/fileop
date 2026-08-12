@@ -111,7 +111,7 @@ public sealed class WindowsEtwEventRecordSnapshotTests
         fixture.WriteHeader(recordSize: 82);
         fixture.WriteUserDataPointer(IntPtr.Zero);
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsEtwEventRecordSnapshot.CopyFrom(fixture.RecordPointer));
     }
 
@@ -122,7 +122,7 @@ public sealed class WindowsEtwEventRecordSnapshotTests
         fixture.WriteHeader(recordSize: 84);
         fixture.WriteUserDataPointer(new IntPtr(1));
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsEtwEventRecordSnapshot.CopyFrom(
                 fixture.RecordPointer,
                 maximumUserDataBytes: 3));
@@ -134,7 +134,7 @@ public sealed class WindowsEtwEventRecordSnapshotTests
         using var fixture = NativeEventRecordFixture.Create(Array.Empty<byte>());
         fixture.WriteHeader(recordSize: 79);
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsEtwEventRecordSnapshot.CopyFrom(fixture.RecordPointer));
     }
 
@@ -144,7 +144,7 @@ public sealed class WindowsEtwEventRecordSnapshotTests
         using var fixture = NativeEventRecordFixture.Create(new byte[] { 1, 2, 3, 4 });
         fixture.WriteHeader(recordSize: 82);
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsEtwEventRecordSnapshot.CopyFrom(fixture.RecordPointer));
     }
 
@@ -154,16 +154,16 @@ public sealed class WindowsEtwEventRecordSnapshotTests
         using var fixture = NativeEventRecordFixture.Create(Array.Empty<byte>());
         fixture.WriteHeader(recordSize: 80);
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             WindowsEtwEventRecordSnapshot.CopyFrom(fixture.RecordPointer, -1));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             WindowsEtwEventRecordSnapshot.CopyFrom(fixture.RecordPointer, ushort.MaxValue + 1));
     }
 
     [TestMethod]
     public void NullEventRecordPointerIsRejected()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             WindowsEtwEventRecordSnapshot.CopyFrom(IntPtr.Zero));
     }
 

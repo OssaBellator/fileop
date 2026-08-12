@@ -112,7 +112,7 @@ public sealed class WindowsDiskIoIssuingThreadResolverFailureTests
         Assert.IsTrue(resolver.Resolve(101, EventTime.ToFileTime()).Resolved);
         api.FailCloseHandle = api.ThreadHandle(100);
 
-        Assert.ThrowsException<InvalidOperationException>(() => resolver.Dispose());
+        Assert.Throws<InvalidOperationException>(() => resolver.Dispose());
 
         Assert.AreEqual(3, api.CloseAttempts.Count);
         CollectionAssert.AreEquivalent(

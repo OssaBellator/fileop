@@ -80,7 +80,7 @@ public sealed class DiskIoProcessResponseTimingTests
             Timing(2, DiskIoOperationKind.Read, 2, ownerA),
         };
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             DiskIoProcessResponseTimingAnalyzer.Analyze(attribution, timings));
     }
 
@@ -107,7 +107,7 @@ public sealed class DiskIoProcessResponseTimingTests
             Timing(3, DiskIoOperationKind.Flush, 3, owner: null),
         };
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             DiskIoProcessResponseTimingAnalyzer.Analyze(attribution, timings));
     }
 
@@ -143,7 +143,7 @@ public sealed class DiskIoProcessResponseTimingTests
             providerOverheadDuration: null,
             detail: "test");
 
-        Assert.ThrowsException<InvalidOperationException>(() =>
+        Assert.Throws<InvalidOperationException>(() =>
             capture.WithProcessResponseTimings(processTiming));
 
         var attached = capture
@@ -162,7 +162,7 @@ public sealed class DiskIoProcessResponseTimingTests
             processTiming[0].OtherIdentifiedReadSamples,
             processTiming[0].OtherIdentifiedWriteSamples,
             processTiming[0].OtherIdentifiedFlushSamples);
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             capture.WithResponseTimings(diskTiming).WithProcessResponseTimings([reversed]));
     }
 
@@ -188,7 +188,7 @@ public sealed class DiskIoProcessResponseTimingTests
             detail: "empty test");
 
         Assert.AreEqual(0, processTiming.Count);
-        Assert.ThrowsException<InvalidOperationException>(() =>
+        Assert.Throws<InvalidOperationException>(() =>
             capture.WithProcessResponseTimings(processTiming));
 
         var attached = capture

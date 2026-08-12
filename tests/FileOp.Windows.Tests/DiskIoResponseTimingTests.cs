@@ -75,7 +75,7 @@ public sealed class DiskIoResponseTimingTests
     [TestMethod]
     public void InvalidTimingEvidenceFailsClosed()
     {
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             DiskIoResponseTimingAnalyzer.Analyze(
                 StartedAt,
                 EndedAt,
@@ -85,7 +85,7 @@ public sealed class DiskIoResponseTimingTests
                     DiskIoOperationKind.Read,
                     TimeSpan.FromTicks(-1))]));
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             DiskIoResponseTimingAnalyzer.Analyze(
                 StartedAt,
                 EndedAt,
@@ -99,42 +99,42 @@ public sealed class DiskIoResponseTimingTests
     [TestMethod]
     public void SummaryRejectsMalformedDurationsAndPercentiles()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new DiskIoResponseTimingSummary(
                 0,
                 TimeSpan.Zero,
                 TimeSpan.Zero,
                 p95: null,
                 maximum: TimeSpan.Zero));
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             new DiskIoResponseTimingSummary(
                 1,
                 TimeSpan.FromTicks(-1),
                 TimeSpan.Zero,
                 p95: null,
                 maximum: TimeSpan.Zero));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DiskIoResponseTimingSummary(
                 1,
                 TimeSpan.FromMilliseconds(2),
                 TimeSpan.FromMilliseconds(1),
                 p95: null,
                 maximum: TimeSpan.FromMilliseconds(3)));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DiskIoResponseTimingSummary(
                 4,
                 TimeSpan.FromMilliseconds(1),
                 TimeSpan.FromMilliseconds(2),
                 p95: TimeSpan.FromMilliseconds(3),
                 maximum: TimeSpan.FromMilliseconds(4)));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DiskIoResponseTimingSummary(
                 5,
                 TimeSpan.FromMilliseconds(1),
                 TimeSpan.FromMilliseconds(2),
                 p95: null,
                 maximum: TimeSpan.FromMilliseconds(4)));
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DiskIoDiskResponseTiming(0, reads: null, writes: null, flushes: null));
     }
 
@@ -198,7 +198,7 @@ public sealed class DiskIoResponseTimingTests
                 p95: null,
                 maximum: TimeSpan.FromMilliseconds(2)),
             flushes: null);
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             result.WithResponseTimings([bad]));
     }
 

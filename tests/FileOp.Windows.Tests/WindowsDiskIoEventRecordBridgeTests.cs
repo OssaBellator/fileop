@@ -195,7 +195,7 @@ public sealed class WindowsDiskIoEventRecordBridgeTests
             payload);
         var snapshot = WindowsEtwEventRecordSnapshot.CopyFrom(fixture.Pointer);
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoEventRecordBridge.TryDecodeCompletion(
                 snapshot,
                 TimeSpan.TicksPerSecond,
@@ -224,7 +224,7 @@ public sealed class WindowsDiskIoEventRecordBridgeTests
                 payload);
             var snapshot = WindowsEtwEventRecordSnapshot.CopyFrom(fixture.Pointer);
 
-            Assert.ThrowsException<InvalidDataException>(() =>
+            Assert.Throws<InvalidDataException>(() =>
                 WindowsDiskIoEventRecordBridge.TryDecodeCompletion(
                     snapshot,
                     TimeSpan.TicksPerSecond,
@@ -247,7 +247,7 @@ public sealed class WindowsDiskIoEventRecordBridgeTests
             payload: new byte[51]);
         var snapshot = WindowsEtwEventRecordSnapshot.CopyFrom(fixture.Pointer);
 
-        Assert.ThrowsException<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             WindowsDiskIoEventRecordBridge.TryDecodeCompletion(
                 snapshot,
                 TimeSpan.TicksPerSecond,
@@ -270,7 +270,7 @@ public sealed class WindowsDiskIoEventRecordBridgeTests
             payload);
         var snapshot = WindowsEtwEventRecordSnapshot.CopyFrom(fixture.Pointer);
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             WindowsDiskIoEventRecordBridge.TryDecodeCompletion(
                 snapshot,
                 performanceCounterFrequency: 0,

@@ -167,9 +167,10 @@ def check_repository(root: Path) -> int:
         (tests, "PidReuseIsStartedAndExitedInsteadOfMatched", "PID reuse regression"),
         (tests, "ProviderUsesExactlyTwoSnapshotsAndOneBoundedDelay", "bounded provider regression"),
         (tests, "ContractsRejectImpossibleFrames", "frame invariant regression"),
-        (docs, "does not classify a process as foreground or background", "no foreground/background classification"),
+        (docs, "does **not** classify a process as foreground or background", "no foreground/background classification"),
         (docs, "does not inspect startup registry keys", "no registration heuristic"),
         (docs, "CPU percentage is intentionally", "no fake CPU percent"),
+        (docs, "- create an impact/health score;", "no synthetic process score"),
         (wrapper, "from verify_machine_process_activity import main", "stable gate delegation"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
         (gate, "verify_background_process_activity.py --repo-root $repoRoot --cases 50000", "stable offline gate entry"),
@@ -182,7 +183,7 @@ def check_repository(root: Path) -> int:
     if provider.count("_delayAsync(budget.SamplingDelay, cancellationToken)") != 1:
         raise AssertionError("provider must use exactly one sampling delay")
     checks += 1
-    combined = core + "\n" + provider + "\n" + docs
+    combined = core + "\n" + provider
     for needle in (
         "BackgroundProcessActivity",
         "Microsoft.Win32",

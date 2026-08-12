@@ -150,7 +150,7 @@ public sealed class StorageKnownLocationReviewTests
     [TestMethod]
     public void UnavailableFactoryRejectsAvailableStatus()
     {
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             StorageKnownLocationReviewClassifier.CreateUnavailable(
                 StorageReviewProvenance.Downloads,
                 StorageReviewLocationStatus.Available,
@@ -163,7 +163,7 @@ public sealed class StorageKnownLocationReviewTests
     {
         var analysis = Analysis(File("setup.msi", ".msi"));
 
-        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             StorageKnownLocationReviewClassifier.Classify(
                 analysis,
                 (StorageReviewProvenance)999));

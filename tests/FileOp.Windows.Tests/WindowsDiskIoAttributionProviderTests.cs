@@ -107,7 +107,7 @@ public sealed class WindowsDiskIoAttributionProviderTests
         await harness.Consumer.ProcessStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         cancellation.Cancel();
-        await Assert.ThrowsExceptionAsync<OperationCanceledException>(async () => await capture);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await capture);
 
         Assert.AreEqual(1, harness.Control.StopCalls);
         Assert.AreEqual(1, harness.Consumer.CloseCalls);
@@ -147,7 +147,7 @@ public sealed class WindowsDiskIoAttributionProviderTests
             finalEvidence: new WindowsDiskIoTraceEvidence(10_000_000, 0, 0),
             delayAsync: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(async () =>
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await harness.Provider.CaptureAsync(DiskIoCaptureBudget.Default));
 
         StringAssert.Contains(exception.Message, "ended before");
@@ -167,7 +167,7 @@ public sealed class WindowsDiskIoAttributionProviderTests
             finalEvidence: new WindowsDiskIoTraceEvidence(1_000_000, 0, 0),
             delayAsync: static (_, _) => Task.CompletedTask);
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(async () =>
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await harness.Provider.CaptureAsync(
                 new DiskIoCaptureBudget(TimeSpan.FromMilliseconds(250), 10, 4)));
 
@@ -204,7 +204,7 @@ public sealed class WindowsDiskIoAttributionProviderTests
             finalEvidence: new WindowsDiskIoTraceEvidence(10_000_000, 0, 0),
             delayAsync: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(async () =>
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await harness.Provider.CaptureAsync(
                 new DiskIoCaptureBudget(TimeSpan.FromSeconds(1), 2, 4)));
 
