@@ -5,11 +5,6 @@ using System.Threading.Tasks;
 
 namespace FileOp.Core.Operations;
 
-/// <summary>
-/// Owns the same final provider capability after Core has durably claimed the exact
-/// Pending -> MutationStarted entry barrier. This scope authorizes only a later separately
-/// reviewed same-lease mutation primitive; it does not expose or perform that mutation.
-/// </summary>
 public sealed class FileDeleteOperationMutationBarrierScope : IAsyncDisposable
 {
     private readonly SemaphoreSlim _disposeGate = new(1, 1);
@@ -25,7 +20,6 @@ public sealed class FileDeleteOperationMutationBarrierScope : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(finalEvidence);
         ArgumentNullException.ThrowIfNull(barrierHistory);
         ArgumentNullException.ThrowIfNull(lease);
-
         PriorBindingEvidence = priorBindingEvidence;
         FinalEvidence = finalEvidence;
         BarrierHistory = barrierHistory;
@@ -33,17 +27,11 @@ public sealed class FileDeleteOperationMutationBarrierScope : IAsyncDisposable
     }
 
     public FileDeleteOperationHistoryBindingEvidence PriorBindingEvidence { get; }
-
     public FileDeleteOperationFinalMutationLeaseEvidence FinalEvidence { get; }
-
     public FileDeleteOperationActionHistory BarrierHistory { get; }
-
     public FileDeleteOperationUserAuthorizationReceipt Authorization => PriorBindingEvidence.Authorization;
-
     public int Ordinal => PriorBindingEvidence.Ordinal;
-
     public bool FinalLeaseHeld => Volatile.Read(ref _lease) is not null;
-
     public bool DeleteAccessCapabilityHeld
     {
         get
@@ -52,9 +40,7 @@ public sealed class FileDeleteOperationMutationBarrierScope : IAsyncDisposable
             return lease is not null && lease.DeleteAccessCapabilityHeld;
         }
     }
-
     public bool MutationBarrierSatisfied => true;
-
     public bool DeleteMutationAuthorized
     {
         get
@@ -66,7 +52,6 @@ public sealed class FileDeleteOperationMutationBarrierScope : IAsyncDisposable
                 ReferenceEquals(lease.Evidence, FinalEvidence);
         }
     }
-
     public bool DeleteMutationPerformed => false;
 
     public async ValueTask DisposeAsync()
@@ -79,7 +64,6 @@ public sealed class FileDeleteOperationMutationBarrierScope : IAsyncDisposable
             {
                 return;
             }
-
             await lease.DisposeAsync().ConfigureAwait(false);
             Volatile.Write(ref _lease, null);
         }
@@ -90,12 +74,6 @@ public sealed class FileDeleteOperationMutationBarrierScope : IAsyncDisposable
     }
 }
 
-/// <summary>
-/// Transfers ownership of the exact accepted final lease and claims the durable per-entry
-/// mutation barrier while that capability remains privately held. Cancellation is honored only
-/// before ownership transfer; the short durable barrier/inspection/recovery section is deliberately
-/// non-cancellable so caller cancellation cannot manufacture an avoidable commit-outcome ambiguity.
-/// </summary>
 public static class FileDeleteOperationMutationBarrier
 {
     private const string ValidationFailureCode = "DeleteMutationBarrierValidationFailed";
@@ -126,8 +104,6 @@ public static class FileDeleteOperationMutationBarrier
         ValidateFinalEvidence(priorBinding, finalEvidence);
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Cancellation stops here. Detach and every durability/recovery operation below use a
-        // non-cancellable critical section so a caller cannot interrupt ownership settlement.
         var lease = await finalLeaseScope.DetachLeaseAsync().ConfigureAwait(false);
         var operationId = priorBinding.HistorySnapshot.OperationId;
         var ordinal = priorBinding.Ordinal;
@@ -141,14 +117,13 @@ public static class FileDeleteOperationMutationBarrier
         }
         catch (Exception barrierException)
         {
-            var resolved = await ResolveBarrierWriteFailureAsync(
+            throw await ResolveBarrierWriteFailureAsync(
                     priorBinding,
                     finalEvidence,
                     historyStore,
                     lease,
                     barrierException)
                 .ConfigureAwait(false);
-            throw resolved;
         }
 
         try
@@ -163,7 +138,7 @@ public static class FileDeleteOperationMutationBarrier
         }
         catch (Exception validationException)
         {
-            var resolved = await RecoverAndReleaseAsync(
+            throw await RecoverAndReleaseAsync(
                     priorBinding,
                     historyStore,
                     lease,
@@ -171,7 +146,6 @@ public static class FileDeleteOperationMutationBarrier
                     ValidationFailureCode,
                     "The durable delete mutation barrier was written but its returned evidence could not be trusted.")
                 .ConfigureAwait(false);
-            throw resolved;
         }
     }
 
@@ -236,11 +210,7 @@ public static class FileDeleteOperationMutationBarrier
         }
         else
         {
-            TryValidateBarrierHistory(
-                priorBinding,
-                finalEvidence,
-                observed,
-                out var validationException);
+            TryValidateBarrierHistory(priorBinding, finalEvidence, observed, out var validationException);
             ambiguity = validationException is null
                 ? new InvalidOperationException(
                     "Delete mutation barrier write failed with an unrecognized durable history state.",
@@ -296,12 +266,16 @@ public static class FileDeleteOperationMutationBarrier
         catch (Exception disposalException)
         {
             failures.Add(disposalException);
+            return new FileDeleteOperationFinalLeaseReleaseException(
+                "Delete mutation barrier recovery failed to release the detached final capability; cleanup ownership is retained for retry.",
+                failures,
+                lease);
         }
 
         return failures.Count == 1
             ? failures[0]
             : new AggregateException(
-                "Delete mutation barrier recovery/release encountered one or more failures; durable history remains the restart-time signal.",
+                "Delete mutation barrier recovery encountered one or more failures; durable history remains the restart-time signal.",
                 failures);
     }
 
@@ -318,14 +292,13 @@ public static class FileDeleteOperationMutationBarrier
         catch (Exception disposalException)
         {
             failures.Add(disposalException);
+            return new FileDeleteOperationFinalLeaseReleaseException(
+                message + " Final capability release failed; cleanup ownership is retained for retry.",
+                failures,
+                lease);
         }
 
-        if (failures.Count == 1)
-        {
-            return failures[0];
-        }
-
-        return new AggregateException(message, failures);
+        return failures.Count == 1 ? failures[0] : new AggregateException(message, failures);
     }
 
     private static void ValidateFinalEvidence(
@@ -386,7 +359,6 @@ public static class FileDeleteOperationMutationBarrier
         ValidateStaticHistoryProvenance(priorBinding, history);
         var prior = priorBinding.HistorySnapshot;
         var ordinal = priorBinding.Ordinal;
-
         for (var index = 0; index < history.Entries.Count; index++)
         {
             var current = history.Entries[index];
@@ -426,7 +398,6 @@ public static class FileDeleteOperationMutationBarrier
         ValidateStaticHistoryProvenance(priorBinding, history);
         var prior = priorBinding.HistorySnapshot;
         var ordinal = priorBinding.Ordinal;
-
         for (var index = 0; index < history.Entries.Count; index++)
         {
             var current = history.Entries[index];
