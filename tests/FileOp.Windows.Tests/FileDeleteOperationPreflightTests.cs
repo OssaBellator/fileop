@@ -44,7 +44,7 @@ public sealed class FileDeleteOperationPreflightTests
     }
 
     [TestMethod]
-    public void ResultStatusMustMatchCapturedItemDecisions()
+    public void ResultStatusMustMatchCapturedItemDecisionsAndFileEvidence()
     {
         var plan = Plan(new FileOperationEntry(@"C:\Source\a.txt", "a.txt", false));
         var sourceRoot = Inspection(@"C:\Source", FileOperationPathState.Directory);
@@ -67,6 +67,34 @@ public sealed class FileDeleteOperationPreflightTests
                 plan,
                 sourceRoot,
                 Array.Empty<FileDeleteOperationPreflightItem>(),
+                FileDeleteOperationPreflightStatus.ReadyForFurtherReview,
+                "invalid"));
+
+        var directoryEntry = new FileOperationEntry(@"C:\Source\Folder", "Folder", true);
+        var directoryPlan = Plan(directoryEntry);
+        var invalidReadyDirectory = new FileDeleteOperationPreflightItem(
+            directoryEntry,
+            Inspection(directoryEntry.Path, FileOperationPathState.Directory),
+            FileDeleteOperationPreflightDecision.ReadyForFurtherReview,
+            "invalid ready directory");
+        Assert.ThrowsException<ArgumentException>(() =>
+            new FileDeleteOperationPreflightResult(
+                directoryPlan,
+                sourceRoot,
+                new[] { invalidReadyDirectory },
+                FileDeleteOperationPreflightStatus.ReadyForFurtherReview,
+                "invalid"));
+
+        var invalidReadyReparse = new FileDeleteOperationPreflightItem(
+            plan.Intent.Entries[0],
+            Inspection(@"C:\Source\a.txt", FileOperationPathState.File, reparse: true),
+            FileDeleteOperationPreflightDecision.ReadyForFurtherReview,
+            "invalid ready reparse");
+        Assert.ThrowsException<ArgumentException>(() =>
+            new FileDeleteOperationPreflightResult(
+                plan,
+                sourceRoot,
+                new[] { invalidReadyReparse },
                 FileDeleteOperationPreflightStatus.ReadyForFurtherReview,
                 "invalid"));
     }
