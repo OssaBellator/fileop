@@ -95,6 +95,14 @@ internal sealed partial class DesktopSearchEngine
                 "The native indexing source changed while known-location review evidence was being captured.");
         }
 
+        if (!await IsNativeReviewSourceCurrentAsync(
+                capturedVolumeIdentity,
+                capturedRoot).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                "The native volume catalog changed before known-location review evidence could be published.");
+        }
+
         return new StorageKnownLocationReviewSnapshot(
             DateTimeOffset.UtcNow,
             capturedRoot,
