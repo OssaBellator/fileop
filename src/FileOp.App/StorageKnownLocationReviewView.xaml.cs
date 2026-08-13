@@ -30,11 +30,13 @@ public sealed partial class StorageKnownLocationReviewView : UserControl
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         var candidates = snapshot.Locations
-            .SelectMany(static location => location.Candidates)
-            .OrderByDescending(static candidate => candidate.MeasuredBytes)
-            .ThenBy(static candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(candidate => StorageKnownLocationCandidateRow.FromCandidate(
-                candidate,
+            .SelectMany(location => location.Candidates.Select(candidate => (Location: location, Candidate: candidate)))
+            .OrderByDescending(static item => item.Candidate.MeasuredBytes)
+            .ThenBy(static item => item.Candidate.Path, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static item => item.Candidate.RuleId, StringComparer.Ordinal)
+            .Select(item => StorageKnownLocationCandidateRow.FromCandidate(
+                item.Candidate,
+                item.Location.RootPath,
                 snapshot.ActiveVolumeRootPath))
             .ToArray();
         LocationStatusList.ItemsSource = snapshot.Locations
@@ -95,6 +97,9 @@ public sealed record StorageKnownLocationStatusRow(
 public sealed record StorageKnownLocationCandidateRow(
     string Name,
     string Path,
+    string ReviewRootPath,
+    StorageReviewProvenance Provenance,
+    string RuleId,
     string EvidenceText,
     string SizeText,
     string LastWriteText,
@@ -102,9 +107,11 @@ public sealed record StorageKnownLocationCandidateRow(
 {
     public static StorageKnownLocationCandidateRow FromCandidate(
         StorageReviewCandidate candidate,
+        string reviewRootPath,
         string activeVolumeRootPath)
     {
         ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reviewRootPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(activeVolumeRootPath);
 
         var provenance = candidate.Provenance switch
@@ -126,6 +133,9 @@ public sealed record StorageKnownLocationCandidateRow(
         return new StorageKnownLocationCandidateRow(
             candidate.Name,
             candidate.Path,
+            reviewRootPath,
+            candidate.Provenance,
+            candidate.RuleId,
             $"{provenance} · {reason} · rule {candidate.RuleId}. Review only; this rule does not establish safe deletion." +
             (canReviewInFiles
                 ? string.Empty
