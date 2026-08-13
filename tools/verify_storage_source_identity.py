@@ -242,6 +242,7 @@ def forbid(text: str, needle: str, label: str) -> int:
 def check_repository(root: Path) -> int:
     paths = {
         "engine": "src/FileOp.App/DesktopSearchEngine.StorageSourceIdentity.cs",
+        "engine_constructor": "src/FileOp.App/DesktopSearchEngine.StorageHistory.cs",
         "lifecycle": "src/FileOp.App/DesktopSearchEngine.cs",
         "window": "src/FileOp.App/MainWindow.StorageSourceIdentity.cs",
         "app": "src/FileOp.App/App.xaml.cs",
@@ -257,8 +258,8 @@ def check_repository(root: Path) -> int:
     checks = 0
 
     required = (
-        ("engine", "public DesktopSearchEngine()", "engine identity tracker constructor"),
-        ("engine", "StateChanged += TrackStorageSourceIdentity;", "engine-first state tracking"),
+        ("engine_constructor", "public DesktopSearchEngine()", "engine identity tracker constructor"),
+        ("engine_constructor", "StateChanged += TrackStorageSourceIdentity;", "engine-first state tracking"),
         ("engine", "_nativeStorageSourceGeneration", "native source generation"),
         ("engine", "ReferenceEquals(_trackedNativeStorageSession, nativeSession)", "native helper-session tracking"),
         ("engine", "_trackedNativeStorageVolumeIdentity != nativeVolume.VolumeIdentity", "native physical identity tracking"),

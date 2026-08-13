@@ -118,7 +118,7 @@ def check_repository(repo_root: Path) -> int:
     )
 
     required = [
-        (engine, "internal DesktopSearchEngine()"),
+        (engine, "public DesktopSearchEngine()"),
         (engine, "StateChanged += StorageHistoryCapture_StateChanged"),
         (engine, "HistoryPostSyncYieldDelay"),
         (engine, "StorageHistoryCaptured?.Invoke"),
