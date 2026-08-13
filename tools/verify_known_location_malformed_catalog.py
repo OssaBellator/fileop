@@ -33,7 +33,15 @@ def try_root(path: str | None) -> str | None:
 def try_path(path: str | None) -> str | None:
     if path is None or not path.strip() or "\x00" in path:
         return None
-    return ntpath.normcase(ntpath.normpath(path.replace("/", "\\")))
+    value = path.replace("/", "\\")
+    drive, tail = ntpath.splitdrive(value)
+    fully_qualified = (
+        (drive.startswith("\\\\") and tail.startswith("\\"))
+        or (len(drive) == 2 and drive[1] == ":" and tail.startswith("\\"))
+    )
+    if not fully_qualified:
+        return None
+    return ntpath.normcase(ntpath.normpath(value))
 
 
 def select_unique(
@@ -104,6 +112,10 @@ def run_model(cases: int) -> int:
     checks += 1
     assert try_path("D:\\Users\\U\\Down\x00loads") is None
     checks += 1
+    assert try_path("D:Temp") is None
+    checks += 1
+    assert try_path("\\Temp") is None
+    checks += 1
     assert not safe_path_equal("D:\\Temp\x00", "D:\\Temp")
     checks += 1
 
@@ -170,6 +182,7 @@ def check_repository(root: Path) -> int:
     required_producer = (
         ("TryNormalizeReviewRoot(capturedPrimary.RootPath, out var capturedRoot)", "active primary root validation"),
         ("exception is ArgumentException or\n            COMException or\n            InvalidDataException or\n            IOException or\n            NotSupportedException", "Downloads resolver path exception isolation"),
+        ("if (!Path.IsPathFullyQualified(locationPath))", "local path fully-qualified requirement"),
         ("fullPath = Path.GetFullPath(locationPath);", "per-location path normalization"),
         ("resolved to an invalid filesystem path", "local malformed-path refusal"),
         ("exception is ArgumentException or NotSupportedException or PathTooLongException", "local path exception filter"),
@@ -194,6 +207,7 @@ def check_repository(root: Path) -> int:
         ("ReviewRootsEqual(primaryVolume.RootPath, activeRoot)", "selected-primary safe root comparison"),
         ("ReviewRootsEqual(current.RootPath, target.RootPath)", "secondary safe root comparison"),
         ("ReviewPathsEqual(response.Analysis.RootPath, fullPath)", "analysis-root safe comparison"),
+        ("if (!Path.IsPathFullyQualified(path))", "analysis path fully-qualified requirement"),
         ("TryNormalizeReviewPath(left", "nonthrowing analysis path normalizer"),
         ("exception is ArgumentException or NotSupportedException or PathTooLongException", "path exception fail-closed filter"),
         ("unexpected or malformed root", "malformed analysis-root refusal wording"),
