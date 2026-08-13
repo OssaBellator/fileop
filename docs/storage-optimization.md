@@ -2,7 +2,7 @@
 
 ## Purpose
 
-FileOp's Storage surface is intended to help improve storage use and system performance, not merely browse files quickly. Optimize consumes the shared filesystem index and presents evidence at progressively stronger levels without silently deleting anything or inventing an opaque health score.
+FileOp's Storage surface is intended to improve storage understanding and system performance without turning metadata heuristics into automatic cleanup. Optimize consumes the shared filesystem index and presents progressively stronger evidence while keeping mutation authority separate.
 
 The native advisor includes:
 
@@ -11,13 +11,13 @@ The native advisor includes:
 - **Same-size candidate groups** — distinct physical indexed files with equal logical length.
 - **Explicit duplicate verification** — bounded full-file SHA-256 over sampled paths under the desktop user's token.
 - **Current physical reclaim evidence** — post-hash identity/link/allocation revalidation from the already-open file handles.
-- **Session view thresholds** — user-controlled stricter filters that never imply evidence below the native helper baseline.
-- **Known-location review** — conservative Downloads/current-user-Temp review rules over the same native indexed metadata.
-- **Measured Performance evidence** — bounded foreground probes and explicit Disk I/O attribution, not generic “PC optimization.”
+- **Persisted view thresholds** — user-controlled same-or-stricter filters stored as policy-relative multipliers.
+- **Known-location review** — conservative Downloads/current-user-Temp provenance rules over the same native indexed metadata.
+- **Measured Performance evidence** — bounded foreground probes and explicit diagnostics/capture providers, not generic “PC optimization.”
 
 ## Default native policy
 
-The current helper policy is explicit and serialized with each `StorageOptimizationAnalysis`:
+The current helper policy is explicit and serialized with every `StorageOptimizationAnalysis`:
 
 - large-file minimum: 512 MiB;
 - same-size candidate minimum: 64 MiB;
@@ -29,47 +29,49 @@ The current helper policy is explicit and serialized with each `StorageOptimizat
 
 These values are policy choices, not a hidden score.
 
-The session threshold panel can make the displayed large/same-size/age thresholds **stricter** without rerunning the helper. It rejects looser values because a client-side filter cannot reconstruct evidence omitted by the bounded native query.
-
-Persisting threshold preferences or transporting lower thresholds into the helper remains a separate typed-policy decision.
+The threshold panel can make the displayed large/same-size/age thresholds **stricter** without rerunning the helper. It rejects looser values because a client-side filter cannot reconstruct evidence omitted by the bounded native query.
 
 ## Shared-index semantics
 
-Native analysis reads the same per-volume SQLite namespace used by Search, Files and Storage. It requires a valid durable NTFS checkpoint and a cross-process read lease. It does not perform a second recursive filesystem scan.
+Native analysis reads the same per-volume SQLite namespace used by Search, Files and Storage. It requires a valid durable NTFS checkpoint and a shared cross-process read lease. It does not perform a second recursive filesystem scan.
 
-Hard-link aliases are collapsed before physical-file candidate selection. A `(volume serial, file reference)` identity identifies one physical indexed file when available; missing identities fall back conservatively to path identity.
+Hard-link aliases are collapsed before physical-file candidate selection. A stable `(volume serial, file reference)` identity represents one physical indexed file when available; missing identity falls back conservatively.
 
 Largest-file ranking uses `allocated_length` when the native index knows it and falls back to logical length only when physical allocation is unavailable.
 
 ## Duplicate evidence hierarchy
 
-### Same-size candidate
+### 1. Same-size candidate
 
 Equal length is not content equality. Same-size groups are only a cheap prefilter.
 
-The full-group potential logical savings value remains:
+The full-group potential logical savings value is:
 
 `logical bytes per file × (candidate file count - 1)`
 
-That is a candidate upper bound, not guaranteed reclaimable space.
+That is a candidate upper bound, not verified duplicate or guaranteed reclaimable space.
 
-### SHA-256-matched sampled paths
+### 2. SHA-256-matched sampled paths
 
-The user must explicitly request verification for one same-size group. FileOp then fully hashes only whole sampled files that fit the hard verification budget. Content is read by the desktop under the user's token rather than through the elevated indexer.
+The user must explicitly request verification for one current same-size group. FileOp fully hashes only whole sampled files that fit the hard verification budget. Content is read by the unelevated desktop under the user's token rather than through the indexing helper.
 
-A hash match proves content equality only for the fully hashed sampled paths. Digest values are not persisted or presented as cleanup authority.
+The default policy permits at most 8 sampled files and 2 GiB of whole-file content. If fewer than two whole files fit, verification refuses before opening candidate paths. Partial-file hashes never become duplicate evidence.
 
-### Current physical reclaim upper bound
+A SHA-256 match establishes content equality only for the fully hashed sampled paths. Raw digest values are not persisted or exposed as cleanup authority.
 
-For SHA-256 matching sampled paths, FileOp reuses the still-open read handles to revalidate current physical identity, hard-link count, logical length and allocation.
+### 3. Current physical reclaim upper bound
 
-Hard-link aliases collapse again. Only current singleton-link physical files can contribute to the deletion-based reclaim upper bound. At least one content-equivalent physical file remains in the accounting model.
+For SHA-256 matching sampled paths, FileOp reuses the still-open read handles to revalidate current physical identity, hard-link count, logical length and allocated bytes.
+
+Hard-link aliases collapse again. Only current singleton-link physical files can contribute to the deletion-based reclaim upper bound, and at least one content-equivalent physical file remains in the accounting model.
 
 The resulting physical number is still a **current upper bound**, not deletion authorization. It becomes stale after verification handles close and files later change.
 
-## Session threshold semantics
+See `docs/same-size-content-verification.md` and `docs/physical-reclaim-evidence.md`.
 
-Optimize's view-threshold panel derives its presets from the native policy returned with the analysis.
+## Persisted threshold semantics
+
+Optimize presets are derived from the native policy returned with the analysis. Supported multipliers are deliberately same-or-stricter than the helper baseline.
 
 Changing a preset:
 
@@ -80,32 +82,44 @@ Changing a preset:
 - does not scan the filesystem;
 - does not change result caps.
 
-Original same-size group indices are retained so existing content/physical verification evidence remains attached when a group is hidden and later re-shown.
+The selected supported multipliers can be persisted under the current user's LocalApplicationData `FileOp/preferences` directory. FileOp stores semantic policy-relative multipliers rather than raw byte/day thresholds. Each fresh analysis resolves those multipliers again against the helper's current `StorageOptimizationPolicy`, then passes the result through the same-or-stricter completeness check.
+
+Malformed, unsupported or unavailable preference data falls back to the baseline and must not make Optimize unavailable.
+
+Original same-size group indices are retained so current content/physical verification evidence stays attached when a stricter threshold hides a group and later re-shows it.
+
+This persistence is **not helper-policy transport**. FileOp still cannot ask protocol v8 to collect files below the helper's native baseline. A future below-baseline feature would need a separately reviewed typed analysis-policy request; the current UI fails closed instead of presenting incomplete evidence as complete.
+
+See `docs/storage-threshold-overlay.md` and `docs/storage-threshold-preferences.md`.
 
 ## Known-location review
 
-The first provenance-based review slice uses the native stale-large analysis for the current user's Downloads and Temp roots when those roots are on the active indexed volume.
+The current provenance-based review uses the native stale-large analysis for the current user's Downloads and Temp roots when those roots are on the active indexed volume.
 
-Downloads uses explicit package/archive extension allow-lists. `.exe` is deliberately not inferred to be an installer. User Temp uses location provenance without extension guessing.
+Downloads uses explicit package/archive/disk-image extension allow-lists after a file is already in the bounded native stale-large source set. `.exe` is deliberately not inferred to be an installer. User Temp uses location provenance without extension guessing.
 
-Every row exposes a rule ID and reason, and the UI states that location, age, size and extension do **not** establish safe deletion. Aggregate bytes are candidate measured bytes, not guaranteed reclaim.
+Every row exposes a rule ID/reason, and the UI states that location, age, size and extension do **not** establish safe deletion. Aggregate bytes are candidate measured bytes, not guaranteed reclaim.
 
-If a known location lies on another volume, FileOp reports that scope explicitly instead of silently scanning it. If the native stale-large source reaches its cap, the review is marked potentially incomplete.
+On current `main`, a known location on another volume is reported outside the active source rather than silently scanned. If the native stale-large source reaches its cap, the review is marked potentially incomplete.
 
-See `docs/known-location-review.md` for the exact rules and boundary.
+Review in Files is a non-destructive handoff into the indexed browser; cleanup readiness is a separate read-only current-path check. Neither becomes delete consent.
 
-## Native-only reclaim boundary
+See `docs/known-location-review.md`, `docs/known-location-files-handoff.md` and `docs/cleanup-readiness.md`.
 
-Optimize reclaim evidence is available only while the native NTFS index is active. The fallback crawler is intentionally not used for reclaim recommendations because a profile-scoped fallback snapshot must not be presented as a complete volume optimization model.
+## Native-only Optimize/reclaim boundary
 
-Fallback parity can be added later only with honest scope labeling and equivalent hard-link/accounting semantics.
+Optimize reclaim evidence is available only while the native NTFS index is active. The fallback crawler is useful for Search/browse/general Storage, but its ordinary records do not preserve the same NTFS file-identity and allocated-length evidence required for equivalent hard-link-deduplicated physical reclaim accounting.
 
-## Safety boundary
+FileOp therefore does **not** claim crawler-fallback Optimize parity today. Adding such a path would require equivalent identity/allocation semantics or a deliberately weaker, separately labelled evidence model; it must not silently reuse native reclaim wording.
 
-Optimize analysis does not:
+## Mutation boundary
+
+Optimize itself remains non-destructive. It does not:
 
 - delete, move, replace, truncate or overwrite files;
-- execute queued Files operations;
+- issue a `FileDeleteOperationUserAuthorizationReceipt`;
+- invoke `FileDeleteOperationOrchestrator`;
+- execute queued Copy/Move plans;
 - automatically hash content;
 - clear caches or temporary directories;
 - label known-location candidates “junk”;
@@ -116,11 +130,13 @@ Optimize analysis does not:
 - run SQLite `VACUUM` or force WAL checkpoints;
 - calculate an opaque cleanup/health/performance score.
 
-Any future destructive operation remains behind explicit user selection, the reviewed Files preflight/recovery/authorization boundary, and fresh action-time revalidation.
+FileOp now has a separately reviewed **Files file-delete session**. That does not make Optimize evidence reusable authorization. If a user later chooses permanent deletion, the file must be selected in Files and independently pass the Files recovery scan, read-only delete preflight, canonical/protected-location validation, explicit confirmation, authorization, durable history begin and reviewed mutation orchestration.
+
+Cleanup readiness and physical reclaim values remain evidence only and cannot skip that boundary.
 
 ## Performance evidence
 
-Optimize includes measured performance evidence alongside storage review:
+Optimize/Performance surfaces include measured evidence such as:
 
 - exact bounded Search/root-Storage latency probes;
 - low-frequency latency distributions with timer-overhead disclosure;
@@ -128,24 +144,28 @@ Optimize includes measured performance evidence alongside storage review:
 - helper-owned main/WAL/SHM index footprint;
 - SQLite page/freelist evidence;
 - durable checkpoint/USN freshness evidence;
-- FileOp's own process footprint;
-- explicit bounded Disk I/O attribution capture.
+- FileOp process footprint;
+- explicit bounded Disk I/O attribution and timing/loss evidence;
+- system/device/health/fragmentation evidence where the reviewed provider supports it.
 
-Performance and full Optimize refreshes are kept out of an active Disk I/O capture so FileOp does not inject avoidable index work into the measurement it is trying to attribute.
+Performance and full Optimize refreshes are coordinated around explicit Disk I/O capture and content verification so FileOp does not intentionally contaminate the measurement it is trying to attribute.
 
-The product should avoid registry cleaners, RAM boosters, broad service disabling and similarly ungrounded optimization claims.
+The product avoids registry cleaners, RAM boosters, broad service disabling and similarly ungrounded optimization claims.
 
 ## Validation without GitHub Actions
 
-The offline gate now layers dedicated model/source guards rather than weakening the original Optimize verifier:
+`tools/test-local.ps1` is the authoritative validation inventory. Relevant offline guards include the native Optimize model, explicit content-verification model, physical reclaim accounting, threshold overlay/preferences, known-location review and Performance/index/Disk-I/O providers.
 
-- `tools/verify_storage_optimization.py` — native ranking, age, hard-link collapse and same-size candidate semantics;
-- `tools/verify_same_size_content_verification.py` — bounded explicit full-file hashing;
-- `tools/verify_physical_reclaim_evidence.py` — current physical identity/link/allocation accounting;
-- `tools/verify_storage_threshold_overlay.py` — stricter session filters and lifecycle coordination;
-- `tools/verify_known_location_review.py` — provenance/rule classification and review-only safety boundary;
-- Performance/index/Disk-I/O verifiers for the measured diagnostics surface.
+Run the portable aggregate gate:
 
-They are wired into `tools/test-local.ps1 -OfflineOnly`.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1 -OfflineOnly
+```
 
-The Windows/.NET local gate additionally contains focused native regressions. Those tests require the Windows/.NET toolchain and are not replaced by the Python models; native execution is not claimed from the current sandbox.
+The complete Windows gate additionally runs the .NET builds, regression/integration tests, WinUI x64 build, bundled-helper checks and real helper-process handshake:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
+```
+
+The portable models do not replace native Windows/.NET validation; they provide a reproducible no-Actions layer around the same reviewed boundaries.
