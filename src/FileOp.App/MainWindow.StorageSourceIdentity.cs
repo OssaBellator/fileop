@@ -60,12 +60,12 @@ public sealed partial class MainWindow
 
         // Same-size verification suppresses stale publication by comparing its
         // captured analysis object by reference rather than by generation. Clear
-        // source-bound Optimize references immediately so a verification that
-        // finishes before the queued UI source-reset handler cannot publish old
-        // evidence. Disk I/O capture is intentionally system-wide and therefore
-        // remains independent of this indexed-source transition.
-        _storageOptimizationAnalysis = null;
-        _storageKnownLocationReview = null;
+        // source-bound Optimize references with an interlocked exchange so a
+        // verification that finishes before the queued UI source-reset handler
+        // cannot publish old evidence. Disk I/O capture is intentionally system-
+        // wide and therefore remains independent of this indexed-source transition.
+        Interlocked.Exchange(ref _storageOptimizationAnalysis, null);
+        Interlocked.Exchange(ref _storageKnownLocationReview, null);
 
         // Invalidate in-flight Storage work immediately as well. Individual
         // feature handlers may advance their generation again while refreshing;
