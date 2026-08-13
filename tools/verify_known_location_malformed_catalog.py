@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify malformed native catalog/root evidence fails closed without path exceptions."""
+"""Verify malformed known-location/catalog path evidence fails closed."""
 
 from __future__ import annotations
 
@@ -30,6 +30,12 @@ def try_root(path: str | None) -> str | None:
     return ntpath.normcase(drive + "\\")
 
 
+def try_path(path: str | None) -> str | None:
+    if path is None or not path.strip() or "\x00" in path:
+        return None
+    return ntpath.normcase(ntpath.normpath(path.replace("/", "\\")))
+
+
 def select_unique(
     volumes: tuple[Volume, ...],
     expected_root: str | None,
@@ -52,14 +58,13 @@ def select_unique(
 
 
 def safe_path_equal(left: str | None, right: str | None) -> bool:
-    if (
-        left is None
-        or right is None
-        or "\x00" in left
-        or "\x00" in right
-    ):
-        return False
-    return ntpath.normcase(ntpath.normpath(left)) == ntpath.normcase(ntpath.normpath(right))
+    normalized_left = try_path(left)
+    normalized_right = try_path(right)
+    return (
+        normalized_left is not None
+        and normalized_right is not None
+        and normalized_left == normalized_right
+    )
 
 
 def run_model(cases: int) -> int:
@@ -94,6 +99,10 @@ def run_model(cases: int) -> int:
     checks += 1
     unc_root = r"\\server\share\\"
     assert try_root(unc_root) == ntpath.normcase(ntpath.normpath(unc_root))
+    checks += 1
+    assert try_path("D:\\Users\\U\\Downloads") is not None
+    checks += 1
+    assert try_path("D:\\Users\\U\\Down\x00loads") is None
     checks += 1
     assert not safe_path_equal("D:\\Temp\x00", "D:\\Temp")
     checks += 1
@@ -143,6 +152,9 @@ def forbid(text: str, needle: str, label: str) -> int:
 
 
 def check_repository(root: Path) -> int:
+    producer = (root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReview.cs").read_text(
+        encoding="utf-8"
+    )
     helper = (root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReviewCrossVolume.cs").read_text(
         encoding="utf-8"
     )
@@ -154,6 +166,18 @@ def check_repository(root: Path) -> int:
         encoding="utf-8"
     )
     checks = 0
+
+    required_producer = (
+        ("TryNormalizeReviewRoot(capturedPrimary.RootPath, out var capturedRoot)", "active primary root validation"),
+        ("fullPath = Path.GetFullPath(locationPath);", "per-location path normalization"),
+        ("resolved to an invalid filesystem path", "local malformed-path refusal"),
+        ("exception is ArgumentException or NotSupportedException or PathTooLongException", "local path exception filter"),
+        ("!ReviewRootsEqual(currentRoot, capturedRoot)", "final public root safe comparison"),
+        ("!ReviewRootsEqual(currentPrimary.RootPath, capturedRoot)", "final selected root safe comparison"),
+        ("exception is ArgumentException or\n            IOException or\n            NotSupportedException or\n            PathTooLongException", "Temp PathTooLong isolation"),
+    )
+    for needle, label in required_producer:
+        checks += require(producer, needle, label)
 
     required_helper = (
         ("out bool invalidCatalog", "selector malformed-catalog status"),
@@ -213,7 +237,7 @@ def main() -> int:
     repo_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = f" and {repo_checks:,} source checks" if args.repo_root else ""
     print(
-        "PASS: malformed known-location catalog handling verified with "
+        "PASS: malformed known-location path/catalog handling verified with "
         f"{model_checks:,} model checks across {args.cases:,} randomized states{suffix}."
     )
     return 0
