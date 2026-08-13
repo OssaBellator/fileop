@@ -103,10 +103,7 @@ internal sealed partial class DesktopSearchEngine
                         target.RootPath,
                         fullPath),
                     _lifetimeCancellation.Token).ConfigureAwait(false);
-                if (!string.Equals(
-                        Path.GetFullPath(response.Analysis.RootPath),
-                        fullPath,
-                        StringComparison.OrdinalIgnoreCase))
+                if (!ReviewPathsEqual(response.Analysis.RootPath, fullPath))
                 {
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
                         provenance,
@@ -196,6 +193,17 @@ internal sealed partial class DesktopSearchEngine
                 NormalizeRoot(volume.RootPath),
                 normalizedRoot,
                 StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool ReviewPathsEqual(string left, string right)
+    {
+        var normalizedLeft = Path.GetFullPath(left).TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar);
+        var normalizedRight = Path.GetFullPath(right).TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar);
+        return string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSnapshotRequiredState(string state) =>
