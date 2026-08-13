@@ -119,6 +119,11 @@ public static class StorageKnownLocationReviewClassifier
         var candidates = new List<StorageReviewCandidate>();
         foreach (var source in analysis.StaleLargeFiles)
         {
+            if (!IsFullyQualifiedPathWithinRoot(source.Path, analysis.RootPath))
+            {
+                continue;
+            }
+
             var classified = provenance switch
             {
                 StorageReviewProvenance.Downloads => ClassifyDownloads(source),
@@ -221,6 +226,44 @@ public static class StorageKnownLocationReviewClassifier
             source.LogicalBytes,
             source.AllocatedBytes,
             source.LastWriteTime);
+
+    private static bool IsFullyQualifiedPathWithinRoot(string? path, string? rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(path) ||
+            string.IsNullOrWhiteSpace(rootPath) ||
+            !Path.IsPathFullyQualified(path) ||
+            !Path.IsPathFullyQualified(rootPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            var fullRoot = Path.GetFullPath(rootPath);
+            var comparablePath = fullPath.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            var comparableRoot = fullRoot.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            if (string.Equals(
+                    comparablePath,
+                    comparableRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var rootedPrefix = comparableRoot + Path.DirectorySeparatorChar;
+            return comparablePath.StartsWith(rootedPrefix, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
 
     private static string CreateAvailableDetail(
         StorageOptimizationAnalysis analysis,
