@@ -15,7 +15,7 @@ class OrchestrationState:
     cancel_before_ordinal: int
     mutation_failure_ordinal: int
     release_failure_ordinal: int
-    completion_behavior: int  # 0 success, 1 throw-before-persist, 2 throw-after-persist
+    completion_behavior: int  # 0 success, 1 throw-before, 2 throw-after-success, 3 return-recovery, 4 throw-after-recovery
 
 
 @dataclass(frozen=True)
@@ -107,6 +107,19 @@ def execute(state: OrchestrationState) -> OrchestrationResult:
             terminal,
             False,
         )
+    if state.completion_behavior in (3, 4):
+        entries[0] = "R"
+        events.append("completion-recovery")
+        if state.completion_behavior == 4:
+            events.append("inspect-terminal")
+        return OrchestrationResult(
+            "completion-recovery-after-inspection" if state.completion_behavior == 4 else "completion-recovery",
+            tuple(entries),
+            tuple(events),
+            tuple(mutation_counts),
+            "RecoveryRequired",
+            False,
+        )
     return OrchestrationResult(
         "completed", tuple(entries), tuple(events), tuple(mutation_counts), terminal, False
     )
@@ -137,7 +150,7 @@ def run_model(cases: int, seed: int) -> int:
         cancel = rng.randrange(-1, count) if rng.random() < 0.15 else -1
         mutation_failure = rng.randrange(count) if rng.random() < 0.08 else -1
         release_failure = rng.randrange(count) if rng.random() < 0.05 else -1
-        completion_behavior = rng.choices((0, 1, 2), weights=(85, 8, 7), k=1)[0]
+        completion_behavior = rng.choices((0, 1, 2, 3, 4), weights=(81, 8, 7, 2, 2), k=1)[0]
         state = OrchestrationState(
             entries,
             initially_terminal,
@@ -166,11 +179,17 @@ def run_model(cases: int, seed: int) -> int:
             assert "complete" not in result.events
             checks += 3
 
-        if result.terminal_state is not None:
+        if result.terminal_state in ("Succeeded", "Failed"):
             assert all(value in ("C", "F") for value in result.entries)
             expected = "Succeeded" if all(value == "C" for value in result.entries) else "Failed"
             assert result.terminal_state == expected
             checks += 2
+
+        if result.terminal_state == "RecoveryRequired":
+            assert "R" in result.entries
+            assert result.outcome in ("completion-recovery", "completion-recovery-after-inspection")
+            assert "complete" in result.events
+            checks += 3
 
         if result.outcome == "completion-unproven":
             assert all(value in ("C", "F") for value in result.entries)
@@ -202,6 +221,7 @@ def forbid(text: str, needle: str, label: str) -> int:
 def check_repository(root: Path) -> int:
     orchestrator = (root / "src/FileOp.Core/Operations/FileDeleteOperationOrchestrator.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationOrchestratorTests.cs").read_text(encoding="utf-8")
+    recovery_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationOrchestratorRecoveryTerminalTests.cs").read_text(encoding="utf-8")
     native_tests = (root / "tests/FileOp.Windows.Tests/WindowsFileDeleteOperationOrchestratorTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/file-delete-multi-entry-orchestration.md").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
@@ -221,6 +241,7 @@ def check_repository(root: Path) -> int:
         (orchestrator, "FileDeleteOperationMutationCommit", "reviewed one-file mutation/settlement"),
         (orchestrator, "CancellationToken.None)", "post-barrier non-cancellable boundary"),
         (orchestrator, ".CompleteAsync(authorization.PlanId, CancellationToken.None)", "non-cancellable operation completion"),
+        (orchestrator, "catch (FileDeleteOperationOrchestrationRecoveryRequiredException)", "recovery completion passthrough"),
         (orchestrator, "completion was not proven", "completion-only retry semantics"),
         (orchestrator, "FileDeleteOperationOrchestrationRecoveryRequiredException", "explicit recovery signal"),
         (tests, "PendingEntriesMutateOnceInOrderAndCompleteSucceeded", "all-pending orchestration regression"),
@@ -229,6 +250,8 @@ def check_repository(root: Path) -> int:
         (tests, "CancellationAfterFirstCommitStopsBeforeNextOrdinal", "between-entry cancellation regression"),
         (tests, "CompletionThrowAfterPersistenceIsInspectedWithoutMutationReplay", "completion ambiguity regression"),
         (tests, "PostMutationReleaseFailureStopsBeforeNextOrdinalAndRetainsCleanupOwner", "cleanup ownership regression"),
+        (recovery_tests, "CompletionReturningRecoveryRequiredIsSurfacedAsRecovery", "direct recovery completion regression"),
+        (recovery_tests, "CompletionThrowThenObservedRecoveryRequiredIsSurfacedAsRecovery", "inspected recovery completion regression"),
         (native_tests, "TwoAuthorizedFilesDeleteSequentiallyAndCompleteSucceededHistory", "native two-file orchestration regression"),
         (docs, "Persisted history never recreates any of these live capabilities", "history-not-authority documentation"),
         (docs, "does not translate arbitrary pre-barrier exceptions into durable `Failed` entries", "conservative failure classification documentation"),
