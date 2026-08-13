@@ -66,7 +66,11 @@ internal sealed partial class DesktopSearchEngine
         string tempPath;
         try
         {
-            tempPath = Path.GetFullPath(Path.GetTempPath());
+            // Preserve the resolver output until AnalyzeKnownLocationAsync has
+            // verified that it is fully qualified. Calling GetFullPath here first
+            // would let a drive-relative/current-drive-rooted value inherit the
+            // desktop process current-directory state before provenance validation.
+            tempPath = Path.GetTempPath();
         }
         catch (Exception exception) when (
             exception is ArgumentException or
