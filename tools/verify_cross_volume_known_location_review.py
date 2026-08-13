@@ -46,6 +46,29 @@ def select_unique(volumes: tuple[Volume, ...], root: str) -> tuple[Volume | None
     return (matches[0] if matches else None), False
 
 
+def review_source_current(
+    *,
+    expected_identity: int,
+    expected_root: str,
+    selected_identity: int | None,
+    selected_root: str | None,
+    catalog: tuple[Volume, ...],
+) -> bool:
+    if (
+        selected_identity != expected_identity
+        or selected_root is None
+        or not same_root(selected_root, expected_root)
+    ):
+        return False
+    descriptor, ambiguous = select_unique(catalog, expected_root)
+    return (
+        not ambiguous
+        and descriptor is not None
+        and descriptor.identity == expected_identity
+        and same_root(descriptor.root, expected_root)
+    )
+
+
 def snapshot_required(volume: Volume) -> bool:
     return volume.state.lower() == "snapshotrequired"
 
@@ -105,7 +128,28 @@ def run_model(cases: int, seed: int) -> int:
     assert same_path("D:\\Temp\\", "D:\\Temp")
     assert same_path("d:\\users\\u\\downloads", "D:\\Users\\U\\Downloads\\")
     assert not same_path("D:\\Temp", "D:\\Temp2")
-    checks += 3
+    assert review_source_current(
+        expected_identity=1,
+        expected_root="C:\\",
+        selected_identity=1,
+        selected_root="c:\\",
+        catalog=before,
+    )
+    assert not review_source_current(
+        expected_identity=1,
+        expected_root="C:\\",
+        selected_identity=1,
+        selected_root="C:\\",
+        catalog=(Volume("C:\\", 9, True), Volume("D:\\", 2, True)),
+    )
+    assert not review_source_current(
+        expected_identity=1,
+        expected_root="C:\\",
+        selected_identity=1,
+        selected_root="C:\\",
+        catalog=(Volume("C:\\", 1, True), Volume("C:\\", 9, True)),
+    )
+    checks += 6
 
     fixed = (
         (
@@ -187,6 +231,36 @@ def run_model(cases: int, seed: int) -> int:
     drives = "CDEFGH"
     busy_descriptor_states = ("Idle", "Busy", "Rebuilding", "Syncing")
     for index in range(cases):
+        source_identity = 20_000_000 + index
+        selected_matches = rng.random() < 0.98
+        selected_identity = source_identity if selected_matches else source_identity + 1
+        selected_root_matches = rng.random() < 0.99
+        selected_root = "C:\\" if selected_root_matches else "D:\\"
+        catalog_present = rng.random() < 0.99
+        catalog_identity_matches = rng.random() < 0.98
+        catalog_ambiguous = rng.random() < 0.01
+        catalog_list: list[Volume] = []
+        if catalog_present:
+            catalog_identity = source_identity if catalog_identity_matches else source_identity + 2
+            catalog_list.append(Volume("C:\\", catalog_identity, True))
+            if catalog_ambiguous:
+                catalog_list.append(Volume("C:\\", catalog_identity + 1_000_000, True))
+        source_current = review_source_current(
+            expected_identity=source_identity,
+            expected_root="C:\\",
+            selected_identity=selected_identity,
+            selected_root=selected_root,
+            catalog=tuple(catalog_list),
+        )
+        assert source_current == (
+            selected_matches
+            and selected_root_matches
+            and catalog_present
+            and catalog_identity_matches
+            and not catalog_ambiguous
+        )
+        checks += 1
+
         active_drive = rng.choice(drives)
         location_drive = rng.choice(drives)
         active_root = f"{active_drive}:\\"
@@ -353,6 +427,7 @@ def forbid(text: str, needle: str, label: str) -> int:
 def check_repository(root: Path) -> int:
     paths = {
         "helper": "src/FileOp.App/DesktopSearchEngine.KnownLocationReviewCrossVolume.cs",
+        "source": "src/FileOp.App/DesktopSearchEngine.KnownLocationReviewSource.cs",
         "producer": "src/FileOp.App/DesktopSearchEngine.KnownLocationReview.cs",
         "review_model": "src/FileOp.Core/Storage/StorageKnownLocationReview.cs",
         "optimizer": "src/FileOp.Core/Storage/SqliteStorageOptimizationAnalytics.cs",
@@ -372,9 +447,15 @@ def check_repository(root: Path) -> int:
     required = (
         ("producer", "AnalyzeCrossVolumeKnownLocationAsync(", "cross-volume delegation"),
         ("producer", "var capturedVolumeIdentity = capturedPrimary.VolumeIdentity;", "snapshot primary identity capture"),
-        ("producer", "currentPrimary.VolumeIdentity != capturedVolumeIdentity", "snapshot primary identity revalidation"),
+        ("producer", "currentPrimary.VolumeIdentity != capturedVolumeIdentity", "snapshot local primary identity revalidation"),
+        ("producer", "IsNativeReviewSourceCurrentAsync(", "snapshot service-catalog freshness check"),
         ("producer", "ActiveVolumeIdentity = capturedVolumeIdentity", "snapshot identity persistence"),
         ("review_model", "public ulong? ActiveVolumeIdentity { get; init; }", "snapshot identity model"),
+        ("source", "internal async ValueTask<bool> IsNativeReviewSourceCurrentAsync(", "reusable source freshness API"),
+        ("source", "await _searchOperationGate.WaitAsync(token)", "source freshness search gate"),
+        ("source", "await _nativeOperationGate.WaitAsync(token)", "source freshness native gate"),
+        ("source", "session.Client.GetVolumesAsync(token)", "source freshness native catalog read"),
+        ("source", "FindUniqueIndexedVolumeByRoot(", "source freshness unique descriptor binding"),
         ("helper", "Path.GetPathRoot(fullPath)", "location volume-root derivation"),
         ("helper", "FindUniqueIndexedVolumeByRoot(", "unique descriptor selector"),
         ("helper", "out var primaryBeforeAmbiguous", "pre-capture primary ambiguity check"),
@@ -417,12 +498,26 @@ def check_repository(root: Path) -> int:
     for source, needle, label in required:
         checks += require(text[source], needle, label)
 
+    if text["readiness"].count("IsNativeReviewSourceCurrentAsync(") != 2:
+        raise AssertionError("cleanup readiness must verify the native catalog before and after its direct path read")
+    if text["handoff"].count("IsNativeReviewSourceCurrentAsync(") != 2:
+        raise AssertionError("Files handoff must verify the native catalog before navigation and before selection")
+    checks += 2
+
     helper = text["helper"]
     if helper.count("GetVolumesAsync(_lifetimeCancellation.Token)") != 2:
         raise AssertionError("cross-volume review must read volume descriptors before and after analysis")
     if "FirstOrDefault(volume =>" in helper:
         raise AssertionError("cross-volume volume selection must not fall back to first root match")
     checks += 2
+
+    source = text["source"]
+    source_search_at = source.index("await _searchOperationGate.WaitAsync(token)")
+    source_native_at = source.index("await _nativeOperationGate.WaitAsync(token)")
+    source_catalog_at = source.index("session.Client.GetVolumesAsync(token)")
+    if not source_search_at < source_native_at < source_catalog_at:
+        raise AssertionError("native source freshness gate/catalog ordering changed")
+    checks += 1
 
     pre_at = helper.index("var volumesBefore = await session.Client")
     primary_before_at = helper.index("var primaryBefore = FindUniqueIndexedVolumeByRoot")
@@ -449,7 +544,11 @@ def check_repository(root: Path) -> int:
         raise AssertionError("post-capture unique binding/identity/checkpoint ordering changed")
     checks += 2
 
-    for source, label in (("helper", "cross-volume helper"), ("producer", "known-location producer")):
+    for source_name, label in (
+        ("helper", "cross-volume helper"),
+        ("source", "source freshness helper"),
+        ("producer", "known-location producer"),
+    ):
         for needle in (
             "FileSystemCrawler",
             "Directory.Enumerate",
@@ -460,7 +559,7 @@ def check_repository(root: Path) -> int:
             "File.Delete(",
             "Directory.Delete(",
         ):
-            checks += forbid(text[source], needle, f"{label} {needle}")
+            checks += forbid(text[source_name], needle, f"{label} {needle}")
 
     checks += forbid(text["protocol"], "CrossVolumeKnownLocation", "new protocol operation")
     checks += forbid(text["protocol"], "KnownLocationReview", "known-location protocol surface")
