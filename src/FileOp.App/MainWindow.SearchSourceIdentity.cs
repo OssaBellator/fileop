@@ -39,10 +39,12 @@ public sealed partial class MainWindow
             return;
         }
 
-        // A Native busy publication can precede an in-place snapshot rebuild or
-        // helper replacement. Invalidate an in-flight query immediately, even
-        // though a failed elevation deliberately keeps the backing token stable.
-        if (state.Mode == DesktopSearchMode.Native && state.IsBusy)
+        // Any busy publication can precede a backing-source transition. This
+        // includes Native maintenance and helper replacement, but also elevation
+        // that begins while the current mode is Fallback. Invalidate an in-flight
+        // query immediately; unchanged backing tokens deliberately keep already-
+        // displayed rows intact when a busy operation ultimately changes nothing.
+        if (state.IsBusy)
         {
             Interlocked.Increment(ref _searchGeneration);
         }
