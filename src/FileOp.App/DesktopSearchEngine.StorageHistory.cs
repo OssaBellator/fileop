@@ -30,8 +30,9 @@ internal sealed partial class DesktopSearchEngine
     private long _nextHistoryCaptureAttemptUtcTicks;
     private int _historyCaptureInProgress;
 
-    internal DesktopSearchEngine()
+    public DesktopSearchEngine()
     {
+        StateChanged += TrackStorageSourceIdentity;
         StateChanged += StorageHistoryCapture_StateChanged;
     }
 

@@ -35,6 +35,18 @@ Invoke-Step "Offline Storage UI edge-case verifier" {
     python tools/verify_storage_ui_edgecases.py
 }
 
+Invoke-Step "Offline Storage source identity verifier" {
+    python tools/verify_storage_source_identity.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline Storage source elevation-busy verifier" {
+    python tools/verify_storage_source_elevation_busy.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline native busy publication verifier" {
+    python tools/verify_storage_busy_publication_barrier.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Storage file-type verifier" {
     python tools/verify_storage_types.py --repo-root $repoRoot
 }
