@@ -238,7 +238,7 @@ def check_repository(root: Path) -> int:
         'Content="Check readiness"',
         'Click="CheckCleanupReadinessButton_Click"',
         "Neither action prepares, queues, authorizes, or executes deletion",
-        "Delete recovery/history and mutation authorization are not implemented",
+        "permanent deletion, if later chosen in Files",
     ):
         checks += require(xaml, needle)
     checks += require(view, "CheckKnownLocationCleanupReadinessAsync(row.Path)")
@@ -248,8 +248,9 @@ def check_repository(root: Path) -> int:
     for needle in (
         "No previous readiness result is retained as current evidence",
         "Cleanup readiness has not been checked for this review",
+        "Cross-volume review candidates remain eligible for this read-only current-path check",
     ):
-        checks += require(lifecycle, needle)
+        checks += require(lifecycle + "\n" + coordinator, needle)
 
     for needle in (
         "!await _storageGate.WaitAsync(0)",
@@ -263,6 +264,10 @@ def check_repository(root: Path) -> int:
         "_storageGate.Release();",
     ):
         checks += require(coordinator, needle)
+    checks += forbid(
+        coordinator,
+        "IsPathWithinRoot(matchedLocation.RootPath, activeRoot)",
+    )
 
     for needle in (
         "MatchingCurrentEvidenceRemainsNonAuthorizing",
@@ -287,9 +292,10 @@ def check_repository(root: Path) -> int:
     checks += forbid(protocol, "CleanupReadiness")
     checks += require(gate, "verify_cleanup_readiness.py --repo-root $repoRoot --cases 50000")
     for needle in (
-        "does not yet provide a reviewed delete executor",
+        "now has a separately reviewed Files file-delete session",
         "does **not** prove that this is the same physical file object that was indexed earlier",
         "CleanupMutationAuthorized` is always `false`",
+        "not reusable consent or mutation authority",
     ):
         checks += require(docs, needle)
     return checks
