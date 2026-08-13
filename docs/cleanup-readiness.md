@@ -66,20 +66,24 @@ The Core readiness detail uses the same current wording: a consistent preview sa
 
 ## Cross-volume lifecycle
 
-Readiness is rebound to the exact candidate in the current cached native known-location review and serialized through the existing Storage gate. The review snapshot preserves both the active primary root and its `VolumeIdentity`; readiness requires both to match the current native source before starting its path checks.
+Readiness is rebound to the exact candidate in the current cached native known-location review and serialized through the existing Storage gate. The snapshot preserves the active primary root/`VolumeIdentity`, and every available location also preserves the `VolumeIdentity` of the indexed volume that produced its evidence.
 
-For a cross-volume candidate, the known-location producer has already required a current checkpointed secondary native index. The readiness service then performs its own current path/identity checks directly against that candidate and known-location root. Files handoff can remain unavailable for that candidate without disabling readiness.
+Before the direct current-path read, the coordinator reads the current native volume catalog through the engine's existing search/native gate order. It requires one unique descriptor for the active primary and for the matched location's filesystem root, requires both identities/roots to match the cached review, and requires both descriptors to still expose a checkpoint. A missing checkpoint, temporary busy descriptor, duplicate root descriptor, same-drive-letter replacement, or secondary-volume replacement therefore invalidates the cached review evidence before the readiness service is called.
 
-The coordinator retains the exact review object while the Windows read-only check is in flight. Before rendering, it requires that object still be the current cached review and rechecks the active primary root **and volume identity**. A same-drive-letter volume replacement therefore invalidates stale review evidence instead of passing merely because the root string is unchanged.
+For a cross-volume candidate, the readiness service then performs its separate current canonical/path/file-identity checks directly against that candidate and known-location root. Files handoff can remain unavailable for that candidate without disabling readiness.
+
+The coordinator retains the exact review object while the Windows read-only check is in flight. Before rendering, it again requires that object to be current, rechecks the active primary identity/root, and repeats the catalog binding for the matched location's original indexed source. A source replacement or checkpoint loss during the current-file read therefore prevents old review evidence from repainting as current merely because the path, size or timestamp still looks plausible.
 
 Any new known-location review loading/unavailable/completed state clears the previous readiness result as current evidence.
 
 ## Validation
 
-`tools/verify_cleanup_readiness.py` is wired into `tools/test-local.ps1 -OfflineOnly`.
+`tools/verify_cleanup_readiness.py` and `tools/verify_known_location_source_identity.py` are wired into `tools/test-local.ps1 -OfflineOnly`.
 
-Its deterministic/randomized model covers current/changed/blocked/unavailable states, reparse and canonical-escape boundaries, volume mismatch, two-current-read identity stability, indexed size/time drift, overlapping known-location rows, and same-root primary-volume identity replacement. The overlap model requires a unique full path/root/provenance/rule match and rejects duplicate exact bindings.
+The cleanup-readiness deterministic/randomized model covers current/changed/blocked/unavailable states, reparse and canonical-escape boundaries, volume mismatch, two-current-read identity stability, indexed size/time drift, overlapping known-location rows, and same-root primary-volume identity replacement. The overlap model requires a unique full path/root/provenance/rule match and rejects duplicate exact bindings.
 
-Repository guards pin zero-access metadata reads, the existing canonical resolver, exact UI-row/coordinator binding, snapshot primary-volume identity persistence, pre/post-read source identity checks, post-read review-object freshness, protocol v8, absence of mutation APIs in the readiness path, `CleanupMutationAuthorized == false`, current delete-boundary wording, and the separate Files delete authorization/orchestration boundary.
+The focused source-identity model additionally covers per-location source identity persistence, secondary replacement after review capture, duplicate source descriptors, missing/lost checkpoints, same-volume source binding and unavailable-location handling. Repository guards pin that same-volume and cross-volume producers persist `SourceVolumeIdentity`, final snapshot publication revalidates all available location sources, and readiness revalidates the matched owning source before and after its direct current-file read.
+
+Repository guards also pin zero-access metadata reads, the existing canonical resolver, exact UI-row/coordinator binding, snapshot primary-volume identity persistence, post-read review-object freshness, protocol v8, absence of mutation APIs in the readiness path, `CleanupMutationAuthorized == false`, current delete-boundary wording, and the separate Files delete authorization/orchestration boundary.
 
 Focused .NET tests cover Core readiness semantics plus a Windows-only current-handle metadata reader. The complete Windows local gate remains mandatory before merging changes to this boundary.
