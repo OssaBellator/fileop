@@ -1,15 +1,28 @@
 using FileOp.Core.Indexing.Service;
+using FileOp.Core.Storage;
 
 namespace FileOp.App;
 
 internal sealed partial class DesktopSearchEngine
 {
-    internal async ValueTask<bool> IsNativeReviewSourceCurrentAsync(
+    internal ValueTask<bool> IsNativeReviewSourceCurrentAsync(
         ulong expectedVolumeIdentity,
         string expectedRoot,
+        CancellationToken cancellationToken = default) =>
+        AreNativeReviewSourcesCurrentAsync(
+            expectedVolumeIdentity,
+            expectedRoot,
+            Array.Empty<StorageKnownLocationReview>(),
+            cancellationToken);
+
+    internal async ValueTask<bool> AreNativeReviewSourcesCurrentAsync(
+        ulong expectedVolumeIdentity,
+        string expectedRoot,
+        IReadOnlyList<StorageKnownLocationReview> expectedLocations,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedRoot);
+        ArgumentNullException.ThrowIfNull(expectedLocations);
         ThrowIfDisposed();
 
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -48,17 +61,49 @@ internal sealed partial class DesktopSearchEngine
                 }
 
                 var volumes = await session.Client.GetVolumesAsync(token).ConfigureAwait(false);
-                var currentDescriptor = FindUniqueIndexedVolumeByRoot(
-                    volumes.Volumes,
-                    expectedRoot,
-                    out var ambiguous);
-                return !ambiguous &&
-                    currentDescriptor is not null &&
-                    currentDescriptor.VolumeIdentity == expectedVolumeIdentity &&
-                    string.Equals(
-                        NormalizeRoot(currentDescriptor.RootPath),
-                        normalizedExpectedRoot,
-                        StringComparison.OrdinalIgnoreCase);
+                if (!MatchesExpectedSource(
+                        volumes.Volumes,
+                        expectedRoot,
+                        expectedVolumeIdentity))
+                {
+                    return false;
+                }
+
+                foreach (var location in expectedLocations)
+                {
+                    if (location.Status != StorageReviewLocationStatus.Available)
+                    {
+                        continue;
+                    }
+
+                    if (location.SourceVolumeIdentity is not { } sourceVolumeIdentity ||
+                        string.IsNullOrWhiteSpace(location.RootPath))
+                    {
+                        return false;
+                    }
+
+                    string? sourceRoot;
+                    try
+                    {
+                        sourceRoot = Path.GetPathRoot(location.RootPath);
+                    }
+                    catch (Exception exception)
+                        when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+                    {
+                        return false;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(sourceRoot) ||
+                        !MatchesExpectedSource(
+                            volumes.Volumes,
+                            sourceRoot,
+                            sourceVolumeIdentity))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
             }
             finally
             {
@@ -69,5 +114,23 @@ internal sealed partial class DesktopSearchEngine
         {
             _searchOperationGate.Release();
         }
+    }
+
+    private static bool MatchesExpectedSource(
+        IReadOnlyList<IndexingVolumeDescriptor> volumes,
+        string expectedRoot,
+        ulong expectedVolumeIdentity)
+    {
+        var currentDescriptor = FindUniqueIndexedVolumeByRoot(
+            volumes,
+            expectedRoot,
+            out var ambiguous);
+        return !ambiguous &&
+            currentDescriptor is not null &&
+            currentDescriptor.VolumeIdentity == expectedVolumeIdentity &&
+            string.Equals(
+                NormalizeRoot(currentDescriptor.RootPath),
+                NormalizeRoot(expectedRoot),
+                StringComparison.OrdinalIgnoreCase);
     }
 }
