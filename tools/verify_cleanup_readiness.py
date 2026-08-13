@@ -52,6 +52,21 @@ def analyze(
     return CONSISTENT
 
 
+def exact_review_match_count(
+    candidates: list[tuple[str, str, str, str]],
+    requested: tuple[str, str, str, str],
+) -> int:
+    path, root, provenance, rule = requested
+    return sum(
+        1
+        for candidate_path, candidate_root, candidate_provenance, candidate_rule in candidates
+        if candidate_path.casefold() == path.casefold()
+        and candidate_root.rstrip("\\/").casefold() == root.rstrip("\\/").casefold()
+        and candidate_provenance == provenance
+        and candidate_rule == rule
+    )
+
+
 def run_model(cases: int, seed: int) -> int:
     checks = 0
     base = dict(
@@ -79,12 +94,30 @@ def run_model(cases: int, seed: int) -> int:
     assert analyze(**changed) == CHANGED
     changed = base | {"root_binding": False}
     assert analyze(**changed) == BLOCKED
-    checks += 5
+
+    overlap = [
+        (r"D:\Review\same.zip", r"D:\Review", "downloads", "downloads.old-archive-extension.v1"),
+        (r"D:\Review\same.zip", r"D:\Review", "temp", "user-temp.old-large-file.v1"),
+        (r"D:\Other\same.zip", r"D:\Other", "downloads", "downloads.old-archive-extension.v1"),
+    ]
+    assert exact_review_match_count(
+        overlap,
+        (r"d:\review\same.zip", r"d:\review\", "temp", "user-temp.old-large-file.v1"),
+    ) == 1
+    assert exact_review_match_count(
+        overlap,
+        (r"D:\Review\same.zip", r"D:\Review", "downloads", "user-temp.old-large-file.v1"),
+    ) == 0
+    assert exact_review_match_count(
+        overlap + [overlap[0]],
+        overlap[0],
+    ) == 2
+    checks += 8
 
     rng = random.Random(seed)
     root_states = ("directory", "missing", "file", "inaccessible", "error")
     candidate_states = ("file", "missing", "directory", "inaccessible", "error")
-    for _ in range(cases):
+    for index in range(cases):
         values = dict(
             root_binding=rng.random() < 0.97,
             candidate_binding=rng.random() < 0.97,
@@ -155,7 +188,26 @@ def run_model(cases: int, seed: int) -> int:
                 and values["size_match"]
                 and values["time_match"]
             )
-        checks += 7
+
+        # The same path may appear under overlapping known-location rules. Exact
+        # root/provenance/rule binding must select only the row the user clicked.
+        path = rf"D:\Overlap\candidate-{index % 101}.zip"
+        root = r"D:\Overlap"
+        requested_provenance = rng.choice(("downloads", "temp"))
+        requested_rule = (
+            "downloads.old-archive-extension.v1"
+            if requested_provenance == "downloads"
+            else "user-temp.old-large-file.v1"
+        )
+        bindings = [
+            (path, root, "downloads", "downloads.old-archive-extension.v1"),
+            (path, root, "temp", "user-temp.old-large-file.v1"),
+        ]
+        assert exact_review_match_count(
+            bindings,
+            (path.swapcase(), root + "\\", requested_provenance, requested_rule),
+        ) == 1
+        checks += 8
     return checks
 
 
@@ -249,22 +301,43 @@ def check_repository(root: Path) -> int:
         "permanent deletion, if later chosen in Files",
     ):
         checks += require(xaml, needle)
-    checks += require(view, "CheckKnownLocationCleanupReadinessAsync(row.Path)")
+
+    for needle in (
+        "StorageKnownLocationCandidateRow row",
+        "row.Path",
+        "row.ReviewRootPath",
+        "row.Provenance",
+        "row.RuleId",
+    ):
+        checks += require(view, needle)
     checks += require(view, "ApplyCleanupReadiness")
     checks += forbid(view, "CleanupMutationAuthorized")
 
     for needle in (
+        "string ReviewRootPath",
+        "StorageReviewProvenance Provenance",
+        "string RuleId",
+        "item.Location.RootPath",
+        "candidate.RuleId",
         "No previous readiness result is retained as current evidence",
         "Cleanup readiness has not been checked for this review",
-        "Cross-volume review candidates remain eligible for this read-only current-path check",
     ):
-        checks += require(lifecycle + "\n" + coordinator, needle)
+        checks += require(lifecycle, needle)
 
     for needle in (
+        "string requestedReviewRoot",
+        "StorageReviewProvenance requestedProvenance",
+        "string requestedRuleId",
         "!await _storageGate.WaitAsync(0)",
         "_performanceDiskIoCaptureActive || _storageSameSizeVerificationActive",
-        "PathsEqual(candidate.Path, requestedPath)",
-        "matchedLocation.Status != StorageReviewLocationStatus.Available",
+        "location.Provenance != requestedProvenance",
+        "!PathsEqual(location.RootPath, requestedReviewRoot)",
+        "!PathsEqual(candidate.Path, requestedPath)",
+        "candidate.Provenance != requestedProvenance",
+        "!string.Equals(candidate.RuleId, requestedRuleId, StringComparison.Ordinal)",
+        "matchCount++",
+        "matchCount != 1",
+        "exact path/root/rule candidate",
         "IsPathWithinRoot(matchedCandidate.Path, matchedLocation.RootPath)",
         "_storageCleanupReadinessService.PreviewAsync",
         "ReferenceEquals(review, _storageKnownLocationReview)",
