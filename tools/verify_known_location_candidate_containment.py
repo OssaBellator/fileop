@@ -37,7 +37,7 @@ def run_model(cases: int, seed: int) -> int:
     fixed = (
         (r"C:\review\file.zip", r"C:\review", True),
         (r"c:\REVIEW\sub\file.zip", r"C:\review", True),
-        (r"C:\review", r"C:\review\", True),
+        (r"C:\review", "C:\\review\\", True),
         (r"C:\review2\file.zip", r"C:\review", False),
         (r"D:\review\file.zip", r"C:\review", False),
         (r"D:payload.zip", r"D:\review", False),
@@ -53,7 +53,8 @@ def run_model(cases: int, seed: int) -> int:
     rows = [r"C:\review\good.zip", r"C:\review2\bad.zip"]
     filtered = [path for path in rows if is_within_root(path, r"C:\review")]
     assert filtered == [r"C:\review\good.zip"]
-    assert len(rows) == 2
+    source_count = len(rows)
+    assert source_count == 2
     checks += 2
 
     rng = random.Random(seed)
@@ -96,8 +97,10 @@ def run_model(cases: int, seed: int) -> int:
         source_count = rng.randint(1, 100)
         cap = rng.randint(1, 100)
         filtered_count = rng.randint(0, source_count)
+        upstream_truncated = source_count >= cap
         assert filtered_count <= source_count
-        assert (source_count >= cap) == (source_count >= cap)
+        if source_count >= cap and filtered_count < cap:
+            assert upstream_truncated and not (filtered_count >= cap)
         checks += 4
 
     return checks
