@@ -58,6 +58,7 @@ public sealed partial class MainWindow
             Interlocked.Increment(ref _storageGeneration);
             Interlocked.Increment(ref _storageTypeGeneration);
             Interlocked.Increment(ref _storageHistoryGeneration);
+            Interlocked.Exchange(ref _storageHistoryLoadingGeneration, 0);
             Interlocked.Increment(ref _storageOptimizationGeneration);
 
             // Same-size verification uses analysis reference identity rather than
@@ -108,6 +109,7 @@ public sealed partial class MainWindow
         Interlocked.Increment(ref _storageGeneration);
         Interlocked.Increment(ref _storageTypeGeneration);
         Interlocked.Increment(ref _storageHistoryGeneration);
+        Interlocked.Exchange(ref _storageHistoryLoadingGeneration, 0);
         Interlocked.Increment(ref _storageOptimizationGeneration);
     }
 
