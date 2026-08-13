@@ -29,7 +29,7 @@ internal sealed partial class DesktopSearchEngine
             cancellationToken,
             _lifetimeCancellation.Token);
         var token = linkedCancellation.Token;
-        if (!TryNormalizeReviewRoot(expectedRoot, out _))
+        if (!TryNormalizeReviewRoot(expectedRoot, out _) || !IsPrimaryReviewStateCurrent())
         {
             return false;
         }
@@ -38,7 +38,8 @@ internal sealed partial class DesktopSearchEngine
         try
         {
             ThrowIfDisposed();
-            if (_nativeSession is not { Client.IsConnected: true } ||
+            if (!IsPrimaryReviewStateCurrent() ||
+                _nativeSession is not { Client.IsConnected: true } ||
                 _primaryVolume is not { } selectedPrimary ||
                 selectedPrimary.VolumeIdentity != expectedVolumeIdentity ||
                 !ReviewRootsEqual(selectedPrimary.RootPath, expectedRoot))
@@ -49,7 +50,8 @@ internal sealed partial class DesktopSearchEngine
             await _nativeOperationGate.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                if (_nativeSession is not { Client.IsConnected: true } session ||
+                if (!IsPrimaryReviewStateCurrent() ||
+                    _nativeSession is not { Client.IsConnected: true } session ||
                     _primaryVolume is not { } currentPrimary ||
                     currentPrimary.VolumeIdentity != expectedVolumeIdentity ||
                     !ReviewRootsEqual(currentPrimary.RootPath, expectedRoot))
@@ -117,6 +119,14 @@ internal sealed partial class DesktopSearchEngine
             _searchOperationGate.Release();
         }
     }
+
+    private bool IsPrimaryReviewStateCurrent() =>
+        State is
+        {
+            Mode: DesktopSearchMode.Native,
+            IsBusy: false,
+            IsCurrent: true,
+        };
 
     private static bool MatchesExpectedSource(
         IReadOnlyList<IndexingVolumeDescriptor> volumes,
