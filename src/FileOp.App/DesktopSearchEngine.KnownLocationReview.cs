@@ -170,11 +170,13 @@ internal sealed partial class DesktopSearchEngine
         }
         catch (IndexingServiceRemoteException exception)
         {
+            // A remote failure after review has begun is source unavailability, not
+            // proof that the path has no indexed source. The cross-volume helper is
+            // the only place that returns OutsideActiveVolume, after a fresh catalog
+            // read positively establishes that no descriptor exists for that root.
             return StorageKnownLocationReviewClassifier.CreateUnavailable(
                 provenance,
-                exception.Error.Code == IndexingServiceErrorCode.VolumeNotFound
-                    ? StorageReviewLocationStatus.OutsideActiveVolume
-                    : StorageReviewLocationStatus.Unavailable,
+                StorageReviewLocationStatus.Unavailable,
                 fullPath,
                 $"{FormatProvenance(provenance)} could not be reviewed from the native index: {exception.Error.Message}");
         }
