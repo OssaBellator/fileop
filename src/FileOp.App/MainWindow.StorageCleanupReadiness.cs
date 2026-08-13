@@ -8,9 +8,15 @@ public sealed partial class MainWindow
     private readonly WindowsStorageCleanupReadinessService _storageCleanupReadinessService = new();
     private bool _storageCleanupReadinessActive;
 
-    internal async Task CheckKnownLocationCleanupReadinessAsync(string requestedPath)
+    internal async Task CheckKnownLocationCleanupReadinessAsync(
+        string requestedPath,
+        string requestedReviewRoot,
+        StorageReviewProvenance requestedProvenance,
+        string requestedRuleId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(requestedPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestedReviewRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestedRuleId);
         if (_closed || !_storageOptimizationInitialized || _storageCleanupReadinessActive)
         {
             return;
@@ -35,39 +41,77 @@ public sealed partial class MainWindow
         {
             if (_storageKnownLocationReview is not { } review ||
                 _searchEngine.StorageRootPath is not { } activeRoot ||
+                _searchEngine.StorageVolumeIdentity is not { } activeVolumeIdentity ||
                 _searchEngine.State.IsBusy ||
                 _searchEngine.State.Mode != DesktopSearchMode.Native ||
                 !_searchEngine.StorageOptimizationAvailable)
             {
                 _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
-                    "Known-location review evidence is no longer current for an active native indexed volume. Refresh Optimize before checking cleanup readiness.");
+                    "Known-location review evidence is no longer current for an active native indexed source. Refresh Optimize before checking cleanup readiness.");
                 return;
             }
 
             StorageKnownLocationReview? matchedLocation = null;
             StorageReviewCandidate? matchedCandidate = null;
+            var matchCount = 0;
             foreach (var location in review.Locations)
             {
-                var candidate = location.Candidates.FirstOrDefault(candidate =>
-                    PathsEqual(candidate.Path, requestedPath));
-                if (candidate is not null)
+                if (location.Provenance != requestedProvenance ||
+                    !PathsEqual(location.RootPath, requestedReviewRoot))
                 {
+                    continue;
+                }
+
+                foreach (var candidate in location.Candidates)
+                {
+                    if (!PathsEqual(candidate.Path, requestedPath) ||
+                        candidate.Provenance != requestedProvenance ||
+                        !string.Equals(candidate.RuleId, requestedRuleId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    matchCount++;
                     matchedLocation = location;
                     matchedCandidate = candidate;
-                    break;
                 }
             }
 
-            if (matchedLocation is null ||
+            if (matchCount != 1 ||
+                matchedLocation is null ||
                 matchedCandidate is null ||
                 matchedLocation.Status != StorageReviewLocationStatus.Available ||
                 string.IsNullOrWhiteSpace(matchedLocation.RootPath) ||
+                review.ActiveVolumeIdentity != activeVolumeIdentity ||
                 !PathsEqual(review.ActiveVolumeRootPath, activeRoot) ||
-                !IsPathWithinRoot(matchedLocation.RootPath, activeRoot) ||
                 !IsPathWithinRoot(matchedCandidate.Path, matchedLocation.RootPath))
             {
                 _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
-                    "That path is not an available candidate in the current known-location review for this indexed volume.");
+                    "That exact path/root/rule candidate is not uniquely available in the current known-location review. Refresh Optimize before checking this read-only evidence.");
+                return;
+            }
+
+            try
+            {
+                if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
+                        activeVolumeIdentity,
+                        activeRoot,
+                        [matchedLocation],
+                        _lifetimeCancellation.Token))
+                {
+                    _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
+                        "The indexed source for this known-location review no longer matches the native volume catalog. Refresh Optimize before checking cleanup readiness.");
+                    return;
+                }
+            }
+            catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
+                    $"Cleanup readiness could not confirm the current indexed source: {exception.Message}");
                 return;
             }
 
@@ -98,15 +142,41 @@ public sealed partial class MainWindow
             }
 
             var currentRoot = _searchEngine.StorageRootPath;
+            var currentVolumeIdentity = _searchEngine.StorageVolumeIdentity;
             if (!ReferenceEquals(review, _storageKnownLocationReview) ||
                 currentRoot is null ||
+                currentVolumeIdentity != activeVolumeIdentity ||
                 !PathsEqual(currentRoot, activeRoot) ||
                 _searchEngine.State.Mode != DesktopSearchMode.Native ||
                 _searchEngine.State.IsBusy ||
                 !_searchEngine.StorageOptimizationAvailable)
             {
                 _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
-                    "The indexed source or review changed while cleanup readiness was being checked. Refresh Optimize before using the result.");
+                    "The active indexed source or review changed while cleanup readiness was being checked. Refresh Optimize before using the result.");
+                return;
+            }
+
+            try
+            {
+                if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
+                        activeVolumeIdentity,
+                        activeRoot,
+                        [matchedLocation],
+                        _lifetimeCancellation.Token))
+                {
+                    _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
+                        "The indexed source for this review changed while cleanup readiness was being checked. Refresh Optimize before using the result.");
+                    return;
+                }
+            }
+            catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
+                    $"Cleanup readiness could not re-confirm the indexed source: {exception.Message}");
                 return;
             }
 

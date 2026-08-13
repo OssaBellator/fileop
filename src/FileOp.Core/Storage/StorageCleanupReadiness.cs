@@ -45,8 +45,8 @@ public sealed record StorageCleanupReadinessPreview(
             ? allocatedBytes
             : 0;
 
-    // The repository does not yet have a durable delete recovery/history executor.
-    // This preview is intentionally incapable of authorizing mutation.
+    // Readiness evidence is deliberately separate from the reviewed Files delete session.
+    // It can never be reused as deletion consent or mutation authority.
     public bool CleanupMutationAuthorized => false;
 }
 
@@ -209,7 +209,7 @@ public static class StorageCleanupReadinessAnalyzer
             "Current canonical path, file type, identity snapshot, logical size, allocation, hard-link count and last-write time are internally consistent with this indexed review candidate. " +
             releaseDetail +
             "The indexed review did not preserve a prior physical identity, so continuity of the same file object since indexing is not proven. " +
-            "Deletion is still unavailable because durable delete recovery/history and final mutation authorization are not implemented.",
+            "This readiness preview does not authorize deletion. If permanent deletion is later chosen, the file must be selected in Files and independently pass the Files recovery, preflight, canonical validation, explicit confirmation, durable history and mutation-authorization boundary.",
             currentFile);
     }
 

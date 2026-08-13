@@ -20,7 +20,8 @@ public sealed class StorageCleanupReadinessTests
         Assert.IsTrue(preview.CanonicalEvidencePassed);
         Assert.IsFalse(preview.CleanupMutationAuthorized);
         StringAssert.Contains(preview.Detail, "continuity of the same file object since indexing is not proven");
-        StringAssert.Contains(preview.Detail, "Deletion is still unavailable");
+        StringAssert.Contains(preview.Detail, "This readiness preview does not authorize deletion");
+        StringAssert.Contains(preview.Detail, "must be selected in Files");
     }
 
     [TestMethod]

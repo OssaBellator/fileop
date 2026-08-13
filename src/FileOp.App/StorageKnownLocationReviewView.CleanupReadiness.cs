@@ -48,6 +48,10 @@ public sealed partial class StorageKnownLocationReviewView
             return;
         }
 
-        await window.CheckKnownLocationCleanupReadinessAsync(row.Path);
+        await window.CheckKnownLocationCleanupReadinessAsync(
+            row.Path,
+            row.ReviewRootPath,
+            row.Provenance,
+            row.RuleId);
     }
 }

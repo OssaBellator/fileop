@@ -10,16 +10,29 @@ internal sealed partial class DesktopSearchEngine
 {
     private readonly WindowsKnownFolderPathResolver _knownFolderPathResolver = new();
 
+    public ulong? StorageVolumeIdentity =>
+        State.Mode == DesktopSearchMode.Native
+            ? _primaryVolume?.VolumeIdentity
+            : null;
+
     public async ValueTask<StorageKnownLocationReviewSnapshot> AnalyzeKnownLocationReviewAsync()
     {
         ThrowIfDisposed();
-        if (!StorageOptimizationAvailable || StorageRootPath is not { } activeRoot)
+        if (!StorageOptimizationAvailable ||
+            !IsPrimaryReviewStateCurrent() ||
+            _primaryVolume is not { } capturedPrimary)
         {
             throw new InvalidOperationException(
-                "Known-location review currently requires the native indexed NTFS volume.");
+                "Known-location review currently requires a current native indexed NTFS volume.");
         }
 
-        var capturedRoot = Path.GetFullPath(activeRoot);
+        if (!TryNormalizeReviewRoot(capturedPrimary.RootPath, out var capturedRoot))
+        {
+            throw new InvalidOperationException(
+                "The active native indexed volume reported an invalid filesystem root.");
+        }
+
+        var capturedVolumeIdentity = capturedPrimary.VolumeIdentity;
         var locations = new List<StorageKnownLocationReview>(2);
         string downloadsPath;
         try
@@ -27,9 +40,11 @@ internal sealed partial class DesktopSearchEngine
             downloadsPath = _knownFolderPathResolver.GetDownloadsPath();
         }
         catch (Exception exception) when (
-            exception is COMException or
+            exception is ArgumentException or
+            COMException or
             InvalidDataException or
             IOException or
+            NotSupportedException or
             UnauthorizedAccessException or
             PlatformNotSupportedException)
         {
@@ -46,18 +61,24 @@ internal sealed partial class DesktopSearchEngine
             locations.Add(await AnalyzeKnownLocationAsync(
                 StorageReviewProvenance.Downloads,
                 downloadsPath,
-                capturedRoot).ConfigureAwait(false));
+                capturedRoot,
+                capturedVolumeIdentity).ConfigureAwait(false));
         }
 
         string tempPath;
         try
         {
-            tempPath = Path.GetFullPath(Path.GetTempPath());
+            // Preserve the resolver output until AnalyzeKnownLocationAsync has
+            // verified that it is fully qualified. Calling GetFullPath here first
+            // would let a drive-relative/current-drive-rooted value inherit the
+            // desktop process current-directory state before provenance validation.
+            tempPath = Path.GetTempPath();
         }
         catch (Exception exception) when (
             exception is ArgumentException or
             IOException or
             NotSupportedException or
+            PathTooLongException or
             UnauthorizedAccessException)
         {
             tempPath = string.Empty;
@@ -73,59 +94,98 @@ internal sealed partial class DesktopSearchEngine
             locations.Add(await AnalyzeKnownLocationAsync(
                 StorageReviewProvenance.UserTemp,
                 tempPath,
-                capturedRoot).ConfigureAwait(false));
+                capturedRoot,
+                capturedVolumeIdentity).ConfigureAwait(false));
         }
 
         ThrowIfDisposed();
         if (!StorageOptimizationAvailable ||
+            !IsPrimaryReviewStateCurrent() ||
             StorageRootPath is not { } currentRoot ||
-            !string.Equals(
-                Path.GetFullPath(currentRoot),
-                capturedRoot,
-                StringComparison.OrdinalIgnoreCase))
+            _primaryVolume is not { } currentPrimary ||
+            currentPrimary.VolumeIdentity != capturedVolumeIdentity ||
+            !ReviewRootsEqual(currentRoot, capturedRoot) ||
+            !ReviewRootsEqual(currentPrimary.RootPath, capturedRoot))
         {
             throw new InvalidOperationException(
-                "The native indexing source changed while known-location review evidence was being captured.");
+                "The native indexing source changed or fell behind while known-location review evidence was being captured.");
+        }
+
+        if (!await IsNativeReviewSourceCurrentAsync(
+                capturedVolumeIdentity,
+                capturedRoot,
+                locations).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                "A native indexed-volume source changed or fell behind before known-location review evidence could be published.");
         }
 
         return new StorageKnownLocationReviewSnapshot(
             DateTimeOffset.UtcNow,
             capturedRoot,
-            locations.ToArray());
+            locations.ToArray())
+        {
+            ActiveVolumeIdentity = capturedVolumeIdentity,
+        };
     }
 
     private async ValueTask<StorageKnownLocationReview> AnalyzeKnownLocationAsync(
         StorageReviewProvenance provenance,
         string locationPath,
-        string activeRoot)
+        string activeRoot,
+        ulong activeVolumeIdentity)
     {
-        var fullPath = Path.GetFullPath(locationPath);
-        if (!IsReviewPathWithinRoot(fullPath, activeRoot))
-        {
-            return StorageKnownLocationReviewClassifier.CreateUnavailable(
-                provenance,
-                StorageReviewLocationStatus.OutsideActiveVolume,
-                fullPath,
-                $"{FormatProvenance(provenance)} is outside the currently active indexed volume {activeRoot}. " +
-                "This first review slice does not aggregate candidates across volumes.");
-        }
-
+        string fullPath;
         try
         {
-            var analysis = await AnalyzeStorageOptimizationAsync(fullPath).ConfigureAwait(false);
-            return StorageKnownLocationReviewClassifier.Classify(analysis, provenance);
+            if (!Path.IsPathFullyQualified(locationPath))
+            {
+                return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                    provenance,
+                    StorageReviewLocationStatus.Unavailable,
+                    locationPath,
+                    $"{FormatProvenance(provenance)} resolved to a path that is not fully qualified.");
+            }
+
+            fullPath = Path.GetFullPath(locationPath);
         }
-        catch (IndexingServiceRemoteException exception)
-            when (exception.Error.Code is
-                IndexingServiceErrorCode.InvalidRequest or
-                IndexingServiceErrorCode.SnapshotRequired or
-                IndexingServiceErrorCode.Busy)
+        catch (Exception exception)
+            when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
             return StorageKnownLocationReviewClassifier.CreateUnavailable(
                 provenance,
                 StorageReviewLocationStatus.Unavailable,
+                locationPath,
+                $"{FormatProvenance(provenance)} resolved to an invalid filesystem path: {exception.Message}");
+        }
+
+        try
+        {
+            if (!IsReviewPathWithinRoot(fullPath, activeRoot))
+            {
+                return await AnalyzeCrossVolumeKnownLocationAsync(
+                    provenance,
+                    fullPath,
+                    activeRoot).ConfigureAwait(false);
+            }
+
+            var analysis = await AnalyzeStorageOptimizationAsync(fullPath).ConfigureAwait(false);
+            return StorageKnownLocationReviewClassifier.Classify(analysis, provenance) with
+            {
+                SourceVolumeIdentity = activeVolumeIdentity,
+            };
+        }
+        catch (IndexingServiceRemoteException exception)
+        {
+            // A remote failure after review has begun is source unavailability, not
+            // proof that the path has no indexed source. The cross-volume helper is
+            // the only place that returns OutsideActiveVolume, after a fresh catalog
+            // read positively establishes that no descriptor exists for that root.
+            return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                provenance,
+                StorageReviewLocationStatus.Unavailable,
                 fullPath,
-                $"{FormatProvenance(provenance)} could not be reviewed from the current native index: {exception.Error.Message}");
+                $"{FormatProvenance(provenance)} could not be reviewed from the native index: {exception.Error.Message}");
         }
         catch (InvalidOperationException exception)
         {

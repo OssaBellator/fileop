@@ -5,7 +5,7 @@
     <StackPanel Spacing="10">
         <TextBlock Text="Known locations review" FontSize="16" FontWeight="SemiBold" />
         <TextBlock
-            Text="Read-only, bounded review evidence from the current native index. Downloads/Temp location, file age, size, or extension do not establish that a file is safe to delete. Review in Files only opens the indexed browser; cleanup readiness only revalidates current path evidence. Neither action prepares, queues, authorizes, or executes deletion."
+            Text="Read-only, bounded review evidence from current checkpointed native indexes. Downloads/Temp location, file age, size, or extension do not establish that a file is safe to delete. Cleanup readiness only revalidates current path evidence. Review in Files is available only when the candidate is on the active Files indexed volume. Neither action prepares, queues, authorizes, or executes deletion."
             TextWrapping="Wrap"
             Opacity="0.72" />
         <TextBlock
@@ -15,7 +15,7 @@
             Opacity="0.82" />
         <TextBlock
             x:Name="CleanupReadinessStatusText"
-            Text="Cleanup readiness has not been checked. Delete recovery/history and mutation authorization are not implemented."
+            Text="Cleanup readiness has not been checked. It is read-only evidence; permanent deletion, if later chosen in Files, requires the separate Files preflight, recovery and explicit-authorization flow."
             TextWrapping="Wrap"
             Opacity="0.76" />
 
@@ -53,6 +53,7 @@
                             <Button
                                 Content="Review in Files"
                                 HorizontalAlignment="Right"
+                                IsEnabled="{Binding CanReviewInFiles}"
                                 Click="ReviewInFilesButton_Click" />
                         </StackPanel>
                     </Grid>

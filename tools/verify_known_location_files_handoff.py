@@ -40,6 +40,7 @@ def resolve_parent(
     candidate: str,
     candidates: set[str],
     *,
+    same_source_identity: bool,
     native: bool,
     busy: bool,
     optimize_ready: bool,
@@ -54,6 +55,7 @@ def resolve_parent(
         or disk_io_active
         or verification_active
         or storage_busy
+        or not same_source_identity
         or not same(active_root, review_root)
         or not any(same(candidate, item) for item in candidates)
         or not within(candidate, active_root)
@@ -74,28 +76,38 @@ def may_apply_selection(
     *,
     same_review: bool,
     same_root: bool,
+    same_source_identity: bool,
     native: bool,
     busy: bool,
     optimize_ready: bool,
 ) -> bool:
-    return same_review and same_root and native and not busy and optimize_ready
+    return (
+        same_review
+        and same_root
+        and same_source_identity
+        and native
+        and not busy
+        and optimize_ready
+    )
 
 
 def run_model(cases: int, seed: int) -> int:
     rng = random.Random(seed)
     checks = 0
     fixed = [
-        ("C:\\", "C:\\", "C:\\Users\\A\\Downloads\\old.zip", True),
-        ("C:\\", "D:\\", "C:\\Users\\A\\Downloads\\old.zip", False),
-        ("C:\\Data", "C:\\Data", "C:\\Database\\old.zip", False),
-        ("C:\\Data", "C:\\Data", "C:\\Data\\old.zip", True),
+        ("C:\\", "C:\\", "C:\\Users\\A\\Downloads\\old.zip", True, True),
+        ("C:\\", "D:\\", "C:\\Users\\A\\Downloads\\old.zip", True, False),
+        ("C:\\Data", "C:\\Data", "C:\\Database\\old.zip", True, False),
+        ("C:\\Data", "C:\\Data", "C:\\Data\\old.zip", True, True),
+        ("C:\\", "C:\\", "C:\\Users\\A\\Downloads\\old.zip", False, False),
     ]
-    for active, review, candidate, expected in fixed:
+    for active, review, candidate, same_source_identity, expected in fixed:
         result = resolve_parent(
             active,
             review,
             candidate,
             {candidate},
+            same_source_identity=same_source_identity,
             native=True,
             busy=False,
             optimize_ready=True,
@@ -113,6 +125,7 @@ def run_model(cases: int, seed: int) -> int:
     assert may_apply_selection(
         same_review=True,
         same_root=True,
+        same_source_identity=True,
         native=True,
         busy=False,
         optimize_ready=True,
@@ -120,11 +133,20 @@ def run_model(cases: int, seed: int) -> int:
     assert not may_apply_selection(
         same_review=False,
         same_root=True,
+        same_source_identity=True,
         native=True,
         busy=False,
         optimize_ready=True,
     )
-    checks += 4
+    assert not may_apply_selection(
+        same_review=True,
+        same_root=True,
+        same_source_identity=False,
+        native=True,
+        busy=False,
+        optimize_ready=True,
+    )
+    checks += 5
 
     for index in range(cases):
         drive = rng.choice("CDE")
@@ -133,6 +155,7 @@ def run_model(cases: int, seed: int) -> int:
         review_root = root if rng.random() < 0.84 else f"{rng.choice('FGH')}:\\Indexed"
         candidate = good if rng.random() < 0.90 else f"{drive}:\\IndexedElsewhere\\candidate-{index}.zip"
         listed = rng.random() < 0.91
+        same_source_identity = rng.random() < 0.96
         native = rng.random() < 0.94
         busy = rng.random() < 0.04
         optimize_ready = rng.random() < 0.96
@@ -144,6 +167,7 @@ def run_model(cases: int, seed: int) -> int:
             review_root,
             candidate,
             {candidate} if listed else {good + ".other"},
+            same_source_identity=same_source_identity,
             native=native,
             busy=busy,
             optimize_ready=optimize_ready,
@@ -158,6 +182,7 @@ def run_model(cases: int, seed: int) -> int:
             and not disk_io_active
             and not verification_active
             and not storage_busy
+            and same_source_identity
             and same(root, review_root)
             and listed
             and within(candidate, root)
@@ -201,12 +226,14 @@ def run_model(cases: int, seed: int) -> int:
 
         same_review_after_load = rng.random() < 0.93
         same_root_after_load = rng.random() < 0.96
+        same_source_identity_after_load = rng.random() < 0.96
         native_after_load = rng.random() < 0.97
         busy_after_load = rng.random() < 0.04
         optimize_ready_after_load = rng.random() < 0.96
         can_select = may_apply_selection(
             same_review=same_review_after_load,
             same_root=same_root_after_load,
+            same_source_identity=same_source_identity_after_load,
             native=native_after_load,
             busy=busy_after_load,
             optimize_ready=optimize_ready_after_load,
@@ -214,11 +241,17 @@ def run_model(cases: int, seed: int) -> int:
         assert can_select == (
             same_review_after_load
             and same_root_after_load
+            and same_source_identity_after_load
             and native_after_load
             and not busy_after_load
             and optimize_ready_after_load
         )
-        if not same_review_after_load or not same_root_after_load or not native_after_load:
+        if (
+            not same_review_after_load
+            or not same_root_after_load
+            or not same_source_identity_after_load
+            or not native_after_load
+        ):
             assert not can_select
         checks += 2
     return checks
@@ -262,6 +295,8 @@ def run_source_guards(root: Path) -> int:
         (coordinator, "!await _storageGate.WaitAsync(0)", "non-blocking Storage gate acquisition"),
         (coordinator, "_storageGate.Release();", "Storage gate release"),
         (coordinator, "_searchEngine.State.Mode != DesktopSearchMode.Native", "native evidence"),
+        (coordinator, "_searchEngine.StorageVolumeIdentity is not { } currentVolumeIdentity", "active volume identity capture"),
+        (coordinator, "review.ActiveVolumeIdentity != volumeIdentity", "review volume identity revalidation"),
         (coordinator, "PathsEqual(root, review.ActiveVolumeRootPath)", "review root revalidation"),
         (coordinator, ".SelectMany(static location => location.Candidates)", "candidate membership"),
         (coordinator, "PathsEqual(candidate.Path, requestedPath)", "candidate path binding"),
@@ -276,6 +311,8 @@ def run_source_guards(root: Path) -> int:
         (coordinator, "LoadFilesDirectoryAsync(", "existing paged Files loader"),
         (coordinator, "ReferenceEquals(review, _storageKnownLocationReview)", "post-load review identity"),
         (coordinator, "var currentRootAfterLoad = _searchEngine.StorageRootPath", "post-load root capture"),
+        (coordinator, "var currentVolumeIdentityAfterLoad = _searchEngine.StorageVolumeIdentity", "post-load volume identity capture"),
+        (coordinator, "currentVolumeIdentityAfterLoad != volumeIdentity", "post-load volume identity comparison"),
         (coordinator, "!PathsEqual(currentRootAfterLoad, root)", "post-load root comparison"),
         (coordinator, "did not auto-select stale review evidence", "stale-selection suppression"),
         (coordinator, "SetReviewSelectionHint(candidatePath)", "selection hint"),
@@ -296,11 +333,14 @@ def run_source_guards(root: Path) -> int:
     load_at = coordinator.index("await LoadFilesDirectoryAsync(")
     selection_at = coordinator.index("SetReviewSelectionHint(candidatePath)")
     freshness_at = coordinator.index("ReferenceEquals(review, _storageKnownLocationReview)")
+    identity_after_at = coordinator.index("currentVolumeIdentityAfterLoad != volumeIdentity")
     if release_at >= load_at:
         raise AssertionError("Storage gate must be released before Files loader reacquires it")
     if freshness_at <= load_at or freshness_at >= selection_at:
         raise AssertionError("post-load source freshness must be checked before applying the selection hint")
-    checks += 2
+    if identity_after_at <= load_at or identity_after_at >= selection_at:
+        raise AssertionError("post-load volume identity must be checked before applying the selection hint")
+    checks += 3
 
     combined = coordinator + "\n" + pane + "\n" + view
     for token in (

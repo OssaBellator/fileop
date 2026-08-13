@@ -30,6 +30,7 @@ public sealed partial class MainWindow
 
         StorageKnownLocationReviewSnapshot review;
         string root;
+        ulong volumeIdentity;
         string candidatePath;
         string candidateName;
         string parentPath;
@@ -38,6 +39,7 @@ public sealed partial class MainWindow
         {
             if (_storageKnownLocationReview is not { } currentReview ||
                 _searchEngine.StorageRootPath is not { } currentRoot ||
+                _searchEngine.StorageVolumeIdentity is not { } currentVolumeIdentity ||
                 _searchEngine.State.IsBusy ||
                 _searchEngine.State.Mode != DesktopSearchMode.Native ||
                 !_searchEngine.StorageOptimizationAvailable)
@@ -49,20 +51,51 @@ public sealed partial class MainWindow
 
             review = currentReview;
             root = currentRoot;
-            if (!PathsEqual(root, review.ActiveVolumeRootPath))
+            volumeIdentity = currentVolumeIdentity;
+            if (review.ActiveVolumeIdentity != volumeIdentity ||
+                !PathsEqual(root, review.ActiveVolumeRootPath))
             {
                 SetStorageStatus(
                     "The active indexed volume changed after this known-location review. Refresh Optimize before reviewing it in Files.");
                 return;
             }
 
+            try
+            {
+                if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
+                        volumeIdentity,
+                        root,
+                        _lifetimeCancellation.Token))
+                {
+                    SetStorageStatus(
+                        "The native volume catalog no longer matches this known-location review. Refresh Optimize before reviewing it in Files.");
+                    return;
+                }
+            }
+            catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                SetStorageStatus(
+                    $"Review in Files could not confirm the current indexed source: {exception.Message}");
+                return;
+            }
+
             var candidate = review.Locations
                 .SelectMany(static location => location.Candidates)
                 .FirstOrDefault(candidate => PathsEqual(candidate.Path, requestedPath));
-            if (candidate is null || !IsPathWithinRoot(candidate.Path, root))
+            if (candidate is null)
             {
                 SetStorageStatus(
-                    "That path is not a candidate in the current known-location review for this indexed volume.");
+                    "That path is not a candidate in the current known-location review.");
+                return;
+            }
+            if (!IsPathWithinRoot(candidate.Path, root))
+            {
+                SetStorageStatus(
+                    $"That review candidate is on another indexed volume. Files browsing remains bound to {root}; FileOp did not use direct filesystem enumeration as a fallback.");
                 return;
             }
 
@@ -80,7 +113,7 @@ public sealed partial class MainWindow
             if (string.IsNullOrWhiteSpace(parentPath) || !IsPathWithinRoot(parentPath, root))
             {
                 SetStorageStatus(
-                    "The review candidate parent is outside the current indexed volume and cannot be handed to Files.");
+                    "The review candidate parent is outside the current Files indexed volume and cannot be handed to Files.");
                 return;
             }
 
@@ -146,8 +179,10 @@ public sealed partial class MainWindow
         }
 
         var currentRootAfterLoad = _searchEngine.StorageRootPath;
+        var currentVolumeIdentityAfterLoad = _searchEngine.StorageVolumeIdentity;
         if (!ReferenceEquals(review, _storageKnownLocationReview) ||
             currentRootAfterLoad is null ||
+            currentVolumeIdentityAfterLoad != volumeIdentity ||
             !PathsEqual(currentRootAfterLoad, root) ||
             _searchEngine.State.Mode != DesktopSearchMode.Native ||
             _searchEngine.State.IsBusy ||
@@ -158,6 +193,35 @@ public sealed partial class MainWindow
                 parentPath);
             SetFilesStatus(
                 "Known-location handoff stopped after the indexed source changed; refresh Optimize before selecting that review candidate.");
+            return;
+        }
+
+        try
+        {
+            if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
+                    volumeIdentity,
+                    root,
+                    _lifetimeCancellation.Token))
+            {
+                paneView.SetStatus(
+                    "The native volume catalog changed while the review candidate was being handed to Files. The parent directory is open, but stale review evidence was not auto-selected.",
+                    parentPath);
+                SetFilesStatus(
+                    "Known-location handoff stopped after the native volume catalog changed; refresh Optimize before selecting that review candidate.");
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            paneView.SetStatus(
+                "The current indexed source could not be re-confirmed, so stale review evidence was not auto-selected.",
+                parentPath);
+            SetFilesStatus(
+                $"Known-location handoff could not re-confirm the indexed source: {exception.Message}");
             return;
         }
 

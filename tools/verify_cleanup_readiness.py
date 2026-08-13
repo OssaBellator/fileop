@@ -52,6 +52,38 @@ def analyze(
     return CONSISTENT
 
 
+def exact_review_match_count(
+    candidates: list[tuple[str, str, str, str]],
+    requested: tuple[str, str, str, str],
+) -> int:
+    path, root, provenance, rule = requested
+    return sum(
+        1
+        for candidate_path, candidate_root, candidate_provenance, candidate_rule in candidates
+        if candidate_path.casefold() == path.casefold()
+        and candidate_root.rstrip("\\/").casefold() == root.rstrip("\\/").casefold()
+        and candidate_provenance == provenance
+        and candidate_rule == rule
+    )
+
+
+def source_binding_current(
+    review_identity: int | None,
+    start_identity: int | None,
+    end_identity: int | None,
+    review_root: str,
+    start_root: str,
+    end_root: str,
+) -> bool:
+    normalized_review_root = review_root.rstrip("\\/").casefold()
+    return (
+        review_identity is not None
+        and review_identity == start_identity == end_identity
+        and normalized_review_root == start_root.rstrip("\\/").casefold()
+        and normalized_review_root == end_root.rstrip("\\/").casefold()
+    )
+
+
 def run_model(cases: int, seed: int) -> int:
     checks = 0
     base = dict(
@@ -79,12 +111,33 @@ def run_model(cases: int, seed: int) -> int:
     assert analyze(**changed) == CHANGED
     changed = base | {"root_binding": False}
     assert analyze(**changed) == BLOCKED
-    checks += 5
+
+    overlap = [
+        (r"D:\Review\same.zip", r"D:\Review", "downloads", "downloads.old-archive-extension.v1"),
+        (r"D:\Review\same.zip", r"D:\Review", "temp", "user-temp.old-large-file.v1"),
+        (r"D:\Other\same.zip", r"D:\Other", "downloads", "downloads.old-archive-extension.v1"),
+    ]
+    assert exact_review_match_count(
+        overlap,
+        (r"d:\review\same.zip", r"d:\review\", "temp", "user-temp.old-large-file.v1"),
+    ) == 1
+    assert exact_review_match_count(
+        overlap,
+        (r"D:\Review\same.zip", r"D:\Review", "downloads", "user-temp.old-large-file.v1"),
+    ) == 0
+    assert exact_review_match_count(
+        overlap + [overlap[0]],
+        overlap[0],
+    ) == 2
+    assert source_binding_current(10, 10, 10, r"C:\", r"c:\", r"C:\")
+    assert not source_binding_current(10, 10, 11, r"C:\", r"C:\", r"C:\")
+    assert not source_binding_current(None, 10, 10, r"C:\", r"C:\", r"C:\")
+    checks += 11
 
     rng = random.Random(seed)
     root_states = ("directory", "missing", "file", "inaccessible", "error")
     candidate_states = ("file", "missing", "directory", "inaccessible", "error")
-    for _ in range(cases):
+    for index in range(cases):
         values = dict(
             root_binding=rng.random() < 0.97,
             candidate_binding=rng.random() < 0.97,
@@ -155,7 +208,47 @@ def run_model(cases: int, seed: int) -> int:
                 and values["size_match"]
                 and values["time_match"]
             )
-        checks += 7
+
+        # The same path may appear under overlapping known-location rules. Exact
+        # root/provenance/rule binding must select only the row the user clicked.
+        path = rf"D:\Overlap\candidate-{index % 101}.zip"
+        root = r"D:\Overlap"
+        requested_provenance = rng.choice(("downloads", "temp"))
+        requested_rule = (
+            "downloads.old-archive-extension.v1"
+            if requested_provenance == "downloads"
+            else "user-temp.old-large-file.v1"
+        )
+        bindings = [
+            (path, root, "downloads", "downloads.old-archive-extension.v1"),
+            (path, root, "temp", "user-temp.old-large-file.v1"),
+        ]
+        assert exact_review_match_count(
+            bindings,
+            (path.swapcase(), root + "\\", requested_provenance, requested_rule),
+        ) == 1
+
+        review_identity = rng.randrange(1, 1_000_000)
+        start_identity = review_identity if rng.random() < 0.98 else review_identity + 1
+        end_identity = start_identity if rng.random() < 0.97 else start_identity + 1
+        review_root = r"C:\"
+        start_root = r"c:\" if rng.random() < 0.99 else r"D:\"
+        end_root = r"C:\" if rng.random() < 0.99 else r"D:\"
+        expected_source_current = (
+            start_identity == review_identity
+            and end_identity == review_identity
+            and start_root.rstrip("\\/").casefold() == review_root.rstrip("\\/").casefold()
+            and end_root.rstrip("\\/").casefold() == review_root.rstrip("\\/").casefold()
+        )
+        assert source_binding_current(
+            review_identity,
+            start_identity,
+            end_identity,
+            review_root,
+            start_root,
+            end_root,
+        ) == expected_source_current
+        checks += 9
     return checks
 
 
@@ -174,6 +267,8 @@ def forbid(text: str, needle: str) -> int:
 def check_repository(root: Path) -> int:
     checks = 0
     core = (root / "src/FileOp.Core/Storage/StorageCleanupReadiness.cs").read_text(encoding="utf-8")
+    review_model = (root / "src/FileOp.Core/Storage/StorageKnownLocationReview.cs").read_text(encoding="utf-8")
+    producer = (root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReview.cs").read_text(encoding="utf-8")
     windows = (root / "src/FileOp.Windows/Storage/WindowsStorageCleanupReadinessService.cs").read_text(encoding="utf-8")
     xaml = (root / "src/FileOp.App/StorageKnownLocationReviewView.xaml").read_text(encoding="utf-8")
     view = (root / "src/FileOp.App/StorageKnownLocationReviewView.CleanupReadiness.cs").read_text(encoding="utf-8")
@@ -206,9 +301,26 @@ def check_repository(root: Path) -> int:
         "candidate.LastWriteTime.ToUniversalTime().UtcDateTime.Ticks",
         "CleanupMutationAuthorized => false",
         "continuity of the same file object since indexing is not proven",
-        "Deletion is still unavailable",
+        "This readiness preview does not authorize deletion",
+        "must be selected in Files and independently pass the Files recovery",
+        "can never be reused as deletion consent or mutation authority",
     ):
         checks += require(core, needle)
+    for stale in (
+        "The repository does not yet have a durable delete recovery/history executor",
+        "Deletion is still unavailable",
+        "durable delete recovery/history and final mutation authorization are not implemented",
+    ):
+        checks += forbid(core, stale)
+
+    checks += require(review_model, "public ulong? ActiveVolumeIdentity { get; init; }")
+    for needle in (
+        "public ulong? StorageVolumeIdentity",
+        "var capturedVolumeIdentity = capturedPrimary.VolumeIdentity;",
+        "currentPrimary.VolumeIdentity != capturedVolumeIdentity",
+        "ActiveVolumeIdentity = capturedVolumeIdentity",
+    ):
+        checks += require(producer, needle)
 
     for needle in (
         "WindowsFileOperationCanonicalPathResolver",
@@ -238,31 +350,60 @@ def check_repository(root: Path) -> int:
         'Content="Check readiness"',
         'Click="CheckCleanupReadinessButton_Click"',
         "Neither action prepares, queues, authorizes, or executes deletion",
-        "Delete recovery/history and mutation authorization are not implemented",
+        "permanent deletion, if later chosen in Files",
     ):
         checks += require(xaml, needle)
-    checks += require(view, "CheckKnownLocationCleanupReadinessAsync(row.Path)")
+
+    for needle in (
+        "StorageKnownLocationCandidateRow row",
+        "row.Path",
+        "row.ReviewRootPath",
+        "row.Provenance",
+        "row.RuleId",
+    ):
+        checks += require(view, needle)
     checks += require(view, "ApplyCleanupReadiness")
     checks += forbid(view, "CleanupMutationAuthorized")
 
     for needle in (
+        "string ReviewRootPath",
+        "StorageReviewProvenance Provenance",
+        "string RuleId",
+        "item.Location.RootPath",
+        "candidate.RuleId",
         "No previous readiness result is retained as current evidence",
         "Cleanup readiness has not been checked for this review",
     ):
         checks += require(lifecycle, needle)
 
     for needle in (
+        "string requestedReviewRoot",
+        "StorageReviewProvenance requestedProvenance",
+        "string requestedRuleId",
         "!await _storageGate.WaitAsync(0)",
         "_performanceDiskIoCaptureActive || _storageSameSizeVerificationActive",
-        "PathsEqual(candidate.Path, requestedPath)",
-        "matchedLocation.Status != StorageReviewLocationStatus.Available",
+        "_searchEngine.StorageVolumeIdentity is not { } activeVolumeIdentity",
+        "location.Provenance != requestedProvenance",
+        "!PathsEqual(location.RootPath, requestedReviewRoot)",
+        "!PathsEqual(candidate.Path, requestedPath)",
+        "candidate.Provenance != requestedProvenance",
+        "!string.Equals(candidate.RuleId, requestedRuleId, StringComparison.Ordinal)",
+        "matchCount++",
+        "matchCount != 1",
+        "exact path/root/rule candidate",
+        "review.ActiveVolumeIdentity != activeVolumeIdentity",
         "IsPathWithinRoot(matchedCandidate.Path, matchedLocation.RootPath)",
         "_storageCleanupReadinessService.PreviewAsync",
         "ReferenceEquals(review, _storageKnownLocationReview)",
+        "currentVolumeIdentity != activeVolumeIdentity",
         "ApplyKnownLocationCleanupReadiness(preview)",
         "_storageGate.Release();",
     ):
         checks += require(coordinator, needle)
+    checks += forbid(
+        coordinator,
+        "IsPathWithinRoot(matchedLocation.RootPath, activeRoot)",
+    )
 
     for needle in (
         "MatchingCurrentEvidenceRemainsNonAuthorizing",
@@ -287,9 +428,10 @@ def check_repository(root: Path) -> int:
     checks += forbid(protocol, "CleanupReadiness")
     checks += require(gate, "verify_cleanup_readiness.py --repo-root $repoRoot --cases 50000")
     for needle in (
-        "does not yet provide a reviewed delete executor",
+        "now has a separately reviewed Files file-delete session",
         "does **not** prove that this is the same physical file object that was indexed earlier",
         "CleanupMutationAuthorized` is always `false`",
+        "not reusable consent or mutation authority",
     ):
         checks += require(docs, needle)
     return checks
