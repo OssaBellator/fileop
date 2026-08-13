@@ -41,6 +41,7 @@ public sealed partial class MainWindow
         {
             if (_storageKnownLocationReview is not { } review ||
                 _searchEngine.StorageRootPath is not { } activeRoot ||
+                _searchEngine.StorageVolumeIdentity is not { } activeVolumeIdentity ||
                 _searchEngine.State.IsBusy ||
                 _searchEngine.State.Mode != DesktopSearchMode.Native ||
                 !_searchEngine.StorageOptimizationAvailable)
@@ -81,6 +82,7 @@ public sealed partial class MainWindow
                 matchedCandidate is null ||
                 matchedLocation.Status != StorageReviewLocationStatus.Available ||
                 string.IsNullOrWhiteSpace(matchedLocation.RootPath) ||
+                review.ActiveVolumeIdentity != activeVolumeIdentity ||
                 !PathsEqual(review.ActiveVolumeRootPath, activeRoot) ||
                 !IsPathWithinRoot(matchedCandidate.Path, matchedLocation.RootPath))
             {
@@ -116,8 +118,10 @@ public sealed partial class MainWindow
             }
 
             var currentRoot = _searchEngine.StorageRootPath;
+            var currentVolumeIdentity = _searchEngine.StorageVolumeIdentity;
             if (!ReferenceEquals(review, _storageKnownLocationReview) ||
                 currentRoot is null ||
+                currentVolumeIdentity != activeVolumeIdentity ||
                 !PathsEqual(currentRoot, activeRoot) ||
                 _searchEngine.State.Mode != DesktopSearchMode.Native ||
                 _searchEngine.State.IsBusy ||
