@@ -767,6 +767,7 @@ public sealed partial class MainWindow : Window
         }
 
         var storageSourceBeforeElevation = _storageSourceKey;
+        var storageIdentityBeforeElevation = _searchEngine.StorageSourceIdentityKey;
         SearchBox.IsEnabled = false;
         StorageRefreshButton.IsEnabled = false;
         EnableFastIndexButton.IsEnabled = false;
@@ -805,10 +806,15 @@ public sealed partial class MainWindow : Window
             _searchEngine.StorageRootPath is { } root)
         {
             var currentSourceKey = CreateStorageSourceKey(_searchEngine.State.Mode, root);
+            var currentSourceIdentityKey = _searchEngine.StorageSourceIdentityKey;
             if (string.Equals(
                     currentSourceKey,
                     storageSourceBeforeElevation,
-                    StringComparison.OrdinalIgnoreCase))
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    currentSourceIdentityKey,
+                    storageIdentityBeforeElevation,
+                    StringComparison.Ordinal))
             {
                 var path = _storageCurrentPath;
                 if (string.IsNullOrWhiteSpace(path) || !IsPathWithinRoot(path, root))
