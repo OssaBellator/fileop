@@ -59,10 +59,16 @@ public sealed partial class MainWindow
             var candidate = review.Locations
                 .SelectMany(static location => location.Candidates)
                 .FirstOrDefault(candidate => PathsEqual(candidate.Path, requestedPath));
-            if (candidate is null || !IsPathWithinRoot(candidate.Path, root))
+            if (candidate is null)
             {
                 SetStorageStatus(
-                    "That path is not a candidate in the current known-location review for this indexed volume.");
+                    "That path is not a candidate in the current known-location review.");
+                return;
+            }
+            if (!IsPathWithinRoot(candidate.Path, root))
+            {
+                SetStorageStatus(
+                    $"That review candidate is on another indexed volume. Files browsing remains bound to {root}; FileOp did not use direct filesystem enumeration as a fallback.");
                 return;
             }
 
@@ -80,7 +86,7 @@ public sealed partial class MainWindow
             if (string.IsNullOrWhiteSpace(parentPath) || !IsPathWithinRoot(parentPath, root))
             {
                 SetStorageStatus(
-                    "The review candidate parent is outside the current indexed volume and cannot be handed to Files.");
+                    "The review candidate parent is outside the current Files indexed volume and cannot be handed to Files.");
                 return;
             }
 
