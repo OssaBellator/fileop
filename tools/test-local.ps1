@@ -83,6 +83,22 @@ Invoke-Step "Offline known-location review verifier" {
     python tools/verify_known_location_review.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline cross-volume known-location review verifier" {
+    python tools/verify_cross_volume_known_location_review.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline known-location source identity verifier" {
+    python tools/verify_known_location_source_identity.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline malformed known-location catalog verifier" {
+    python tools/verify_known_location_malformed_catalog.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline known-location status semantics verifier" {
+    python tools/verify_known_location_status_semantics.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline known-location Files handoff verifier" {
     python tools/verify_known_location_files_handoff.py --repo-root $repoRoot --cases 50000
 }
