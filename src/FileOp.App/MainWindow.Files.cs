@@ -294,7 +294,7 @@ public sealed partial class MainWindow
         var tab = pane.ActiveTab;
         var current = tab.CurrentPath;
         var cursor = tab.NextCursor;
-        if (current is null || cursor is null || pane.LoadingGeneration != 0)
+        if (current is null || cursor is null || Volatile.Read(ref pane.LoadingGeneration) != 0)
         {
             return;
         }
@@ -400,7 +400,7 @@ public sealed partial class MainWindow
         EnsureFilesPaneHasTab(pane, root);
         ApplyFilesTabs(pane);
 
-        if (pane.LoadingGeneration != 0)
+        if (Volatile.Read(ref pane.LoadingGeneration) != 0)
         {
             return;
         }
@@ -522,8 +522,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        var generation = ++pane.Generation;
-        pane.LoadingGeneration = generation;
+        var generation = Interlocked.Increment(ref pane.Generation);
+        Volatile.Write(ref pane.LoadingGeneration, generation);
         var paneView = GetFilesPaneView(pane);
         paneView.SetLoading(
             directoryPath,
@@ -556,7 +556,7 @@ public sealed partial class MainWindow
                 }
 
                 ApplyFilesPage(pane, tab, page, root, append);
-                pane.LoadingGeneration = 0;
+                Volatile.Write(ref pane.LoadingGeneration, 0);
             }
             finally
             {
@@ -590,9 +590,10 @@ public sealed partial class MainWindow
         }
         finally
         {
-            if (IsFilesRequestCurrent(pane, tab, generation) && pane.LoadingGeneration == generation)
+            if (IsFilesRequestCurrent(pane, tab, generation) &&
+                Volatile.Read(ref pane.LoadingGeneration) == generation)
             {
-                pane.LoadingGeneration = 0;
+                Volatile.Write(ref pane.LoadingGeneration, 0);
             }
 
             if (IsFilesRequestCurrent(pane, tab, generation))
@@ -613,7 +614,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        pane.LoadingGeneration = 0;
+        Volatile.Write(ref pane.LoadingGeneration, 0);
         GetFilesPaneView(pane).SetStatus(message, tab.CurrentPath);
         SetFilesStatus($"{pane.Name}: {message}");
     }
@@ -622,7 +623,7 @@ public sealed partial class MainWindow
         !_closed &&
         _filesVisible &&
         pane.ActiveTabId == tab.Id &&
-        pane.Generation == generation;
+        Volatile.Read(ref pane.Generation) == generation;
 
     private void ApplyFilesPage(
         FilesPaneState pane,
@@ -718,8 +719,8 @@ public sealed partial class MainWindow
 
     private void InvalidateFilesPane(FilesPaneState pane)
     {
-        pane.Generation++;
-        pane.LoadingGeneration = 0;
+        Interlocked.Increment(ref pane.Generation);
+        Volatile.Write(ref pane.LoadingGeneration, 0);
     }
 
     private void EnsureFilesPaneHasTab(FilesPaneState pane, string? path)
@@ -841,9 +842,9 @@ public sealed partial class MainWindow
 
         public Guid ActiveTabId { get; set; }
 
-        public int Generation { get; set; }
+        public int Generation;
 
-        public int LoadingGeneration { get; set; }
+        public int LoadingGeneration;
 
         public FilesTabState ActiveTab =>
             Tabs.First(tab => tab.Id == ActiveTabId);

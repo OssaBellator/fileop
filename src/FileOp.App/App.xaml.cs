@@ -16,6 +16,8 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         var window = new MainWindow();
+        window.InitializeStorageSourceIdentityTracking();
+        window.InitializeSearchSourceIdentityTracking();
         window.InitializeFilesFeature();
         MainWindow = window;
         _window = window;

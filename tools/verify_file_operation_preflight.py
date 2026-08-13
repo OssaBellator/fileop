@@ -191,7 +191,7 @@ def check_repository(root: Path) -> int:
         'core': root / 'src/FileOp.Core/Operations/FileOperationPreflight.cs',
         'windows': root / 'src/FileOp.Windows/Operations/WindowsFileOperationPreflightValidator.cs',
         'execution': root / 'src/FileOp.Core/Operations/FileOperationExecution.cs',
-        'docs': root / 'docs/files-browser.md',
+        'docs': root / 'docs/file-operation-execution-validation.md',
         'local': root / 'tools/test-local.ps1',
     }
     missing = [str(path) for path in paths.values() if not path.is_file()]
@@ -244,8 +244,8 @@ def check_repository(root: Path) -> int:
 
     assert re.search(r'public interface IFileOperationExecutor\s*\{', source['execution'])
     assert 'class WindowsFileOperationPreflightValidator : IFileOperationExecutor' not in source['windows']
-    assert '## Read-only live preflight' in source['docs']
-    assert 'not execution authorization' in source['docs']
+    assert 'deliberately separate from queue preflight' in source['docs']
+    assert 'Preflight remains a fast conservative metadata check' in source['docs']
     assert 'reparse' in source['docs'].casefold()
     assert 'verify_file_operation_preflight.py' in source['local']
 

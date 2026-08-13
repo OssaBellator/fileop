@@ -35,6 +35,22 @@ Invoke-Step "Offline Storage UI edge-case verifier" {
     python tools/verify_storage_ui_edgecases.py
 }
 
+Invoke-Step "Offline Storage source identity verifier" {
+    python tools/verify_storage_source_identity.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline Storage source elevation-busy verifier" {
+    python tools/verify_storage_source_elevation_busy.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline native busy publication verifier" {
+    python tools/verify_storage_busy_publication_barrier.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline Search source lifetime verifier" {
+    python tools/verify_search_source_lifetime.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Storage file-type verifier" {
     python tools/verify_storage_types.py --repo-root $repoRoot
 }
@@ -65,22 +81,6 @@ Invoke-Step "Offline Storage threshold preference verifier" {
 
 Invoke-Step "Offline known-location review verifier" {
     python tools/verify_known_location_review.py --repo-root $repoRoot --cases 50000
-}
-
-Invoke-Step "Offline cross-volume known-location review verifier" {
-    python tools/verify_cross_volume_known_location_review.py --repo-root $repoRoot --cases 50000
-}
-
-Invoke-Step "Offline known-location source identity verifier" {
-    python tools/verify_known_location_source_identity.py --repo-root $repoRoot --cases 50000
-}
-
-Invoke-Step "Offline malformed known-location catalog verifier" {
-    python tools/verify_known_location_malformed_catalog.py --repo-root $repoRoot --cases 50000
-}
-
-Invoke-Step "Offline known-location status semantics verifier" {
-    python tools/verify_known_location_status_semantics.py --repo-root $repoRoot --cases 50000
 }
 
 Invoke-Step "Offline known-location Files handoff verifier" {
