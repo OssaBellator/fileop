@@ -45,11 +45,11 @@ public sealed partial class MainWindow
             return;
         }
 
-        // Same-identity native maintenance can replace the snapshot in place.
-        // Invalidate source-bound Optimize evidence immediately only for that
-        // maintenance class; a user elevation attempt that leaves the helper
-        // unchanged is temporarily busy but does not replace the indexed source.
-        if (_searchEngine.StorageSourceMaintenanceBusy)
+        // A successful native elevation can replace the helper/session after the
+        // initial IsBusy publication. Clear source-bound Optimize references at
+        // every native busy entry so same-size verification cannot publish old
+        // evidence in that interval; failed elevation may conservatively refresh.
+        if (state.Mode == DesktopSearchMode.Native && state.IsBusy)
         {
             Interlocked.Exchange(ref _storageOptimizationAnalysis, null);
             Interlocked.Exchange(ref _storageKnownLocationReview, null);
