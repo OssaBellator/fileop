@@ -77,6 +77,14 @@ public sealed partial class MainWindow
         Interlocked.Exchange(ref _storageHistorySourceKey, null);
         Interlocked.Exchange(ref _storageOptimizationSourceKey, null);
 
+        // Files page requests use per-pane generation tokens. BrowseDirectoryAsync
+        // prevents a source swap during the engine read, but the source can change
+        // after that read returns and before the UI continuation publishes the page.
+        // Advance both request tokens immediately so an old-source page fails
+        // IsFilesRequestCurrent before the queued Files state handler runs.
+        InvalidateFilesPane(_leftFilesPane);
+        InvalidateFilesPane(_rightFilesPane);
+
         // Same-size verification suppresses stale publication by comparing its
         // captured analysis object by reference rather than by generation. Clear
         // source-bound Optimize references with an interlocked exchange so a
