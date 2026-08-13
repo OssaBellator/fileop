@@ -206,9 +206,17 @@ def check_repository(root: Path) -> int:
         "candidate.LastWriteTime.ToUniversalTime().UtcDateTime.Ticks",
         "CleanupMutationAuthorized => false",
         "continuity of the same file object since indexing is not proven",
-        "Deletion is still unavailable",
+        "This readiness preview does not authorize deletion",
+        "must be selected in Files and independently pass the Files recovery",
+        "can never be reused as deletion consent or mutation authority",
     ):
         checks += require(core, needle)
+    for stale in (
+        "The repository does not yet have a durable delete recovery/history executor",
+        "Deletion is still unavailable",
+        "durable delete recovery/history and final mutation authorization are not implemented",
+    ):
+        checks += forbid(core, stale)
 
     for needle in (
         "WindowsFileOperationCanonicalPathResolver",
