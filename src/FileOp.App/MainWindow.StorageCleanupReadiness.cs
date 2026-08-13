@@ -93,7 +93,7 @@ public sealed partial class MainWindow
 
             try
             {
-                if (!await _searchEngine.AreNativeReviewSourcesCurrentAsync(
+                if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
                         activeVolumeIdentity,
                         activeRoot,
                         [matchedLocation],
@@ -158,7 +158,7 @@ public sealed partial class MainWindow
 
             try
             {
-                if (!await _searchEngine.AreNativeReviewSourcesCurrentAsync(
+                if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
                         activeVolumeIdentity,
                         activeRoot,
                         [matchedLocation],
