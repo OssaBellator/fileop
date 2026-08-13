@@ -15,6 +15,7 @@ class Source:
     mode: str
     root: str | None
     native_identity: int | None = None
+    native_generation: int = 0
     fallback_generation: int = 0
 
 
@@ -24,8 +25,12 @@ def normalize_windows_path(path: str) -> str:
 
 
 def identity_key(source: Source) -> str | None:
-    if source.mode == "Native" and source.native_identity is not None:
-        return f"native:{source.native_identity:016X}"
+    if (
+        source.mode == "Native"
+        and source.native_identity is not None
+        and source.native_generation > 0
+    ):
+        return f"native:{source.native_identity:016X}:{source.native_generation}"
     if source.mode == "Fallback" and source.fallback_generation > 0:
         return f"fallback:{source.fallback_generation}"
     return None
@@ -43,6 +48,31 @@ def cache_is_current(previous: Source, current: Source) -> bool:
         and identity_key(previous) == identity_key(current)
         and root_cache_key(previous) == root_cache_key(current)
     )
+
+
+def track_native_generation(
+    generation: int,
+    active: bool,
+    tracked_session: int | None,
+    tracked_identity: int | None,
+    mode: str,
+    busy: bool,
+    session: int | None,
+    identity: int | None,
+) -> tuple[int, bool, int | None, int | None]:
+    if mode == "Native" and session is not None and identity is not None:
+        session_changed = tracked_session != session
+        identity_changed = tracked_identity != identity
+        if session_changed or identity_changed:
+            return generation + 1, not busy, session, identity
+        if busy:
+            if active:
+                generation += 1
+            return generation, False, tracked_session, tracked_identity
+        return generation, True, tracked_session, tracked_identity
+    if mode != "Native":
+        return generation, False, None, None
+    return generation, active, tracked_session, tracked_identity
 
 
 def track_fallback_generation(
@@ -78,56 +108,216 @@ def run_model(cases: int) -> int:
         replacement_identity = native_identity
         while replacement_identity == native_identity:
             replacement_identity = rng.getrandbits(64)
+        native_generation = rng.randint(1, 1_000_000)
         fallback_generation = rng.randint(1, 1_000_000)
 
-        native = Source("Native", root, native_identity=native_identity)
-        native_same = Source("Native", root_case_variant, native_identity=native_identity)
-        native_replaced = Source("Native", root, native_identity=replacement_identity)
-        native_other_root = Source("Native", other_root, native_identity=native_identity)
+        native = Source(
+            "Native",
+            root,
+            native_identity=native_identity,
+            native_generation=native_generation,
+        )
+        native_same = Source(
+            "Native",
+            root_case_variant,
+            native_identity=native_identity,
+            native_generation=native_generation,
+        )
+        native_replaced = Source(
+            "Native",
+            root,
+            native_identity=replacement_identity,
+            native_generation=native_generation,
+        )
+        native_rebuilt = Source(
+            "Native",
+            root,
+            native_identity=native_identity,
+            native_generation=native_generation + 1,
+        )
+        native_other_root = Source(
+            "Native",
+            other_root,
+            native_identity=native_identity,
+            native_generation=native_generation,
+        )
         fallback = Source("Fallback", root, fallback_generation=fallback_generation)
-        fallback_same = Source("Fallback", root_case_variant, fallback_generation=fallback_generation)
-        fallback_rebuilt = Source("Fallback", root, fallback_generation=fallback_generation + 1)
+        fallback_same = Source(
+            "Fallback",
+            root_case_variant,
+            fallback_generation=fallback_generation,
+        )
+        fallback_rebuilt = Source(
+            "Fallback",
+            root,
+            fallback_generation=fallback_generation + 1,
+        )
         unavailable = Source("Initializing", None)
 
         assert cache_is_current(native, native_same)
         assert not cache_is_current(native, native_replaced)
+        assert not cache_is_current(native, native_rebuilt)
         assert not cache_is_current(native, native_other_root)
         assert cache_is_current(fallback, fallback_same)
         assert not cache_is_current(fallback, fallback_rebuilt)
         assert not cache_is_current(native, fallback)
         assert not cache_is_current(native, unavailable)
-        checks += 7
+        checks += 8
+
+        session = rng.randint(1, 1_000_000)
+        native_state = (
+            native_generation,
+            True,
+            session,
+            native_identity,
+        )
+        repeated_native = track_native_generation(
+            *native_state,
+            "Native",
+            False,
+            session,
+            native_identity,
+        )
+        assert repeated_native == native_state
+        checks += 1
+
+        busy_native = track_native_generation(
+            *repeated_native,
+            "Native",
+            True,
+            session,
+            native_identity,
+        )
+        assert busy_native == (
+            native_generation + 1,
+            False,
+            session,
+            native_identity,
+        )
+        checks += 1
+
+        repeated_busy = track_native_generation(
+            *busy_native,
+            "Native",
+            True,
+            session,
+            native_identity,
+        )
+        assert repeated_busy == busy_native
+        checks += 1
+
+        recovered_native = track_native_generation(
+            *repeated_busy,
+            "Native",
+            False,
+            session,
+            native_identity,
+        )
+        assert recovered_native == (
+            native_generation + 1,
+            True,
+            session,
+            native_identity,
+        )
+        checks += 1
+
+        replacement_session = session + 1_000_001
+        replaced_session = track_native_generation(
+            *recovered_native,
+            "Native",
+            False,
+            replacement_session,
+            native_identity,
+        )
+        assert replaced_session == (
+            native_generation + 2,
+            True,
+            replacement_session,
+            native_identity,
+        )
+        checks += 1
+
+        replaced_identity = track_native_generation(
+            *replaced_session,
+            "Native",
+            False,
+            replacement_session,
+            replacement_identity,
+        )
+        assert replaced_identity == (
+            native_generation + 3,
+            True,
+            replacement_session,
+            replacement_identity,
+        )
+        checks += 1
+
+        left_native = track_native_generation(
+            *replaced_identity,
+            "Fallback",
+            False,
+            None,
+            None,
+        )
+        assert left_native == (native_generation + 3, False, None, None)
+        checks += 1
+
+        reentered_native = track_native_generation(
+            *left_native,
+            "Native",
+            False,
+            replacement_session,
+            replacement_identity,
+        )
+        assert reentered_native == (
+            native_generation + 4,
+            True,
+            replacement_session,
+            replacement_identity,
+        )
+        checks += 1
 
         generation = fallback_generation
         active = True
-        repeated_generation, repeated_active = track_fallback_generation(
-            generation, active, "Fallback", True
+        repeated_fallback = track_fallback_generation(
+            generation,
+            active,
+            "Fallback",
+            True,
         )
-        assert repeated_generation == generation and repeated_active
+        assert repeated_fallback == (generation, True)
         checks += 1
 
-        initializing_generation, initializing_active = track_fallback_generation(
-            repeated_generation, repeated_active, "Initializing", False
+        initializing_fallback = track_fallback_generation(
+            *repeated_fallback,
+            "Initializing",
+            False,
         )
-        assert initializing_generation == generation and not initializing_active
+        assert initializing_fallback == (generation, False)
         checks += 1
 
-        rebuilt_generation, rebuilt_active = track_fallback_generation(
-            initializing_generation, initializing_active, "Fallback", True
+        rebuilt_fallback = track_fallback_generation(
+            *initializing_fallback,
+            "Fallback",
+            True,
         )
-        assert rebuilt_generation == generation + 1 and rebuilt_active
+        assert rebuilt_fallback == (generation + 1, True)
         checks += 1
 
-        native_generation, native_active = track_fallback_generation(
-            rebuilt_generation, rebuilt_active, "Native", False
+        native_after_fallback = track_fallback_generation(
+            *rebuilt_fallback,
+            "Native",
+            False,
         )
-        assert native_generation == generation + 1 and not native_active
+        assert native_after_fallback == (generation + 1, False)
         checks += 1
 
-        next_fallback_generation, next_fallback_active = track_fallback_generation(
-            native_generation, native_active, "Fallback", True
+        next_fallback = track_fallback_generation(
+            *native_after_fallback,
+            "Fallback",
+            True,
         )
-        assert next_fallback_generation == generation + 2 and next_fallback_active
+        assert next_fallback == (generation + 2, True)
         checks += 1
 
     return checks
@@ -148,6 +338,7 @@ def forbid(text: str, needle: str, label: str) -> int:
 def check_repository(root: Path) -> int:
     paths = {
         "engine": "src/FileOp.App/DesktopSearchEngine.StorageSourceIdentity.cs",
+        "lifecycle": "src/FileOp.App/DesktopSearchEngine.cs",
         "window": "src/FileOp.App/MainWindow.StorageSourceIdentity.cs",
         "app": "src/FileOp.App/App.xaml.cs",
         "main": "src/FileOp.App/MainWindow.xaml.cs",
@@ -164,11 +355,18 @@ def check_repository(root: Path) -> int:
     required = (
         ("engine", "public DesktopSearchEngine()", "engine identity tracker constructor"),
         ("engine", "StateChanged += TrackStorageSourceIdentity;", "engine-first state tracking"),
-        ("engine", 'native:{volume.VolumeIdentity:X16}', "native volume identity token"),
+        ("engine", 'native:{volume.VolumeIdentity:X16}:{Volatile.Read(ref _nativeStorageSourceGeneration)}', "native physical/generation token"),
         ("engine", 'fallback:{Volatile.Read(ref _fallbackStorageSourceGeneration)}', "fallback generation token"),
+        ("engine", "ReferenceEquals(_trackedNativeStorageSession, nativeSession)", "native helper-session tracking"),
+        ("engine", "_trackedNativeStorageVolumeIdentity != nativeVolume.VolumeIdentity", "native physical identity tracking"),
+        ("engine", "Interlocked.Exchange(ref _nativeStorageSourceActive, 0) == 1", "single native maintenance edge"),
+        ("engine", "Interlocked.Increment(ref _nativeStorageSourceGeneration)", "native generation advance"),
         ("engine", "Interlocked.Exchange(ref _fallbackStorageSourceActive, 1)", "single fallback publication edge"),
         ("engine", "Interlocked.Increment(ref _fallbackStorageSourceGeneration)", "fallback generation advance"),
         ("engine", "Volatile.Write(ref _fallbackStorageSourceActive, 0)", "fallback edge reset"),
+        ("lifecycle", "_primaryVolume = preparation.Volume", "native primary assignment"),
+        ("lifecycle", "DesktopSearchMode.Initializing", "fallback pre-publication state"),
+        ("lifecycle", "_fallbackReady = true;", "fallback completed snapshot marker"),
         ("window", "InitializeStorageSourceIdentityTracking", "MainWindow identity initialization"),
         ("window", "_searchEngine.StateChanged -= SearchEngine_StateChanged;", "pre-handler ordering remove"),
         ("window", "_searchEngine.StateChanged += StorageSourceIdentity_StateChanged;", "identity pre-handler"),
@@ -201,6 +399,22 @@ def check_repository(root: Path) -> int:
         "Interlocked.Increment(ref _performanceDiskIoGeneration);",
         "indexed-source invalidation of system-wide Disk I/O capture",
     )
+
+    lifecycle = text["lifecycle"]
+    apply_start = lifecycle.index("private void ApplyNativePreparation")
+    primary_at = lifecycle.index("_primaryVolume = preparation.Volume", apply_start)
+    native_publish_at = lifecycle.index("DesktopSearchMode.Native", primary_at)
+    if primary_at >= native_publish_at:
+        raise AssertionError("native VolumeIdentity must be assigned before Native state publication")
+    checks += 1
+
+    build_start = lifecycle.index("private async Task BuildFallbackAsync")
+    initializing_at = lifecycle.index("DesktopSearchMode.Initializing", build_start)
+    fallback_ready_at = lifecycle.index("_fallbackReady = true;", initializing_at)
+    fallback_publish_at = lifecycle.index("DesktopSearchMode.Fallback", fallback_ready_at)
+    if not initializing_at < fallback_ready_at < fallback_publish_at:
+        raise AssertionError("fallback rebuild must publish Initializing before one completed Fallback snapshot")
+    checks += 1
 
     app_identity_at = text["app"].index("window.InitializeStorageSourceIdentityTracking();")
     app_files_at = text["app"].index("window.InitializeFilesFeature();")
