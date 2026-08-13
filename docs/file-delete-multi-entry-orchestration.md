@@ -85,7 +85,7 @@ The returned history must preserve exact static and already-observed settled pro
 - `Failed` only when at least one entry is `Failed` and no entry is pending/recovery-sensitive;
 - `RecoveryRequired` is surfaced through `FileDeleteOperationOrchestrationRecoveryRequiredException`, never returned as ordinary completion evidence.
 
-If `CompleteAsync` throws or returns untrusted evidence, the orchestrator reads current history without caller cancellation. If exact `Succeeded`/`Failed` terminal history is already durable, it accepts that state without replaying any mutation. Recovery-sensitive terminal history is surfaced as recovery. If all entries remain durably `Committed`/`Failed` but the operation itself is still non-terminal, it reports completion ambiguity; a later orchestration call may retry only `CompleteAsync`, because all per-entry mutation states are already terminal and therefore skipped.
+If `CompleteAsync` throws or returns untrusted evidence, the orchestrator reads current history without caller cancellation. If exact `Succeeded`/`Failed` terminal history is already durable, it accepts that state without replaying any mutation. Recovery-sensitive terminal history is surfaced as recovery. If all entries remain durably `Committed`/`Failed` but the operation itself is still non-terminal, it reports completion ambiguity; a later orchestration call may retry only `CompleteAsync`, because all per-entry mutation states are already terminal and therefore skipped. The completion-only retry path is explicitly tested across two invocations to prove that neither read-only stability nor final mutation capability is reacquired.
 
 ## Result evidence
 
@@ -119,10 +119,14 @@ The next product step can build an explicit recovery/reconciliation experience a
 
 `FileDeleteOperationOrchestratorRecoveryTerminalTests` pins recovery-sensitive completion results both when returned directly and when observed after a completion exception.
 
-`FileDeleteOperationOrchestratorHistoryRegressionTests` pins `Committed`/`Failed` history regression rejection before any new provider acquisition.
+`FileDeleteOperationOrchestratorHistoryRegressionTests` pins `Committed`/`Failed` history regression rejection before any new provider acquisition and verifies that recovery-sensitive escalation still stops as recovery.
+
+`FileDeleteOperationOrchestratorCompletionRetryTests` pins throw-before-persist completion ambiguity followed by a second invocation that retries only operation completion and never reacquires either provider.
 
 `WindowsFileDeleteOperationOrchestratorTests` runs two real temporary files through the Windows stability/final providers, same-handle mutation, SQLite per-entry settlement, and operation `CompleteAsync`, requiring both namespaces to disappear and final history to be `Succeeded`.
 
 `tools/verify_file_delete_multi_entry_orchestration.py` independently models randomized multi-entry state transitions, recovery-sensitive completion, settled-history regression semantics, and source-contract guards. It is wired into `tools/test-local.ps1 -OfflineOnly`.
+
+`tools/verify_file_delete_completion_retry.py` independently verifies completion-only retry for both all-committed success and mixed committed/failed terminal history, with zero mutation attempts on the failed completion call and retry. It is also wired into `tools/test-local.ps1 -OfflineOnly`.
 
 The complete Windows local gate remains mandatory before this orchestration slice can merge.
