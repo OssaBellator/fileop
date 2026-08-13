@@ -270,7 +270,7 @@ def check_repository(root: Path) -> int:
         ("lifecycle", "_primaryVolume = preparation.Volume", "native primary assignment"),
         ("lifecycle", "_fallbackReady = true;", "fallback completed snapshot marker"),
         ("window", "InitializeStorageSourceIdentityTracking", "MainWindow identity initialization"),
-        ("window", "state.Mode == DesktopSearchMode.Native && state.IsBusy", "native busy Optimize barrier"),
+        ("window", "if (state.IsBusy)", "all-mode busy publication barrier"),
         ("window", "previousSourceIdentityKey = Interlocked.Exchange(", "atomic identity-token handoff"),
         ("window", "_searchEngine.StateChanged += StorageSourceIdentity_StateChanged;", "identity pre-handler"),
         ("window", "Interlocked.Exchange(ref _storageSourceKey, null);", "folder cache invalidation"),
@@ -328,10 +328,10 @@ def check_repository(root: Path) -> int:
     checks += 1
 
     window = text["window"]
-    busy_at = window.index("state.Mode == DesktopSearchMode.Native && state.IsBusy")
+    busy_at = window.index("if (state.IsBusy)")
     key_at = window.index("var sourceIdentityKey = _searchEngine.StorageSourceIdentityKey;")
     if busy_at >= key_at:
-        raise AssertionError("native busy Optimize invalidation must precede identity equality return")
+        raise AssertionError("all-mode busy invalidation must precede identity equality return")
     checks += 1
 
     remove_at = window.index("_searchEngine.StateChanged -= SearchEngine_StateChanged;")
