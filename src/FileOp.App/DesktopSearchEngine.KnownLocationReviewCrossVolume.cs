@@ -53,6 +53,21 @@ internal sealed partial class DesktopSearchEngine
                 var volumesBefore = await session.Client
                     .GetVolumesAsync(_lifetimeCancellation.Token)
                     .ConfigureAwait(false);
+                var primaryBefore = FindIndexedVolumeByRoot(volumesBefore.Volumes, activeRoot);
+                if (primaryBefore is null ||
+                    primaryBefore.VolumeIdentity != primaryVolume.VolumeIdentity ||
+                    !string.Equals(
+                        NormalizeRoot(primaryBefore.RootPath),
+                        NormalizeRoot(primaryVolume.RootPath),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                        provenance,
+                        StorageReviewLocationStatus.Unavailable,
+                        fullPath,
+                        $"{FormatProvenance(provenance)} active primary indexed-volume identity or root no longer matches the selected native source, so no cross-volume evidence was captured.");
+                }
+
                 var target = FindIndexedVolumeByRoot(volumesBefore.Volumes, locationRoot);
                 if (target is null)
                 {
@@ -148,7 +163,23 @@ internal sealed partial class DesktopSearchEngine
                         $"{FormatProvenance(provenance)} indexed volume {current.RootPath} lost its durable checkpoint while evidence was being captured, so the result was discarded.");
                 }
 
+                var primaryAfter = FindIndexedVolumeByRoot(volumesAfter.Volumes, activeRoot);
+                if (primaryAfter is null ||
+                    primaryAfter.VolumeIdentity != primaryBefore.VolumeIdentity ||
+                    !string.Equals(
+                        NormalizeRoot(primaryAfter.RootPath),
+                        NormalizeRoot(primaryBefore.RootPath),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                        provenance,
+                        StorageReviewLocationStatus.Unavailable,
+                        fullPath,
+                        $"{FormatProvenance(provenance)} active primary indexed-volume identity or root changed while secondary-volume evidence was being captured, so the result was discarded.");
+                }
+
                 if (_primaryVolume is not { } currentPrimary ||
+                    currentPrimary.VolumeIdentity != primaryBefore.VolumeIdentity ||
                     !string.Equals(
                         NormalizeRoot(currentPrimary.RootPath),
                         NormalizeRoot(activeRoot),
