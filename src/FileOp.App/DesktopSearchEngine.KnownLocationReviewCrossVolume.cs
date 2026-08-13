@@ -333,6 +333,11 @@ internal sealed partial class DesktopSearchEngine
 
         try
         {
+            if (!Path.IsPathFullyQualified(path))
+            {
+                return false;
+            }
+
             var fullPath = Path.GetFullPath(path);
             var filesystemRoot = Path.GetPathRoot(fullPath);
             if (string.IsNullOrWhiteSpace(filesystemRoot))
