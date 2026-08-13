@@ -10,16 +10,22 @@ internal sealed partial class DesktopSearchEngine
 {
     private readonly WindowsKnownFolderPathResolver _knownFolderPathResolver = new();
 
+    public ulong? StorageVolumeIdentity =>
+        State.Mode == DesktopSearchMode.Native
+            ? _primaryVolume?.VolumeIdentity
+            : null;
+
     public async ValueTask<StorageKnownLocationReviewSnapshot> AnalyzeKnownLocationReviewAsync()
     {
         ThrowIfDisposed();
-        if (!StorageOptimizationAvailable || StorageRootPath is not { } activeRoot)
+        if (!StorageOptimizationAvailable || _primaryVolume is not { } capturedPrimary)
         {
             throw new InvalidOperationException(
                 "Known-location review currently requires the native indexed NTFS volume.");
         }
 
-        var capturedRoot = Path.GetFullPath(activeRoot);
+        var capturedRoot = Path.GetFullPath(capturedPrimary.RootPath);
+        var capturedVolumeIdentity = capturedPrimary.VolumeIdentity;
         var locations = new List<StorageKnownLocationReview>(2);
         string downloadsPath;
         try
@@ -78,9 +84,10 @@ internal sealed partial class DesktopSearchEngine
 
         ThrowIfDisposed();
         if (!StorageOptimizationAvailable ||
-            StorageRootPath is not { } currentRoot ||
+            _primaryVolume is not { } currentPrimary ||
+            currentPrimary.VolumeIdentity != capturedVolumeIdentity ||
             !string.Equals(
-                Path.GetFullPath(currentRoot),
+                Path.GetFullPath(currentPrimary.RootPath),
                 capturedRoot,
                 StringComparison.OrdinalIgnoreCase))
         {
@@ -91,7 +98,10 @@ internal sealed partial class DesktopSearchEngine
         return new StorageKnownLocationReviewSnapshot(
             DateTimeOffset.UtcNow,
             capturedRoot,
-            locations.ToArray());
+            locations.ToArray())
+        {
+            ActiveVolumeIdentity = capturedVolumeIdentity,
+        };
     }
 
     private async ValueTask<StorageKnownLocationReview> AnalyzeKnownLocationAsync(
