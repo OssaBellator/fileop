@@ -57,8 +57,11 @@ Cleanup readiness still does **not** grant access to that mutation boundary. It 
 - run `FileDeleteOperationOrchestrator`;
 - queue a cleanup action;
 - expose a Storage delete button;
-- call the indexing helper or change protocol v8;
+- add a cleanup-readiness Indexer operation or use the helper as a file-content/current-file metadata oracle;
+- change protocol v8;
 - claim that `CurrentEvidenceConsistent` means safe to delete.
+
+The coordinator **does** use the existing protocol-v8 `GetVolumes` catalog before and after the direct desktop-user file check to prove that the indexed source identity/root/checkpoint behind the cached review remains current. Those catalog reads provide source provenance only; the readiness service still obtains current file evidence directly under the desktop user's filesystem access.
 
 If the user later chooses permanent deletion, they must select the file in Files and independently pass the Files delete session's fresh preflight, recovery checks, canonical identity/protected-location validation and explicit confirmation. Readiness evidence is not reusable consent or mutation authority.
 
