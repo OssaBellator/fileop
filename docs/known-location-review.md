@@ -64,27 +64,30 @@ When a known location is outside the active primary volume, FileOp now:
 
 1. derives the location's filesystem root;
 2. reads the already connected helper's indexed-volume descriptors;
-3. selects the exact descriptor by normalized volume root;
-4. distinguishes a genuine durable-checkpoint absence (`State == SnapshotRequired`) from a temporarily unavailable descriptor; helper busy descriptors intentionally report `HasCheckpoint == false` while maintenance owns the index, so other no-checkpoint states are treated as transient rather than as evidence that a rebuild is required;
-5. requires the selected secondary volume to have an available existing checkpoint;
-6. performs bounded journal catch-up with the existing `SyncVolume` / `CatchUpAsync` path;
-7. requires catch-up to reach `IsCurrent == true`;
-8. submits `AnalyzeStorageOptimization` with that exact secondary `VolumeIdentity`, `VolumeRootPath`, and known-location path;
-9. verifies the returned analysis root is the same normalized Windows path as the requested known location;
-10. re-reads indexed-volume descriptors after analysis, first requiring the same volume identity/root and then distinguishing transient descriptor unavailability from an actual lost `SnapshotRequired` checkpoint;
-11. verifies that the active primary source did not change while the secondary evidence was captured.
+3. requires exactly one descriptor for the normalized active-primary root and exactly one descriptor for the normalized secondary root; an absent secondary remains outside the active volume, while duplicate root matches are treated as an ambiguous catalog and fail closed rather than using the first descriptor;
+4. verifies that the service-reported primary descriptor identity/root still matches the selected primary native source;
+5. distinguishes a genuine durable-checkpoint absence (`State == SnapshotRequired`) from a temporarily unavailable descriptor; helper busy descriptors intentionally report `HasCheckpoint == false` while maintenance owns the index, so other no-checkpoint states are treated as transient rather than as evidence that a rebuild is required;
+6. requires the selected secondary volume to have an available existing checkpoint;
+7. performs bounded journal catch-up with the existing `SyncVolume` / `CatchUpAsync` path;
+8. requires catch-up to reach `IsCurrent == true`;
+9. submits `AnalyzeStorageOptimization` with that exact secondary `VolumeIdentity`, `VolumeRootPath`, and known-location path;
+10. verifies the returned analysis root is the same normalized Windows path as the requested known location;
+11. re-reads indexed-volume descriptors after analysis, requiring unique primary/secondary root matches, the same identities/roots and a still-available secondary checkpoint;
+12. verifies that the selected primary source still has the same identity/root before accepting the secondary evidence.
 
-A redirected location with no matching indexed volume remains `OutsideActiveVolume`. A genuine missing checkpoint, a required rebuild/elevation, bounded catch-up that remains behind, a transient busy/maintenance descriptor, lost checkpoint, or source identity/root drift marks that location unavailable. FileOp does **not** silently rebuild a secondary volume and does not scan the path directly.
+A redirected location with no matching indexed volume remains `OutsideActiveVolume`. A duplicate/ambiguous root match, genuine missing checkpoint, required rebuild/elevation, bounded catch-up that remains behind, transient busy/maintenance descriptor, lost checkpoint, or source identity/root drift marks that location unavailable. FileOp does **not** silently rebuild a secondary volume and does not scan the path directly.
 
 The primary Search/Storage volume is never replaced merely to review a redirected known location.
+
+After both known locations have been evaluated, the producer performs one final service-catalog freshness check for the active primary source even if both locations were same-volume. The snapshot persists the active primary `VolumeIdentity` as well as its root. Publication is refused unless the selected in-process primary and a unique current `GetVolumes` descriptor still agree on that identity/root. This closes the interval where a different physical volume could appear under the same drive letter before background sync reports the transition.
 
 The current native volume catalog is drive-letter-rooted (`DriveInfo.GetDrives()` with drive-letter root filtering). The cross-volume verifier pins that contract because the current `Path.GetPathRoot` selector depends on it. If native discovery later exposes directory-mounted volumes, selection must move to descriptor-containment/longest-root semantics rather than silently assuming the host drive root.
 
 ## Candidate actions
 
-**Check readiness** remains available for cross-volume candidates. It performs separate current canonical/path/identity checks directly against the candidate and its known-location root and remains non-authorizing.
+**Check readiness** remains available for cross-volume candidates. It performs separate current canonical/path/identity checks directly against the candidate and its known-location root and remains non-authorizing. Before the direct path read and again before rendering the result, the coordinator also requires the cached snapshot's primary identity/root to match both the selected native source and a unique current service-catalog descriptor.
 
-**Review in Files** remains available only for candidates on the active Files indexed volume. Files is still primary-volume-bound, so a cross-volume candidate's button is disabled and the coordinator independently refuses programmatic handoff. There is no direct-filesystem browsing fallback.
+**Review in Files** remains available only for candidates on the active Files indexed volume. Files is still primary-volume-bound, so a cross-volume candidate's button is disabled and the coordinator independently refuses programmatic handoff. Before navigation and again before applying an asynchronous selection hint, the handoff revalidates the snapshot's primary identity/root against the current service catalog. There is no direct-filesystem browsing fallback.
 
 Storage review/readiness evidence never becomes reusable delete consent. If permanent deletion is later chosen, the user must select/review the file in Files and pass the Files delete session's current recovery checks, canonical identity/protected-location validation, explicit confirmation, durable history begin, and reviewed mutation orchestration.
 
@@ -126,8 +129,8 @@ This slice does not:
 
 `tools/verify_known_location_review.py` continues to pin provenance/candidate membership, measured-byte semantics and the original review-only safety boundary.
 
-`tools/verify_cross_volume_known_location_review.py` models indexed-volume selection, genuine `SnapshotRequired` versus temporary no-checkpoint descriptors, bounded catch-up currentness, normalized returned-root equivalence, post-capture identity/checkpoint validation and primary-source preservation. Its source guards pin exact volume-bound requests, two descriptor reads, the helper busy-descriptor/snapshot-required contract, drive-letter-root discovery, matching SQLite/request path normalization, no secondary rebuild/crawler fallback, protocol v8, cross-volume Files-handoff refusal and continued read-only readiness.
+`tools/verify_cross_volume_known_location_review.py` models unique indexed-volume selection, ambiguous duplicate-root refusal, genuine `SnapshotRequired` versus temporary no-checkpoint descriptors, bounded catch-up currentness, normalized returned-root equivalence, post-capture identity/checkpoint validation, primary-source preservation and the final native-catalog freshness check used for same-volume publication and cached actions. Its source guards pin exact volume-bound requests, before/after descriptor reads, reusable source-freshness gate ordering, the helper busy-descriptor/snapshot-required contract, drive-letter-root discovery, matching SQLite/request path normalization, no secondary rebuild/crawler fallback, protocol v8, cross-volume Files-handoff refusal and continued read-only readiness.
 
-`tools/verify_known_location_files_handoff.py` continues to model the primary-volume Files containment rule. `tools/verify_cleanup_readiness.py` pins that readiness can operate on a cross-volume review candidate without becoming mutation authority.
+`tools/verify_known_location_files_handoff.py` continues to model the primary-volume Files containment rule. `tools/verify_cleanup_readiness.py` pins that readiness can operate on a cross-volume review candidate without becoming mutation authority. The cross-volume verifier additionally requires both action coordinators to call the native catalog freshness boundary before and after their asynchronous/current-path work.
 
-All are part of `tools/test-local.ps1`; the complete Windows/.NET/WinUI local gate remains mandatory before merge.
+All are part of `tools/test-local.ps1`; the complete Windows/.NET/WinUI local gate remains mandatory before merge and can be batched after the portable/source-review work.
