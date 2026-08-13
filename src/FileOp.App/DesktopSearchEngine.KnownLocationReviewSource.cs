@@ -127,6 +127,7 @@ internal sealed partial class DesktopSearchEngine
             out var ambiguous);
         return !ambiguous &&
             currentDescriptor is not null &&
+            currentDescriptor.HasCheckpoint &&
             currentDescriptor.VolumeIdentity == expectedVolumeIdentity &&
             string.Equals(
                 NormalizeRoot(currentDescriptor.RootPath),
