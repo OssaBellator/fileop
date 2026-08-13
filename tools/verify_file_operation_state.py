@@ -274,11 +274,11 @@ def check_repository(root: Path) -> int:
     ]:
         assert forbidden not in combined, forbidden
 
-    assert '## Execution contract and state machine' in source['docs']
-    assert 'late cancellation' in source['docs']
-    assert 'Validation can be cancelled immediately' in source['docs']
-    assert 'single cancellation path' in source['docs']
-    assert 'retry creates a new plan' in source['docs']
+    assert '## Copy / Move planning boundary' in source['docs']
+    assert 'Preparing or queueing a plan performs no filesystem write.' in source['docs']
+    assert 'read-only Windows preflight' in source['docs']
+    assert 'Files **Copy/Move queue UI still does not instantiate or execute that pipeline**' in source['docs']
+    assert 'UI execution wiring, overwrite/replace and Move remain separate product decisions.' in source['docs']
     assert 'verify_file_operation_state.py' in source['local']
 
     return len(required_plan) + len(required_execution) + 8 + 5 + 12
