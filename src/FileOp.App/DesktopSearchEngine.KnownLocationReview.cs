@@ -86,8 +86,13 @@ internal sealed partial class DesktopSearchEngine
 
         ThrowIfDisposed();
         if (!StorageOptimizationAvailable ||
+            StorageRootPath is not { } currentRoot ||
             _primaryVolume is not { } currentPrimary ||
             currentPrimary.VolumeIdentity != capturedVolumeIdentity ||
+            !string.Equals(
+                Path.GetFullPath(currentRoot),
+                capturedRoot,
+                StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(
                 Path.GetFullPath(currentPrimary.RootPath),
                 capturedRoot,
