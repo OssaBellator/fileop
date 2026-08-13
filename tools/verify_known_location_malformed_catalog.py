@@ -92,7 +92,8 @@ def run_model(cases: int) -> int:
 
     assert select_unique((Volume("C:\\", 1),), "bad\x00root")[2]
     checks += 1
-    assert try_root(r"\\server\share\") == ntpath.normcase(r"\\server\share\")
+    unc_root = r"\\server\share\\"
+    assert try_root(unc_root) == ntpath.normcase(ntpath.normpath(unc_root))
     checks += 1
     assert not safe_path_equal("D:\\Temp\x00", "D:\\Temp")
     checks += 1
