@@ -38,10 +38,7 @@ internal sealed partial class DesktopSearchEngine
             {
                 if (_nativeSession is not { Client.IsConnected: true } session ||
                     _primaryVolume is not { } primaryVolume ||
-                    !string.Equals(
-                        NormalizeRoot(primaryVolume.RootPath),
-                        NormalizeRoot(activeRoot),
-                        StringComparison.OrdinalIgnoreCase))
+                    !ReviewRootsEqual(primaryVolume.RootPath, activeRoot))
                 {
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
                         provenance,
@@ -56,7 +53,17 @@ internal sealed partial class DesktopSearchEngine
                 var primaryBefore = FindUniqueIndexedVolumeByRoot(
                     volumesBefore.Volumes,
                     activeRoot,
-                    out var primaryBeforeAmbiguous);
+                    out var primaryBeforeAmbiguous,
+                    out var primaryBeforeInvalidCatalog);
+                if (primaryBeforeInvalidCatalog)
+                {
+                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                        provenance,
+                        StorageReviewLocationStatus.Unavailable,
+                        fullPath,
+                        $"{FormatProvenance(provenance)} cannot bind the active primary source because the native volume catalog contains a malformed root descriptor.");
+                }
+
                 if (primaryBeforeAmbiguous)
                 {
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
@@ -68,10 +75,7 @@ internal sealed partial class DesktopSearchEngine
 
                 if (primaryBefore is null ||
                     primaryBefore.VolumeIdentity != primaryVolume.VolumeIdentity ||
-                    !string.Equals(
-                        NormalizeRoot(primaryBefore.RootPath),
-                        NormalizeRoot(primaryVolume.RootPath),
-                        StringComparison.OrdinalIgnoreCase))
+                    !ReviewRootsEqual(primaryBefore.RootPath, primaryVolume.RootPath))
                 {
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
                         provenance,
@@ -83,7 +87,17 @@ internal sealed partial class DesktopSearchEngine
                 var target = FindUniqueIndexedVolumeByRoot(
                     volumesBefore.Volumes,
                     locationRoot,
-                    out var targetAmbiguous);
+                    out var targetAmbiguous,
+                    out var targetInvalidCatalog);
+                if (targetInvalidCatalog)
+                {
+                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                        provenance,
+                        StorageReviewLocationStatus.Unavailable,
+                        fullPath,
+                        $"{FormatProvenance(provenance)} cannot bind {locationRoot} because the native volume catalog contains a malformed root descriptor.");
+                }
+
                 if (targetAmbiguous)
                 {
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
@@ -148,7 +162,7 @@ internal sealed partial class DesktopSearchEngine
                         provenance,
                         StorageReviewLocationStatus.Unavailable,
                         fullPath,
-                        $"{FormatProvenance(provenance)} returned analysis for an unexpected root, so the cross-volume evidence was discarded.");
+                        $"{FormatProvenance(provenance)} returned analysis for an unexpected or malformed root, so the cross-volume evidence was discarded.");
                 }
 
                 var volumesAfter = await session.Client
@@ -157,14 +171,21 @@ internal sealed partial class DesktopSearchEngine
                 var current = FindUniqueIndexedVolumeByRoot(
                     volumesAfter.Volumes,
                     locationRoot,
-                    out var currentAmbiguous);
+                    out var currentAmbiguous,
+                    out var currentInvalidCatalog);
+                if (currentInvalidCatalog)
+                {
+                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                        provenance,
+                        StorageReviewLocationStatus.Unavailable,
+                        fullPath,
+                        $"{FormatProvenance(provenance)} native volume catalog became malformed while evidence was being captured, so the result was discarded.");
+                }
+
                 if (currentAmbiguous ||
                     current is null ||
                     current.VolumeIdentity != target.VolumeIdentity ||
-                    !string.Equals(
-                        NormalizeRoot(current.RootPath),
-                        NormalizeRoot(target.RootPath),
-                        StringComparison.OrdinalIgnoreCase))
+                    !ReviewRootsEqual(current.RootPath, target.RootPath))
                 {
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
                         provenance,
@@ -196,14 +217,21 @@ internal sealed partial class DesktopSearchEngine
                 var primaryAfter = FindUniqueIndexedVolumeByRoot(
                     volumesAfter.Volumes,
                     activeRoot,
-                    out var primaryAfterAmbiguous);
+                    out var primaryAfterAmbiguous,
+                    out var primaryAfterInvalidCatalog);
+                if (primaryAfterInvalidCatalog)
+                {
+                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                        provenance,
+                        StorageReviewLocationStatus.Unavailable,
+                        fullPath,
+                        $"{FormatProvenance(provenance)} active primary native catalog became malformed while secondary-volume evidence was being captured, so the result was discarded.");
+                }
+
                 if (primaryAfterAmbiguous ||
                     primaryAfter is null ||
                     primaryAfter.VolumeIdentity != primaryBefore.VolumeIdentity ||
-                    !string.Equals(
-                        NormalizeRoot(primaryAfter.RootPath),
-                        NormalizeRoot(primaryBefore.RootPath),
-                        StringComparison.OrdinalIgnoreCase))
+                    !ReviewRootsEqual(primaryAfter.RootPath, primaryBefore.RootPath))
                 {
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
                         provenance,
@@ -216,10 +244,7 @@ internal sealed partial class DesktopSearchEngine
 
                 if (_primaryVolume is not { } currentPrimary ||
                     currentPrimary.VolumeIdentity != primaryBefore.VolumeIdentity ||
-                    !string.Equals(
-                        NormalizeRoot(currentPrimary.RootPath),
-                        NormalizeRoot(activeRoot),
-                        StringComparison.OrdinalIgnoreCase))
+                    !ReviewRootsEqual(currentPrimary.RootPath, activeRoot))
                 {
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
                         provenance,
@@ -252,17 +277,29 @@ internal sealed partial class DesktopSearchEngine
     private static IndexingVolumeDescriptor? FindUniqueIndexedVolumeByRoot(
         IReadOnlyList<IndexingVolumeDescriptor> volumes,
         string rootPath,
-        out bool ambiguous)
+        out bool ambiguous,
+        out bool invalidCatalog)
     {
         ArgumentNullException.ThrowIfNull(volumes);
-        ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
-        var normalizedRoot = NormalizeRoot(rootPath);
-        IndexingVolumeDescriptor? match = null;
         ambiguous = false;
+        invalidCatalog = false;
+        if (!TryNormalizeReviewRoot(rootPath, out var normalizedRoot))
+        {
+            invalidCatalog = true;
+            return null;
+        }
+
+        IndexingVolumeDescriptor? match = null;
         foreach (var volume in volumes)
         {
+            if (!TryNormalizeReviewRoot(volume.RootPath, out var normalizedVolumeRoot))
+            {
+                invalidCatalog = true;
+                return null;
+            }
+
             if (!string.Equals(
-                    NormalizeRoot(volume.RootPath),
+                    normalizedVolumeRoot,
                     normalizedRoot,
                     StringComparison.OrdinalIgnoreCase))
             {
@@ -281,15 +318,56 @@ internal sealed partial class DesktopSearchEngine
         return match;
     }
 
-    private static bool ReviewPathsEqual(string left, string right)
+    private static bool ReviewRootsEqual(string? left, string? right) =>
+        TryNormalizeReviewRoot(left, out var normalizedLeft) &&
+        TryNormalizeReviewRoot(right, out var normalizedRight) &&
+        string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryNormalizeReviewRoot(string? path, out string normalizedRoot)
     {
-        var normalizedLeft = Path.GetFullPath(left).TrimEnd(
-            Path.DirectorySeparatorChar,
-            Path.AltDirectorySeparatorChar);
-        var normalizedRight = Path.GetFullPath(right).TrimEnd(
-            Path.DirectorySeparatorChar,
-            Path.AltDirectorySeparatorChar);
-        return string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+        normalizedRoot = string.Empty;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            normalizedRoot = NormalizeRoot(path);
+            return true;
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static bool ReviewPathsEqual(string? left, string? right) =>
+        TryNormalizeReviewPath(left, out var normalizedLeft) &&
+        TryNormalizeReviewPath(right, out var normalizedRight) &&
+        string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryNormalizeReviewPath(string? path, out string normalizedPath)
+    {
+        normalizedPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            normalizedPath = Path.GetFullPath(path).TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            return true;
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 
     private static bool IsSnapshotRequiredState(string state) =>
