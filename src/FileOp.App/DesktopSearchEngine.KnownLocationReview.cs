@@ -38,9 +38,11 @@ internal sealed partial class DesktopSearchEngine
             downloadsPath = _knownFolderPathResolver.GetDownloadsPath();
         }
         catch (Exception exception) when (
-            exception is COMException or
+            exception is ArgumentException or
+            COMException or
             InvalidDataException or
             IOException or
+            NotSupportedException or
             UnauthorizedAccessException or
             PlatformNotSupportedException)
         {
