@@ -12,7 +12,7 @@ public sealed partial class StorageKnownLocationReviewView : UserControl
 
     public void SetLoading()
     {
-        StatusText.Text = "Reviewing large, old files in current-user known locations from the native index…";
+        StatusText.Text = "Reviewing large, old files in current-user known locations from current checkpointed native indexes…";
         CleanupReadinessStatusText.Text =
             "Cleanup readiness is waiting for the refreshed known-location review. No previous readiness result is retained as current evidence.";
     }
@@ -33,22 +33,28 @@ public sealed partial class StorageKnownLocationReviewView : UserControl
             .SelectMany(static location => location.Candidates)
             .OrderByDescending(static candidate => candidate.MeasuredBytes)
             .ThenBy(static candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(StorageKnownLocationCandidateRow.FromCandidate)
+            .Select(candidate => StorageKnownLocationCandidateRow.FromCandidate(
+                candidate,
+                snapshot.ActiveVolumeRootPath))
             .ToArray();
         LocationStatusList.ItemsSource = snapshot.Locations
             .Select(StorageKnownLocationStatusRow.FromLocation)
             .ToArray();
         CandidateList.ItemsSource = candidates;
         CleanupReadinessStatusText.Text =
-            "Cleanup readiness has not been checked for this review. Delete recovery/history and mutation authorization are not implemented.";
+            "Cleanup readiness has not been checked for this review. It is read-only current-path evidence; permanent deletion, if later chosen in Files, requires the separate Files preflight, recovery and explicit-authorization flow.";
 
         var available = snapshot.Locations.Count(static location =>
             location.Status == StorageReviewLocationStatus.Available);
         var capped = snapshot.Locations.Count(static location => location.SourceMayBeTruncated);
+        var crossVolumeCandidates = candidates.Count(static candidate => !candidate.CanReviewInFiles);
         StatusText.Text =
             $"{available:N0} known location(s) reviewed · {candidates.Length:N0} candidate(s) · " +
             $"{ByteFormatter.Format(snapshot.CandidateMeasuredBytes)} candidate measured bytes. " +
             "This is review evidence, not guaranteed reclaimable space or deletion authorization." +
+            (crossVolumeCandidates > 0
+                ? $" {crossVolumeCandidates:N0} candidate(s) are on another indexed volume; readiness remains available, but Files handoff is disabled until Files supports that volume."
+                : string.Empty) +
             (capped > 0
                 ? $" {capped:N0} location(s) reached the upstream stale-candidate cap, so additional matching files may exist."
                 : string.Empty);
@@ -70,7 +76,7 @@ public sealed record StorageKnownLocationStatusRow(
         var status = location.Status switch
         {
             StorageReviewLocationStatus.Available => "reviewed",
-            StorageReviewLocationStatus.OutsideActiveVolume => "outside active volume",
+            StorageReviewLocationStatus.OutsideActiveVolume => "outside active volume / no indexed source",
             StorageReviewLocationStatus.Unavailable => "unavailable",
             _ => location.Status.ToString(),
         };
@@ -91,10 +97,16 @@ public sealed record StorageKnownLocationCandidateRow(
     string Path,
     string EvidenceText,
     string SizeText,
-    string LastWriteText)
+    string LastWriteText,
+    bool CanReviewInFiles)
 {
-    public static StorageKnownLocationCandidateRow FromCandidate(StorageReviewCandidate candidate)
+    public static StorageKnownLocationCandidateRow FromCandidate(
+        StorageReviewCandidate candidate,
+        string activeVolumeRootPath)
     {
+        ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentException.ThrowIfNullOrWhiteSpace(activeVolumeRootPath);
+
         var provenance = candidate.Provenance switch
         {
             StorageReviewProvenance.Downloads => "Downloads",
@@ -110,13 +122,49 @@ public sealed record StorageKnownLocationCandidateRow(
             StorageReviewReason.OldUserTempFile => "old file under current-user Temp",
             _ => candidate.Reason.ToString(),
         };
+        var canReviewInFiles = IsPathWithinRoot(candidate.Path, activeVolumeRootPath);
         return new StorageKnownLocationCandidateRow(
             candidate.Name,
             candidate.Path,
-            $"{provenance} · {reason} · rule {candidate.RuleId}. Review only; this rule does not establish safe deletion.",
+            $"{provenance} · {reason} · rule {candidate.RuleId}. Review only; this rule does not establish safe deletion." +
+            (canReviewInFiles
+                ? string.Empty
+                : " This candidate is outside the active Files indexed volume, so Review in Files is unavailable for this evidence."),
             candidate.AllocatedBytes is { } allocated
                 ? $"{ByteFormatter.Format(allocated)} physical"
                 : $"{ByteFormatter.Format(candidate.LogicalBytes)} logical",
-            candidate.LastWriteTime.ToLocalTime().ToString("g"));
+            candidate.LastWriteTime.ToLocalTime().ToString("g"),
+            canReviewInFiles);
+    }
+
+    private static bool IsPathWithinRoot(string path, string rootPath)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            var fullRoot = Path.GetFullPath(rootPath);
+            var comparablePath = fullPath.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            var comparableRoot = fullRoot.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            if (string.Equals(
+                    comparablePath,
+                    comparableRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return fullPath.StartsWith(
+                comparableRoot + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 }
