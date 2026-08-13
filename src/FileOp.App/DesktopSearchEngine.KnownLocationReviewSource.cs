@@ -9,13 +9,13 @@ internal sealed partial class DesktopSearchEngine
         ulong expectedVolumeIdentity,
         string expectedRoot,
         CancellationToken cancellationToken = default) =>
-        AreNativeReviewSourcesCurrentAsync(
+        IsNativeReviewSourceCurrentAsync(
             expectedVolumeIdentity,
             expectedRoot,
             Array.Empty<StorageKnownLocationReview>(),
             cancellationToken);
 
-    internal async ValueTask<bool> AreNativeReviewSourcesCurrentAsync(
+    internal async ValueTask<bool> IsNativeReviewSourceCurrentAsync(
         ulong expectedVolumeIdentity,
         string expectedRoot,
         IReadOnlyList<StorageKnownLocationReview> expectedLocations,
