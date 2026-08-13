@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""Verify native busy entry suppresses old-source UI publication before recovery."""
+"""Verify engine busy entry suppresses old-source UI publication before recovery."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 import random
+
+
+MODES = ("Initializing", "Native", "Fallback", "Unavailable")
+
+
+def busy_barrier_applies(mode: str, is_busy: bool) -> bool:
+    if mode not in MODES:
+        raise ValueError(mode)
+    return is_busy
 
 
 def run_model(cases: int) -> int:
@@ -15,14 +24,17 @@ def run_model(cases: int) -> int:
     for _ in range(cases):
         # Folders, Types, History, Optimize, left Files, right Files each own a
         # request generation captured before awaiting source-bound work.
+        mode = rng.choice(MODES)
+        assert busy_barrier_applies(mode, True)
+        checks += 1
         generations = [rng.randint(1, 1_000_000) for _ in range(6)]
         captured = generations.copy()
         history_loading_generation = rng.randint(1, 1_000_000)
 
-        # Native busy entry is an immediate publication barrier. The backing
-        # source token deliberately remains stable until maintenance recovers,
-        # but every old request must become stale now. History also has a separate
-        # loading sentinel that must be released when its owner generation is stale.
+        # Busy entry is an immediate publication barrier in every engine mode. The
+        # backing source token deliberately remains stable until a real transition
+        # is published, but every old request must become stale now. This includes
+        # elevation beginning in Fallback as well as Native maintenance/elevation.
         generations = [value + 1 for value in generations]
         history_loading_generation = 0
         for current, request in zip(generations, captured):
@@ -56,6 +68,7 @@ def check_repository(root: Path) -> int:
     window = (root / "src/FileOp.App/MainWindow.StorageSourceIdentity.cs").read_text(
         encoding="utf-8"
     )
+    engine = (root / "src/FileOp.App/DesktopSearchEngine.cs").read_text(encoding="utf-8")
     files = (root / "src/FileOp.App/MainWindow.Files.cs").read_text(encoding="utf-8")
     folders = (root / "src/FileOp.App/MainWindow.xaml.cs").read_text(encoding="utf-8")
     types = (root / "src/FileOp.App/MainWindow.StorageTypes.cs").read_text(encoding="utf-8")
@@ -69,16 +82,13 @@ def check_repository(root: Path) -> int:
     handler_start = window.index(
         "private void StorageSourceIdentity_StateChanged(DesktopSearchEngineState state)"
     )
-    busy_at = window.index(
-        "if (state.Mode == DesktopSearchMode.Native && state.IsBusy)",
-        handler_start,
-    )
+    busy_at = window.index("if (state.IsBusy)", handler_start)
     identity_read_at = window.index(
         "var sourceIdentityKey = _searchEngine.StorageSourceIdentityKey;",
         busy_at,
     )
     if busy_at >= identity_read_at:
-        raise AssertionError("native busy publication barrier must precede identity equality return")
+        raise AssertionError("engine busy publication barrier must precede identity equality return")
     checks += 1
 
     busy_block = window[busy_at:identity_read_at]
@@ -95,6 +105,20 @@ def check_repository(root: Path) -> int:
     )
     for needle, label in required_busy:
         checks += require(busy_block, needle, label)
+
+    elevation_busy_at = engine.index(
+        'Status = "Requesting helper-only administrative indexing access…"'
+    )
+    elevation_gate_at = engine.index(
+        "await _searchOperationGate.WaitAsync(token)",
+        elevation_busy_at,
+    )
+    elevation_busy_block = engine[elevation_busy_at:elevation_gate_at]
+    if "IsBusy = true" not in elevation_busy_block or "Mode =" in elevation_busy_block:
+        raise AssertionError(
+            "elevation must publish busy while preserving the current mode, including Fallback"
+        )
+    checks += 1
 
     equality_at = window.index("if (string.Equals(", identity_read_at)
     equality_return_at = window.index("return;", equality_at)
@@ -169,7 +193,7 @@ def main() -> int:
     repo_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = f" and {repo_checks:,} source checks" if args.repo_root else ""
     print(
-        "PASS: native busy publication barrier verified with "
+        "PASS: engine busy publication barrier verified with "
         f"{model_checks:,} model checks across {args.cases:,} randomized states{suffix}."
     )
     return 0
