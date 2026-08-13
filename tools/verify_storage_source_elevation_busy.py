@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify native cache epochs distinguish elevation busy from index maintenance."""
+"""Verify native source epochs, elevation busy, and in-flight Files invalidation."""
 
 from __future__ import annotations
 
@@ -64,6 +64,10 @@ def track_native(
         tracked_identity,
         tracked_can_elevate,
     )
+
+
+def files_request_current(current_generation: int, request_generation: int) -> bool:
+    return current_generation == request_generation
 
 
 def run_model(cases: int) -> int:
@@ -226,6 +230,29 @@ def run_model(cases: int) -> int:
         assert left_native == (generation, False, False, None, None, False)
         checks += 1
 
+        # Files captures one generation when the page request starts. If the
+        # engine source changes after BrowseDirectoryAsync returns but before the
+        # UI continuation publishes, immediate pane invalidation must make that
+        # captured generation stale. A later request then owns a fresh token.
+        pane_generation = rng.randint(1, 1_000_000)
+        request_generation = pane_generation + 1
+        pane_generation = request_generation
+        assert files_request_current(pane_generation, request_generation)
+        checks += 1
+
+        pane_generation += 1
+        assert not files_request_current(pane_generation, request_generation)
+        checks += 1
+
+        next_request_generation = pane_generation + 1
+        pane_generation = next_request_generation
+        assert files_request_current(pane_generation, next_request_generation)
+        checks += 1
+
+        pane_generation += 1
+        assert not files_request_current(pane_generation, next_request_generation)
+        checks += 1
+
     return checks
 
 
@@ -243,6 +270,7 @@ def check_repository(root: Path) -> int:
     window = (root / "src/FileOp.App/MainWindow.StorageSourceIdentity.cs").read_text(
         encoding="utf-8"
     )
+    files = (root / "src/FileOp.App/MainWindow.Files.cs").read_text(encoding="utf-8")
     xaml = (root / "src/FileOp.App/MainWindow.xaml").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
     checks = 0
@@ -327,10 +355,49 @@ def check_repository(root: Path) -> int:
         raise AssertionError("identity-aware elevation handler must not force hidden Folders analysis")
     checks += 1
 
+    required_files = (
+        ("var generation = Interlocked.Increment(ref pane.Generation);", "atomic Files request generation"),
+        ("Volatile.Read(ref pane.Generation) == generation;", "Files current-request generation read"),
+        ("Interlocked.Increment(ref pane.Generation);", "atomic Files pane invalidation"),
+        ("Volatile.Write(ref pane.LoadingGeneration, 0);", "Files loading-generation invalidation"),
+        ("public int Generation;", "interlocked-capable Files generation field"),
+        ("public int LoadingGeneration;", "volatile-capable Files loading-generation field"),
+    )
+    for needle, label in required_files:
+        checks += require(files, needle, label)
+
+    source_key_clear_at = window.index("Interlocked.Exchange(ref _filesSourceKey, null);")
+    left_pane_invalidate_at = window.index("InvalidateFilesPane(_leftFilesPane);", source_key_clear_at)
+    right_pane_invalidate_at = window.index("InvalidateFilesPane(_rightFilesPane);", left_pane_invalidate_at)
+    storage_generation_at = window.index(
+        "Interlocked.Increment(ref _storageGeneration);",
+        right_pane_invalidate_at,
+    )
+    if not (
+        source_key_clear_at
+        < left_pane_invalidate_at
+        < right_pane_invalidate_at
+        < storage_generation_at
+    ):
+        raise AssertionError("Files pane generations must invalidate immediately at source transition")
+    checks += 1
+
+    files_load_start = files.index("private async Task LoadFilesPageAsync")
+    request_generation_at = files.index(
+        "var generation = Interlocked.Increment(ref pane.Generation);",
+        files_load_start,
+    )
+    browse_at = files.index("var page = await _searchEngine.BrowseDirectoryAsync", request_generation_at)
+    post_browse_check_at = files.index("if (!IsFilesRequestCurrent(pane, tab, generation))", browse_at)
+    apply_page_at = files.index("ApplyFilesPage(pane, tab, page, root, append);", post_browse_check_at)
+    if not request_generation_at < browse_at < post_browse_check_at < apply_page_at:
+        raise AssertionError("Files must revalidate its generation after browse before page publication")
+    checks += 1
+
     checks += require(
         gate,
         "verify_storage_source_elevation_busy.py --repo-root $repoRoot --cases 50000",
-        "offline elevation-busy verifier wiring",
+        "offline source-lifecycle verifier wiring",
     )
     return checks
 
@@ -347,7 +414,7 @@ def main() -> int:
     repo_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = f" and {repo_checks:,} source checks" if args.repo_root else ""
     print(
-        "PASS: storage source elevation-busy behavior verified with "
+        "PASS: storage source lifecycle verified with "
         f"{model_checks:,} model checks across {args.cases:,} randomized states{suffix}."
     )
     return 0
