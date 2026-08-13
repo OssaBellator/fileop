@@ -230,13 +230,16 @@ public static class FileDeleteOperationOrchestrator
                 .CompleteAsync(authorization.PlanId, CancellationToken.None)
                 .ConfigureAwait(false);
             ValidateHistoryAgainstBaseline(authorization, baseline, completed);
-            ValidateTerminalHistory(completed);
-            return new FileDeleteOperationOrchestrationResult(
+            return CreateTerminalResult(
                 authorization,
                 completed,
                 mutatedEntryCount,
                 previouslyTerminalEntryCount,
                 completionObservedFromExistingHistory: false);
+        }
+        catch (FileDeleteOperationOrchestrationRecoveryRequiredException)
+        {
+            throw;
         }
         catch (Exception completionException)
         {
@@ -285,8 +288,7 @@ public static class FileDeleteOperationOrchestrator
         ValidateHistoryAgainstBaseline(authorization, baseline, observed);
         if (observed.TerminalState.HasValue)
         {
-            ValidateTerminalHistory(observed);
-            return new FileDeleteOperationOrchestrationResult(
+            return CreateTerminalResult(
                 authorization,
                 observed,
                 mutatedEntryCount,
