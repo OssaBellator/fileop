@@ -113,19 +113,19 @@ public sealed class StorageKnownLocationReviewTests
     [TestMethod]
     public void CandidateContainmentAcceptsRootNestedAndCaseEquivalentPaths()
     {
-        const string root = @"C:\review";
+        const string root = @"C:\review.zip";
         var analysis = Analysis(
             root,
-            FileAt(root, "root.zip", ".zip"),
-            FileAt(@"C:\review\nested\archive.zip", "archive.zip", ".zip"),
-            FileAt(@"c:\REVIEW\nested\image.iso", "image.iso", ".iso"));
+            FileAt(root, "review.zip", ".zip"),
+            FileAt(@"C:\review.zip\nested\archive.zip", "archive.zip", ".zip"),
+            FileAt(@"c:\REVIEW.ZIP\nested\image.iso", "image.iso", ".iso"));
 
         var review = StorageKnownLocationReviewClassifier.Classify(
             analysis,
             StorageReviewProvenance.Downloads);
 
         CollectionAssert.AreEqual(
-            new[] { "root.zip", "archive.zip", "image.iso" },
+            new[] { "review.zip", "archive.zip", "image.iso" },
             review.Candidates.Select(static candidate => candidate.Name).ToArray());
     }
 
@@ -184,6 +184,55 @@ public sealed class StorageKnownLocationReviewTests
     }
 
     [TestMethod]
+    public void CandidateMetadataRejectsExtensionSpoofWithoutDiscardingValidNeighbor()
+    {
+        const string root = @"C:\review";
+        var analysis = Analysis(
+            root,
+            FileAt(@"C:\review\photo.jpg", "photo.jpg", ".zip"),
+            FileAt(@"C:\review\good.zip", "good.zip", ".zip"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.Downloads);
+
+        Assert.AreEqual(1, review.Candidates.Count);
+        Assert.AreEqual("good.zip", review.Candidates[0].Name);
+    }
+
+    [TestMethod]
+    public void CandidateMetadataRejectsMismatchedNameForUserTemp()
+    {
+        const string root = @"C:\review";
+        var analysis = Analysis(
+            root,
+            FileAt(@"C:\review\actual.work", "alias.work", ".work"),
+            FileAt(@"C:\review\good.work", "good.work", ".work"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.UserTemp);
+
+        Assert.AreEqual(1, review.Candidates.Count);
+        Assert.AreEqual("good.work", review.Candidates[0].Name);
+    }
+
+    [TestMethod]
+    public void CandidateMetadataComparisonIsCaseInsensitive()
+    {
+        var analysis = Analysis(
+            @"C:\review",
+            FileAt(@"C:\review\ARCHIVE.ZIP", "archive.zip", ".zip"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.Downloads);
+
+        Assert.AreEqual(1, review.Candidates.Count);
+        Assert.AreEqual(StorageReviewReason.OldArchive, review.Candidates[0].Reason);
+    }
+
+    [TestMethod]
     public void FilteredCandidatesStillCountTowardUpstreamStaleCap()
     {
         var policy = StorageOptimizationPolicy.Default with { MaxStaleLargeFiles = 2 };
@@ -192,6 +241,25 @@ public sealed class StorageKnownLocationReviewTests
             policy,
             FileAt(@"C:\review\good.zip", "good.zip", ".zip"),
             FileAt(@"C:\review2\bad.zip", "bad.zip", ".zip"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.Downloads);
+
+        Assert.AreEqual(1, review.Candidates.Count);
+        Assert.AreEqual(2, review.SourceStaleCandidateCount);
+        Assert.IsTrue(review.SourceMayBeTruncated);
+    }
+
+    [TestMethod]
+    public void MetadataFilteredCandidatesStillCountTowardUpstreamStaleCap()
+    {
+        var policy = StorageOptimizationPolicy.Default with { MaxStaleLargeFiles = 2 };
+        var analysis = Analysis(
+            @"C:\review",
+            policy,
+            FileAt(@"C:\review\good.zip", "good.zip", ".zip"),
+            FileAt(@"C:\review\photo.jpg", "photo.jpg", ".zip"));
 
         var review = StorageKnownLocationReviewClassifier.Classify(
             analysis,
