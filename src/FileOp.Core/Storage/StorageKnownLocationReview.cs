@@ -119,7 +119,8 @@ public static class StorageKnownLocationReviewClassifier
         var candidates = new List<StorageReviewCandidate>();
         foreach (var source in analysis.StaleLargeFiles)
         {
-            if (!IsFullyQualifiedPathWithinRoot(source.Path, analysis.RootPath))
+            if (!IsFullyQualifiedPathWithinRoot(source.Path, analysis.RootPath) ||
+                !IsPathMetadataConsistent(source))
             {
                 continue;
             }
@@ -259,6 +260,23 @@ public static class StorageKnownLocationReviewClassifier
 
             var rootedPrefix = comparableRoot + Path.DirectorySeparatorChar;
             return comparablePath.StartsWith(rootedPrefix, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsPathMetadataConsistent(StorageOptimizationFileCandidate source)
+    {
+        try
+        {
+            var fileName = Path.GetFileName(source.Path);
+            var extension = Path.GetExtension(source.Path);
+            return !string.IsNullOrWhiteSpace(fileName) &&
+                string.Equals(fileName, source.Name, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(extension, source.Extension, StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception exception)
             when (exception is ArgumentException or NotSupportedException or PathTooLongException)
