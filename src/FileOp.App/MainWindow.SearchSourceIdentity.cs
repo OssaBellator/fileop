@@ -73,7 +73,7 @@ public sealed partial class MainWindow
     {
         if (DispatcherQueue.HasThreadAccess)
         {
-            ApplySearchPresentationInvalidation(
+            _ = ApplySearchPresentationInvalidationAsync(
                 invalidationGeneration,
                 sourceIdentityKey);
             return;
@@ -81,25 +81,44 @@ public sealed partial class MainWindow
 
         DispatcherQueue.TryEnqueue(() =>
         {
-            ApplySearchPresentationInvalidation(
+            _ = ApplySearchPresentationInvalidationAsync(
                 invalidationGeneration,
                 sourceIdentityKey);
         });
     }
 
-    private void ApplySearchPresentationInvalidation(
+    private async Task ApplySearchPresentationInvalidationAsync(
         int invalidationGeneration,
         string? sourceIdentityKey)
     {
-        if (_closed ||
-            invalidationGeneration != Volatile.Read(ref _searchGeneration))
+        try
         {
-            return;
-        }
+            // RunSearchAsync releases this gate before its outer error handler can
+            // complete. Waiting here ensures an invalidated old request cannot
+            // overwrite the final source-changed status with a stale failure. A
+            // fresh query may acquire the gate first; its newer generation then
+            // makes this invalidation self-cancel after that query completes.
+            await _searchGate.WaitAsync(_lifetimeCancellation.Token);
+            try
+            {
+                if (_closed ||
+                    invalidationGeneration != Volatile.Read(ref _searchGeneration))
+                {
+                    return;
+                }
 
-        _results.Clear();
-        SetSearchStatus(sourceIdentityKey is null
-            ? "Search source is changing. Search will be available when indexing is ready."
-            : "Search source changed. Search again to show results from the current index.");
+                _results.Clear();
+                SetSearchStatus(sourceIdentityKey is null
+                    ? "Search source is changing. Search will be available when indexing is ready."
+                    : "Search source changed. Search again to show results from the current index.");
+            }
+            finally
+            {
+                _searchGate.Release();
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
     }
 }
