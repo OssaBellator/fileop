@@ -30,6 +30,7 @@ public sealed partial class MainWindow
 
         StorageKnownLocationReviewSnapshot review;
         string root;
+        ulong volumeIdentity;
         string candidatePath;
         string candidateName;
         string parentPath;
@@ -38,6 +39,7 @@ public sealed partial class MainWindow
         {
             if (_storageKnownLocationReview is not { } currentReview ||
                 _searchEngine.StorageRootPath is not { } currentRoot ||
+                _searchEngine.StorageVolumeIdentity is not { } currentVolumeIdentity ||
                 _searchEngine.State.IsBusy ||
                 _searchEngine.State.Mode != DesktopSearchMode.Native ||
                 !_searchEngine.StorageOptimizationAvailable)
@@ -49,7 +51,9 @@ public sealed partial class MainWindow
 
             review = currentReview;
             root = currentRoot;
-            if (!PathsEqual(root, review.ActiveVolumeRootPath))
+            volumeIdentity = currentVolumeIdentity;
+            if (review.ActiveVolumeIdentity != volumeIdentity ||
+                !PathsEqual(root, review.ActiveVolumeRootPath))
             {
                 SetStorageStatus(
                     "The active indexed volume changed after this known-location review. Refresh Optimize before reviewing it in Files.");
@@ -152,8 +156,10 @@ public sealed partial class MainWindow
         }
 
         var currentRootAfterLoad = _searchEngine.StorageRootPath;
+        var currentVolumeIdentityAfterLoad = _searchEngine.StorageVolumeIdentity;
         if (!ReferenceEquals(review, _storageKnownLocationReview) ||
             currentRootAfterLoad is null ||
+            currentVolumeIdentityAfterLoad != volumeIdentity ||
             !PathsEqual(currentRootAfterLoad, root) ||
             _searchEngine.State.Mode != DesktopSearchMode.Native ||
             _searchEngine.State.IsBusy ||
