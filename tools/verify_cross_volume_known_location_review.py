@@ -196,6 +196,7 @@ def check_repository(root: Path) -> int:
     view = (root / "src/FileOp.App/StorageKnownLocationReviewView.xaml.cs").read_text(encoding="utf-8")
     handoff = (root / "src/FileOp.App/MainWindow.FilesReviewHandoff.cs").read_text(encoding="utf-8")
     readiness = (root / "src/FileOp.App/MainWindow.StorageCleanupReadiness.cs").read_text(encoding="utf-8")
+    volume_discovery = (root / "src/FileOp.Windows/Ntfs/NtfsVolumeDiscovery.cs").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
     docs = (root / "docs/known-location-review.md").read_text(encoding="utf-8")
@@ -205,6 +206,9 @@ def check_repository(root: Path) -> int:
         (producer, "AnalyzeCrossVolumeKnownLocationAsync(", "cross-volume delegation"),
         (producer, "if (!IsReviewPathWithinRoot(fullPath, activeRoot))", "primary/cross-volume split"),
         (helper, "Path.GetPathRoot(fullPath)", "location volume-root derivation"),
+        (volume_discovery, "DriveInfo.GetDrives()", "native fixed-drive discovery"),
+        (volume_discovery, "drive.RootDirectory.FullName", "native catalog root source"),
+        (volume_discovery, "rootPath[1] != ':'", "drive-letter volume-root contract"),
         (helper, "GetVolumesAsync(_lifetimeCancellation.Token)", "indexed-volume discovery"),
         (helper, "FindIndexedVolumeByRoot(volumesBefore.Volumes, locationRoot)", "pre-capture root selection"),
         (helper, "if (!target.HasCheckpoint)", "existing-checkpoint requirement"),
