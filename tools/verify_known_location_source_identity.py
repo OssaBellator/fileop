@@ -30,6 +30,14 @@ def canon_root(path: str) -> str:
     return ntpath.normcase(drive + "\\")
 
 
+def path_root(path: str) -> str:
+    value = ntpath.normpath(path)
+    drive, tail = ntpath.splitdrive(value)
+    if not drive or not tail.startswith("\\"):
+        raise ValueError(path)
+    return ntpath.normcase(drive + "\\")
+
+
 def select_unique(volumes: tuple[Volume, ...], root: str) -> tuple[Volume | None, bool]:
     expected = canon_root(root)
     matches = [volume for volume in volumes if canon_root(volume.root) == expected]
@@ -66,7 +74,7 @@ def review_sources_current(
         if location.source_identity is None or not location.root:
             return False
         try:
-            source_root = canon_root(location.root)
+            source_root = path_root(location.root)
         except ValueError:
             return False
         if not matches_source(catalog, source_root, location.source_identity):
@@ -174,7 +182,6 @@ def run_model(cases: int, seed: int) -> int:
                 if location_ambiguous:
                     catalog.append(Volume(location_root, catalog_location_identity + 1_000_000))
         elif location_available and canon_root(location_root) == canon_root(primary_root):
-            location_identity = primary_identity
             location = Location(
                 True,
                 location_path,
