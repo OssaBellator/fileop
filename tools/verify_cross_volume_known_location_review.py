@@ -32,6 +32,13 @@ def same_root(left: str, right: str) -> bool:
         return False
 
 
+def same_path(left: str, right: str) -> bool:
+    try:
+        return ntpath.normcase(ntpath.normpath(left)) == ntpath.normcase(ntpath.normpath(right))
+    except ValueError:
+        return False
+
+
 def select_volume(volumes: tuple[Volume, ...], root: str) -> Volume | None:
     return next((volume for volume in volumes if same_root(volume.root, root)), None)
 
@@ -75,6 +82,9 @@ def cross_volume_outcome(
 def run_model(cases: int, seed: int) -> int:
     checks = 0
     before = (Volume("C:\\", 1, True), Volume("D:\\", 2, True))
+    assert same_path("D:\\Temp\\", "D:\\Temp")
+    assert same_path("d:\\users\\u\\downloads", "D:\\Users\\U\\Downloads\\")
+    assert not same_path("D:\\Temp", "D:\\Temp2")
     assert cross_volume_outcome(
         location_root="D:\\",
         active_root="C:\\",
@@ -141,7 +151,7 @@ def run_model(cases: int, seed: int) -> int:
         after=(Volume("C:\\", 1, True), Volume("D:\\", 99, False, "Busy")),
         primary_stable=True,
     ) == "unavailable-source-changed"
-    checks += 8
+    checks += 11
 
     rng = random.Random(seed)
     drives = "CDEFGH"
@@ -151,6 +161,11 @@ def run_model(cases: int, seed: int) -> int:
         location_drive = rng.choice(drives)
         active_root = f"{active_drive}:\\"
         location_root = f"{location_drive}:\\"
+        normalized_candidate = f"{location_root}Users\\U{index % 97}\\Temp"
+        equivalent_candidate = normalized_candidate + "\\" if index % 2 == 0 else normalized_candidate.swapcase()
+        assert same_path(normalized_candidate, equivalent_candidate)
+        checks += 1
+
         target_present = rng.random() < 0.90
         checkpoint = rng.random() < 0.91
         target_busy = rng.random() < 0.05
@@ -264,6 +279,7 @@ def forbid(text: str, needle: str, label: str) -> int:
 def check_repository(root: Path) -> int:
     helper = (root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReviewCrossVolume.cs").read_text(encoding="utf-8")
     producer = (root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReview.cs").read_text(encoding="utf-8")
+    optimizer = (root / "src/FileOp.Core/Storage/SqliteStorageOptimizationAnalytics.cs").read_text(encoding="utf-8")
     xaml = (root / "src/FileOp.App/StorageKnownLocationReviewView.xaml").read_text(encoding="utf-8")
     view = (root / "src/FileOp.App/StorageKnownLocationReviewView.xaml.cs").read_text(encoding="utf-8")
     handoff = (root / "src/FileOp.App/MainWindow.FilesReviewHandoff.cs").read_text(encoding="utf-8")
@@ -279,6 +295,9 @@ def check_repository(root: Path) -> int:
         (producer, "AnalyzeCrossVolumeKnownLocationAsync(", "cross-volume delegation"),
         (producer, "if (!IsReviewPathWithinRoot(fullPath, activeRoot))", "primary/cross-volume split"),
         (helper, "Path.GetPathRoot(fullPath)", "location volume-root derivation"),
+        (helper, "ReviewPathsEqual(response.Analysis.RootPath, fullPath)", "normalized analysis-root validation"),
+        (helper, "TrimEnd(", "review-path trailing-separator normalization"),
+        (optimizer, "trimmed = trimmed.TrimEnd('\\\\', '/')", "optimizer trailing-separator normalization"),
         (volume_discovery, "DriveInfo.GetDrives()", "native fixed-drive discovery"),
         (volume_discovery, "drive.RootDirectory.FullName", "native catalog root source"),
         (volume_discovery, "rootPath[1] != ':'", "drive-letter volume-root contract"),
@@ -329,17 +348,24 @@ def check_repository(root: Path) -> int:
     no_checkpoint_at = helper.index("has no existing checkpoint")
     catchup_at = helper.index("CatchUpAsync(")
     request_at = helper.index("new IndexingStorageOptimizationRequest(")
+    analysis_root_at = helper.index("ReviewPathsEqual(response.Analysis.RootPath, fullPath)")
     post_at = helper.index("var volumesAfter = await session.Client")
     identity_at = helper.index("current.VolumeIdentity != target.VolumeIdentity")
     current_checkpoint_at = helper.index("if (!current.HasCheckpoint)")
     current_state_at = helper.index("if (!IsSnapshotRequiredState(current.State))")
     checkpoint_lost_at = helper.index("lost its durable checkpoint")
     classify_at = helper.index("StorageKnownLocationReviewClassifier.Classify(")
-    if not target_checkpoint_at < target_state_at < no_checkpoint_at < catchup_at < request_at < post_at:
-        raise AssertionError("pre-capture descriptor/checkpoint/catch-up ordering changed")
+    if not target_checkpoint_at < target_state_at < no_checkpoint_at < catchup_at < request_at < analysis_root_at < post_at:
+        raise AssertionError("pre-capture descriptor/catch-up/analysis-root ordering changed")
     if not post_at < identity_at < current_checkpoint_at < current_state_at < checkpoint_lost_at < classify_at:
         raise AssertionError("post-capture identity/checkpoint descriptor ordering changed")
     checks += 2
+
+    checks += forbid(
+        helper,
+        "string.Equals(\n                        Path.GetFullPath(response.Analysis.RootPath)",
+        "raw analysis-root equality",
+    )
 
     for text, label in ((helper, "cross-volume helper"), (producer, "known-location producer")):
         for needle in (
