@@ -24,7 +24,12 @@ internal sealed partial class DesktopSearchEngine
                 "Known-location review currently requires the native indexed NTFS volume.");
         }
 
-        var capturedRoot = Path.GetFullPath(capturedPrimary.RootPath);
+        if (!TryNormalizeReviewRoot(capturedPrimary.RootPath, out var capturedRoot))
+        {
+            throw new InvalidOperationException(
+                "The active native indexed volume reported an invalid filesystem root.");
+        }
+
         var capturedVolumeIdentity = capturedPrimary.VolumeIdentity;
         var locations = new List<StorageKnownLocationReview>(2);
         string downloadsPath;
@@ -65,6 +70,7 @@ internal sealed partial class DesktopSearchEngine
             exception is ArgumentException or
             IOException or
             NotSupportedException or
+            PathTooLongException or
             UnauthorizedAccessException)
         {
             tempPath = string.Empty;
@@ -89,14 +95,8 @@ internal sealed partial class DesktopSearchEngine
             StorageRootPath is not { } currentRoot ||
             _primaryVolume is not { } currentPrimary ||
             currentPrimary.VolumeIdentity != capturedVolumeIdentity ||
-            !string.Equals(
-                Path.GetFullPath(currentRoot),
-                capturedRoot,
-                StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(
-                Path.GetFullPath(currentPrimary.RootPath),
-                capturedRoot,
-                StringComparison.OrdinalIgnoreCase))
+            !ReviewRootsEqual(currentRoot, capturedRoot) ||
+            !ReviewRootsEqual(currentPrimary.RootPath, capturedRoot))
         {
             throw new InvalidOperationException(
                 "The native indexing source changed while known-location review evidence was being captured.");
@@ -126,7 +126,21 @@ internal sealed partial class DesktopSearchEngine
         string activeRoot,
         ulong activeVolumeIdentity)
     {
-        var fullPath = Path.GetFullPath(locationPath);
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(locationPath);
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                provenance,
+                StorageReviewLocationStatus.Unavailable,
+                locationPath,
+                $"{FormatProvenance(provenance)} resolved to an invalid filesystem path: {exception.Message}");
+        }
+
         try
         {
             if (!IsReviewPathWithinRoot(fullPath, activeRoot))
