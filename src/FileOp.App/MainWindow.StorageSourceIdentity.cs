@@ -45,11 +45,11 @@ public sealed partial class MainWindow
             return;
         }
 
-        // Native maintenance can replace the snapshot in place while preserving
-        // both root and VolumeIdentity. Immediately invalidate only source-bound
-        // Optimize work at busy entry; the engine advances the general source
-        // generation on recovery, when every root-keyed feature can reload.
-        if (state.Mode == DesktopSearchMode.Native && state.IsBusy)
+        // Same-identity native maintenance can replace the snapshot in place.
+        // Invalidate source-bound Optimize evidence immediately only for that
+        // maintenance class; a user elevation attempt that leaves the helper
+        // unchanged is temporarily busy but does not replace the indexed source.
+        if (_searchEngine.StorageSourceMaintenanceBusy)
         {
             Interlocked.Exchange(ref _storageOptimizationAnalysis, null);
             Interlocked.Exchange(ref _storageKnownLocationReview, null);
