@@ -65,13 +65,13 @@ internal sealed partial class DesktopSearchEngine
 
                 if (!target.HasCheckpoint)
                 {
-                    if (IsTransientIndexingState(target.State))
+                    if (!IsSnapshotRequiredState(target.State))
                     {
                         return StorageKnownLocationReviewClassifier.CreateUnavailable(
                             provenance,
                             StorageReviewLocationStatus.Unavailable,
                             fullPath,
-                            $"{FormatProvenance(provenance)} maps to indexed volume {target.RootPath}, but its native index is temporarily {target.State}. No cross-volume evidence was presented; retry after indexing maintenance finishes.");
+                            $"{FormatProvenance(provenance)} maps to indexed volume {target.RootPath}, but its checkpoint descriptor is temporarily unavailable in state {target.State}. No cross-volume evidence was presented; retry after indexing maintenance finishes.");
                     }
 
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
@@ -119,18 +119,8 @@ internal sealed partial class DesktopSearchEngine
                     .GetVolumesAsync(_lifetimeCancellation.Token)
                     .ConfigureAwait(false);
                 var current = FindIndexedVolumeByRoot(volumesAfter.Volumes, locationRoot);
-                if (current is not null && IsTransientIndexingState(current.State))
-                {
-                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
-                        provenance,
-                        StorageReviewLocationStatus.Unavailable,
-                        fullPath,
-                        $"{FormatProvenance(provenance)} indexed volume {current.RootPath} entered transient {current.State} state while evidence was being captured, so the result was discarded.");
-                }
-
                 if (current is null ||
                     current.VolumeIdentity != target.VolumeIdentity ||
-                    !current.HasCheckpoint ||
                     !string.Equals(
                         NormalizeRoot(current.RootPath),
                         NormalizeRoot(target.RootPath),
@@ -140,7 +130,25 @@ internal sealed partial class DesktopSearchEngine
                         provenance,
                         StorageReviewLocationStatus.Unavailable,
                         fullPath,
-                        $"{FormatProvenance(provenance)} indexed-volume identity or checkpoint changed while evidence was being captured, so the result was discarded.");
+                        $"{FormatProvenance(provenance)} indexed-volume identity or root changed while evidence was being captured, so the result was discarded.");
+                }
+
+                if (!current.HasCheckpoint)
+                {
+                    if (!IsSnapshotRequiredState(current.State))
+                    {
+                        return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                            provenance,
+                            StorageReviewLocationStatus.Unavailable,
+                            fullPath,
+                            $"{FormatProvenance(provenance)} indexed volume {current.RootPath} became temporarily unavailable in state {current.State} while evidence was being captured, so the result was discarded.");
+                    }
+
+                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                        provenance,
+                        StorageReviewLocationStatus.Unavailable,
+                        fullPath,
+                        $"{FormatProvenance(provenance)} indexed volume {current.RootPath} lost its durable checkpoint while evidence was being captured, so the result was discarded.");
                 }
 
                 if (_primaryVolume is not { } currentPrimary ||
@@ -190,8 +198,6 @@ internal sealed partial class DesktopSearchEngine
                 StringComparison.OrdinalIgnoreCase));
     }
 
-    private static bool IsTransientIndexingState(string state) =>
-        string.Equals(state, "Busy", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(state, "Rebuilding", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(state, "Syncing", StringComparison.OrdinalIgnoreCase);
+    private static bool IsSnapshotRequiredState(string state) =>
+        string.Equals(state, "SnapshotRequired", StringComparison.OrdinalIgnoreCase);
 }
