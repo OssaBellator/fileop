@@ -333,12 +333,30 @@ internal sealed partial class DesktopSearchEngine
 
         try
         {
-            normalizedRoot = NormalizeRoot(path);
+            var fullPath = Path.GetFullPath(path);
+            var filesystemRoot = Path.GetPathRoot(fullPath);
+            if (string.IsNullOrWhiteSpace(filesystemRoot))
+            {
+                return false;
+            }
+
+            normalizedRoot = NormalizeRoot(fullPath);
+            var normalizedFilesystemRoot = NormalizeRoot(filesystemRoot);
+            if (!string.Equals(
+                    normalizedRoot,
+                    normalizedFilesystemRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                normalizedRoot = string.Empty;
+                return false;
+            }
+
             return true;
         }
         catch (Exception exception)
             when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
+            normalizedRoot = string.Empty;
             return false;
         }
     }
