@@ -67,6 +67,10 @@ Invoke-Step "Offline known-location review verifier" {
     python tools/verify_known_location_review.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline known-location candidate containment verifier" {
+    python tools/verify_known_location_candidate_containment.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline known-location Files handoff verifier" {
     python tools/verify_known_location_files_handoff.py --repo-root $repoRoot --cases 50000
 }
