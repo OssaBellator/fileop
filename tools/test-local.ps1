@@ -259,6 +259,10 @@ Invoke-Step "Offline file delete completion-only retry verifier" {
     python tools/verify_file_delete_completion_retry.py --repo-root $repoRoot
 }
 
+Invoke-Step "Offline Files delete session verifier" {
+    python tools/verify_files_delete_session.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline file delete recovery-history discovery verifier" {
     python tools/verify_file_delete_recovery_history_discovery.py --repo-root $repoRoot --cases 50000
 }
