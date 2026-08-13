@@ -13,6 +13,7 @@ from pathlib import Path
 class Volume:
     root: str
     identity: int
+    checkpoint: bool = True
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,12 @@ def select_unique(volumes: tuple[Volume, ...], root: str) -> tuple[Volume | None
 
 def matches_source(volumes: tuple[Volume, ...], root: str, identity: int) -> bool:
     descriptor, ambiguous = select_unique(volumes, root)
-    return not ambiguous and descriptor is not None and descriptor.identity == identity
+    return (
+        not ambiguous
+        and descriptor is not None
+        and descriptor.checkpoint
+        and descriptor.identity == identity
+    )
 
 
 def review_sources_current(
@@ -118,6 +124,14 @@ def run_model(cases: int, seed: int) -> int:
         primary_identity=1,
         selected_primary_root="C:\\",
         selected_primary_identity=1,
+        locations=(available_secondary,),
+        catalog=(Volume("C:\\", 1), Volume("D:\\", 2, checkpoint=False)),
+    )
+    assert not review_sources_current(
+        primary_root="C:\\",
+        primary_identity=1,
+        selected_primary_root="C:\\",
+        selected_primary_identity=1,
         locations=(Location(True, available_secondary.root, None),),
         catalog=base_catalog,
     )
@@ -129,7 +143,7 @@ def run_model(cases: int, seed: int) -> int:
         locations=(unavailable,),
         catalog=(Volume("C:\\", 1),),
     )
-    checks += 5
+    checks += 6
 
     rng = random.Random(seed)
     drives = "CDEFGH"
@@ -149,12 +163,13 @@ def run_model(cases: int, seed: int) -> int:
         catalog: list[Volume] = []
         primary_present = rng.random() < 0.99
         primary_identity_matches = rng.random() < 0.98
+        primary_checkpoint = rng.random() < 0.98
         primary_ambiguous = rng.random() < 0.01
         if primary_present:
             catalog_primary_identity = (
                 primary_identity if primary_identity_matches else primary_identity + 2
             )
-            catalog.append(Volume(primary_root, catalog_primary_identity))
+            catalog.append(Volume(primary_root, catalog_primary_identity, primary_checkpoint))
             if primary_ambiguous:
                 catalog.append(Volume(primary_root, catalog_primary_identity + 1_000_000))
 
@@ -165,6 +180,7 @@ def run_model(cases: int, seed: int) -> int:
         location_has_identity = rng.random() < 0.99
         location_present = rng.random() < 0.98
         location_identity_matches = rng.random() < 0.96
+        location_checkpoint = rng.random() < 0.97
         location_ambiguous = rng.random() < 0.01
         location_path = f"{location_root}Users\\U{index % 97}\\Review"
         location = Location(
@@ -178,7 +194,11 @@ def run_model(cases: int, seed: int) -> int:
                 catalog_location_identity = (
                     location_identity if location_identity_matches else location_identity + 3
                 )
-                catalog.append(Volume(location_root, catalog_location_identity))
+                catalog.append(Volume(
+                    location_root,
+                    catalog_location_identity,
+                    location_checkpoint,
+                ))
                 if location_ambiguous:
                     catalog.append(Volume(location_root, catalog_location_identity + 1_000_000))
         elif location_available and canon_root(location_root) == canon_root(primary_root):
@@ -189,6 +209,7 @@ def run_model(cases: int, seed: int) -> int:
             )
             location_present = primary_present
             location_identity_matches = primary_identity_matches
+            location_checkpoint = primary_checkpoint
             location_ambiguous = primary_ambiguous
 
         result = review_sources_current(
@@ -204,6 +225,7 @@ def run_model(cases: int, seed: int) -> int:
             and selected_primary_root_matches
             and primary_present
             and primary_identity_matches
+            and primary_checkpoint
             and not primary_ambiguous
             and (
                 not location_available
@@ -211,6 +233,7 @@ def run_model(cases: int, seed: int) -> int:
                     location_has_identity
                     and location_present
                     and location_identity_matches
+                    and location_checkpoint
                     and not location_ambiguous
                 )
             )
@@ -220,7 +243,7 @@ def run_model(cases: int, seed: int) -> int:
             assert not result
         if location_available and location_present and not location_identity_matches:
             assert not result
-        if location_available and location_ambiguous:
+        if location_available and not location_checkpoint:
             assert not result
         checks += 4
     return checks
@@ -250,6 +273,7 @@ def check_repository(root: Path) -> int:
         ("source", "IReadOnlyList<StorageKnownLocationReview> expectedLocations", "location-aware freshness overload"),
         ("source", "location.SourceVolumeIdentity is not { } sourceVolumeIdentity", "location source identity requirement"),
         ("source", "Path.GetPathRoot(location.RootPath)", "location source-root derivation"),
+        ("source", "currentDescriptor.HasCheckpoint", "current checkpoint requirement"),
         ("source", "MatchesExpectedSource(", "unique catalog source matching"),
         ("readiness", "[matchedLocation]", "readiness owning-location source binding"),
         ("gate", "verify_known_location_source_identity.py", "offline gate wiring"),
