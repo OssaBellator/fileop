@@ -268,12 +268,12 @@ public sealed class FileDeleteOperationOrchestratorTests
     {
         var entries = history.Entries.ToArray();
         var previous = entries[ordinal];
-        var mutationStarted = state is FileDeleteOperationActionEntryState.MutationStarted or
+        DateTimeOffset? mutationStarted = state is FileDeleteOperationActionEntryState.MutationStarted or
             FileDeleteOperationActionEntryState.Committed or
             FileDeleteOperationActionEntryState.RecoveryRequired
                 ? previous.MutationStartedAtUtc ?? history.StartedAtUtc.AddMilliseconds(ordinal + 1)
                 : null;
-        var completed = state is FileDeleteOperationActionEntryState.Committed or
+        DateTimeOffset? completed = state is FileDeleteOperationActionEntryState.Committed or
             FileDeleteOperationActionEntryState.Failed or
             FileDeleteOperationActionEntryState.RecoveryRequired
                 ? (mutationStarted ?? history.StartedAtUtc).AddMilliseconds(10 + ordinal)
