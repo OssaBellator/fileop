@@ -18,10 +18,12 @@ internal sealed partial class DesktopSearchEngine
     public async ValueTask<StorageKnownLocationReviewSnapshot> AnalyzeKnownLocationReviewAsync()
     {
         ThrowIfDisposed();
-        if (!StorageOptimizationAvailable || _primaryVolume is not { } capturedPrimary)
+        if (!StorageOptimizationAvailable ||
+            !IsPrimaryReviewStateCurrent() ||
+            _primaryVolume is not { } capturedPrimary)
         {
             throw new InvalidOperationException(
-                "Known-location review currently requires the native indexed NTFS volume.");
+                "Known-location review currently requires a current native indexed NTFS volume.");
         }
 
         if (!TryNormalizeReviewRoot(capturedPrimary.RootPath, out var capturedRoot))
@@ -98,6 +100,7 @@ internal sealed partial class DesktopSearchEngine
 
         ThrowIfDisposed();
         if (!StorageOptimizationAvailable ||
+            !IsPrimaryReviewStateCurrent() ||
             StorageRootPath is not { } currentRoot ||
             _primaryVolume is not { } currentPrimary ||
             currentPrimary.VolumeIdentity != capturedVolumeIdentity ||
@@ -105,7 +108,7 @@ internal sealed partial class DesktopSearchEngine
             !ReviewRootsEqual(currentPrimary.RootPath, capturedRoot))
         {
             throw new InvalidOperationException(
-                "The native indexing source changed while known-location review evidence was being captured.");
+                "The native indexing source changed or fell behind while known-location review evidence was being captured.");
         }
 
         if (!await IsNativeReviewSourceCurrentAsync(
@@ -114,7 +117,7 @@ internal sealed partial class DesktopSearchEngine
                 locations).ConfigureAwait(false))
         {
             throw new InvalidOperationException(
-                "A native indexed-volume source changed before known-location review evidence could be published.");
+                "A native indexed-volume source changed or fell behind before known-location review evidence could be published.");
         }
 
         return new StorageKnownLocationReviewSnapshot(
