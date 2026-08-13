@@ -100,32 +100,28 @@ internal sealed partial class DesktopSearchEngine
         string activeRoot)
     {
         var fullPath = Path.GetFullPath(locationPath);
-        if (!IsReviewPathWithinRoot(fullPath, activeRoot))
-        {
-            return StorageKnownLocationReviewClassifier.CreateUnavailable(
-                provenance,
-                StorageReviewLocationStatus.OutsideActiveVolume,
-                fullPath,
-                $"{FormatProvenance(provenance)} is outside the currently active indexed volume {activeRoot}. " +
-                "This first review slice does not aggregate candidates across volumes.");
-        }
-
         try
         {
+            if (!IsReviewPathWithinRoot(fullPath, activeRoot))
+            {
+                return await AnalyzeCrossVolumeKnownLocationAsync(
+                    provenance,
+                    fullPath,
+                    activeRoot).ConfigureAwait(false);
+            }
+
             var analysis = await AnalyzeStorageOptimizationAsync(fullPath).ConfigureAwait(false);
             return StorageKnownLocationReviewClassifier.Classify(analysis, provenance);
         }
         catch (IndexingServiceRemoteException exception)
-            when (exception.Error.Code is
-                IndexingServiceErrorCode.InvalidRequest or
-                IndexingServiceErrorCode.SnapshotRequired or
-                IndexingServiceErrorCode.Busy)
         {
             return StorageKnownLocationReviewClassifier.CreateUnavailable(
                 provenance,
-                StorageReviewLocationStatus.Unavailable,
+                exception.Error.Code == IndexingServiceErrorCode.VolumeNotFound
+                    ? StorageReviewLocationStatus.OutsideActiveVolume
+                    : StorageReviewLocationStatus.Unavailable,
                 fullPath,
-                $"{FormatProvenance(provenance)} could not be reviewed from the current native index: {exception.Error.Message}");
+                $"{FormatProvenance(provenance)} could not be reviewed from the native index: {exception.Error.Message}");
         }
         catch (InvalidOperationException exception)
         {
