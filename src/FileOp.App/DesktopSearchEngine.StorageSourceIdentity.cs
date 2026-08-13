@@ -11,14 +11,6 @@ internal sealed partial class DesktopSearchEngine
     private long _fallbackStorageSourceGeneration;
     private int _fallbackStorageSourceActive;
 
-    public DesktopSearchEngine()
-    {
-        // This handler is registered before any MainWindow subscriber. It turns
-        // usable native/fallback publications into stable source generations
-        // without coupling MainWindow cache logic to lifecycle implementation.
-        StateChanged += TrackStorageSourceIdentity;
-    }
-
     internal string? StorageSourceIdentityKey
     {
         get

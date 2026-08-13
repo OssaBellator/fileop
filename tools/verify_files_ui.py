@@ -401,11 +401,11 @@ def check_repository(root: Path) -> int:
         assert forbidden not in combined, forbidden
 
     assert '## Selection semantics' in s['docs']
-    assert '## Prepared operation intent' in s['docs']
-    assert '## Planned operation queue' in s['docs']
-    assert '## Read-only live preflight' in s['docs']
+    assert '## Copy / Move planning boundary' in s['docs']
+    assert 'Preparing or queueing a plan performs no filesystem write.' in s['docs']
+    assert 'read-only Windows preflight' in s['docs']
     assert 'Ask later' in s['docs'] and 'Skip existing' in s['docs'] and 'Stop on collision' in s['docs']
-    assert 'Destructive replacement is deliberately not a queue policy' in s['docs']
+    assert 'Destructive replacement is not silently inferred from one of those choices.' in s['docs']
 
     return (
         len(required_main) + len(required_selection) + len(required_intent) + len(required_queue) +

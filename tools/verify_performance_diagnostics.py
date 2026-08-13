@@ -197,8 +197,8 @@ def check_repository(root: Path) -> int:
     for needle in (
         "protocol v8",
         "GetIndexDiagnostics",
-        "performance-diagnostics panel",
-        "Storage has four views: Folders, Types, History and Optimize",
+        "Optimize/Performance surfaces are measurement-oriented",
+        "These providers do not justify fake optimization behavior",
     ):
         assert needle.casefold() in text["architecture"].casefold(), needle
         checks += 1
