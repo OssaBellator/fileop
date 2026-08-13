@@ -6,147 +6,141 @@ import argparse
 from pathlib import Path
 import random
 
+UINT32_MAX = (1 << 32) - 1
+
 
 def source_event(
     generation: int,
-    last_source_generation: int,
+    source_invalidation_count: int,
     last_token: str | None,
     new_token: str | None,
     busy: bool,
-) -> tuple[int, int, str | None, bool, str | None]:
+) -> tuple[int, int, str | None, bool, tuple[int, int, str | None] | None]:
     if busy:
-        generation += 1
-        last_source_generation = generation
+        source_invalidation_count += 1
+        generation = (generation + 1) & UINT32_MAX
 
     changed = new_token != last_token
-    captured_clear_token: str | None = None
+    clear: tuple[int, int, str | None] | None = None
     if changed:
-        generation += 1
-        last_source_generation = generation
+        source_invalidation_count += 1
+        generation = (generation + 1) & UINT32_MAX
         last_token = new_token
-        captured_clear_token = new_token
+        clear = (generation, source_invalidation_count, new_token)
 
-    return (
-        generation,
-        last_source_generation,
-        last_token,
-        changed,
-        captured_clear_token,
-    )
+    return generation, source_invalidation_count, last_token, changed, clear
 
 
 def user_event(generation: int) -> int:
-    return generation + 1
+    return (generation + 1) & UINT32_MAX
 
 
 def can_apply_clear(
     generation: int,
-    last_source_generation: int,
+    source_invalidation_count: int,
     current_token: str | None,
-    captured_clear_token: str | None,
+    clear: tuple[int, int, str | None] | None,
 ) -> bool:
+    if clear is None:
+        return False
+
+    invalidation_generation, initial_source_count, captured_token = clear
+    source_delta = source_invalidation_count - initial_source_count
+    generation_delta = (generation - invalidation_generation) & UINT32_MAX
     return (
-        generation == last_source_generation
-        and current_token == captured_clear_token
+        0 <= source_delta <= UINT32_MAX
+        and generation_delta == source_delta
+        and current_token == captured_token
     )
 
 
 def run_model(cases: int, seed: int) -> int:
     checks = 0
 
-    # Busy with an unchanged token invalidates an in-flight query but does not
-    # manufacture a displayed-result clear.
-    generation, source_generation, token, changed, captured = source_event(
+    # Busy with an unchanged token invalidates in-flight work only.
+    generation, source_count, token, changed, clear = source_event(
         10,
-        9,
+        4,
         "native:1:1",
         "native:1:1",
         busy=True,
     )
     assert generation == 11
-    assert source_generation == 11
+    assert source_count == 5
     assert token == "native:1:1"
-    assert not changed and captured is None
+    assert not changed and clear is None
     checks += 4
 
-    # Token change owns a clear. A later source-owned busy generation keeps the
-    # clear valid, while a user-owned generation cancels it. If that user query is
-    # then invalidated by another source busy event, the clear becomes valid again.
-    generation, source_generation, token, changed, captured = source_event(
+    # Token change owns a clear. Later source-only invalidation keeps it valid.
+    generation, source_count, token, changed, clear = source_event(
         20,
-        19,
+        7,
         "native:1:1",
         "native:1:2",
         busy=False,
     )
-    assert changed and captured == "native:1:2"
-    assert can_apply_clear(generation, source_generation, token, captured)
+    assert changed and clear == (21, 8, "native:1:2")
+    assert can_apply_clear(generation, source_count, token, clear)
     checks += 2
 
-    generation, source_generation, token, changed_again, ignored = source_event(
+    generation, source_count, token, changed_again, ignored = source_event(
         generation,
-        source_generation,
+        source_count,
         token,
         token,
         busy=True,
     )
     assert not changed_again and can_apply_clear(
         generation,
-        source_generation,
+        source_count,
         token,
-        captured,
+        clear,
     )
     checks += 1
 
+    # A later user/query generation permanently supersedes that clear. Another
+    # failed source-busy interval with the same token must not resurrect it.
     generation = user_event(generation)
-    assert not can_apply_clear(generation, source_generation, token, captured)
+    assert not can_apply_clear(generation, source_count, token, clear)
     checks += 1
 
-    generation, source_generation, token, changed_again, ignored = source_event(
+    generation, source_count, token, changed_again, ignored = source_event(
         generation,
-        source_generation,
+        source_count,
         token,
         token,
         busy=True,
     )
-    assert not changed_again and can_apply_clear(
+    assert not changed_again and not can_apply_clear(
         generation,
-        source_generation,
+        source_count,
         token,
-        captured,
+        clear,
     )
     checks += 1
 
-    old_capture = captured
-    generation, source_generation, token, changed_again, new_capture = source_event(
+    old_clear = clear
+    generation, source_count, token, changed_again, new_clear = source_event(
         generation,
-        source_generation,
+        source_count,
         token,
         "fallback:2",
         busy=False,
     )
     assert changed_again and not can_apply_clear(
         generation,
-        source_generation,
+        source_count,
         token,
-        old_capture,
+        old_clear,
     )
-    assert can_apply_clear(
-        generation,
-        source_generation,
-        token,
-        new_capture,
-    )
+    assert can_apply_clear(generation, source_count, token, new_clear)
     checks += 2
 
     rng = random.Random(seed)
     token_kinds = (None, "native", "fallback")
     for index in range(cases):
-        generation = rng.randint(1, 100_000)
-        latest_was_source_owned = rng.random() < 0.5
-        last_source_generation = (
-            generation if latest_was_source_owned else generation - 1
-        )
+        generation = rng.randrange(0, UINT32_MAX + 1)
+        source_count = rng.randint(0, 100_000)
         token_kind = rng.choice(token_kinds)
         last_token = (
             None
@@ -171,146 +165,124 @@ def run_model(cases: int, seed: int) -> int:
         busy = rng.random() < 0.35
 
         initial_generation = generation
-        initial_source_generation = last_source_generation
+        initial_source_count = source_count
         (
             generation,
-            last_source_generation,
+            source_count,
             current_token,
             changed,
-            captured,
+            maybe_clear,
         ) = source_event(
             generation,
-            last_source_generation,
+            source_count,
             last_token,
             new_token,
             busy,
         )
-        expected_generation = (
-            initial_generation
-            + (1 if busy else 0)
-            + (1 if source_changed else 0)
-        )
-        expected_source_generation = (
-            expected_generation
-            if busy or source_changed
-            else initial_source_generation
-        )
-        assert generation == expected_generation
+        expected_increment = (1 if busy else 0) + (1 if source_changed else 0)
+        assert generation == ((initial_generation + expected_increment) & UINT32_MAX)
+        assert source_count == initial_source_count + expected_increment
         assert current_token == new_token
         assert changed == source_changed
-        assert captured == (new_token if source_changed else None)
-        assert last_source_generation == expected_source_generation
+        assert (maybe_clear is not None) == source_changed
         checks += 5
 
-        # Use a guaranteed token-change clear to exercise ownership races in every
-        # randomized state, independently of the first event's shape.
+        # Guarantee a token-change clear for ownership-race checks in every state.
         guaranteed_token = f"native:guaranteed:{index}"
         if guaranteed_token == current_token:
             guaranteed_token += ":next"
         (
             generation,
-            last_source_generation,
+            source_count,
             current_token,
             changed,
-            captured,
+            clear,
         ) = source_event(
             generation,
-            last_source_generation,
+            source_count,
             current_token,
             guaranteed_token,
             busy=False,
         )
         assert changed and can_apply_clear(
             generation,
-            last_source_generation,
+            source_count,
             current_token,
-            captured,
+            clear,
         )
         checks += 1
 
-        generation = user_event(generation)
-        assert not can_apply_clear(
+        # Later source-only work keeps the pending clear valid.
+        generation, source_count, current_token, changed_busy, ignored = source_event(
             generation,
-            last_source_generation,
-            current_token,
-            captured,
-        )
-        checks += 1
-
-        (
-            generation,
-            last_source_generation,
-            current_token,
-            changed_after_user,
-            ignored_capture,
-        ) = source_event(
-            generation,
-            last_source_generation,
+            source_count,
             current_token,
             current_token,
             busy=True,
         )
-        assert not changed_after_user and can_apply_clear(
+        assert not changed_busy and can_apply_clear(
             generation,
-            last_source_generation,
+            source_count,
             current_token,
-            captured,
+            clear,
         )
         checks += 1
 
+        # User/query work supersedes it permanently, even if a later failed busy
+        # interval advances the source-owned counters again.
+        generation = user_event(generation)
+        assert not can_apply_clear(
+            generation,
+            source_count,
+            current_token,
+            clear,
+        )
+        checks += 1
+
+        generation, source_count, current_token, changed_busy, ignored = source_event(
+            generation,
+            source_count,
+            current_token,
+            current_token,
+            busy=True,
+        )
+        assert not changed_busy and not can_apply_clear(
+            generation,
+            source_count,
+            current_token,
+            clear,
+        )
+        checks += 1
+
+        # A newer token transition cancels the old captured token and owns a new clear.
+        old_clear = clear
         newer_token = f"fallback:newer:{index}"
-        old_capture = captured
         (
             generation,
-            last_source_generation,
+            source_count,
             current_token,
             changed_newer,
-            newer_capture,
+            newer_clear,
         ) = source_event(
             generation,
-            last_source_generation,
+            source_count,
             current_token,
             newer_token,
             busy=False,
         )
         assert changed_newer and not can_apply_clear(
             generation,
-            last_source_generation,
+            source_count,
             current_token,
-            old_capture,
+            old_clear,
         )
         assert can_apply_clear(
             generation,
-            last_source_generation,
+            source_count,
             current_token,
-            newer_capture,
+            newer_clear,
         )
         checks += 2
-
-        (
-            generation,
-            last_source_generation,
-            current_token,
-            changed_failed,
-            failed_capture,
-        ) = source_event(
-            generation,
-            last_source_generation,
-            current_token,
-            current_token,
-            busy=True,
-        )
-        assert (
-            not changed_failed
-            and failed_capture is None
-            and can_apply_clear(
-                generation,
-                last_source_generation,
-                current_token,
-                newer_capture,
-            )
-        )
-        checks += 1
 
     return checks
 
@@ -350,6 +322,7 @@ def check_repository(root: Path) -> int:
     for needle, label in (
         ("private readonly object _searchSourceIdentityGate = new();", "source callback serialization gate"),
         ("private int _lastSearchSourceOwnedGeneration;", "latest source-owned generation"),
+        ("private long _searchSourceInvalidationCount;", "source invalidation counter"),
         ("InitializeSearchSourceIdentityTracking", "Search lifetime initializer"),
         ("_searchEngine.StateChanged += SearchSourceIdentity_StateChanged;", "Search pre-handler subscription"),
         ("lock (_searchSourceIdentityGate)", "source-event serialization"),
@@ -357,15 +330,20 @@ def check_repository(root: Path) -> int:
         ("InvalidateSearchFromSource();", "source-owned generation invalidation"),
         ("_searchEngine.StorageSourceIdentityKey", "backing source token read"),
         ("Interlocked.Exchange(\n                ref _lastSearchSourceIdentityKey,", "atomic previous-token exchange"),
-        ("StringComparison.Ordinal", "exact backing-token comparison"),
-        ("QueueSearchPresentationInvalidation(sourceIdentityKey);", "token-change display invalidation"),
+        ("QueueSearchPresentationInvalidation(\n                _lastSearchSourceOwnedGeneration,", "token-change clear baseline generation"),
+        ("Volatile.Read(ref _searchSourceInvalidationCount)", "token-change clear baseline source count"),
+        ("Interlocked.Increment(ref _searchSourceInvalidationCount);", "source invalidation counter advance"),
         ("_lastSearchSourceOwnedGeneration = Interlocked.Increment(ref _searchGeneration);", "source-owned request token"),
         ("DispatcherQueue.TryEnqueue", "UI-thread presentation invalidation"),
         ("await _searchGate.WaitAsync(_lifetimeCancellation.Token);", "stale request gate drain"),
         ("_searchGate.Release();", "stale request gate release"),
         ("await Task.Yield();", "post-request UI turn ordering"),
         ("var currentGeneration = Volatile.Read(ref _searchGeneration);", "current request generation read"),
-        ("currentGeneration != _lastSearchSourceOwnedGeneration", "user-owned generation suppression"),
+        ("var currentSourceInvalidationCount = Volatile.Read(", "current source invalidation count read"),
+        ("var sourceInvalidationDelta =", "source invalidation delta"),
+        ("var generationDelta = unchecked(", "modular generation delta"),
+        ("sourceInvalidationDelta > uint.MaxValue", "generation-wrap bound"),
+        ("generationDelta != (uint)sourceInvalidationDelta", "user-owned generation suppression"),
         ("sourceIdentityKey,\n                        _searchEngine.StorageSourceIdentityKey", "captured/current token equality"),
         ("catch (ObjectDisposedException) when (_closed)", "shutdown-safe queued invalidation"),
         ("_results.Clear();", "old presentation clear"),
@@ -394,12 +372,27 @@ def check_repository(root: Path) -> int:
         busy_at,
     )
     queue_at = search_lifetime.index(
-        "QueueSearchPresentationInvalidation(sourceIdentityKey);",
+        "QueueSearchPresentationInvalidation(",
         token_at,
     )
     if not handler_at < handler_lock_at < busy_at < token_at < queue_at:
         raise AssertionError(
             "Search source callback must serialize busy/token invalidation before queueing presentation work"
+        )
+    checks += 1
+
+    invalidate_at = search_lifetime.index("private void InvalidateSearchFromSource()")
+    source_count_at = search_lifetime.index(
+        "Interlocked.Increment(ref _searchSourceInvalidationCount);",
+        invalidate_at,
+    )
+    source_generation_at = search_lifetime.index(
+        "_lastSearchSourceOwnedGeneration = Interlocked.Increment(ref _searchGeneration);",
+        source_count_at,
+    )
+    if not invalidate_at < source_count_at < source_generation_at:
+        raise AssertionError(
+            "source invalidation count must advance before its matching Search generation"
         )
     checks += 1
 
@@ -411,21 +404,34 @@ def check_repository(root: Path) -> int:
         "var currentGeneration = Volatile.Read(ref _searchGeneration);",
         final_lock_at,
     )
-    source_owner_at = search_lifetime.index(
-        "currentGeneration != _lastSearchSourceOwnedGeneration",
+    current_source_count_at = search_lifetime.index(
+        "var currentSourceInvalidationCount = Volatile.Read(",
         current_generation_at,
+    )
+    source_delta_at = search_lifetime.index(
+        "var sourceInvalidationDelta =",
+        current_source_count_at,
+    )
+    generation_delta_at = search_lifetime.index(
+        "var generationDelta = unchecked(",
+        source_delta_at,
+    )
+    user_guard_at = search_lifetime.index(
+        "generationDelta != (uint)sourceInvalidationDelta",
+        generation_delta_at,
     )
     current_token_at = search_lifetime.index(
         "_searchEngine.StorageSourceIdentityKey",
-        source_owner_at,
+        user_guard_at,
     )
     clear_at = search_lifetime.index("_results.Clear();", current_token_at)
     if not (
         wait_at < release_at < yield_at < final_lock_at
-        < current_generation_at < source_owner_at < current_token_at < clear_at
+        < current_generation_at < current_source_count_at < source_delta_at
+        < generation_delta_at < user_guard_at < current_token_at < clear_at
     ):
         raise AssertionError(
-            "presentation invalidation must drain stale Search work, yield, then validate source ownership/token before clearing"
+            "presentation invalidation must drain stale Search work, yield, then compare generation/source deltas and token before clearing"
         )
     checks += 1
 
