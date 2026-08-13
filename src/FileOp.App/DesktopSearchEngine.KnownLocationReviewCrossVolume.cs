@@ -376,6 +376,11 @@ internal sealed partial class DesktopSearchEngine
 
         try
         {
+            if (!Path.IsPathFullyQualified(path))
+            {
+                return false;
+            }
+
             normalizedPath = Path.GetFullPath(path).TrimEnd(
                 Path.DirectorySeparatorChar,
                 Path.AltDirectorySeparatorChar);
