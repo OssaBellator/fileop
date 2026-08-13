@@ -69,6 +69,8 @@ public sealed record StorageKnownLocationReviewSnapshot(
     string ActiveVolumeRootPath,
     IReadOnlyList<StorageKnownLocationReview> Locations)
 {
+    public ulong? ActiveVolumeIdentity { get; init; }
+
     public long CandidateMeasuredBytes
     {
         get
