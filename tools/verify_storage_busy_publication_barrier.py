@@ -17,14 +17,19 @@ def run_model(cases: int) -> int:
         # request generation captured before awaiting source-bound work.
         generations = [rng.randint(1, 1_000_000) for _ in range(6)]
         captured = generations.copy()
+        history_loading_generation = rng.randint(1, 1_000_000)
 
         # Native busy entry is an immediate publication barrier. The backing
         # source token deliberately remains stable until maintenance recovers,
-        # but every old request must become stale now.
+        # but every old request must become stale now. History also has a separate
+        # loading sentinel that must be released when its owner generation is stale.
         generations = [value + 1 for value in generations]
+        history_loading_generation = 0
         for current, request in zip(generations, captured):
             assert current != request
             checks += 1
+        assert history_loading_generation == 0
+        checks += 1
 
         # Root-keyed caches are not discarded merely because the source is busy;
         # failed elevation can therefore keep unchanged cached evidence. A real
@@ -83,6 +88,7 @@ def check_repository(root: Path) -> int:
         ("Interlocked.Increment(ref _storageGeneration);", "Folders busy generation"),
         ("Interlocked.Increment(ref _storageTypeGeneration);", "Types busy generation"),
         ("Interlocked.Increment(ref _storageHistoryGeneration);", "History busy generation"),
+        ("Interlocked.Exchange(ref _storageHistoryLoadingGeneration, 0);", "History busy loading reset"),
         ("Interlocked.Increment(ref _storageOptimizationGeneration);", "Optimize busy generation"),
         ("Interlocked.Exchange(ref _storageOptimizationAnalysis, null);", "same-size busy reference barrier"),
         ("Interlocked.Exchange(ref _storageKnownLocationReview, null);", "known-location busy reference barrier"),
@@ -96,6 +102,13 @@ def check_repository(root: Path) -> int:
     if not identity_read_at < equality_at < equality_return_at < source_key_clear_at:
         raise AssertionError("stable busy token must return before root-key cache invalidation")
     checks += 1
+
+    source_change_block = window[source_key_clear_at:]
+    checks += require(
+        source_change_block,
+        "Interlocked.Exchange(ref _storageHistoryLoadingGeneration, 0);",
+        "History source-change loading reset",
+    )
 
     checks += require(
         files,
@@ -121,6 +134,20 @@ def check_repository(root: Path) -> int:
     )
     for text, needle, label in generation_guards:
         checks += require(text, needle, label)
+
+    # History's stale task intentionally only clears its loading sentinel when its
+    # captured generation is still current. That is why the immediate barrier must
+    # release the sentinel itself after invalidating the owner generation.
+    checks += require(
+        history,
+        "generation == Volatile.Read(ref _storageHistoryGeneration) &&",
+        "History stale-finally ownership check",
+    )
+    checks += require(
+        history,
+        "_storageHistoryLoadingGeneration == generation",
+        "History loading-sentinel ownership check",
+    )
 
     checks += require(
         gate,
