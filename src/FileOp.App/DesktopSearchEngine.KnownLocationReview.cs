@@ -128,6 +128,15 @@ internal sealed partial class DesktopSearchEngine
         string activeRoot,
         ulong activeVolumeIdentity)
     {
+        if (!Path.IsPathFullyQualified(locationPath))
+        {
+            return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                provenance,
+                StorageReviewLocationStatus.Unavailable,
+                locationPath,
+                $"{FormatProvenance(provenance)} resolved to a path that is not fully qualified.");
+        }
+
         string fullPath;
         try
         {
