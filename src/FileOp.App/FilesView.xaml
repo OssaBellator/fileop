@@ -149,13 +149,13 @@
 
                 <Button x:Name="ReviewDeleteLeftButton"
                         Content="Review Left deletion…"
-                        Click="ReviewDeleteLeftButton_Click"
+                        Click="ReviewDeleteLeftWithSessionGateButton_Click"
                         IsEnabled="False"
                         ToolTipService.ToolTip="Run read-only delete checks for the exact Left file selection, then require explicit confirmation before any destructive authorization" />
                 <Button x:Name="ReviewDeleteRightButton"
                         Grid.Column="1"
                         Content="Review Right deletion…"
-                        Click="ReviewDeleteRightButton_Click"
+                        Click="ReviewDeleteRightWithSessionGateButton_Click"
                         IsEnabled="False"
                         ToolTipService.ToolTip="Run read-only delete checks for the exact Right file selection, then require explicit confirmation before any destructive authorization" />
                 <Button x:Name="RetryDeleteCleanupButton"
