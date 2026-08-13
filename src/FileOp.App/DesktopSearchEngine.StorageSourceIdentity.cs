@@ -4,8 +4,10 @@ internal sealed partial class DesktopSearchEngine
 {
     private long _nativeStorageSourceGeneration;
     private int _nativeStorageSourceActive;
+    private int _nativeStorageSourceElevationBusy;
     private object? _trackedNativeStorageSession;
     private ulong _trackedNativeStorageVolumeIdentity;
+    private bool _trackedNativeStorageCanElevate;
     private long _fallbackStorageSourceGeneration;
     private int _fallbackStorageSourceActive;
 
@@ -39,6 +41,7 @@ internal sealed partial class DesktopSearchEngine
             _nativeSession is { } nativeSession &&
             _primaryVolume is { } nativeVolume)
         {
+            var previousCanElevate = _trackedNativeStorageCanElevate;
             var sessionChanged = !ReferenceEquals(_trackedNativeStorageSession, nativeSession);
             var identityChanged = _trackedNativeStorageVolumeIdentity != nativeVolume.VolumeIdentity;
             if (sessionChanged || identityChanged)
@@ -49,26 +52,46 @@ internal sealed partial class DesktopSearchEngine
 
             if (state.IsBusy)
             {
-                // Mark the current healthy source epoch inactive, but defer the
-                // generation advance until native service availability recovers.
-                // That makes every root-keyed feature observe its forced cache miss
-                // when it is actually able to reload rather than while it is busy.
-                Volatile.Write(ref _nativeStorageSourceActive, 0);
+                // Native elevation temporarily publishes IsBusy=true before it
+                // knows whether the helper/session will actually change. Preserve
+                // the current cache epoch across that user-requested busy interval;
+                // a successful replacement is still detected by session/identity.
+                if (Volatile.Read(ref _nativeStorageSourceElevationBusy) == 1 ||
+                    (!sessionChanged && !identityChanged && previousCanElevate))
+                {
+                    Volatile.Write(ref _nativeStorageSourceElevationBusy, 1);
+                }
+                else
+                {
+                    // Background maintenance can replace the SQLite snapshot in
+                    // place while keeping VolumeIdentity stable. Mark the healthy
+                    // source epoch inactive and advance it when availability returns.
+                    Volatile.Write(ref _nativeStorageSourceActive, 0);
+                }
             }
             else
             {
+                var elevationBusy =
+                    Interlocked.Exchange(ref _nativeStorageSourceElevationBusy, 0) == 1;
                 var wasActive = Interlocked.Exchange(ref _nativeStorageSourceActive, 1);
                 if (sessionChanged || identityChanged || wasActive == 0)
                 {
-                    Interlocked.Increment(ref _nativeStorageSourceGeneration);
+                    if (sessionChanged || identityChanged || !elevationBusy)
+                    {
+                        Interlocked.Increment(ref _nativeStorageSourceGeneration);
+                    }
                 }
             }
+
+            _trackedNativeStorageCanElevate = state.CanElevate;
         }
         else if (state.Mode != DesktopSearchMode.Native)
         {
             Volatile.Write(ref _nativeStorageSourceActive, 0);
+            Volatile.Write(ref _nativeStorageSourceElevationBusy, 0);
             _trackedNativeStorageSession = null;
             _trackedNativeStorageVolumeIdentity = 0;
+            _trackedNativeStorageCanElevate = false;
         }
 
         if (state.Mode == DesktopSearchMode.Fallback && _fallbackReady)
