@@ -2,13 +2,20 @@
 
 ## Purpose
 
-The **Files** surface is an indexed dual-pane directory browser built on the same metadata source as Search and Storage. Browsing itself does not launch another recursive filesystem enumerator.
+The **Files** surface is an indexed dual-pane directory browser built on the same metadata source as Search and Storage. Browsing does not launch another recursive filesystem enumerator.
 
-Native mode browses the primary whole-volume NTFS index. Fallback mode browses the completed user-profile crawler snapshot. Neither UI path calls `Directory.Enumerate*`, `GetFiles`, `GetDirectories`, `FileSystemWatcher` or another filesystem scan.
+Native mode browses the primary whole-volume NTFS index. Fallback mode browses the completed user-profile crawler snapshot. Neither browse path launches `Directory.Enumerate*`, `GetFiles`, `GetDirectories`, `FileSystemWatcher` or another filesystem scan for each page.
+
+Files now has two distinct kinds of operation UI that must not be conflated:
+
+- a session-only **Copy/Move planning queue**, which still does not instantiate/run the production copy executor from the Files UI;
+- a separately reviewed **file-only permanent-delete session**, which is a real destructive action with its own recovery, authorization and mutation boundary.
+
+Browse selection, prepared intent, preflight evidence and Storage handoff are never themselves mutation authority.
 
 ## Exact page boundary
 
-Files consumes protocol-v6 `BrowseDirectory` directly:
+Files consumes protocol-v6 `BrowseDirectory` through `DesktopSearchEngine.BrowseDirectoryAsync`:
 
 ```text
 FileOp.App Files
@@ -28,197 +35,156 @@ NextCursor?
 
 Each entry is direct `FileRecord` metadata. Recursive folder sizes and category aggregates remain Storage responsibilities rather than making every browse page an analytics query.
 
-The visible table therefore shows name, type, logical/allocated size for files and last-write time. Directory size columns intentionally show `—`.
+The table shows direct metadata such as name, type, logical/allocated size for files and last-write time. Directory recursive sizes are not calculated as part of browse paging.
 
 ## Dual-pane and tab state
 
-Files renders two simultaneously visible panes, **Left** and **Right**. Each pane owns its own tabs, active tab, browse generation and active-load generation. Each tab owns its path, accumulated page rows, live count, continuation cursor and loaded-for-source state.
+Files renders two simultaneously visible panes, **Left** and **Right**. Each pane owns independent tabs, active-tab state, browse generation and load generation. A tab owns its path, accumulated rows, live count, continuation cursor and source-loaded state.
 
-The two panes share the same `DesktopSearchEngine` and the same authenticated helper session. Actual browse requests still pass through `_storageGate`, so they are serialized before entering the single request/response pipe. Presentation state remains independent: navigation or paging in one pane does not invalidate the other pane.
+Both panes share one `DesktopSearchEngine` and authenticated helper session. Browse requests are serialized before the single request/response pipe, while presentation state remains independent.
 
-A page result is accepted only when both the pane generation and active tab still match the request. Stale work that waited behind the other pane is discarded before transmission once it reaches the gate; already-transmitted helper requests are allowed to complete and their stale results are ignored.
+A page result is accepted only when the pane generation and active tab still match the request. Stale queued work is discarded before transmission when possible; an already-transmitted helper request is allowed to complete and its stale result is ignored.
 
-Source transitions clear paths and page caches across every tab because the available root may change. Temporary index maintenance clears cached page state and selection while retaining tab paths, so active tabs can reload when the same source becomes readable again.
+Source transitions invalidate cached rows and selection conservatively so a selection cannot silently migrate into a different namespace/source context.
 
 ## Ordering and continuation
 
-Ordering is directories first, then normalized name and normalized path. Continuation uses a keyset cursor containing the last returned row's directory/file kind, name and absolute path. Native SQL requests `pageSize + 1`; the extra row only proves another page exists and is not returned.
+Ordering is directories first, then normalized name and normalized path. Continuation uses a keyset cursor containing the last returned row's directory/file kind, name and absolute path.
 
-Each pane requests 256 rows per page. `Load more` is visible only while `NextCursor` exists. Returned pages are appended in service order rather than resorted in the UI, and duplicate paths are defensively suppressed case-insensitively.
+Each pane requests 256 rows per page. `Load more` is visible only while `NextCursor` exists. Pages are appended in service order and duplicate paths are defensively suppressed case-insensitively.
 
-`TotalCount` is live per page. The UI distinguishes a completed sequence from a count mismatch caused by the directory changing while pages were being read rather than claiming that an older total is authoritative.
+`TotalCount` is live per page. A directory can change between requests, so a completed page sequence is not advertised as one transactionally frozen snapshot.
 
 ## Selection semantics
 
-Each pane uses explicit multi-selection with checkboxes. Selection belongs only to the currently active tab and is tracked by case-insensitive absolute path.
+Each pane uses explicit multi-selection tracked by case-insensitive absolute path for the active tab.
 
-Selection is preserved when more pages are appended. It is deliberately cleared when switching tabs, refreshing, navigating to another directory, becoming unavailable during index maintenance, or changing the underlying source. This conservative boundary prevents future mutation work from silently carrying a selection into a different navigation or namespace context.
+Selection survives page append but is cleared on navigation/tab/source transitions and other state changes that make the old selection unsafe to reuse.
 
-Single-click is reserved for selection. Opening a directory or file is an explicit **Open** action and is enabled only when exactly one entry is selected. Opening a directory still navigates through the indexed browse path; opening a file still uses the existing shell-open behavior.
+Single-click selection is separate from **Open**. Opening a directory still navigates through the indexed browse path; opening a file uses the existing shell-open behavior.
 
-## Prepared operation intent
+## Copy / Move planning boundary
 
-The center command strip can capture either **Left → Right** or **Right → Left** intent. Preparing an intent takes an immutable snapshot of:
+The center command strip can capture **Left -> Right** or **Right -> Left** intent as an immutable snapshot of source pane/tab/directory, selected entries and destination pane/tab/directory.
 
-```text
-Source pane
-Source tab
-Source directory
-Selected entry paths/names/kinds
-Destination pane
-Destination tab
-Destination directory
-```
+A prepared intent can become a session-only queued Copy or Move plan. Preparing or queueing a plan performs no filesystem write.
 
-Any pane/tab/path/selection readiness change clears the prepared intent. A prepared intent can then be converted into a queued Copy or Move plan, but preparing or queueing still performs no filesystem write.
+Before a plan is accepted, the UI applies path-level guards such as source/destination separation, direct-child membership and directory-recursion checks.
 
-The operation plan/intent records and operation/collision enums live in `FileOp.Core.Operations`; the WinUI surface consumes that shared domain model instead of owning a second App-only copy.
+The queue retains explicit collision intent such as Ask later, Skip existing and Stop on collision. Destructive replacement is not silently inferred from one of those choices.
 
-## Planned operation queue
+### Preflight and execution-grade contracts
 
-Files owns an in-memory, session-only planned-operation queue. Each queued row captures an immutable operation snapshot:
+The repository now contains more than the original planning/preflight model:
 
-```text
-Operation id
-Queued UTC timestamp
-Kind: Copy | Move
-Collision policy
-Prepared source/destination intent
-```
+- read-only Windows preflight;
+- canonical execution-grade validation contracts;
+- durable action-history/recovery models;
+- a production **file Copy** executor and identity-bound Windows copy mutation primitive.
 
-Queue entries do not follow later navigation or selection changes. Removing or clearing a queued entry changes only this in-memory plan list.
+However, the Files **Copy/Move queue UI still does not instantiate or execute that pipeline**. The production copy executor is a reviewed lower-level boundary for file Copy; UI execution wiring, overwrite/replace and Move remain separate product decisions.
 
-Before a plan is accepted, the UI applies path-level guards:
+See `docs/file-copy-executor.md`, `docs/windows-file-copy-mutation.md` and the `docs/file-operation-*.md` recovery/history series.
 
-- source and destination folders must differ;
-- every selected entry must still be a direct child of the captured source folder;
-- a selected directory cannot target itself or one of its descendants.
+A queued/preflight-ready Copy or Move row must therefore not be described as executed or authorized merely because the lower-level copy machinery exists.
 
-These checks are intentionally performed before any future executor exists, so invalid intent cannot become accepted queue state.
+## Permanent file deletion
 
-### Collision policy
+Permanent delete is intentionally **not** another Copy/Move queue kind. There is no generic `FileOperationKind.Delete` added to the planning queue.
 
-The queue currently offers three non-destructive policies:
+A delete review starts from an exact selection in one ready Files pane and supports regular files only. Directories, simultaneous selection in the other pane, stale/missing tab state and rows that are no longer direct children of the captured directory fail before a usable delete plan is created.
 
-- **Ask later** — preserve the collision as an unresolved decision for a future executor/UI;
-- **Skip existing** — a future executor may leave an existing destination untouched and skip that item;
-- **Stop on collision** — a future executor may stop the operation before changing the colliding destination.
+### Destructive-session serialization
 
-Destructive replacement is deliberately not a queue policy yet. Safe replacement needs explicit file-vs-directory semantics, recovery behavior and undo/history guarantees before FileOp should encode it as executable intent.
+Before recovery inspection, the App acquires a per-user cross-process destructive-session lock under the FileOp LocalApplicationData control directory using exclusive file sharing. A second updated FileOp process cannot enter a concurrent authorization window while that lock is held.
 
-## Execution contract and state machine
+The lock is application-control state only; it is never derived from a selected target path and grants no filesystem mutation capability itself.
 
-`FileOp.Core.Operations` defines the execution boundary without providing an implementation that can mutate files.
+### Reviewed session sequence
 
-The immutable `FileOperationExecutionSnapshot` state sequence is:
+The user-facing flow is:
 
 ```text
-Planned
-  -> Validating
-      -> Running
-          -> Succeeded
-          -> Failed
-          -> CancellationRequested -> Cancelled | Succeeded
-      -> Failed
-      -> Cancelled
-  -> Cancelled
+per-user destructive-session lock
+-> persistent delete recovery-history scan
+-> read-only Windows delete preflight
+-> canonical execution validation + protected-location policy
+-> explicit permanent-delete confirmation for exact canonical paths
+-> second persistent recovery-history scan
+-> session-scoped FileDeleteOperationUserAuthorizationReceipt
+-> durable SQLite BeginAsync
+-> FileDeleteOperationOrchestrator
+-> Windows stability/final-mutation capability providers
+-> same-handle final mutation
 ```
 
-Planning and validation can be cancelled immediately because no filesystem mutation is in flight. Only `Running` enters `CancellationRequested`, where an executor must wait for an entry-safe boundary before settling the request.
+Important ordering rules:
 
-Progress is monotonic: `CompletedEntryCount` can never decrease or exceed the plan's entry count. `Succeeded` is allowed only after every entry has completed. Failure is terminal and stores a structured code/message/path plus a `Retryable` hint.
+- no delete authorization exists before explicit confirmation;
+- recovery-sensitive history is checked both before review and again after the confirmation dialog;
+- durable history begins before orchestration can cross the mutation barrier;
+- a recovery/history record is not reusable consent and never becomes automatic replay authority;
+- the final mutation capability is tied to the reviewed canonical/identity boundary rather than a path-only `File.Delete` fallback.
 
-User cancellation has a single cancellation path. Validation can be cancelled immediately; once a mutation is running, `RequestCancellationAsync` drives the snapshot to `CancellationRequested` and the executor settles it only at an entry-safe boundary. `ExecuteAsync` intentionally has no arbitrary cancellation token, preventing a second API from bypassing those safe-boundary semantics.
+### Recovery and cleanup ownership
 
-If a late cancellation request arrives while the final in-flight entry is completing, safe-boundary settlement reports `Succeeded` when every entry is already done rather than falsely labelling a fully completed operation as cancelled.
+Unresolved `MutationStarted` / `RecoveryRequired` history blocks a new session.
 
-The cancellation token on `RequestCancellationAsync` only controls the request call itself; it is not the cancellation mechanism for the filesystem mutation being requested to stop.
+A terminal recovery-required orchestration result is surfaced explicitly and does not manufacture replacement authorization. FileOp does not auto-replay a delete after restart.
 
-Failed snapshots do not have an in-place retry transition. A retry creates a new plan after current source/destination state is revalidated. This avoids pretending that replaying a partially completed multi-entry operation is automatically safe or idempotent.
+If final mutation-lease release fails, the release exception retains cleanup ownership. Files retries that **cleanup-only** release and, if it remains pending, disables new deletion review and exposes a retry action. Cleanup retry grants no new mutation authority.
 
-There is still no concrete `IFileOperationExecutor` implementation, no running queue coordinator and no filesystem mutation call.
+Once durable history has begun, Files tabs displaying the affected directory are invalidated/refreshed because namespace state may have changed even if terminal completion becomes recovery-sensitive.
 
-## Read-only live preflight
+### Current delete scope
 
-`IFileOperationPreflightValidator` and the Windows `WindowsFileOperationPreflightValidator` add a dry-run boundary between queued intent and any future executor. Preflight reads current path metadata only; it does not enumerate directories and does not write, rename, delete or create files.
+The user-facing delete slice is deliberately narrow:
 
-The Windows path probe uses `File.GetAttributes` on individual captured paths. It classifies each lookup as file, directory, missing, inaccessible or error and records whether the inspected path itself is a reparse point.
+- file-only;
+- permanent delete;
+- no directory deletion;
+- no Recycle Bin integration;
+- no undo/restore claim;
+- no automatic recovery replay;
+- no Indexer mutation API;
+- no path-only delete fallback.
 
-Before classifying collisions, preflight rechecks the captured invariants against live state:
+The detailed security boundary is split across `docs/file-delete-preflight.md`, `docs/file-delete-execution-validation.md`, `docs/file-delete-user-authorization.md`, `docs/file-delete-action-history.md`, `docs/file-delete-recovery-history-discovery.md`, `docs/file-delete-stability-lease.md`, `docs/file-delete-final-mutation-lease-contract.md`, `docs/windows-file-delete-final-mutation-lease-provider.md`, `docs/file-delete-mutation-barrier.md`, `docs/file-delete-same-handle-mutation.md` and `docs/file-delete-multi-entry-orchestration.md`.
 
-- source and destination roots must still be existing ordinary directories;
-- source and destination roots cannot themselves be reparse points;
-- source and destination roots must differ;
-- each source must still be a direct child of the captured source root;
-- the current source leaf name must match the captured name;
-- the live source kind must still match the captured file/directory kind;
-- source entries that are reparse points are blocked;
-- alternate-data-stream names are blocked;
-- a directory cannot target itself or a lexical descendant.
+## Storage review handoff
 
-Collision classification is deliberately non-destructive:
+Known-location review can hand a current candidate into Files for inspection when that path is within the active Files indexed source. The handoff selects/opens indexed browse state only; it does not queue, authorize or execute deletion.
 
-```text
-Destination missing      -> Ready
-Destination exists + Ask -> NeedsDecision
-Destination exists + Skip -> Skip
-Destination exists + Stop -> Blocked
-Destination inaccessible/error -> Blocked
-```
+Cleanup-readiness evidence is similarly non-authorizing. If the user later chooses permanent deletion, the Files delete session starts fresh from current Files selection and reruns its recovery/preflight/canonical/confirmation boundaries.
 
-A `Ready` preflight result means only that the plan can proceed to a later execution-grade validation. It is **not execution authorization**. The current check does not claim to prove canonical ancestry through every possible junction/reparse ancestor, and any real executor must re-resolve and revalidate paths immediately before mutation.
+## Native and fallback browsing
 
-The preflight probe is cancellable because it performs read-only inspection. That cancellation mechanism is separate from the safe-boundary mutation cancellation contract because no mutation has begun.
+Native browsing opens SQLite read-only, takes the shared cross-process lease and requires a valid durable checkpoint. When the requested directory has stable provider identity, the native path can use parent-identity columns rather than a whole-index path scan.
 
-### Queue preflight UI
+Fallback browsing pages the already-completed in-memory user-profile snapshot. It does not rescan the filesystem for every page.
 
-The Files queue exposes **Preflight selected** for one selected planned operation. The action runs `IFileOperationPreflightValidator` against the immutable queued plan and stores a timestamped result keyed by that plan ID.
-
-The queue row displays one of:
-
-```text
-Not checked
-Ready for later validation · <time>
-Needs decision · <time>
-Blocked · <time>
-```
-
-The timestamp matters: this is a point-in-time observation of live metadata, not a durable guarantee. Later pane navigation does not rewrite the result because the check belongs to the captured plan rather than the current pane state. Removing a plan removes its preflight snapshot, and clearing the queue clears every snapshot.
-
-While one read-only preflight is active, queue selection/removal/clear/preflight controls are disabled to avoid presenting competing queue mutations under the in-flight result. Preparing or adding another immutable plan remains independent of that selected-plan check.
-
-The UI still exposes no **Run** or **Execute** operation action and does not call `IFileOperationExecutor.ExecuteAsync`. A displayed `Ready for later validation` status is deliberately worded so it cannot be mistaken for execution authorization.
-
-## Native and fallback behavior
-
-Native browsing opens SQLite read-only, takes the existing shared cross-process lease and requires a valid durable checkpoint. When the requested directory has a stable identity, direct children are filtered by the existing parent-identity columns/index rather than by a whole-index path scan.
-
-`DesktopSearchEngine.BrowseDirectoryAsync` exposes the same page model for fallback mode. Fallback paging scans only the already-completed in-memory profile snapshot; it performs no filesystem enumeration. Native mode is the performance-critical path and does not materialize the persistent index.
+This equivalence is a **browse** statement only. The crawler snapshot does not preserve every NTFS identity/allocation property needed to make it automatically equivalent to native Optimize physical-reclaim evidence.
 
 ## Validation without hosted Actions
 
-`tools/verify_files_ui.py` guards the dual-pane browse, selection, prepared-intent, queue and preflight-UI boundaries. It checks exact paging, pane/tab isolation, selection lifecycle, immutable plans, collision policy UI, timestamped preflight snapshots, snapshot removal/clear behavior, handler wiring, the absence of Run/Execute controls and the absence of filesystem mutation APIs.
+`tools/test-local.ps1` is the authoritative validation inventory. The Files boundary is covered by dedicated offline verifiers for browse/UI state, operation state/preflight/execution validation, delete history/preparation/final capability/mutation/orchestration, recovery discovery and the user-facing Files delete session.
 
-`tools/verify_file_operation_state.py` independently models the execution state machine with randomized transitions and source guards. It checks monotonic progress, terminal-state rejection, immediate pre-mutation cancellation, safe-boundary running cancellation including late cancellation, the single cancellation path, shared Core plan ownership and absence of mutation APIs.
-
-`tools/verify_file_operation_preflight.py` models live preflight decisions and guards the committed implementation. It covers collision policy classification, source disappearance/type changes, direct-child/name/ADS checks, reparse blocking, recursive targets, inaccessible paths, read-only probing and the absence of enumeration/mutation APIs.
-
-`tools/verify_directory_browse.py` separately covers the protocol/service keyset algorithm, read-only SQLite access, lease/checkpoint enforcement and native/fallback source wiring.
-
-Run the Files UI verifier directly:
+Run portable model/source validation through the aggregate gate:
 
 ```powershell
-python tools/verify_files_ui.py --repo-root . --cases 10000
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1 -OfflineOnly
 ```
 
-Or run the whole standard-library suite without the .NET SDK:
+The complete Windows gate adds Core/Windows/Indexer builds, the regression/integration test suite, WinUI x64 build, bundled-helper artifact checks and a real helper-process handshake:
 
 ```powershell
-pwsh -File tools/test-local.ps1 -OfflineOnly
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
 ```
 
-Without `-OfflineOnly`, the local Windows gate continues into the .NET builds, regression tests, WinUI build, bundled-helper checks and real helper-process handshake.
+See `docs/local-validation.md` for the validation workflow.
 
-## Next file-manager boundary
+## Remaining queue boundary
 
-The next slice should define execution-grade canonical-path validation and durable action-history/undo records before actual Copy is enabled. Preflight results must be revalidated immediately before any later mutation. Move should remain later still because partial cross-volume moves combine copy and deletion failure modes.
+The existence of the lower-level production file Copy executor does not imply that the session-only Copy/Move queue is executable from the Files UI. UI execution wiring, overwrite/replace semantics, directory Copy and Move remain separately reviewed work.
+
+Permanent file deletion should stay outside that generic queue unless a future design can preserve the stricter delete recovery/authorization semantics rather than weakening them into a generic operation kind.

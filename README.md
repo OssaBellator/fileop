@@ -2,98 +2,125 @@
 
 FileOp is a high-performance Windows file and storage manager built around one reusable filesystem index.
 
-The product direction is to combine instant file search, power-user file management, storage analysis, duplicate detection, storage cleanup, disk health and—later—carefully isolated administrative operations such as partition management.
+The product direction is to combine instant search, power-user file management, storage analysis, duplicate evidence, carefully authorized cleanup, disk health and measurable performance diagnostics without turning into a generic “PC cleaner.”
 
 ## Status
 
-The current implementation has four runtime layers plus a benchmark harness:
+The implementation has four runtime layers plus a benchmark harness:
 
-- `FileOp.Core` contains filesystem records, query parsing, index mutation/search contracts, exact paged directory-browse models, in-memory and SQLite-backed indexes, shared directory/file-type/category storage analytics, read-only storage-optimization analysis, helper-index performance evidence, aggregate storage-history persistence/deltas, checkpoint persistence, the fallback crawler and versioned service contracts.
-- `FileOp.Windows` contains the Windows/NTFS engine and indexing-service boundary: NTFS discovery, MFT namespace enumeration, USN journal processing, file-ID metadata hydration, hard-link expansion, transactional namespace synchronization, authenticated named-pipe transport and read-only browse/history/optimization/index-diagnostics service composition.
+- `FileOp.Core` contains filesystem records, query/index contracts, exact paged browse models, in-memory and SQLite-backed analytics, Storage/Optimize evidence models, file-operation/delete contracts, recovery/history models and the versioned indexing-service protocol.
+- `FileOp.Windows` contains the Windows/NTFS engine and indexing-service boundary: NTFS discovery, MFT namespace enumeration, USN journal processing, file-ID metadata hydration, hard-link expansion, transactional namespace synchronization, read-only Storage/Optimize providers, Windows file-operation validation/mutation providers and authenticated named-pipe transport.
 - `FileOp.Indexer` is the on-demand helper that owns native indexing and per-volume persistent-index writes. It starts unelevated; helper-only UAC is limited to same-account split-token administrators so the desktop never changes integrity level or identity.
-- `FileOp.App` is the WinUI 3 desktop shell. Search, Files and Storage share the same native-first metadata source and explicit crawler fallback; Files consumes exact paged direct-child browsing, while native Storage exposes Folders, Types, History and a read-only Optimize advisor with measured performance evidence.
-- `FileOp.Benchmarks` provides synthetic search, directory-aggregation and file-type/category baselines at 100,000 and 1,000,000 files.
+- `FileOp.App` is the WinUI 3 desktop shell. Search, Files and Storage share the same native-first metadata source and explicit crawler fallback where that fallback can preserve the required semantics.
+- `FileOp.Benchmarks` provides synthetic Search/Storage baselines.
 
-The NTFS engine can hydrate logical/allocated size, link count, timestamps and attributes by file ID, preserve multiple hard-link namespace paths, pair rename events, move directory subtrees transactionally, reconcile hard-link changes and commit namespace mutations together with durable USN checkpoints.
+The current indexing-service protocol is **v8**. It exposes version/status discovery, index diagnostics, snapshot rebuild and journal synchronization, Search, exact paged directory browsing, read-only Storage analytics/Optimize analysis and aggregate Storage history. It exposes no cleanup, delete, partition, format or other destructive helper command.
 
-`FileOp.Indexer` exposes version negotiation, volume/status discovery, read-only index diagnostics, snapshot rebuild, incremental journal synchronization, search, exact paged direct-child browsing, read-only Storage analytics, read-only optimization analysis and aggregate Storage-history capture/query. **Protocol v8** adds `GetIndexDiagnostics`; the v7 `AnalyzeStorageOptimization`, v6 `BrowseDirectory` keyset-paging and v5 history contracts remain intact. The protocol exposes no partition, format, cleanup or other destructive commands.
-
-Each NTFS volume/root pair has its own SQLite database. Live reads require a valid durable checkpoint and use shared cross-process leases; rebuild/sync operations use an exclusive maintenance lease so multiple FileOp instances cannot interleave one logical snapshot. All service layers now use one database-path resolver that preserves the historical `ntfs-<volume>-<root>.sqlite` filename format.
+Each NTFS volume/root pair has its own SQLite database. Live reads require a valid durable checkpoint and use shared cross-process leases; rebuild/sync uses an exclusive maintenance lease so multiple FileOp instances cannot expose a partially maintained namespace.
 
 ## Search, Files and Storage
 
-Search uses the persistent native NTFS index when available and falls back to the bounded user-profile crawler when required. Startup builds/resumes the primary NTFS snapshot, catches the USN cursor up in bounded batches and continues low-priority synchronization behind foreground work.
+Search uses the persistent native NTFS index when available and falls back to the bounded user-profile crawler when native indexing is unavailable. Startup builds or resumes the primary NTFS snapshot, catches the USN cursor up in bounded batches and then continues low-priority synchronization behind foreground work.
 
-Files and Storage consume the same metadata rows as Search. Neither performs another recursive filesystem scan merely to browse indexed names or calculate storage breakdowns.
+Files and native Storage consume the same indexed metadata rows. They do not launch another recursive scan merely to browse names or calculate indexed storage evidence.
 
 ### Files
 
-Files is a read-only exact paged browser. It requests 256 direct entries at a time through `DesktopSearchEngine.BrowseDirectoryAsync`, exposes `Load more` only while the protocol returns a continuation cursor and appends pages in service order.
+Files is an exact paged browser over direct-child metadata. It requests 256 entries at a time, exposes `Load more` only while a continuation cursor exists and uses keyset ordering rather than offsets.
 
-`BrowseDirectory` returns direct `FileRecord` metadata rather than recursive Storage aggregates. Native paging uses the persisted parent identity when available, the existing cross-process read lease and a valid durable checkpoint. Ordering is stable within each live page sequence: directories first, then normalized name and normalized path. Continuation is keyset-based rather than offset-based, so inserts before an existing cursor do not shift already-consumed rows into later pages.
+Browsing itself remains read-only, but Files now also owns the separately reviewed **file-only permanent-delete session**. Destructive authority is not inferred from a selected row, Storage recommendation or cleanup-readiness result.
 
-The desktop coordinator exposes the same paged model for fallback mode by paging the already-completed in-memory profile snapshot. That path does not touch the filesystem again; native mode reads SQLite directly and does not materialize the whole persistent index.
+A permanent-delete session requires the current exact Files selection to pass the reviewed sequence:
 
-Files rows show direct metadata only: name, type, logical/allocated size for files and last-write time. Directory recursive sizes remain a Storage responsibility. The page sequence is live rather than transactionally frozen; the UI distinguishes a completed sequence from a count mismatch caused by directory changes while pages were read.
+```text
+per-user cross-process destructive-session lock
+-> durable recovery-history scan
+-> read-only Windows delete preflight
+-> canonical/protected-location execution validation
+-> explicit permanent-delete confirmation for the exact canonical paths
+-> recovery-history recheck
+-> session authorization receipt
+-> durable action-history begin
+-> reviewed file-delete orchestrator and final same-handle mutation boundary
+```
 
-### Folders
+The current user-facing delete action is deliberately narrow:
 
-Directory analysis returns direct entries with recursive logical bytes, nullable physical allocation, file/directory counts and hard-link accounting. The WinUI Storage page provides summary cards, drill-down, a detailed table and a proportional treemap. When direct results are truncated, the treemap derives an exact `Other entries` remainder from complete root totals.
+- regular files only; directory deletion is not exposed;
+- no generic `FileOperationKind.Delete` is added to the ordinary copy/move planning queue;
+- no Recycle Bin, undo or restore semantics are claimed;
+- unresolved `MutationStarted` / `RecoveryRequired` history blocks new authorization;
+- recovery history is never reused as consent or automatic replay authority;
+- final-lease cleanup ownership is retained and retried without granting another mutation capability;
+- Storage/Optimize and the indexing helper remain non-authorizing.
 
-### Types and Categories
+See the `docs/file-delete-*.md` series for the reviewed preflight, authorization, history, stability/final-capability, mutation-barrier and orchestration contracts. `docs/files-browser.md` covers paging and browser lifecycle.
 
-File-type analysis groups the same subtree by normalized extension and deterministic metadata-only category. Every visible hard-link name contributes logical namespace bytes; physical allocation is counted once per stable `FileIdentity`.
+### Folders, Types and Categories
 
-`MaxTypes` bounds only the extension table. Root totals and complete `TypeCount` are calculated before truncation, while exact category rows are aggregated over the complete extension set. Category bars therefore remain exact even when the UI shows only the top N extensions.
+Folder analysis returns direct entries with recursive logical bytes, nullable physical allocation, file/directory counts and hard-link accounting. Types groups the same subtree by normalized extension and deterministic metadata-only category.
+
+Every visible hard-link name contributes logical namespace bytes. Physical allocation is counted once per stable `FileIdentity`; unknown allocation remains unknown instead of being silently replaced with logical size and labelled physical.
 
 ### Growth history
 
-Aggregate history stores root totals plus exact category rollups in the same per-volume database; it does **not** retain per-file history or trigger another filesystem scan. Namespace rebuilds do not erase prior observations, and root identity uses ordinal-ignore-case semantics rather than SQLite's ASCII-only `NOCASE`.
+Aggregate history stores root totals plus exact category rollups in the same per-volume database. It does **not** retain per-file history or trigger another filesystem scan.
 
-Protocol v5 introduced trusted native history and those operations remain part of v8:
-
-- `CaptureStorageHistory` has no client timestamp. The service first materializes a valid exact-category live analysis, then writes it into the current UTC-hour bucket. Repeated captures in one hour are idempotent replacements.
-- `GetStorageHistory` returns a bounded persisted series. It requires the physical volume/root to remain attached but does not require the current namespace checkpoint to still be valid.
-
-The desktop schedules **whole-primary-volume native observations opportunistically**. Scheduling belongs to `DesktopSearchEngine`, so it does not depend on the Storage page being opened. A capture is attempted only when the native index is current, yields briefly after synchronization, and takes both foreground/native gates with non-blocking acquisition. Existing Search/Files/Storage work therefore wins; contention defers history instead of queuing it ahead of the user. Once a named-pipe capture request has been transmitted it is allowed to complete, preserving the existing IPC synchronization rule.
-
-Within one desktop session, a successful UTC-hour bucket suppresses further automatic captures until the next hour. Server-side bucket idempotency also prevents duplicate rows across retries or app restarts.
-
-History is native-only and intentionally tracks the whole primary indexed volume rather than every folder the user happens to browse. Its timeline displays physical allocation only when every displayed observation has exact allocation; otherwise the entire timeline uses logical size. “What grew?” compares the newest two observations using `StorageHistoryDelta` and shows signed category changes. It does not present forecasting or claim a long-term trend from two points.
-
-Fallback-history semantics remain deliberately undefined so a static crawler snapshot cannot silently be mixed into the native durable series.
+The desktop schedules whole-primary-volume native observations opportunistically only when the native source is current and foreground work is not using the relevant gates. Historical physical comparisons are shown only when the observations have comparable allocation evidence. FileOp does not project a “disk full” date from two points.
 
 ### Optimize
 
-The native **Optimize** view is a read-only evidence advisor over the same durable index. It currently surfaces:
+The native **Optimize** view is a bounded evidence advisor over the durable index. It surfaces:
 
 - large files, ranked by physical allocation when known and logical size otherwise;
 - old large files using an explicit last-write age threshold;
-- same-size groups of distinct physical files as a cheap duplicate-candidate prefilter.
+- same-size groups of distinct physical files as a cheap duplicate-candidate prefilter;
+- current-user known-location review evidence for Downloads and Temp when those paths are within the current supported indexed-source boundary;
+- measured Search/Storage/index/performance evidence.
 
-Hard-link aliases are collapsed by stable file identity before candidates are ranked or grouped. Same-size groups are **not confirmed duplicates**: equal length does not establish content equality. Their displayed potential savings is a logical upper bound until a future lazy content-verification stage confirms matching bytes.
+Same-size is **not** content equality. The full indexed group carries only a logical candidate upper bound.
 
-The initial Optimize reclaim view is native-only. FileOp does not present the profile-scoped fallback crawler snapshot as complete reclaim analysis. The advisor performs no delete, cleanup, cache clearing, registry modification or opaque health scoring; destructive cleanup remains a separately authorized boundary. See `docs/storage-optimization.md` for policy and safety semantics.
+When the user explicitly chooses **Verify content**, FileOp performs bounded desktop-process SHA-256 verification rather than asking the potentially elevated indexer to read arbitrary file content. The default verification budget allows at most **8 sampled files** and **2 GiB** of whole-file content. Partial-file hashes never become duplicate evidence and ordinary Optimize refresh does not hash files automatically.
 
-Optimize also contains **measured performance evidence**. On demand it records bounded end-to-end Search and root-Storage timings, current free-space capacity and a local timer baseline. In native mode protocol v8 additionally reports helper-owned SQLite index evidence through a read-only request:
+For SHA-256 matching sampled paths, FileOp then revalidates current handle-level file identity, hard-link count and allocated length. This produces separate evidence levels:
 
-- main database, WAL and shared-memory file footprint;
-- SQLite page size and page count;
-- freelist page count and reusable-page bytes;
-- the default `cache_size` target observed on the diagnostics reader connection;
-- journal mode and indexed-row count.
+1. full-group same-size candidate logical upper bound;
+2. SHA-256-matched sampled logical duplicate bytes;
+3. current sampled physical reclaim **upper bound** when physical evidence is sufficient.
 
-Reusable freelist pages are described as internal database space SQLite can reuse, not automatic reclaimable space. FileOp currently does not set `PRAGMA cache_size`, so the displayed reader-connection cache default is not a FileOp tuning choice, observed resident RAM, live cache occupancy or cache-hit evidence. The helper takes the same shared read lease and requires a valid durable checkpoint before reporting these numbers. No `VACUUM`, WAL checkpoint forcing or other database mutation is performed by diagnostics.
+The physical value is not permanent and is not deletion authorization. Any later permanent deletion still starts from a fresh Files selection and must independently pass the Files recovery/preflight/canonical-validation/confirmation/authorization boundary.
 
-Storage therefore has **Folders, Types, History and Optimize** modes: Folders explains where space is used, Types explains what uses it, History explains what changed, and Optimize identifies evidence-backed reclaim candidates plus measurable performance state.
+See `docs/same-size-content-verification.md` and `docs/physical-reclaim-evidence.md` for the content and physical-accounting rules.
+
+#### Optimize thresholds
+
+Optimize threshold controls are display filters over the already-returned bounded native analysis. FileOp supports only **same-or-stricter** thresholds than the helper policy so it never implies the helper examined evidence that was not returned.
+
+Supported policy-relative multipliers can be persisted under the current user's LocalApplicationData tree. Stored preferences are semantic multipliers rather than raw byte/day thresholds and are resolved again against each fresh helper policy. Invalid or unsupported preferences fall back to the baseline.
+
+There is currently no typed helper-policy transport for asking the helper to collect files below its native analysis baseline. The UI fails closed instead of presenting a looser display threshold as complete evidence.
+
+See `docs/storage-threshold-overlay.md` and `docs/storage-threshold-preferences.md`.
+
+#### Known-location review
+
+Downloads is resolved through the Windows known-folder API; Temp uses the current-user environment path. Location, age, size, extension and rule ID remain review provenance only and never establish that a file is safe to delete.
+
+On current `main`, known-location review is bounded by the active native indexed volume. A redirected location outside that source is reported rather than silently scanned. Review evidence can be handed to Files only within the supported indexed browser source; cleanup readiness remains a separate read-only current-path check.
+
+## Performance and device evidence
+
+Optimize/Performance diagnostics favor measurement over “tuning” claims. Current capabilities include bounded Search/Storage latency probes, helper SQLite/index diagnostics, resource-footprint evidence, disk-I/O attribution and timing/loss evidence, system CPU/memory context, physical-device context, failure-prediction/health evidence where supported, and fragmentation analysis.
+
+These surfaces are evidence only. FileOp does not perform registry cleaning, RAM boosting, arbitrary service disabling, automatic database `VACUUM`, forced WAL checkpointing or opaque health scoring.
 
 ## Trust and privilege boundary
 
-The desktop process always remains non-elevated. Native indexing starts with the current token and reports structured `ElevationRequired` when needed. Same-account helper-only UAC is allowed only for split-token administrators; different-admin credential elevation remains unsupported until a separately reviewed service/ACL design exists.
+`FileOp.App` always remains non-elevated. Native indexing starts with the current token and reports structured elevation requirements when necessary. Same-account helper-only UAC is allowed only for split-token administrators; different-admin credential elevation remains unsupported until a separately reviewed service/ACL design exists.
 
-The per-session pipe is restricted to the current Windows user and exact desktop PID. Requests are versioned, framed and capped at 8 MiB. Oversized responses return retryable `ResponseTooLarge` without destroying an otherwise healthy session.
+The per-session pipe is restricted to the current Windows user and exact desktop PID. Requests are versioned, framed and capped. Interrupted exchanges fault the session rather than risking request/response desynchronization.
 
-The app build places the reviewed `FileOp.Indexer` host beside `FileOp.App`. Runtime resolution accepts only the exact adjacent non-reparse executable. This is a deterministic location rule, not an Authenticode trust claim; signed packaging still needs publisher/signature verification before elevation is offered.
+The app build places the reviewed `FileOp.Indexer` host beside `FileOp.App`. Runtime resolution accepts only the exact adjacent non-reparse executable. This is a deterministic location rule, not an Authenticode trust claim; signed packaging still needs publisher/signature verification before elevation is treated as a production trust boundary.
 
 ## Query examples
 
@@ -109,61 +136,38 @@ ext:zip size:>1gb backup
 Requirements:
 
 - .NET 10 SDK
-- Windows 10 1809 or later for native engine/indexer and desktop app
+- Windows 10 1809 or later for the native engine/indexer and desktop app
 - Python 3 for the zero-Actions verifiers
 
-Core/benchmarks:
+Representative builds:
 
 ```powershell
-dotnet build src/FileOp.Core/FileOp.Core.csproj
-dotnet build benchmarks/FileOp.Benchmarks/FileOp.Benchmarks.csproj
+dotnet build src/FileOp.Core/FileOp.Core.csproj -c Release
+dotnet build src/FileOp.Windows/FileOp.Windows.csproj -c Release
+dotnet build src/FileOp.Indexer/FileOp.Indexer.csproj -c Release -p:Platform=x64
+dotnet test tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj -c Release
+dotnet build src/FileOp.App/FileOp.App.csproj -c Release -p:Platform=x64
 ```
 
-Windows stack:
-
-```powershell
-dotnet build src/FileOp.Windows/FileOp.Windows.csproj
-dotnet build src/FileOp.Indexer/FileOp.Indexer.csproj -p:Platform=x64
-dotnet test tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj
-dotnet build src/FileOp.App/FileOp.App.csproj -p:Platform=x64
-```
-
-The desktop build copies the indexer host executable, assembly, dependency manifest and runtime configuration beside the app. The full local gate verifies those artifacts and performs a real helper-process handshake using the bundled copy.
+The desktop build copies the reviewed indexer host artifacts beside the app. The complete local gate checks those bundled artifacts and performs a real helper-process handshake.
 
 ## Local verification without GitHub Actions
 
-Standard-library-only checks include:
+`tools/test-local.ps1` is the **authoritative verification inventory**. Individual verifier names evolve as reviewed boundaries are added, so this README intentionally does not duplicate the complete list.
+
+Run all standard-library model/source verifiers without requiring the .NET SDK:
 
 ```powershell
-python tools/verify_storage_ui.py --self-test-only
-python tools/verify_storage_types.py --self-test-only
-python tools/verify_storage_types_fuzz.py --cases 1000
-python tools/verify_storage_optimization.py --cases 10000
-python tools/verify_performance_diagnostics.py --cases 50000
-python tools/verify_index_diagnostics.py --cases 50000
-python tools/verify_storage_history.py --self-test-only --cases 1000
-python tools/verify_storage_history_unicode.py --self-test-only
-python tools/verify_storage_history_service.py --self-test-only --cases 2000
-python tools/verify_storage_history_ui.py --self-test-only --cases 10000
-python tools/verify_files_ui.py --self-test-only --cases 10000
-python tools/verify_directory_browse.py --self-test-only --cases 10000
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1 -OfflineOnly
 ```
 
-Repository-mode variants validate source wiring as well. The Optimize verifier checks hard-link collapse, measured-size ranking, stale-age filtering, same-size upper-bound semantics, read-only service wiring, WinUI disclaimers and stale-load invalidation. The performance/index verifiers check exact bounded probe arguments, helper-owned read-only SQLite evidence, protocol-v8 wiring, shared database identity, reader-cache/freelist semantics and the no-polling/no-fake-optimiser boundary. The Files verifier checks exact page accumulation, Load-more/cursor lifecycle and active-load supersession; the paged-browse verifier separately exercises SQLite keyset pagination over randomized fixtures and guards read-only database access, cross-process lease/checkpoint wiring, native/fallback routing and the no-rescan rule.
-
-Run all standard-library verifiers without requiring the .NET SDK:
+Run the complete Windows no-Actions gate:
 
 ```powershell
-pwsh -File tools/test-local.ps1 -OfflineOnly
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
 ```
 
-On Windows, run the complete no-Actions gate:
-
-```powershell
-pwsh -File tools/test-local.ps1
-```
-
-It runs the offline verifiers, Core/benchmark builds, native Windows/indexer builds, regression/integration tests, WinUI x64 build, bundled-helper checks and real process handshake. Use `-SkipBenchmarks` or `-SkipWinUI` for narrower development passes.
+The complete gate runs the offline verifiers, Core/Windows/Indexer/benchmark Release builds, the Windows regression/integration test suite, WinUI x64 Release build, bundled-helper artifact checks and a real bundled-helper process handshake. `docs/local-validation.md` documents the gate and narrower development switches.
 
 Benchmarks remain manual:
 
@@ -176,48 +180,36 @@ dotnet run -c Release --project benchmarks/FileOp.Benchmarks -- --filter *Storag
 
 ```text
 src/
-  FileOp.Core/       Search/index/browse/storage/history/optimization/performance domain and service contracts
-  FileOp.Windows/    Windows-native NTFS/USN engine and indexing IPC client/backends
+  FileOp.Core/       Search/index/browse/storage/operation domain and service contracts
+  FileOp.Windows/    Windows-native NTFS/USN engine, indexing IPC and file-operation providers
   FileOp.Indexer/    On-demand native indexing helper process
-  FileOp.App/        WinUI 3 desktop app with Search + exact paged Files + Storage
+  FileOp.App/        WinUI 3 desktop app with Search + Files + Storage/Performance surfaces
 
 tests/
-  FileOp.Windows.Tests/  NTFS, browsing, analytics/history/optimization/performance and service regression/integration tests
+  FileOp.Windows.Tests/  Native, persistence, operation and integration regressions
 
 benchmarks/
-  FileOp.Benchmarks/     Synthetic persistent-index Search/Storage benchmarks
+  FileOp.Benchmarks/     Synthetic Search/Storage baselines
 
 tools/
-  verify_storage_ui.py              Storage/XAML/property verifier
-  verify_storage_ui_edgecases.py    Targeted Storage UI regressions
-  verify_storage_types.py           Exact file-type/category SQL/source verifier
-  verify_storage_types_fuzz.py      Randomized SQL/reference parity verifier
-  verify_storage_optimization.py    Read-only optimization model/source/UI verifier
-  verify_performance_diagnostics.py Measured performance model/source/UI verifier
-  verify_index_diagnostics.py       Helper index SQLite evidence/protocol verifier
-  verify_storage_history.py         Aggregate history SQLite/delta verifier
-  verify_storage_history_unicode.py Ordinal-ignore-case history-root verifier
-  verify_storage_history_service.py Protocol-v8 history capture/query verifier
-  verify_storage_history_ui.py      Native history scheduler/WinUI verifier
-  verify_files_ui.py                Exact paged Files UI/source verifier
-  verify_directory_browse.py        Protocol-v8 keyset browse verifier
-  test-local.ps1                    Offline-only or full local Windows gate
+  test-local.ps1        Authoritative offline/full local verification gate
 
 docs/
-  architecture.md             Architectural decisions and roadmap
-  indexing-service.md         Helper trust boundary and protocol model
-  files-browser.md            Exact indexed Files UI and paging semantics
-  performance-diagnostics.md  Measured performance/index evidence semantics
-  storage-analytics.md        Folder/type/category accounting semantics
-  storage-history.md          Aggregate history persistence/service/delta semantics
-  storage-optimization.md     Read-only optimization policy and safety semantics
-  storage-types-ui.md         WinUI Types/Categories lifecycle and presentation
+  architecture.md                     Architectural boundaries and lifecycle
+  files-browser.md                    Indexed Files browsing/paging
+  storage-optimization.md             Optimize policy/safety semantics
+  same-size-content-verification.md   Explicit bounded SHA-256 verification
+  physical-reclaim-evidence.md        Current physical reclaim upper-bound evidence
+  storage-threshold-preferences.md    Persisted same-or-stricter threshold preferences
+  local-validation.md                 No-Actions validation workflow
+  file-delete-*.md                    Reviewed file-delete safety/mutation contracts
 ```
 
 ## Principles
 
 1. Speed is a feature: no feature should silently trigger a full rescan when the shared index can answer it.
-2. Expensive metadata is lazy: hashes, content indexing and similar work are calculated only when requested or during idle work.
-3. Destructive actions are explainable and reversible where possible.
-4. The normal UI is never permanently elevated; future destructive administration remains a separate privileged surface.
-5. Avoid fake optimisation features such as registry cleaning, RAM boosting and opaque health scores.
+2. Expensive metadata is lazy: hashes and similar content work run only on explicit bounded paths or reviewed idle work.
+3. Evidence is not authority: recommendations, hashes, reclaim estimates and readiness checks do not become mutation consent.
+4. Destructive actions require explicit reviewed boundaries and fresh action-time validation.
+5. The normal UI is never permanently elevated; privileged administration remains isolated.
+6. Avoid fake optimisation features such as registry cleaning, RAM boosting and opaque health scores.
