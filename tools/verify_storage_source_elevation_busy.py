@@ -240,6 +240,10 @@ def check_repository(root: Path) -> int:
         encoding="utf-8"
     )
     lifecycle = (root / "src/FileOp.App/DesktopSearchEngine.cs").read_text(encoding="utf-8")
+    window = (root / "src/FileOp.App/MainWindow.StorageSourceIdentity.cs").read_text(
+        encoding="utf-8"
+    )
+    xaml = (root / "src/FileOp.App/MainWindow.xaml").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
     checks = 0
 
@@ -283,6 +287,46 @@ def check_repository(root: Path) -> int:
         "IndexingServiceErrorCode.SnapshotRequired",
         "same-session native snapshot maintenance path",
     )
+    checks += require(
+        xaml,
+        'Click="EnableFastIndexWithStorageTypesButton_Click"',
+        "XAML elevation handler contract",
+    )
+    checks += require(
+        window,
+        "EnableFastIndexButton.Click -= EnableFastIndexWithStorageTypesButton_Click;",
+        "root-only XAML elevation handler removal",
+    )
+    checks += require(
+        window,
+        "EnableFastIndexButton.Click += EnableFastIndexWithStorageSourceIdentityButton_Click;",
+        "identity-aware production elevation handler",
+    )
+
+    handler_start = window.index(
+        "private async void EnableFastIndexWithStorageSourceIdentityButton_Click"
+    )
+    before_identity_at = window.index("var sourceIdentityBeforeElevation", handler_start)
+    elevate_at = window.index("await _searchEngine.TryElevateAsync", before_identity_at)
+    after_identity_at = window.index("var currentSourceIdentityKey", elevate_at)
+    identity_compare_at = window.index("sourceIdentityBeforeElevation", after_identity_at)
+    active_view_at = window.index("LoadActiveStorageViewAsync(root, forceRefresh: true)", identity_compare_at)
+    if not (
+        handler_start
+        < before_identity_at
+        < elevate_at
+        < after_identity_at
+        < identity_compare_at
+        < active_view_at
+    ):
+        raise AssertionError("production elevation refresh must bind identity and preserve active Storage mode")
+    checks += 1
+
+    handler_end = window.index("\n    }\n}", active_view_at)
+    if "RunStorageAnalysisAsync" in window[handler_start:handler_end]:
+        raise AssertionError("identity-aware elevation handler must not force hidden Folders analysis")
+    checks += 1
+
     checks += require(
         gate,
         "verify_storage_source_elevation_busy.py --repo-root $repoRoot --cases 50000",
