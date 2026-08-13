@@ -39,6 +39,35 @@ public sealed class FileDeleteOperationOrchestratorHistoryRegressionTests
         await AssertRegressionRejectedAsync(authorization, settled, regressed);
     }
 
+    [TestMethod]
+    public async Task PreviouslyCommittedEntryEscalatingToRecoveryRequiredStopsAsRecovery()
+    {
+        var authorization = CreateAuthorization();
+        var settled = CreateHistory(
+            authorization,
+            FileDeleteOperationActionEntryState.Committed);
+        var recovery = CreateHistory(
+            authorization,
+            FileDeleteOperationActionEntryState.RecoveryRequired,
+            startedAtUtc: settled.StartedAtUtc);
+        await using var historyStore = new RegressingHistoryStore(settled, recovery);
+        var stabilityProvider = new CountingStabilityProvider();
+        var finalProvider = new CountingFinalProvider();
+
+        var exception = await CaptureThrowsAsync<FileDeleteOperationOrchestrationRecoveryRequiredException>(async () =>
+            await FileDeleteOperationOrchestrator.ExecuteAsync(
+                authorization,
+                stabilityProvider,
+                finalProvider,
+                historyStore));
+
+        Assert.AreSame(recovery, exception.History);
+        Assert.IsFalse(exception.DeleteMutationAuthorized);
+        Assert.AreEqual(2, historyStore.GetCount);
+        Assert.AreEqual(0, stabilityProvider.AcquireCount);
+        Assert.AreEqual(0, finalProvider.AcquireCount);
+    }
+
     private static async Task AssertRegressionRejectedAsync(
         FileDeleteOperationUserAuthorizationReceipt authorization,
         FileDeleteOperationActionHistory settled,
@@ -108,20 +137,29 @@ public sealed class FileDeleteOperationOrchestratorHistoryRegressionTests
         DateTimeOffset? startedAtUtc = null)
     {
         var startedAt = startedAtUtc ?? authorization.AuthorizedAtUtc.AddMilliseconds(1);
-        var mutationStartedAt = state == FileDeleteOperationActionEntryState.Committed
+        var mutationStartedAt = state is FileDeleteOperationActionEntryState.Committed or
+                FileDeleteOperationActionEntryState.RecoveryRequired
             ? startedAt.AddMilliseconds(1)
             : (DateTimeOffset?)null;
         var completedAt = state is FileDeleteOperationActionEntryState.Committed or
-                FileDeleteOperationActionEntryState.Failed
+                FileDeleteOperationActionEntryState.Failed or
+                FileDeleteOperationActionEntryState.RecoveryRequired
             ? startedAt.AddMilliseconds(2)
             : (DateTimeOffset?)null;
-        var failure = state == FileDeleteOperationActionEntryState.Failed
-            ? new FileOperationFailure(
+        var failure = state switch
+        {
+            FileDeleteOperationActionEntryState.Failed => new FileOperationFailure(
                 "SyntheticSettledFailure",
                 "Synthetic safe pre-mutation failure.",
                 authorization.Items[0].CanonicalPath,
-                Retryable: false)
-            : null;
+                Retryable: false),
+            FileDeleteOperationActionEntryState.RecoveryRequired => new FileOperationFailure(
+                "SyntheticRecoveryEscalation",
+                "Synthetic recovery-sensitive escalation.",
+                authorization.Items[0].CanonicalPath,
+                Retryable: false),
+            _ => null,
+        };
         var item = authorization.Items[0];
         return new FileDeleteOperationActionHistory(
             authorization.PlanId,
@@ -169,14 +207,14 @@ public sealed class FileDeleteOperationOrchestratorHistoryRegressionTests
     private sealed class RegressingHistoryStore : IFileDeleteOperationActionHistoryStore
     {
         private readonly FileDeleteOperationActionHistory _settled;
-        private readonly FileDeleteOperationActionHistory _regressed;
+        private readonly FileDeleteOperationActionHistory _next;
 
         public RegressingHistoryStore(
             FileDeleteOperationActionHistory settled,
-            FileDeleteOperationActionHistory regressed)
+            FileDeleteOperationActionHistory next)
         {
             _settled = settled;
-            _regressed = regressed;
+            _next = next;
         }
 
         public int GetCount { get; private set; }
@@ -230,7 +268,7 @@ public sealed class FileDeleteOperationOrchestratorHistoryRegressionTests
 
             GetCount++;
             return new ValueTask<FileDeleteOperationActionHistory?>(
-                GetCount == 1 ? _settled : _regressed);
+                GetCount == 1 ? _settled : _next);
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -245,7 +283,7 @@ public sealed class FileDeleteOperationOrchestratorHistoryRegressionTests
             CancellationToken cancellationToken = default)
         {
             AcquireCount++;
-            throw new InvalidOperationException("settled history regression must be rejected before stability acquisition");
+            throw new InvalidOperationException("settled history must be rejected or stopped before stability acquisition");
         }
     }
 
@@ -258,7 +296,7 @@ public sealed class FileDeleteOperationOrchestratorHistoryRegressionTests
             CancellationToken cancellationToken = default)
         {
             AcquireCount++;
-            throw new InvalidOperationException("settled history regression must be rejected before final acquisition");
+            throw new InvalidOperationException("settled history must be rejected or stopped before final acquisition");
         }
     }
 }
