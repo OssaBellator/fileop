@@ -39,8 +39,11 @@ def same_path(left: str, right: str) -> bool:
         return False
 
 
-def select_volume(volumes: tuple[Volume, ...], root: str) -> Volume | None:
-    return next((volume for volume in volumes if same_root(volume.root, root)), None)
+def select_unique(volumes: tuple[Volume, ...], root: str) -> tuple[Volume | None, bool]:
+    matches = [volume for volume in volumes if same_root(volume.root, root)]
+    if len(matches) > 1:
+        return None, True
+    return (matches[0] if matches else None), False
 
 
 def snapshot_required(volume: Volume) -> bool:
@@ -59,11 +62,15 @@ def cross_volume_outcome(
     if same_root(location_root, active_root):
         return "primary"
 
-    primary_before = select_volume(before, active_root)
+    primary_before, primary_before_ambiguous = select_unique(before, active_root)
+    if primary_before_ambiguous:
+        return "unavailable-primary-ambiguous-before"
     if primary_before is None or primary_before.identity != selected_primary_identity:
         return "unavailable-primary-before"
 
-    target = select_volume(before, location_root)
+    target, target_ambiguous = select_unique(before, location_root)
+    if target_ambiguous:
+        return "unavailable-target-ambiguous-before"
     if target is None:
         return "outside-active-no-index"
     if not target.checkpoint:
@@ -71,13 +78,17 @@ def cross_volume_outcome(
     if not catchup_current:
         return "unavailable-not-current"
 
-    current = select_volume(after, location_root)
+    current, current_ambiguous = select_unique(after, location_root)
+    if current_ambiguous:
+        return "unavailable-source-ambiguous-after"
     if current is None or current.identity != target.identity or not same_root(current.root, target.root):
         return "unavailable-source-changed"
     if not current.checkpoint:
         return "unavailable-checkpoint-lost" if snapshot_required(current) else "unavailable-busy-after"
 
-    primary_after = select_volume(after, active_root)
+    primary_after, primary_after_ambiguous = select_unique(after, active_root)
+    if primary_after_ambiguous:
+        return "unavailable-primary-ambiguous-after"
     if (
         primary_after is None
         or primary_after.identity != primary_before.identity
@@ -94,55 +105,83 @@ def run_model(cases: int, seed: int) -> int:
     assert same_path("D:\\Temp\\", "D:\\Temp")
     assert same_path("d:\\users\\u\\downloads", "D:\\Users\\U\\Downloads\\")
     assert not same_path("D:\\Temp", "D:\\Temp2")
-    assert cross_volume_outcome(
-        location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
-        before=before, catchup_current=True, after=before,
-    ) == "available-cross-volume"
-    assert cross_volume_outcome(
-        location_root="E:\\", active_root="C:\\", selected_primary_identity=1,
-        before=before, catchup_current=True, after=before,
-    ) == "outside-active-no-index"
-    assert cross_volume_outcome(
-        location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
-        before=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "SnapshotRequired")),
-        catchup_current=True,
-        after=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "SnapshotRequired")),
-    ) == "unavailable-no-checkpoint"
-    assert cross_volume_outcome(
-        location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
-        before=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "Idle")),
-        catchup_current=True,
-        after=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "Idle")),
-    ) == "unavailable-busy-before"
-    assert cross_volume_outcome(
-        location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
-        before=before, catchup_current=False, after=before,
-    ) == "unavailable-not-current"
-    assert cross_volume_outcome(
-        location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
-        before=before, catchup_current=True,
-        after=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "Idle")),
-    ) == "unavailable-busy-after"
-    assert cross_volume_outcome(
-        location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
-        before=before, catchup_current=True,
-        after=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "SnapshotRequired")),
-    ) == "unavailable-checkpoint-lost"
-    assert cross_volume_outcome(
-        location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
-        before=before, catchup_current=True,
-        after=(Volume("C:\\", 1, True), Volume("D:\\", 99, False, "Busy")),
-    ) == "unavailable-source-changed"
-    assert cross_volume_outcome(
-        location_root="D:\\", active_root="C:\\", selected_primary_identity=99,
-        before=before, catchup_current=True, after=before,
-    ) == "unavailable-primary-before"
-    assert cross_volume_outcome(
-        location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
-        before=before, catchup_current=True,
-        after=(Volume("C:\\", 99, True), Volume("D:\\", 2, True)),
-    ) == "unavailable-primary-changed"
-    checks += 13
+    checks += 3
+
+    fixed = (
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=before, catchup_current=True, after=before),
+            "available-cross-volume",
+        ),
+        (
+            dict(location_root="E:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=before, catchup_current=True, after=before),
+            "outside-active-no-index",
+        ),
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=(Volume("C:\\", 1, True), Volume("C:\\", 9, True), Volume("D:\\", 2, True)),
+                 catchup_current=True, after=before),
+            "unavailable-primary-ambiguous-before",
+        ),
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=(Volume("C:\\", 1, True), Volume("D:\\", 2, True), Volume("D:\\", 3, True)),
+                 catchup_current=True, after=before),
+            "unavailable-target-ambiguous-before",
+        ),
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=before, catchup_current=True,
+                 after=(Volume("C:\\", 1, True), Volume("D:\\", 2, True), Volume("D:\\", 3, True))),
+            "unavailable-source-ambiguous-after",
+        ),
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=before, catchup_current=True,
+                 after=(Volume("C:\\", 1, True), Volume("C:\\", 9, True), Volume("D:\\", 2, True))),
+            "unavailable-primary-ambiguous-after",
+        ),
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "SnapshotRequired")),
+                 catchup_current=True,
+                 after=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "SnapshotRequired"))),
+            "unavailable-no-checkpoint",
+        ),
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "Idle")),
+                 catchup_current=True,
+                 after=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "Idle"))),
+            "unavailable-busy-before",
+        ),
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=before, catchup_current=False, after=before),
+            "unavailable-not-current",
+        ),
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=before, catchup_current=True,
+                 after=(Volume("C:\\", 1, True), Volume("D:\\", 99, True))),
+            "unavailable-source-changed",
+        ),
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=99,
+                 before=before, catchup_current=True, after=before),
+            "unavailable-primary-before",
+        ),
+        (
+            dict(location_root="D:\\", active_root="C:\\", selected_primary_identity=1,
+                 before=before, catchup_current=True,
+                 after=(Volume("C:\\", 99, True), Volume("D:\\", 2, True))),
+            "unavailable-primary-changed",
+        ),
+    )
+    for arguments, expected in fixed:
+        assert cross_volume_outcome(**arguments) == expected
+        checks += 1
 
     rng = random.Random(seed)
     drives = "CDEFGH"
@@ -153,7 +192,9 @@ def run_model(cases: int, seed: int) -> int:
         active_root = f"{active_drive}:\\"
         location_root = f"{location_drive}:\\"
         normalized_candidate = f"{location_root}Users\\U{index % 97}\\Temp"
-        equivalent_candidate = normalized_candidate + "\\" if index % 2 == 0 else normalized_candidate.swapcase()
+        equivalent_candidate = (
+            normalized_candidate + "\\" if index % 2 == 0 else normalized_candidate.swapcase()
+        )
         assert same_path(normalized_candidate, equivalent_candidate)
         checks += 1
 
@@ -166,7 +207,12 @@ def run_model(cases: int, seed: int) -> int:
         primary_before_identity = (
             selected_primary_identity if primary_before_matches else selected_primary_identity + 1
         )
+        primary_before_ambiguous = rng.random() < 0.01
+        target_before_ambiguous = rng.random() < 0.01
+
         before_list = [Volume(active_root, primary_before_identity, True)]
+        if primary_before_ambiguous:
+            before_list.append(Volume(active_root, primary_before_identity + 1_000_000, True))
         if target_present and not same_root(location_root, active_root):
             before_list.append(Volume(
                 location_root,
@@ -175,16 +221,24 @@ def run_model(cases: int, seed: int) -> int:
                 rng.choice(busy_descriptor_states)
                 if target_busy else ("Idle" if checkpoint else "SnapshotRequired"),
             ))
+            if target_before_ambiguous:
+                before_list.append(Volume(location_root, identity + 1_000_000, True))
         before_state = tuple(before_list)
+
         catchup_current = rng.random() < 0.88
         source_stable = rng.random() < 0.94
         after_busy = rng.random() < 0.04
         checkpoint_lost = rng.random() < 0.015
         primary_stable = rng.random() < 0.96
+        target_after_ambiguous = rng.random() < 0.01
+        primary_after_ambiguous = rng.random() < 0.01
         primary_after_identity = (
             primary_before_identity if primary_stable else primary_before_identity + 1
         )
+
         after_list = [Volume(active_root, primary_after_identity, True)]
+        if primary_after_ambiguous:
+            after_list.append(Volume(active_root, primary_after_identity + 1_000_000, True))
         if target_present and not same_root(location_root, active_root):
             after_identity = identity if source_stable else identity + 1
             after_checkpoint = checkpoint and not after_busy and not checkpoint_lost
@@ -195,6 +249,9 @@ def run_model(cases: int, seed: int) -> int:
                 rng.choice(busy_descriptor_states)
                 if after_busy else ("Idle" if after_checkpoint else "SnapshotRequired"),
             ))
+            if target_after_ambiguous:
+                after_list.append(Volume(location_root, after_identity + 1_000_000, True))
+
         outcome = cross_volume_outcome(
             location_root=location_root,
             active_root=active_root,
@@ -210,51 +267,74 @@ def run_model(cases: int, seed: int) -> int:
             continue
 
         expected_available = (
-            primary_before_matches and target_present and not target_busy and checkpoint
-            and catchup_current and source_stable and not after_busy
-            and not checkpoint_lost and primary_stable
+            not primary_before_ambiguous
+            and primary_before_matches
+            and target_present
+            and not target_before_ambiguous
+            and not target_busy
+            and checkpoint
+            and catchup_current
+            and not target_after_ambiguous
+            and source_stable
+            and not after_busy
+            and not checkpoint_lost
+            and not primary_after_ambiguous
+            and primary_stable
         )
         assert (outcome == "available-cross-volume") == expected_available
         checks += 1
+
+        if primary_before_ambiguous:
+            assert outcome == "unavailable-primary-ambiguous-before"
+        elif not primary_before_matches:
+            assert outcome == "unavailable-primary-before"
+        elif target_present and target_before_ambiguous:
+            assert outcome == "unavailable-target-ambiguous-before"
+        elif not target_present:
+            assert outcome == "outside-active-no-index"
+        elif target_busy:
+            assert outcome == "unavailable-busy-before"
+        elif not checkpoint:
+            assert outcome == "unavailable-no-checkpoint"
+        elif not catchup_current:
+            assert outcome == "unavailable-not-current"
+        elif target_after_ambiguous:
+            assert outcome == "unavailable-source-ambiguous-after"
+        elif not source_stable:
+            assert outcome == "unavailable-source-changed"
+        elif after_busy:
+            assert outcome == "unavailable-busy-after"
+        elif checkpoint_lost:
+            assert outcome == "unavailable-checkpoint-lost"
+        elif primary_after_ambiguous:
+            assert outcome == "unavailable-primary-ambiguous-after"
+        elif not primary_stable:
+            assert outcome == "unavailable-primary-changed"
+        checks += 1
+
         if outcome == "available-cross-volume":
-            target = select_volume(before_state, location_root)
-            current = select_volume(tuple(after_list), location_root)
-            primary_before = select_volume(before_state, active_root)
-            primary_after = select_volume(tuple(after_list), active_root)
+            target, target_ambiguous = select_unique(before_state, location_root)
+            current, current_ambiguous = select_unique(tuple(after_list), location_root)
+            primary_before, primary_before_is_ambiguous = select_unique(before_state, active_root)
+            primary_after, primary_after_is_ambiguous = select_unique(tuple(after_list), active_root)
+            assert not any((
+                target_ambiguous,
+                current_ambiguous,
+                primary_before_is_ambiguous,
+                primary_after_is_ambiguous,
+            ))
+            assert all(value is not None for value in (
+                target,
+                current,
+                primary_before,
+                primary_after,
+            ))
             assert target is not None and current is not None
             assert primary_before is not None and primary_after is not None
             assert target.checkpoint and current.checkpoint
             assert target.identity == current.identity
             assert primary_before.identity == selected_primary_identity == primary_after.identity
-            assert not snapshot_required(target) and not snapshot_required(current)
-            checks += 6
-        if not primary_before_matches:
-            assert outcome == "unavailable-primary-before"
-            checks += 1
-        elif not target_present:
-            assert outcome == "outside-active-no-index"
-            checks += 1
-        elif target_busy:
-            assert outcome == "unavailable-busy-before"
-            checks += 1
-        elif not checkpoint:
-            assert outcome == "unavailable-no-checkpoint"
-            checks += 1
-        elif not catchup_current:
-            assert outcome == "unavailable-not-current"
-            checks += 1
-        elif not source_stable:
-            assert outcome == "unavailable-source-changed"
-            checks += 1
-        elif after_busy:
-            assert outcome == "unavailable-busy-after"
-            checks += 1
-        elif checkpoint_lost:
-            assert outcome == "unavailable-checkpoint-lost"
-            checks += 1
-        elif not primary_stable:
-            assert outcome == "unavailable-primary-changed"
-            checks += 1
+            checks += 4
     return checks
 
 
@@ -274,6 +354,7 @@ def check_repository(root: Path) -> int:
     paths = {
         "helper": "src/FileOp.App/DesktopSearchEngine.KnownLocationReviewCrossVolume.cs",
         "producer": "src/FileOp.App/DesktopSearchEngine.KnownLocationReview.cs",
+        "review_model": "src/FileOp.Core/Storage/StorageKnownLocationReview.cs",
         "optimizer": "src/FileOp.Core/Storage/SqliteStorageOptimizationAnalytics.cs",
         "xaml": "src/FileOp.App/StorageKnownLocationReviewView.xaml",
         "view": "src/FileOp.App/StorageKnownLocationReviewView.xaml.cs",
@@ -290,13 +371,20 @@ def check_repository(root: Path) -> int:
 
     required = (
         ("producer", "AnalyzeCrossVolumeKnownLocationAsync(", "cross-volume delegation"),
-        ("producer", "if (!IsReviewPathWithinRoot(fullPath, activeRoot))", "primary/cross-volume split"),
+        ("producer", "var capturedVolumeIdentity = capturedPrimary.VolumeIdentity;", "snapshot primary identity capture"),
+        ("producer", "currentPrimary.VolumeIdentity != capturedVolumeIdentity", "snapshot primary identity revalidation"),
+        ("producer", "ActiveVolumeIdentity = capturedVolumeIdentity", "snapshot identity persistence"),
+        ("review_model", "public ulong? ActiveVolumeIdentity { get; init; }", "snapshot identity model"),
         ("helper", "Path.GetPathRoot(fullPath)", "location volume-root derivation"),
+        ("helper", "FindUniqueIndexedVolumeByRoot(", "unique descriptor selector"),
+        ("helper", "out var primaryBeforeAmbiguous", "pre-capture primary ambiguity check"),
+        ("helper", "out var targetAmbiguous", "pre-capture secondary ambiguity check"),
+        ("helper", "out var currentAmbiguous", "post-capture secondary ambiguity check"),
+        ("helper", "out var primaryAfterAmbiguous", "post-capture primary ambiguity check"),
         ("helper", "ReviewPathsEqual(response.Analysis.RootPath, fullPath)", "normalized analysis-root validation"),
-        ("helper", "var primaryBefore = FindIndexedVolumeByRoot(volumesBefore.Volumes, activeRoot);", "pre-capture primary descriptor binding"),
         ("helper", "primaryBefore.VolumeIdentity != primaryVolume.VolumeIdentity", "selected primary identity validation"),
         ("helper", "if (!target.HasCheckpoint)", "existing-checkpoint requirement"),
-        ("helper", "!IsSnapshotRequiredState(target.State)", "pre-capture temporary descriptor classification"),
+        ("helper", "!IsSnapshotRequiredState(target.State)", "temporary descriptor classification"),
         ("helper", "new IndexingVolumeRequest(target.VolumeIdentity, target.RootPath)", "exact sync volume binding"),
         ("helper", "CatchUpAsync(", "bounded catch-up"),
         ("helper", "InitialCatchUpBatchLimit", "bounded catch-up limit"),
@@ -304,9 +392,8 @@ def check_repository(root: Path) -> int:
         ("helper", "new IndexingStorageOptimizationRequest(", "volume-bound analysis"),
         ("helper", "current.VolumeIdentity != target.VolumeIdentity", "post-capture secondary identity check"),
         ("helper", "if (!current.HasCheckpoint)", "post-capture checkpoint check"),
-        ("helper", "var primaryAfter = FindIndexedVolumeByRoot(volumesAfter.Volumes, activeRoot);", "post-capture primary descriptor binding"),
         ("helper", "primaryAfter.VolumeIdentity != primaryBefore.VolumeIdentity", "post-capture primary identity check"),
-        ("helper", "currentPrimary.VolumeIdentity != primaryBefore.VolumeIdentity", "selected primary source preservation"),
+        ("helper", "currentPrimary.VolumeIdentity != primaryBefore.VolumeIdentity", "selected primary preservation"),
         ("helper", "will not rebuild a secondary volume implicitly", "no implicit rebuild"),
         ("optimizer", "trimmed = trimmed.TrimEnd('\\\\', '/')", "optimizer path normalization"),
         ("discovery", "DriveInfo.GetDrives()", "native fixed-drive discovery"),
@@ -316,9 +403,11 @@ def check_repository(root: Path) -> int:
         ("backend", "context.State == VolumeState.Idle && !hasCheckpoint", "snapshot-required state derivation"),
         ("xaml", 'IsEnabled="{Binding CanReviewInFiles}"', "Files handoff UI gating"),
         ("view", "bool CanReviewInFiles", "candidate handoff capability"),
+        ("handoff", "review.ActiveVolumeIdentity != volumeIdentity", "Files handoff identity binding"),
         ("handoff", "That review candidate is on another indexed volume", "programmatic Files refusal"),
+        ("readiness", "review.ActiveVolumeIdentity != activeVolumeIdentity", "readiness identity binding"),
         ("readiness", "!PathsEqual(location.RootPath, requestedReviewRoot)", "exact review-root readiness binding"),
-        ("readiness", "IsPathWithinRoot(matchedCandidate.Path, matchedLocation.RootPath)", "candidate remains inside owning review root"),
+        ("readiness", "IsPathWithinRoot(matchedCandidate.Path, matchedLocation.RootPath)", "candidate owning-root containment"),
         ("readiness", "matchCount != 1", "unique readiness binding"),
         ("protocol", "public const int CurrentVersion = 8;", "protocol v8"),
         ("gate", "verify_cross_volume_known_location_review.py", "offline gate wiring"),
@@ -331,44 +420,45 @@ def check_repository(root: Path) -> int:
     helper = text["helper"]
     if helper.count("GetVolumesAsync(_lifetimeCancellation.Token)") != 2:
         raise AssertionError("cross-volume review must read volume descriptors before and after analysis")
-    checks += 1
+    if "FirstOrDefault(volume =>" in helper:
+        raise AssertionError("cross-volume volume selection must not fall back to first root match")
+    checks += 2
 
     pre_at = helper.index("var volumesBefore = await session.Client")
-    primary_before_at = helper.index("var primaryBefore = FindIndexedVolumeByRoot")
-    primary_before_identity_at = helper.index("primaryBefore.VolumeIdentity != primaryVolume.VolumeIdentity")
+    primary_before_at = helper.index("var primaryBefore = FindUniqueIndexedVolumeByRoot")
+    target_at = helper.index("var target = FindUniqueIndexedVolumeByRoot")
     target_checkpoint_at = helper.index("if (!target.HasCheckpoint)")
-    target_state_at = helper.index("if (!IsSnapshotRequiredState(target.State))")
-    no_checkpoint_at = helper.index("has no existing checkpoint")
     catchup_at = helper.index("CatchUpAsync(")
     request_at = helper.index("new IndexingStorageOptimizationRequest(")
     analysis_root_at = helper.index("ReviewPathsEqual(response.Analysis.RootPath, fullPath)")
     post_at = helper.index("var volumesAfter = await session.Client")
-    identity_at = helper.index("current.VolumeIdentity != target.VolumeIdentity")
+    current_at = helper.index("var current = FindUniqueIndexedVolumeByRoot")
     current_checkpoint_at = helper.index("if (!current.HasCheckpoint)")
-    current_state_at = helper.index("if (!IsSnapshotRequiredState(current.State))")
-    checkpoint_lost_at = helper.index("lost its durable checkpoint")
-    primary_after_at = helper.index("var primaryAfter = FindIndexedVolumeByRoot")
-    primary_after_identity_at = helper.index("primaryAfter.VolumeIdentity != primaryBefore.VolumeIdentity")
+    primary_after_at = helper.index("var primaryAfter = FindUniqueIndexedVolumeByRoot")
     current_primary_identity_at = helper.index("currentPrimary.VolumeIdentity != primaryBefore.VolumeIdentity")
     classify_at = helper.index("StorageKnownLocationReviewClassifier.Classify(")
     if not (
-        pre_at < primary_before_at < primary_before_identity_at
-        < target_checkpoint_at < target_state_at < no_checkpoint_at
+        pre_at < primary_before_at < target_at < target_checkpoint_at
         < catchup_at < request_at < analysis_root_at < post_at
     ):
-        raise AssertionError("pre-capture primary/secondary descriptor/catch-up/analysis-root ordering changed")
+        raise AssertionError("pre-capture unique binding/catch-up/analysis ordering changed")
     if not (
-        post_at < identity_at < current_checkpoint_at < current_state_at
-        < checkpoint_lost_at < primary_after_at < primary_after_identity_at
+        post_at < current_at < current_checkpoint_at < primary_after_at
         < current_primary_identity_at < classify_at
     ):
-        raise AssertionError("post-capture secondary/primary identity/checkpoint ordering changed")
+        raise AssertionError("post-capture unique binding/identity/checkpoint ordering changed")
     checks += 2
 
     for source, label in (("helper", "cross-volume helper"), ("producer", "known-location producer")):
         for needle in (
-            "FileSystemCrawler", "Directory.Enumerate", "Directory.GetFiles", "File.Open",
-            "RebuildVolumeAsync", "RebuildVolume", "File.Delete(", "Directory.Delete(",
+            "FileSystemCrawler",
+            "Directory.Enumerate",
+            "Directory.GetFiles",
+            "File.Open",
+            "RebuildVolumeAsync",
+            "RebuildVolume",
+            "File.Delete(",
+            "Directory.Delete(",
         ):
             checks += forbid(text[source], needle, f"{label} {needle}")
 
