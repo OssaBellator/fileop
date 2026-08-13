@@ -35,6 +35,11 @@ internal sealed partial class DesktopSearchEngine
         }
     }
 
+    internal bool StorageSourceMaintenanceBusy =>
+        State is { Mode: DesktopSearchMode.Native, IsBusy: true } &&
+        Volatile.Read(ref _nativeStorageSourceElevationBusy) == 0 &&
+        Volatile.Read(ref _nativeStorageSourceActive) == 0;
+
     private void TrackStorageSourceIdentity(DesktopSearchEngineState state)
     {
         if (state.Mode == DesktopSearchMode.Native &&
