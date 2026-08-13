@@ -6,6 +6,14 @@ Known-location review evidence can identify an old, large package/archive or cur
 
 **Check readiness** revalidates current path evidence without creating or authorizing a cleanup operation. It remains valid for a reviewed candidate on another indexed volume because the readiness service resolves the candidate/root directly and does not depend on Files' active browse volume.
 
+## Exact review binding
+
+The candidate list preserves the owning review root, provenance and rule ID for every displayed row. A readiness click passes **path + review root + provenance + rule ID** back to the coordinator.
+
+The coordinator requires exactly one candidate in the current cached review to match that full tuple. This matters when known-location roots overlap: the same filesystem path can theoretically satisfy both a Downloads rule and the current-user Temp rule. A path-only lookup would silently pick whichever location appeared first. Exact tuple binding instead rejects missing or duplicate matches and never substitutes another provenance/root merely because the path string is the same.
+
+This binding is still evidence selection only. It grants no mutation capability.
+
 ## Evidence checked
 
 For the candidate's known-location root and file, FileOp reuses the existing Files canonical path boundary through `WindowsFileOperationCanonicalPathResolver`.
@@ -54,11 +62,15 @@ Cleanup readiness still does **not** grant access to that mutation boundary. It 
 
 If the user later chooses permanent deletion, they must select the file in Files and independently pass the Files delete session's fresh preflight, recovery checks, canonical identity/protected-location validation and explicit confirmation. Readiness evidence is not reusable consent or mutation authority.
 
+The Core readiness detail uses the same current wording: a consistent preview says explicitly that it does not authorize deletion and that later permanent deletion must start again from Files. It no longer claims the reviewed delete recovery/history boundary is unimplemented.
+
 ## Cross-volume lifecycle
 
 Readiness is rebound to the exact candidate in the current cached native known-location review and serialized through the existing Storage gate. The review's active-primary source is checked again before the result is rendered.
 
 For a cross-volume candidate, the known-location producer has already required a current checkpointed secondary native index. The readiness service then performs its own current path/identity checks directly against that candidate and known-location root. Files handoff can remain unavailable for that candidate without disabling readiness.
+
+The coordinator retains the exact review object while the Windows read-only check is in flight. Before rendering, it requires that object still be the current cached review and that the active primary native source remain available and unchanged. A refresh/replacement therefore invalidates an in-flight readiness result instead of allowing old evidence to repaint over a newer review.
 
 Any new known-location review loading/unavailable/completed state clears the previous readiness result as current evidence.
 
@@ -66,6 +78,8 @@ Any new known-location review loading/unavailable/completed state clears the pre
 
 `tools/verify_cleanup_readiness.py` is wired into `tools/test-local.ps1 -OfflineOnly`.
 
-Its deterministic model covers current/changed/blocked/unavailable states, reparse and canonical-escape boundaries, volume mismatch, two-current-read identity stability and indexed size/time drift. Repository guards pin zero-access metadata reads, the existing canonical resolver, protocol v8, absence of mutation APIs in the readiness path, `CleanupMutationAuthorized == false`, and the separate Files delete authorization/orchestration boundary.
+Its deterministic/randomized model covers current/changed/blocked/unavailable states, reparse and canonical-escape boundaries, volume mismatch, two-current-read identity stability, indexed size/time drift and overlapping known-location rows. The overlap model requires a unique full path/root/provenance/rule match and rejects duplicate exact bindings.
+
+Repository guards pin zero-access metadata reads, the existing canonical resolver, exact UI-row/coordinator binding, post-read review-object freshness, protocol v8, absence of mutation APIs in the readiness path, `CleanupMutationAuthorized == false`, current delete-boundary wording, and the separate Files delete authorization/orchestration boundary.
 
 Focused .NET tests cover Core readiness semantics plus a Windows-only current-handle metadata reader. The complete Windows local gate remains mandatory before merging changes to this boundary.
