@@ -36,8 +36,8 @@ def select_volume(volumes: tuple[Volume, ...], root: str) -> Volume | None:
     return next((volume for volume in volumes if same_root(volume.root, root)), None)
 
 
-def transient(volume: Volume) -> bool:
-    return volume.state.lower() in {"busy", "rebuilding", "syncing"}
+def snapshot_required(volume: Volume) -> bool:
+    return volume.state.lower() == "snapshotrequired"
 
 
 def cross_volume_outcome(
@@ -54,22 +54,19 @@ def cross_volume_outcome(
     target = select_volume(before, location_root)
     if target is None:
         return "outside-active-no-index"
-    if transient(target):
-        return "unavailable-busy-before"
     if not target.checkpoint:
+        if not snapshot_required(target):
+            return "unavailable-busy-before"
         return "unavailable-no-checkpoint"
     if not catchup_current:
         return "unavailable-not-current"
     current = select_volume(after, location_root)
-    if current is not None and transient(current):
-        return "unavailable-busy-after"
-    if (
-        current is None
-        or current.identity != target.identity
-        or not current.checkpoint
-        or not same_root(current.root, target.root)
-    ):
+    if current is None or current.identity != target.identity or not same_root(current.root, target.root):
         return "unavailable-source-changed"
+    if not current.checkpoint:
+        if not snapshot_required(current):
+            return "unavailable-busy-after"
+        return "unavailable-checkpoint-lost"
     if not primary_stable:
         return "unavailable-primary-changed"
     return "available-cross-volume"
@@ -97,17 +94,19 @@ def run_model(cases: int, seed: int) -> int:
     assert cross_volume_outcome(
         location_root="D:\\",
         active_root="C:\\",
-        before=(Volume("D:\\", 2, False),),
+        before=(Volume("D:\\", 2, False, "SnapshotRequired"),),
         catchup_current=True,
-        after=(Volume("D:\\", 2, False),),
+        after=(Volume("D:\\", 2, False, "SnapshotRequired"),),
         primary_stable=True,
     ) == "unavailable-no-checkpoint"
+    # A locally-held OperationGate can race before State changes away from Idle;
+    # HasCheckpoint=false + non-SnapshotRequired must therefore be treated as temporary.
     assert cross_volume_outcome(
         location_root="D:\\",
         active_root="C:\\",
-        before=(Volume("D:\\", 2, False, "Busy"),),
+        before=(Volume("D:\\", 2, False, "Idle"),),
         catchup_current=True,
-        after=(Volume("D:\\", 2, False, "Busy"),),
+        after=(Volume("D:\\", 2, False, "Idle"),),
         primary_stable=True,
     ) == "unavailable-busy-before"
     assert cross_volume_outcome(
@@ -123,7 +122,7 @@ def run_model(cases: int, seed: int) -> int:
         active_root="C:\\",
         before=before,
         catchup_current=True,
-        after=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "Syncing")),
+        after=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "Idle")),
         primary_stable=True,
     ) == "unavailable-busy-after"
     assert cross_volume_outcome(
@@ -131,14 +130,22 @@ def run_model(cases: int, seed: int) -> int:
         active_root="C:\\",
         before=before,
         catchup_current=True,
-        after=(Volume("C:\\", 1, True), Volume("D:\\", 99, True)),
+        after=(Volume("C:\\", 1, True), Volume("D:\\", 2, False, "SnapshotRequired")),
+        primary_stable=True,
+    ) == "unavailable-checkpoint-lost"
+    assert cross_volume_outcome(
+        location_root="D:\\",
+        active_root="C:\\",
+        before=before,
+        catchup_current=True,
+        after=(Volume("C:\\", 1, True), Volume("D:\\", 99, False, "Busy")),
         primary_stable=True,
     ) == "unavailable-source-changed"
-    checks += 7
+    checks += 8
 
     rng = random.Random(seed)
     drives = "CDEFGH"
-    transient_states = ("Busy", "Rebuilding", "Syncing")
+    busy_descriptor_states = ("Idle", "Busy", "Rebuilding", "Syncing")
     for index in range(cases):
         active_drive = rng.choice(drives)
         location_drive = rng.choice(drives)
@@ -155,23 +162,29 @@ def run_model(cases: int, seed: int) -> int:
                     location_root,
                     identity,
                     checkpoint and not target_busy,
-                    rng.choice(transient_states) if target_busy else "Idle",
+                    rng.choice(busy_descriptor_states)
+                    if target_busy
+                    else ("Idle" if checkpoint else "SnapshotRequired"),
                 )
             )
         before_state = tuple(before_list)
         catchup_current = rng.random() < 0.88
         source_stable = rng.random() < 0.94
         after_busy = rng.random() < 0.04
+        checkpoint_lost = rng.random() < 0.015
         primary_stable = rng.random() < 0.96
         after_list = [Volume(active_root, 10_000_000 + index, True)]
         if target_present and not same_root(location_root, active_root):
             after_identity = identity if source_stable else identity + 1
+            after_checkpoint = checkpoint and not after_busy and not checkpoint_lost
             after_list.append(
                 Volume(
                     location_root,
                     after_identity,
-                    checkpoint and not after_busy,
-                    rng.choice(transient_states) if after_busy else "Idle",
+                    after_checkpoint,
+                    rng.choice(busy_descriptor_states)
+                    if after_busy
+                    else ("Idle" if after_checkpoint else "SnapshotRequired"),
                 )
             )
         outcome = cross_volume_outcome(
@@ -193,8 +206,9 @@ def run_model(cases: int, seed: int) -> int:
             and not target_busy
             and checkpoint
             and catchup_current
-            and not after_busy
             and source_stable
+            and not after_busy
+            and not checkpoint_lost
             and primary_stable
         )
         assert (outcome == "available-cross-volume") == expected_available
@@ -205,7 +219,7 @@ def run_model(cases: int, seed: int) -> int:
             assert target is not None and current is not None
             assert target.checkpoint and current.checkpoint
             assert target.identity == current.identity
-            assert not transient(target) and not transient(current)
+            assert not snapshot_required(target) and not snapshot_required(current)
             assert primary_stable
             checks += 5
         if not target_present:
@@ -220,11 +234,14 @@ def run_model(cases: int, seed: int) -> int:
         elif not catchup_current:
             assert outcome == "unavailable-not-current"
             checks += 1
+        elif not source_stable:
+            assert outcome == "unavailable-source-changed"
+            checks += 1
         elif after_busy:
             assert outcome == "unavailable-busy-after"
             checks += 1
-        elif not source_stable:
-            assert outcome == "unavailable-source-changed"
+        elif checkpoint_lost:
+            assert outcome == "unavailable-checkpoint-lost"
             checks += 1
         elif not primary_stable:
             assert outcome == "unavailable-primary-changed"
@@ -267,10 +284,12 @@ def check_repository(root: Path) -> int:
         (volume_discovery, "rootPath[1] != ':'", "drive-letter volume-root contract"),
         (backend, "CreateBusyDescriptor", "busy descriptor source"),
         (backend, "HasCheckpoint: false", "busy descriptor checkpoint suppression"),
-        (helper, "IsTransientIndexingState(target.State)", "pre-capture transient-state classification"),
-        (helper, "temporarily {target.State}", "transient-state user explanation"),
-        (helper, "IsTransientIndexingState(current.State)", "post-capture transient-state classification"),
-        (helper, "entered transient {current.State} state", "post-capture transient explanation"),
+        (backend, "context.State == VolumeState.Idle && !hasCheckpoint", "snapshot-required state derivation"),
+        (backend, '? "SnapshotRequired"', "snapshot-required descriptor state"),
+        (helper, "!IsSnapshotRequiredState(target.State)", "pre-capture no-checkpoint classification"),
+        (helper, "checkpoint descriptor is temporarily unavailable", "temporary descriptor explanation"),
+        (helper, "!IsSnapshotRequiredState(current.State)", "post-capture no-checkpoint classification"),
+        (helper, "lost its durable checkpoint", "post-capture checkpoint-loss explanation"),
         (helper, "GetVolumesAsync(_lifetimeCancellation.Token)", "indexed-volume discovery"),
         (helper, "FindIndexedVolumeByRoot(volumesBefore.Volumes, locationRoot)", "pre-capture root selection"),
         (helper, "if (!target.HasCheckpoint)", "existing-checkpoint requirement"),
@@ -305,18 +324,21 @@ def check_repository(root: Path) -> int:
         raise AssertionError("cross-volume review must read volume descriptors before and after analysis")
     checks += 1
 
-    target_transient_at = helper.index("if (IsTransientIndexingState(target.State))")
+    target_checkpoint_at = helper.index("if (!target.HasCheckpoint)")
+    target_state_at = helper.index("if (!IsSnapshotRequiredState(target.State))")
     no_checkpoint_at = helper.index("has no existing checkpoint")
     catchup_at = helper.index("CatchUpAsync(")
     request_at = helper.index("new IndexingStorageOptimizationRequest(")
     post_at = helper.index("var volumesAfter = await session.Client")
-    current_transient_at = helper.index("if (current is not null && IsTransientIndexingState(current.State))")
-    source_changed_at = helper.index("current.VolumeIdentity != target.VolumeIdentity")
+    identity_at = helper.index("current.VolumeIdentity != target.VolumeIdentity")
+    current_checkpoint_at = helper.index("if (!current.HasCheckpoint)")
+    current_state_at = helper.index("if (!IsSnapshotRequiredState(current.State))")
+    checkpoint_lost_at = helper.index("lost its durable checkpoint")
     classify_at = helper.index("StorageKnownLocationReviewClassifier.Classify(")
-    if not target_transient_at < no_checkpoint_at < catchup_at < request_at < post_at:
-        raise AssertionError("pre-capture transient/checkpoint/catch-up ordering changed")
-    if not post_at < current_transient_at < source_changed_at < classify_at:
-        raise AssertionError("post-capture transient/source validation ordering changed")
+    if not target_checkpoint_at < target_state_at < no_checkpoint_at < catchup_at < request_at < post_at:
+        raise AssertionError("pre-capture descriptor/checkpoint/catch-up ordering changed")
+    if not post_at < identity_at < current_checkpoint_at < current_state_at < checkpoint_lost_at < classify_at:
+        raise AssertionError("post-capture identity/checkpoint descriptor ordering changed")
     checks += 2
 
     for text, label in ((helper, "cross-volume helper"), (producer, "known-location producer")):
