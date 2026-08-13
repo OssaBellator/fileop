@@ -60,6 +60,29 @@ public sealed partial class MainWindow
                 return;
             }
 
+            try
+            {
+                if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
+                        volumeIdentity,
+                        root,
+                        _lifetimeCancellation.Token))
+                {
+                    SetStorageStatus(
+                        "The native volume catalog no longer matches this known-location review. Refresh Optimize before reviewing it in Files.");
+                    return;
+                }
+            }
+            catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                SetStorageStatus(
+                    $"Review in Files could not confirm the current indexed source: {exception.Message}");
+                return;
+            }
+
             var candidate = review.Locations
                 .SelectMany(static location => location.Candidates)
                 .FirstOrDefault(candidate => PathsEqual(candidate.Path, requestedPath));
@@ -170,6 +193,35 @@ public sealed partial class MainWindow
                 parentPath);
             SetFilesStatus(
                 "Known-location handoff stopped after the indexed source changed; refresh Optimize before selecting that review candidate.");
+            return;
+        }
+
+        try
+        {
+            if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
+                    volumeIdentity,
+                    root,
+                    _lifetimeCancellation.Token))
+            {
+                paneView.SetStatus(
+                    "The native volume catalog changed while the review candidate was being handed to Files. The parent directory is open, but stale review evidence was not auto-selected.",
+                    parentPath);
+                SetFilesStatus(
+                    "Known-location handoff stopped after the native volume catalog changed; refresh Optimize before selecting that review candidate.");
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            paneView.SetStatus(
+                "The current indexed source could not be re-confirmed, so stale review evidence was not auto-selected.",
+                parentPath);
+            SetFilesStatus(
+                $"Known-location handoff could not re-confirm the indexed source: {exception.Message}");
             return;
         }
 
