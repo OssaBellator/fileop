@@ -45,15 +45,25 @@ public sealed partial class MainWindow
             return;
         }
 
-        // A successful native elevation can replace the helper/session after the
-        // initial IsBusy publication. Clear source-bound Optimize references at
-        // every native busy entry so same-size verification cannot publish old
-        // evidence in that interval; failed elevation may conservatively refresh.
+        // Native busy is a publication boundary even though the source token is
+        // deliberately kept stable until maintenance recovers. A successful
+        // elevation can replace the helper/session after this first busy event,
+        // and background maintenance can replace the same-identity snapshot.
+        // Invalidate request tokens now so old-source continuations cannot publish
+        // while the normal UI state handlers are still queued.
         if (state.Mode == DesktopSearchMode.Native && state.IsBusy)
         {
+            InvalidateFilesPane(_leftFilesPane);
+            InvalidateFilesPane(_rightFilesPane);
+            Interlocked.Increment(ref _storageGeneration);
+            Interlocked.Increment(ref _storageTypeGeneration);
+            Interlocked.Increment(ref _storageHistoryGeneration);
+            Interlocked.Increment(ref _storageOptimizationGeneration);
+
+            // Same-size verification uses analysis reference identity rather than
+            // only the Optimize generation, so invalidate its source object too.
             Interlocked.Exchange(ref _storageOptimizationAnalysis, null);
             Interlocked.Exchange(ref _storageKnownLocationReview, null);
-            Interlocked.Increment(ref _storageOptimizationGeneration);
         }
 
         var sourceIdentityKey = _searchEngine.StorageSourceIdentityKey;
@@ -77,11 +87,8 @@ public sealed partial class MainWindow
         Interlocked.Exchange(ref _storageHistorySourceKey, null);
         Interlocked.Exchange(ref _storageOptimizationSourceKey, null);
 
-        // Files page requests use per-pane generation tokens. BrowseDirectoryAsync
-        // prevents a source swap during the engine read, but the source can change
-        // after that read returns and before the UI continuation publishes the page.
-        // Advance both request tokens immediately so an old-source page fails
-        // IsFilesRequestCurrent before the queued Files state handler runs.
+        // A source-token change is an immediate Files publication boundary too.
+        // Advance both request tokens before the queued Files state handler runs.
         InvalidateFilesPane(_leftFilesPane);
         InvalidateFilesPane(_rightFilesPane);
 
