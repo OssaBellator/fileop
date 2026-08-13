@@ -11,6 +11,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class SessionState:
+    session_gate_available: bool
     source_ready: bool
     source_selected: int
     other_selected: int
@@ -32,7 +33,10 @@ class SessionResult:
 
 
 def execute(state: SessionState) -> SessionResult:
-    events: list[str] = []
+    events: list[str] = ["session-gate"]
+    if not state.session_gate_available:
+        events.append("session-gate-blocked")
+        return SessionResult(tuple(events), False, False, False)
 
     if (
         not state.source_ready
@@ -83,6 +87,7 @@ def run_model(cases: int, seed: int) -> int:
 
     happy = execute(
         SessionState(
+            session_gate_available=True,
             source_ready=True,
             source_selected=2,
             other_selected=0,
@@ -99,6 +104,7 @@ def run_model(cases: int, seed: int) -> int:
     assert happy.history_begun
     assert happy.orchestrator_called
     assert happy.events == (
+        "session-gate",
         "recovery-check-before",
         "preflight",
         "execution-validation",
@@ -113,6 +119,7 @@ def run_model(cases: int, seed: int) -> int:
     rng = random.Random(seed)
     for _ in range(cases):
         state = SessionState(
+            session_gate_available=rng.random() < 0.97,
             source_ready=rng.random() < 0.9,
             source_selected=rng.randrange(0, 6),
             other_selected=rng.randrange(0, 3),
@@ -127,13 +134,16 @@ def run_model(cases: int, seed: int) -> int:
         result = execute(state)
 
         if result.orchestrator_called:
+            assert state.session_gate_available
             assert result.authorization_issued
             assert result.history_begun
+            assert result.events.index("session-gate") < result.events.index("recovery-check-before")
             assert result.events.index("issue-authorization") < result.events.index("begin-history")
             assert result.events.index("begin-history") < result.events.index("orchestrate")
-            checks += 4
+            checks += 6
 
         if result.authorization_issued:
+            assert state.session_gate_available
             assert state.source_ready
             assert state.source_selected > 0
             assert state.other_selected == 0
@@ -143,7 +153,14 @@ def run_model(cases: int, seed: int) -> int:
             assert state.validation_ready
             assert state.confirmed
             assert not state.recovery_after_confirmation
-            checks += 9
+            checks += 10
+
+        if not state.session_gate_available:
+            assert not result.authorization_issued
+            assert not result.history_begun
+            assert not result.orchestrator_called
+            assert result.events == ("session-gate", "session-gate-blocked")
+            checks += 4
 
         if not state.confirmed:
             assert not result.authorization_issued
@@ -188,6 +205,7 @@ def forbid(text: str, needle: str, label: str) -> int:
 def check_repository(root: Path) -> int:
     files_delete_path = root / "src/FileOp.App/FilesView.Delete.cs"
     files_delete = files_delete_path.read_text(encoding="utf-8")
+    files_gate = (root / "src/FileOp.App/FilesView.DeleteSessionGate.cs").read_text(encoding="utf-8")
     files_xaml = (root / "src/FileOp.App/FilesView.xaml").read_text(encoding="utf-8")
     files_refresh = (root / "src/FileOp.App/MainWindow.FilesDelete.cs").read_text(encoding="utf-8")
     review_handoff = (root / "src/FileOp.App/MainWindow.FilesReviewHandoff.cs").read_text(encoding="utf-8")
@@ -204,8 +222,18 @@ def check_repository(root: Path) -> int:
         (files_xaml, 'xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"', "WinUI XAML namespace"),
         (files_xaml, 'x:Name="ReviewDeleteLeftButton"', "left delete review action"),
         (files_xaml, 'x:Name="ReviewDeleteRightButton"', "right delete review action"),
+        (files_xaml, 'Click="ReviewDeleteLeftWithSessionGateButton_Click"', "left interprocess session-gate handler"),
+        (files_xaml, 'Click="ReviewDeleteRightWithSessionGateButton_Click"', "right interprocess session-gate handler"),
         (files_xaml, 'x:Name="RetryDeleteCleanupButton"', "cleanup-only release retry action"),
         (files_xaml, "Permanent file deletion", "destructive scope label"),
+        (files_gate, 'DeleteSessionLockFileName = "delete-session.lock"', "stable per-user delete session lock name"),
+        (files_gate, "AcquireDeleteSessionGate(GetDeleteHistoryDatabasePath())", "session gate under durable history directory"),
+        (files_gate, "Directory.CreateDirectory(directory)", "per-user control directory creation"),
+        (files_gate, "FileMode.OpenOrCreate", "persistent lock-file open"),
+        (files_gate, "FileAccess.ReadWrite", "lock-file access"),
+        (files_gate, "FileShare.None", "cross-process exclusive session lock"),
+        (files_gate, "await RunDeleteSessionAsync(source, other)", "session gate covers delete review/execution"),
+        (files_gate, "No delete authorization was issued", "gate failure is non-authorizing"),
         (files_delete, "HasExclusiveFileSelection", "exclusive pane selection guard"),
         (files_delete, "selectedRows.Any(static row => row.IsDirectory)", "directory rejection"),
         (files_delete, "WindowsFileDeleteOperationPreflightValidator", "read-only delete preflight"),
@@ -234,14 +262,18 @@ def check_repository(root: Path) -> int:
     for text, needle, label in required:
         checks += require(text, needle, label)
 
-    for needle, label in (
-        ("File.Delete(", "managed path delete"),
-        ("Directory.Delete(", "directory/path delete"),
-        ("DeleteFileW", "Win32 path delete"),
-        ("SafeFileHandle", "raw delete handle"),
-        ("FileOperationKind.Delete", "generic delete operation kind"),
+    for text, source_label in (
+        (files_delete, "Files delete consumer"),
+        (files_gate, "Files delete session gate"),
     ):
-        checks += forbid(files_delete, needle, label)
+        for needle, label in (
+            ("File.Delete(", "managed path delete"),
+            ("Directory.Delete(", "directory/path delete"),
+            ("DeleteFileW", "Win32 path delete"),
+            ("SafeFileHandle", "raw delete handle"),
+            ("FileOperationKind.Delete", "generic delete operation kind"),
+        ):
+            checks += forbid(text, needle, f"{source_label} {label}")
 
     for text, label in (
         (review_handoff, "known-location Files handoff"),
@@ -267,7 +299,15 @@ def check_repository(root: Path) -> int:
         )
     checks += 1
 
-    # Pin the security-sensitive ordering in source, including the second recovery scan.
+    # The cross-process lock must be acquired before handing control to the session that
+    # performs recovery inspection / confirmation / authorization / durable execution.
+    gate_acquire = files_gate.index("sessionGate = AcquireDeleteSessionGate(GetDeleteHistoryDatabasePath())")
+    gate_run = files_gate.index("await RunDeleteSessionAsync(source, other)", gate_acquire)
+    if not gate_acquire < gate_run:
+        raise AssertionError("Files delete interprocess gate no longer covers the destructive session")
+    checks += 1
+
+    # Pin the security-sensitive ordering inside the gated session, including the second recovery scan.
     first_recovery = files_delete.index("var recovery = await GetRecoveryCandidateAsync(historyPath)")
     preflight = files_delete.index(
         "var preflight = await _deletePreflightValidator",
@@ -317,6 +357,9 @@ def check_repository(root: Path) -> int:
     checks += 1
     if files_delete.count("FileDeleteOperationOrchestrator.ExecuteAsync") != 1:
         raise AssertionError("Files delete session must have exactly one orchestrator invocation site")
+    checks += 1
+    if files_gate.count("AcquireDeleteSessionGate(GetDeleteHistoryDatabasePath())") != 1:
+        raise AssertionError("Files delete session must have exactly one interprocess gate acquisition site")
     checks += 1
     if gate.count("verify_files_delete_session.py") != 1:
         raise AssertionError("Files delete session verifier must be wired exactly once")
