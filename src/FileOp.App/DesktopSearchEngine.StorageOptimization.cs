@@ -47,6 +47,12 @@ internal sealed partial class DesktopSearchEngine
                         volume.RootPath,
                         fullPath),
                     _lifetimeCancellation.Token).ConfigureAwait(false);
+                if (!ReviewPathsEqual(response.Analysis.RootPath, fullPath))
+                {
+                    throw new InvalidOperationException(
+                        "The native storage index returned optimization analysis for an unexpected directory root.");
+                }
+
                 return response.Analysis;
             }
             finally
