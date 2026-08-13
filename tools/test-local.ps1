@@ -67,6 +67,10 @@ Invoke-Step "Offline known-location review verifier" {
     python tools/verify_known_location_review.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline cross-volume known-location review verifier" {
+    python tools/verify_cross_volume_known_location_review.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline known-location Files handoff verifier" {
     python tools/verify_known_location_files_handoff.py --repo-root $repoRoot --cases 50000
 }
