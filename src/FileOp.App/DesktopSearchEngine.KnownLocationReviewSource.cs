@@ -29,7 +29,10 @@ internal sealed partial class DesktopSearchEngine
             cancellationToken,
             _lifetimeCancellation.Token);
         var token = linkedCancellation.Token;
-        var normalizedExpectedRoot = NormalizeRoot(expectedRoot);
+        if (!TryNormalizeReviewRoot(expectedRoot, out _))
+        {
+            return false;
+        }
 
         await _searchOperationGate.WaitAsync(token).ConfigureAwait(false);
         try
@@ -38,10 +41,7 @@ internal sealed partial class DesktopSearchEngine
             if (_nativeSession is not { Client.IsConnected: true } ||
                 _primaryVolume is not { } selectedPrimary ||
                 selectedPrimary.VolumeIdentity != expectedVolumeIdentity ||
-                !string.Equals(
-                    NormalizeRoot(selectedPrimary.RootPath),
-                    normalizedExpectedRoot,
-                    StringComparison.OrdinalIgnoreCase))
+                !ReviewRootsEqual(selectedPrimary.RootPath, expectedRoot))
             {
                 return false;
             }
@@ -52,10 +52,7 @@ internal sealed partial class DesktopSearchEngine
                 if (_nativeSession is not { Client.IsConnected: true } session ||
                     _primaryVolume is not { } currentPrimary ||
                     currentPrimary.VolumeIdentity != expectedVolumeIdentity ||
-                    !string.Equals(
-                        NormalizeRoot(currentPrimary.RootPath),
-                        normalizedExpectedRoot,
-                        StringComparison.OrdinalIgnoreCase))
+                    !ReviewRootsEqual(currentPrimary.RootPath, expectedRoot))
                 {
                     return false;
                 }
@@ -124,14 +121,13 @@ internal sealed partial class DesktopSearchEngine
         var currentDescriptor = FindUniqueIndexedVolumeByRoot(
             volumes,
             expectedRoot,
-            out var ambiguous);
-        return !ambiguous &&
+            out var ambiguous,
+            out var invalidCatalog);
+        return !invalidCatalog &&
+            !ambiguous &&
             currentDescriptor is not null &&
             currentDescriptor.HasCheckpoint &&
             currentDescriptor.VolumeIdentity == expectedVolumeIdentity &&
-            string.Equals(
-                NormalizeRoot(currentDescriptor.RootPath),
-                NormalizeRoot(expectedRoot),
-                StringComparison.OrdinalIgnoreCase);
+            ReviewRootsEqual(currentDescriptor.RootPath, expectedRoot);
     }
 }
