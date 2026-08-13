@@ -172,7 +172,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (_activeSection == AppSection.Search && SearchBox.IsEnabled)
+        if (_activeSection == AppSection.Search && !_filesVisible && SearchBox.IsEnabled)
         {
             await RunSearchAsync();
             return;
