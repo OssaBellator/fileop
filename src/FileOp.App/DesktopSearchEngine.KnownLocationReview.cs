@@ -52,7 +52,8 @@ internal sealed partial class DesktopSearchEngine
             locations.Add(await AnalyzeKnownLocationAsync(
                 StorageReviewProvenance.Downloads,
                 downloadsPath,
-                capturedRoot).ConfigureAwait(false));
+                capturedRoot,
+                capturedVolumeIdentity).ConfigureAwait(false));
         }
 
         string tempPath;
@@ -79,7 +80,8 @@ internal sealed partial class DesktopSearchEngine
             locations.Add(await AnalyzeKnownLocationAsync(
                 StorageReviewProvenance.UserTemp,
                 tempPath,
-                capturedRoot).ConfigureAwait(false));
+                capturedRoot,
+                capturedVolumeIdentity).ConfigureAwait(false));
         }
 
         ThrowIfDisposed();
@@ -95,12 +97,13 @@ internal sealed partial class DesktopSearchEngine
                 "The native indexing source changed while known-location review evidence was being captured.");
         }
 
-        if (!await IsNativeReviewSourceCurrentAsync(
+        if (!await AreNativeReviewSourcesCurrentAsync(
                 capturedVolumeIdentity,
-                capturedRoot).ConfigureAwait(false))
+                capturedRoot,
+                locations).ConfigureAwait(false))
         {
             throw new InvalidOperationException(
-                "The native volume catalog changed before known-location review evidence could be published.");
+                "A native indexed-volume source changed before known-location review evidence could be published.");
         }
 
         return new StorageKnownLocationReviewSnapshot(
@@ -115,7 +118,8 @@ internal sealed partial class DesktopSearchEngine
     private async ValueTask<StorageKnownLocationReview> AnalyzeKnownLocationAsync(
         StorageReviewProvenance provenance,
         string locationPath,
-        string activeRoot)
+        string activeRoot,
+        ulong activeVolumeIdentity)
     {
         var fullPath = Path.GetFullPath(locationPath);
         try
@@ -129,7 +133,10 @@ internal sealed partial class DesktopSearchEngine
             }
 
             var analysis = await AnalyzeStorageOptimizationAsync(fullPath).ConfigureAwait(false);
-            return StorageKnownLocationReviewClassifier.Classify(analysis, provenance);
+            return StorageKnownLocationReviewClassifier.Classify(analysis, provenance) with
+            {
+                SourceVolumeIdentity = activeVolumeIdentity,
+            };
         }
         catch (IndexingServiceRemoteException exception)
         {
