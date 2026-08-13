@@ -45,13 +45,14 @@ public sealed partial class MainWindow
             return;
         }
 
-        // Native busy is a publication boundary even though the source token is
-        // deliberately kept stable until maintenance recovers. A successful
-        // elevation can replace the helper/session after this first busy event,
-        // and background maintenance can replace the same-identity snapshot.
-        // Invalidate request tokens now so old-source continuations cannot publish
-        // while the normal UI state handlers are still queued.
-        if (state.Mode == DesktopSearchMode.Native && state.IsBusy)
+        // Any busy publication is an immediate request-publication boundary even
+        // while the backing token itself remains stable. This covers Native
+        // maintenance/helper replacement and elevation that begins in Fallback:
+        // TryElevateAsync deliberately preserves the current mode when it first
+        // publishes IsBusy=true, before waiting for the search-operation gate.
+        // Invalidate request tokens now so an old-source continuation cannot publish
+        // in the interval before the later source-token transition is observed.
+        if (state.IsBusy)
         {
             InvalidateFilesPane(_leftFilesPane);
             InvalidateFilesPane(_rightFilesPane);
