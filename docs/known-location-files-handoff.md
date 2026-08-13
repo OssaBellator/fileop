@@ -2,11 +2,11 @@
 
 Known-location Optimize evidence can be handed to the existing indexed Files browser for inspection without creating a cleanup action.
 
-Before navigation, FileOp revalidates that the cached review belongs to the currently active native indexed root **and volume identity** and that the exact requested path is still a member of that review. The candidate and its parent must remain inside that root. The handoff is refused while Disk I/O attribution, duplicate content verification, or another Storage analysis owns the shared Storage gate.
+Before navigation, FileOp revalidates that the cached review belongs to the currently active native indexed root **and volume identity** and that the exact requested path is still a member of that review. The native catalog must contain one unique descriptor for that primary root with the same identity and an available checkpoint. The candidate and its parent must remain inside that root. The handoff is refused while Disk I/O attribution, duplicate content verification, or another Storage analysis owns the shared Storage gate.
 
 A successful handoff opens the candidate's parent directory in the left Files pane through the existing exact paged browse path. If a left-pane tab is already on that same parent directory, FileOp reuses it; otherwise it creates one tab for the parent. This avoids accumulating duplicate tabs when the same review location is inspected repeatedly.
 
-After the asynchronous indexed parent load returns, FileOp rechecks the cached review object, active root, active volume identity, native source mode, busy state and Optimize availability. If the source changed during the load—including a different physical volume appearing under the same drive letter—the parent can remain open but FileOp does not auto-select the stale review candidate.
+After the asynchronous indexed parent load returns, FileOp rechecks the cached review object, active root, active volume identity, native source mode, busy state and Optimize availability, then repeats the unique catalog identity/root/checkpoint check before applying a review selection hint. If the source changed during the load—including a different physical volume appearing under the same drive letter—or the descriptor can no longer prove an available checkpoint, the parent can remain open but FileOp does not auto-select the stale review candidate.
 
 When the source is still current, FileOp selects the candidate if it is already loaded. If it is beyond the first page, a path-bound selection hint is retained so an explicit **Load more** can reveal and select it; the handoff does not auto-page through the directory.
 
