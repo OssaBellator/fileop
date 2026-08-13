@@ -21,7 +21,11 @@ def try_root(path: str | None) -> str | None:
         return None
     value = ntpath.normpath(path.replace("/", "\\"))
     drive, tail = ntpath.splitdrive(value)
-    if len(drive) != 2 or drive[1] != ":" or tail not in ("", "\\"):
+    if not drive or tail not in ("", "\\"):
+        return None
+    if drive.startswith("\\\\"):
+        return ntpath.normcase(drive.rstrip("\\") + "\\")
+    if len(drive) != 2 or drive[1] != ":":
         return None
     return ntpath.normcase(drive + "\\")
 
@@ -79,7 +83,16 @@ def run_model(cases: int) -> int:
     assert descriptor is None and not ambiguous and invalid
     checks += 1
 
+    descriptor, ambiguous, invalid = select_unique(
+        (Volume("C:\\", 1), Volume("D:\\folder", 9)),
+        "C:\\",
+    )
+    assert descriptor is None and not ambiguous and invalid
+    checks += 1
+
     assert select_unique((Volume("C:\\", 1),), "bad\x00root")[2]
+    checks += 1
+    assert try_root(r"\\server\share\") == ntpath.normcase(r"\\server\share\")
     checks += 1
     assert not safe_path_equal("D:\\Temp\x00", "D:\\Temp")
     checks += 1
@@ -94,7 +107,8 @@ def run_model(cases: int) -> int:
         if present:
             volumes.append(Volume(target_root, 2))
         if malformed:
-            volumes.append(Volume("bad\x00root", 4))
+            malformed_root = "bad\x00root" if index % 2 == 0 else "E:\\not-a-root"
+            volumes.append(Volume(malformed_root, 4))
         if duplicate and present:
             volumes.append(Volume(target_root, 3))
 
@@ -144,6 +158,9 @@ def check_repository(root: Path) -> int:
         ("out bool invalidCatalog", "selector malformed-catalog status"),
         ("TryNormalizeReviewRoot(rootPath", "expected-root safe normalization"),
         ("TryNormalizeReviewRoot(volume.RootPath", "descriptor safe normalization"),
+        ("var filesystemRoot = Path.GetPathRoot(fullPath);", "filesystem-root derivation"),
+        ("var normalizedFilesystemRoot = NormalizeRoot(filesystemRoot);", "filesystem-root normalization"),
+        ("normalizedRoot,\n                    normalizedFilesystemRoot", "root-only semantic check"),
         ("out var primaryBeforeInvalidCatalog", "primary-before malformed check"),
         ("out var targetInvalidCatalog", "target-before malformed check"),
         ("out var currentInvalidCatalog", "secondary-after malformed check"),
