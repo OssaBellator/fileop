@@ -7,7 +7,7 @@ internal sealed partial class DesktopSearchEngine
     private int _nativeStorageSourceElevationBusy;
     private object? _trackedNativeStorageSession;
     private ulong _trackedNativeStorageVolumeIdentity;
-    private bool _trackedNativeStorageCanElevate;
+    private int _trackedNativeStorageCanElevate;
     private long _fallbackStorageSourceGeneration;
     private int _fallbackStorageSourceActive;
 
@@ -41,7 +41,7 @@ internal sealed partial class DesktopSearchEngine
             _nativeSession is { } nativeSession &&
             _primaryVolume is { } nativeVolume)
         {
-            var previousCanElevate = _trackedNativeStorageCanElevate;
+            var previousCanElevate = Volatile.Read(ref _trackedNativeStorageCanElevate) == 1;
             var sessionChanged = !ReferenceEquals(_trackedNativeStorageSession, nativeSession);
             var identityChanged = _trackedNativeStorageVolumeIdentity != nativeVolume.VolumeIdentity;
             if (sessionChanged || identityChanged)
@@ -83,7 +83,7 @@ internal sealed partial class DesktopSearchEngine
                 }
             }
 
-            _trackedNativeStorageCanElevate = state.CanElevate;
+            Volatile.Write(ref _trackedNativeStorageCanElevate, state.CanElevate ? 1 : 0);
         }
         else if (state.Mode != DesktopSearchMode.Native)
         {
@@ -91,7 +91,7 @@ internal sealed partial class DesktopSearchEngine
             Volatile.Write(ref _nativeStorageSourceElevationBusy, 0);
             _trackedNativeStorageSession = null;
             _trackedNativeStorageVolumeIdentity = 0;
-            _trackedNativeStorageCanElevate = false;
+            Volatile.Write(ref _trackedNativeStorageCanElevate, 0);
         }
 
         if (state.Mode == DesktopSearchMode.Fallback && _fallbackReady)
