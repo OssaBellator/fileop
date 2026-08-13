@@ -49,6 +49,14 @@ def cache_is_current(previous: Source, current: Source) -> bool:
     )
 
 
+def post_elevation_refresh(previous: Source, current: Source) -> bool:
+    return (
+        root_cache_key(previous) == root_cache_key(current)
+        and identity_key(previous) is not None
+        and identity_key(previous) == identity_key(current)
+    )
+
+
 def track_native(
     generation: int,
     active: bool,
@@ -126,6 +134,21 @@ def run_model(cases: int) -> int:
             Source("Fallback", root, fallback_generation=fallback_generation + 1),
         )
         checks += 2
+
+        assert post_elevation_refresh(
+            native,
+            Source("Native", root.swapcase(), native_identity, native_generation),
+        )
+        assert not post_elevation_refresh(
+            native,
+            Source("Native", root, native_identity, native_generation + 1),
+        )
+        assert not post_elevation_refresh(
+            native,
+            Source("Native", other_root, native_identity, native_generation),
+        )
+        assert not post_elevation_refresh(native, fallback)
+        checks += 4
 
         session = rng.randint(1, 1_000_000)
         native_state = (native_generation, True, session, native_identity)
@@ -262,6 +285,9 @@ def check_repository(root: Path) -> int:
         ("window", "Interlocked.Increment(ref _storageHistoryGeneration);", "History in-flight invalidation"),
         ("window", "Interlocked.Increment(ref _storageOptimizationGeneration);", "Optimize in-flight invalidation"),
         ("main", "CreateStorageSourceKey", "shared root cache key"),
+        ("main", "var storageIdentityBeforeElevation = _searchEngine.StorageSourceIdentityKey;", "pre-elevation backing identity capture"),
+        ("main", "var currentSourceIdentityKey = _searchEngine.StorageSourceIdentityKey;", "post-elevation backing identity capture"),
+        ("main", "storageIdentityBeforeElevation", "post-elevation identity comparison"),
         ("files", "_filesSourceKey", "Files shared root-key consumer"),
         ("types", "_storageTypesSourceKey", "Types shared root-key consumer"),
         ("types", "if (string.Equals(sourceKey, _storageTypesSourceKey", "Types key-driven reload contract"),
@@ -313,6 +339,16 @@ def check_repository(root: Path) -> int:
     restore_at = window.index("_searchEngine.StateChanged += SearchEngine_StateChanged;")
     if not remove_at < identity_at < restore_at:
         raise AssertionError("identity handler must precede the existing MainWindow handler")
+    checks += 1
+
+    main = text["main"]
+    elevation_start = main.index("private async void EnableFastIndexButton_Click")
+    before_identity_at = main.index("var storageIdentityBeforeElevation", elevation_start)
+    elevate_at = main.index("await _searchEngine.TryElevateAsync", before_identity_at)
+    after_identity_at = main.index("var currentSourceIdentityKey", elevate_at)
+    identity_compare_at = main.index("storageIdentityBeforeElevation", after_identity_at)
+    if not before_identity_at < elevate_at < after_identity_at < identity_compare_at:
+        raise AssertionError("post-elevation refresh must bind both pre/post backing-source identities")
     checks += 1
 
     checks += forbid(text["protocol"], "StorageSourceIdentity", "new protocol surface")
