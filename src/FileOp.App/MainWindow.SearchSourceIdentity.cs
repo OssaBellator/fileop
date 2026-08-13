@@ -98,29 +98,26 @@ public sealed partial class MainWindow
 
         try
         {
-            // RunSearchAsync releases this gate before its outer error handler can
-            // complete. Waiting here ensures an invalidated old request cannot
-            // overwrite the final source-changed status with a stale failure. A
-            // fresh query may acquire the gate first; its newer generation then
-            // makes this invalidation self-cancel after that query completes.
+            // Drain any request that already owns the Search gate. Its outer error
+            // handler runs on the UI context after releasing the gate. Releasing
+            // immediately here and yielding one UI turn ensures that stale status
+            // publication finishes before this source-change message is applied.
+            // A fresh query can increment the generation during the same interval,
+            // which makes this queued invalidation self-cancel below.
             await _searchGate.WaitAsync(_lifetimeCancellation.Token);
-            try
-            {
-                if (_closed ||
-                    invalidationGeneration != Volatile.Read(ref _searchGeneration))
-                {
-                    return;
-                }
+            _searchGate.Release();
+            await Task.Yield();
 
-                _results.Clear();
-                SetSearchStatus(sourceIdentityKey is null
-                    ? "Search source is changing. Search will be available when indexing is ready."
-                    : "Search source changed. Search again to show results from the current index.");
-            }
-            finally
+            if (_closed ||
+                invalidationGeneration != Volatile.Read(ref _searchGeneration))
             {
-                _searchGate.Release();
+                return;
             }
+
+            _results.Clear();
+            SetSearchStatus(sourceIdentityKey is null
+                ? "Search source is changing. Search will be available when indexing is ready."
+                : "Search source changed. Search again to show results from the current index.");
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
         {
