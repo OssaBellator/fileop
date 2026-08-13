@@ -65,6 +65,15 @@ internal sealed partial class DesktopSearchEngine
 
                 if (!target.HasCheckpoint)
                 {
+                    if (IsTransientIndexingState(target.State))
+                    {
+                        return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                            provenance,
+                            StorageReviewLocationStatus.Unavailable,
+                            fullPath,
+                            $"{FormatProvenance(provenance)} maps to indexed volume {target.RootPath}, but its native index is temporarily {target.State}. No cross-volume evidence was presented; retry after indexing maintenance finishes.");
+                    }
+
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
                         provenance,
                         StorageReviewLocationStatus.Unavailable,
@@ -110,6 +119,15 @@ internal sealed partial class DesktopSearchEngine
                     .GetVolumesAsync(_lifetimeCancellation.Token)
                     .ConfigureAwait(false);
                 var current = FindIndexedVolumeByRoot(volumesAfter.Volumes, locationRoot);
+                if (current is not null && IsTransientIndexingState(current.State))
+                {
+                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                        provenance,
+                        StorageReviewLocationStatus.Unavailable,
+                        fullPath,
+                        $"{FormatProvenance(provenance)} indexed volume {current.RootPath} entered transient {current.State} state while evidence was being captured, so the result was discarded.");
+                }
+
                 if (current is null ||
                     current.VolumeIdentity != target.VolumeIdentity ||
                     !current.HasCheckpoint ||
@@ -171,4 +189,9 @@ internal sealed partial class DesktopSearchEngine
                 normalizedRoot,
                 StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool IsTransientIndexingState(string state) =>
+        string.Equals(state, "Busy", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(state, "Rebuilding", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(state, "Syncing", StringComparison.OrdinalIgnoreCase);
 }
