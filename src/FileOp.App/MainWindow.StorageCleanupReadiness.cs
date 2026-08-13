@@ -8,9 +8,15 @@ public sealed partial class MainWindow
     private readonly WindowsStorageCleanupReadinessService _storageCleanupReadinessService = new();
     private bool _storageCleanupReadinessActive;
 
-    internal async Task CheckKnownLocationCleanupReadinessAsync(string requestedPath)
+    internal async Task CheckKnownLocationCleanupReadinessAsync(
+        string requestedPath,
+        string requestedReviewRoot,
+        StorageReviewProvenance requestedProvenance,
+        string requestedRuleId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(requestedPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestedReviewRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestedRuleId);
         if (_closed || !_storageOptimizationInitialized || _storageCleanupReadinessActive)
         {
             return;
@@ -46,19 +52,32 @@ public sealed partial class MainWindow
 
             StorageKnownLocationReview? matchedLocation = null;
             StorageReviewCandidate? matchedCandidate = null;
+            var matchCount = 0;
             foreach (var location in review.Locations)
             {
-                var candidate = location.Candidates.FirstOrDefault(candidate =>
-                    PathsEqual(candidate.Path, requestedPath));
-                if (candidate is not null)
+                if (location.Provenance != requestedProvenance ||
+                    !PathsEqual(location.RootPath, requestedReviewRoot))
                 {
+                    continue;
+                }
+
+                foreach (var candidate in location.Candidates)
+                {
+                    if (!PathsEqual(candidate.Path, requestedPath) ||
+                        candidate.Provenance != requestedProvenance ||
+                        !string.Equals(candidate.RuleId, requestedRuleId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    matchCount++;
                     matchedLocation = location;
                     matchedCandidate = candidate;
-                    break;
                 }
             }
 
-            if (matchedLocation is null ||
+            if (matchCount != 1 ||
+                matchedLocation is null ||
                 matchedCandidate is null ||
                 matchedLocation.Status != StorageReviewLocationStatus.Available ||
                 string.IsNullOrWhiteSpace(matchedLocation.RootPath) ||
@@ -66,7 +85,7 @@ public sealed partial class MainWindow
                 !IsPathWithinRoot(matchedCandidate.Path, matchedLocation.RootPath))
             {
                 _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
-                    "That path is not an available candidate in the current known-location review. Cross-volume review candidates remain eligible for this read-only current-path check.");
+                    "That exact path/root/rule candidate is not uniquely available in the current known-location review. Refresh Optimize before checking this read-only evidence.");
                 return;
             }
 
