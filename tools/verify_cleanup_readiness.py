@@ -67,6 +67,23 @@ def exact_review_match_count(
     )
 
 
+def source_binding_current(
+    review_identity: int | None,
+    start_identity: int | None,
+    end_identity: int | None,
+    review_root: str,
+    start_root: str,
+    end_root: str,
+) -> bool:
+    normalized_review_root = review_root.rstrip("\\/").casefold()
+    return (
+        review_identity is not None
+        and review_identity == start_identity == end_identity
+        and normalized_review_root == start_root.rstrip("\\/").casefold()
+        and normalized_review_root == end_root.rstrip("\\/").casefold()
+    )
+
+
 def run_model(cases: int, seed: int) -> int:
     checks = 0
     base = dict(
@@ -112,7 +129,10 @@ def run_model(cases: int, seed: int) -> int:
         overlap + [overlap[0]],
         overlap[0],
     ) == 2
-    checks += 8
+    assert source_binding_current(10, 10, 10, r"C:\", r"c:\", r"C:\")
+    assert not source_binding_current(10, 10, 11, r"C:\", r"C:\", r"C:\")
+    assert not source_binding_current(None, 10, 10, r"C:\", r"C:\", r"C:\")
+    checks += 11
 
     rng = random.Random(seed)
     root_states = ("directory", "missing", "file", "inaccessible", "error")
@@ -207,7 +227,28 @@ def run_model(cases: int, seed: int) -> int:
             bindings,
             (path.swapcase(), root + "\\", requested_provenance, requested_rule),
         ) == 1
-        checks += 8
+
+        review_identity = rng.randrange(1, 1_000_000)
+        start_identity = review_identity if rng.random() < 0.98 else review_identity + 1
+        end_identity = start_identity if rng.random() < 0.97 else start_identity + 1
+        review_root = r"C:\"
+        start_root = r"c:\" if rng.random() < 0.99 else r"D:\"
+        end_root = r"C:\" if rng.random() < 0.99 else r"D:\"
+        expected_source_current = (
+            start_identity == review_identity
+            and end_identity == review_identity
+            and start_root.rstrip("\\/").casefold() == review_root.rstrip("\\/").casefold()
+            and end_root.rstrip("\\/").casefold() == review_root.rstrip("\\/").casefold()
+        )
+        assert source_binding_current(
+            review_identity,
+            start_identity,
+            end_identity,
+            review_root,
+            start_root,
+            end_root,
+        ) == expected_source_current
+        checks += 9
     return checks
 
 
@@ -226,6 +267,8 @@ def forbid(text: str, needle: str) -> int:
 def check_repository(root: Path) -> int:
     checks = 0
     core = (root / "src/FileOp.Core/Storage/StorageCleanupReadiness.cs").read_text(encoding="utf-8")
+    review_model = (root / "src/FileOp.Core/Storage/StorageKnownLocationReview.cs").read_text(encoding="utf-8")
+    producer = (root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReview.cs").read_text(encoding="utf-8")
     windows = (root / "src/FileOp.Windows/Storage/WindowsStorageCleanupReadinessService.cs").read_text(encoding="utf-8")
     xaml = (root / "src/FileOp.App/StorageKnownLocationReviewView.xaml").read_text(encoding="utf-8")
     view = (root / "src/FileOp.App/StorageKnownLocationReviewView.CleanupReadiness.cs").read_text(encoding="utf-8")
@@ -269,6 +312,15 @@ def check_repository(root: Path) -> int:
         "durable delete recovery/history and final mutation authorization are not implemented",
     ):
         checks += forbid(core, stale)
+
+    checks += require(review_model, "public ulong? ActiveVolumeIdentity { get; init; }")
+    for needle in (
+        "public ulong? StorageVolumeIdentity",
+        "var capturedVolumeIdentity = capturedPrimary.VolumeIdentity;",
+        "currentPrimary.VolumeIdentity != capturedVolumeIdentity",
+        "ActiveVolumeIdentity = capturedVolumeIdentity",
+    ):
+        checks += require(producer, needle)
 
     for needle in (
         "WindowsFileOperationCanonicalPathResolver",
@@ -330,6 +382,7 @@ def check_repository(root: Path) -> int:
         "string requestedRuleId",
         "!await _storageGate.WaitAsync(0)",
         "_performanceDiskIoCaptureActive || _storageSameSizeVerificationActive",
+        "_searchEngine.StorageVolumeIdentity is not { } activeVolumeIdentity",
         "location.Provenance != requestedProvenance",
         "!PathsEqual(location.RootPath, requestedReviewRoot)",
         "!PathsEqual(candidate.Path, requestedPath)",
@@ -338,9 +391,11 @@ def check_repository(root: Path) -> int:
         "matchCount++",
         "matchCount != 1",
         "exact path/root/rule candidate",
+        "review.ActiveVolumeIdentity != activeVolumeIdentity",
         "IsPathWithinRoot(matchedCandidate.Path, matchedLocation.RootPath)",
         "_storageCleanupReadinessService.PreviewAsync",
         "ReferenceEquals(review, _storageKnownLocationReview)",
+        "currentVolumeIdentity != activeVolumeIdentity",
         "ApplyKnownLocationCleanupReadiness(preview)",
         "_storageGate.Release();",
     ):
