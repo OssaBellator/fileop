@@ -229,16 +229,18 @@ public static class StorageKnownLocationReviewClassifier
 
     private static bool IsFullyQualifiedPathWithinRoot(string? path, string? rootPath)
     {
-        if (string.IsNullOrWhiteSpace(path) ||
-            string.IsNullOrWhiteSpace(rootPath) ||
-            !Path.IsPathFullyQualified(path) ||
-            !Path.IsPathFullyQualified(rootPath))
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(rootPath))
         {
             return false;
         }
 
         try
         {
+            if (!Path.IsPathFullyQualified(path) || !Path.IsPathFullyQualified(rootPath))
+            {
+                return false;
+            }
+
             var fullPath = Path.GetFullPath(path);
             var fullRoot = Path.GetFullPath(rootPath);
             var comparablePath = fullPath.TrimEnd(
