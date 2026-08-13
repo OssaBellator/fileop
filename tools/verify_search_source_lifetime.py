@@ -229,7 +229,11 @@ def check_repository(root: Path) -> int:
         ("StringComparison.Ordinal", "exact backing-token comparison"),
         ("var invalidationGeneration = Interlocked.Increment(ref _searchGeneration);", "display invalidation owner"),
         ("DispatcherQueue.TryEnqueue", "UI-thread presentation invalidation"),
+        ("await _searchGate.WaitAsync(_lifetimeCancellation.Token);", "stale request gate drain"),
+        ("_searchGate.Release();", "stale request gate release"),
+        ("await Task.Yield();", "post-request UI turn ordering"),
         ("invalidationGeneration != Volatile.Read(ref _searchGeneration)", "fresh-query clear suppression"),
+        ("catch (ObjectDisposedException) when (_closed)", "shutdown-safe queued invalidation"),
         ("_results.Clear();", "old presentation clear"),
         ("Search source changed. Search again", "explicit stale-source recovery wording"),
     ):
@@ -246,6 +250,20 @@ def check_repository(root: Path) -> int:
         "direct Search work from source callback",
     )
 
+    wait_at = search_lifetime.index("await _searchGate.WaitAsync(_lifetimeCancellation.Token);")
+    release_at = search_lifetime.index("_searchGate.Release();", wait_at)
+    yield_at = search_lifetime.index("await Task.Yield();", release_at)
+    invalidation_check_at = search_lifetime.index(
+        "invalidationGeneration != Volatile.Read(ref _searchGeneration)",
+        yield_at,
+    )
+    clear_at = search_lifetime.index("_results.Clear();", invalidation_check_at)
+    if not wait_at < release_at < yield_at < invalidation_check_at < clear_at:
+        raise AssertionError(
+            "source-change presentation must drain stale Search work, yield, then revalidate before clearing"
+        )
+    checks += 1
+
     storage_init = app.index("window.InitializeStorageSourceIdentityTracking();")
     search_init = app.index("window.InitializeSearchSourceIdentityTracking();")
     files_init = app.index("window.InitializeFilesFeature();")
@@ -254,6 +272,17 @@ def check_repository(root: Path) -> int:
             "startup must install backing-token tracking before Search, then Files"
         )
     checks += 1
+
+    checks += require(
+        main,
+        "private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)\n    {\n        Interlocked.Increment(ref _searchGeneration);",
+        "atomic Search debounce invalidation",
+    )
+    checks += require(
+        main,
+        "var generation = Interlocked.Increment(ref _searchGeneration);",
+        "atomic Search request generation",
+    )
 
     search_call = main.index("var matches = await _searchEngine.SearchAsync(")
     post_search_generation = main.index(
