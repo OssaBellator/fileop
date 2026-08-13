@@ -269,14 +269,35 @@ def check_repository(root: Path) -> int:
 
     # Pin the security-sensitive ordering in source, including the second recovery scan.
     first_recovery = files_delete.index("var recovery = await GetRecoveryCandidateAsync(historyPath)")
-    preflight = files_delete.index("_deletePreflightValidator")
-    validation = files_delete.index("_deleteExecutionValidator", preflight + 1)
-    confirmation = files_delete.index("ShowDeleteConfirmationAsync(validation)")
-    second_recovery = files_delete.index("recovery = await GetRecoveryCandidateAsync(historyPath)", confirmation)
-    authorization = files_delete.index("IssueAfterExplicitUserConfirmation(validation)")
-    history_store = files_delete.index("new SqliteFileDeleteOperationActionHistoryStore(historyPath)")
-    begin = files_delete.index("historyStore.BeginAsync(authorization, CancellationToken.None)")
-    orchestrate = files_delete.index("FileDeleteOperationOrchestrator.ExecuteAsync")
+    preflight = files_delete.index(
+        "var preflight = await _deletePreflightValidator",
+        first_recovery,
+    )
+    validation = files_delete.index(
+        "var validation = await _deleteExecutionValidator",
+        preflight,
+    )
+    confirmation = files_delete.index("ShowDeleteConfirmationAsync(validation)", validation)
+    second_recovery = files_delete.index(
+        "recovery = await GetRecoveryCandidateAsync(historyPath)",
+        confirmation,
+    )
+    authorization = files_delete.index(
+        "IssueAfterExplicitUserConfirmation(validation)",
+        second_recovery,
+    )
+    history_store = files_delete.index(
+        "new SqliteFileDeleteOperationActionHistoryStore(historyPath)",
+        authorization,
+    )
+    begin = files_delete.index(
+        "historyStore.BeginAsync(authorization, CancellationToken.None)",
+        history_store,
+    )
+    orchestrate = files_delete.index(
+        "FileDeleteOperationOrchestrator.ExecuteAsync",
+        begin,
+    )
     if not (
         first_recovery
         < preflight
