@@ -22,12 +22,19 @@ public sealed partial class MainWindow
         _searchEngine.StateChanged -= SearchEngine_StateChanged;
         _searchEngine.StateChanged += StorageSourceIdentity_StateChanged;
         _searchEngine.StateChanged += SearchEngine_StateChanged;
+
+        // XAML wires the Storage-aware elevation handler before this feature is
+        // installed. Replace that root-only post-elevation comparison in production
+        // with an equivalent handler that also binds the backing-source identity.
+        EnableFastIndexButton.Click -= EnableFastIndexWithStorageTypesButton_Click;
+        EnableFastIndexButton.Click += EnableFastIndexWithStorageSourceIdentityButton_Click;
         Closed += StorageSourceIdentityWindow_Closed;
     }
 
     private void StorageSourceIdentityWindow_Closed(object sender, Microsoft.UI.Xaml.WindowEventArgs args)
     {
         _searchEngine.StateChanged -= StorageSourceIdentity_StateChanged;
+        EnableFastIndexButton.Click -= EnableFastIndexWithStorageSourceIdentityButton_Click;
         Closed -= StorageSourceIdentityWindow_Closed;
     }
 
@@ -87,5 +94,90 @@ public sealed partial class MainWindow
         Interlocked.Increment(ref _storageTypeGeneration);
         Interlocked.Increment(ref _storageHistoryGeneration);
         Interlocked.Increment(ref _storageOptimizationGeneration);
+    }
+
+    private async void EnableFastIndexWithStorageSourceIdentityButton_Click(
+        object sender,
+        Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        var sourceBeforeElevation = _storageViewMode switch
+        {
+            StorageViewMode.Types => _storageTypesSourceKey,
+            StorageViewMode.History => _storageHistorySourceKey,
+            StorageViewMode.Optimize => _storageOptimizationSourceKey,
+            _ => _storageSourceKey,
+        };
+        var sourceIdentityBeforeElevation = _searchEngine.StorageSourceIdentityKey;
+
+        SearchBox.IsEnabled = false;
+        StorageRefreshButton.IsEnabled = false;
+        StorageTypesRefreshButton.IsEnabled = false;
+        if (_storageHistoryInitialized)
+        {
+            _storageHistoryButton.IsEnabled = false;
+            _storageHistoryView.SetReadyForRefresh(false);
+        }
+        if (_storageOptimizationInitialized)
+        {
+            _storageOptimizationButton.IsEnabled = false;
+            _storageOptimizationView.SetReadyForRefresh(false);
+        }
+        EnableFastIndexButton.IsEnabled = false;
+        SetSearchStatus(string.Empty);
+        Interlocked.Increment(ref _searchGeneration);
+        Interlocked.Increment(ref _storageGeneration);
+        Interlocked.Increment(ref _storageTypeGeneration);
+        Interlocked.Increment(ref _storageHistoryGeneration);
+        Interlocked.Increment(ref _storageOptimizationGeneration);
+
+        try
+        {
+            await _searchEngine.TryElevateAsync(_lifetimeCancellation.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (!_closed)
+            {
+                ApplyEngineState(_searchEngine.State);
+            }
+        }
+
+        if (_closed)
+        {
+            return;
+        }
+
+        if (_activeSection == AppSection.Search && SearchBox.IsEnabled)
+        {
+            await RunSearchAsync();
+            return;
+        }
+
+        if (_activeSection == AppSection.Storage &&
+            !_searchEngine.State.IsBusy &&
+            _searchEngine.StorageRootPath is { } root)
+        {
+            var currentSourceKey = CreateStorageSourceKey(_searchEngine.State.Mode, root);
+            var currentSourceIdentityKey = _searchEngine.StorageSourceIdentityKey;
+            if (string.Equals(
+                    currentSourceKey,
+                    sourceBeforeElevation,
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    currentSourceIdentityKey,
+                    sourceIdentityBeforeElevation,
+                    StringComparison.Ordinal))
+            {
+                await LoadActiveStorageViewAsync(root, forceRefresh: true);
+            }
+        }
     }
 }
