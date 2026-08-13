@@ -221,6 +221,8 @@ def check_repository(root: Path) -> int:
         'main': 'src/FileOp.App/MainWindow.Files.cs',
         'viewx': 'src/FileOp.App/FilesView.xaml',
         'viewc': 'src/FileOp.App/FilesView.xaml.cs',
+        'view_delete': 'src/FileOp.App/FilesView.Delete.cs',
+        'view_delete_gate': 'src/FileOp.App/FilesView.DeleteSessionGate.cs',
         'panex': 'src/FileOp.App/FilesPaneView.xaml',
         'panec': 'src/FileOp.App/FilesPaneView.xaml.cs',
         'mainx': 'src/FileOp.App/MainWindow.xaml',
@@ -241,7 +243,8 @@ def check_repository(root: Path) -> int:
     pane_handlers = set(re.findall(r'\b(?:Click|SelectionChanged)="([A-Za-z_]\w*)"', s['panex']))
     view_handlers = set(re.findall(r'\b(?:Click|SelectionChanged)="([A-Za-z_]\w*)"', s['viewx']))
     assert pane_handlers <= methods(s['panec'])
-    assert view_handlers <= methods(s['viewc'])
+    view_code = s['viewc'] + s['view_delete'] + s['view_delete_gate']
+    assert view_handlers <= methods(view_code)
 
     a = s['app']
     assert a.index('var window = new MainWindow();') < a.index('window.InitializeFilesFeature();') < a.index('window.Activate();')

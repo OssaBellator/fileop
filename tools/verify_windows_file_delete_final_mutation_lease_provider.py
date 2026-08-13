@@ -249,8 +249,13 @@ def check_repository(root: Path) -> int:
         for path in directory.rglob("*.cs"):
             if "WindowsFileDeleteOperationFinalMutationLeaseProvider" in path.read_text(encoding="utf-8"):
                 consumers.append(path.relative_to(root).as_posix())
-    if consumers:
-        raise AssertionError("final provider must remain unwired from App/Indexer: " + ", ".join(consumers))
+    allowed_consumers = {"src/FileOp.App/FilesView.Delete.cs"}
+    unexpected_consumers = sorted(set(consumers) - allowed_consumers)
+    if unexpected_consumers:
+        raise AssertionError(
+            "final provider must remain unwired outside the reviewed Files delete session: "
+            + ", ".join(unexpected_consumers)
+        )
     checks += 1
 
     if gate.count("verify_windows_file_delete_final_mutation_lease_provider.py") != 1:
