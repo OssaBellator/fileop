@@ -9,108 +9,153 @@ import random
 
 def source_event(
     generation: int,
+    last_source_generation: int,
     last_token: str | None,
     new_token: str | None,
     busy: bool,
-) -> tuple[int, str | None, int | None]:
+) -> tuple[int, int, str | None, bool, str | None]:
     if busy:
         generation += 1
+        last_source_generation = generation
 
-    clear_owner: int | None = None
-    if new_token != last_token:
+    changed = new_token != last_token
+    captured_clear_token: str | None = None
+    if changed:
         generation += 1
-        clear_owner = generation
+        last_source_generation = generation
         last_token = new_token
+        captured_clear_token = new_token
 
-    return generation, last_token, clear_owner
+    return (
+        generation,
+        last_source_generation,
+        last_token,
+        changed,
+        captured_clear_token,
+    )
 
 
-def apply_clear(generation: int, clear_owner: int | None, displayed: bool) -> bool:
-    if clear_owner is not None and clear_owner == generation:
-        return False
-    return displayed
+def user_event(generation: int) -> int:
+    return generation + 1
+
+
+def can_apply_clear(
+    generation: int,
+    last_source_generation: int,
+    current_token: str | None,
+    captured_clear_token: str | None,
+) -> bool:
+    return (
+        generation == last_source_generation
+        and current_token == captured_clear_token
+    )
 
 
 def run_model(cases: int, seed: int) -> int:
     checks = 0
 
-    generation = 10
-    query_generation = generation
-    displayed = True
-    token = "native:1:1"
-    generation, current_token, clear_owner = source_event(
-        generation,
-        token,
-        token,
+    # Busy with an unchanged token invalidates an in-flight query but does not
+    # manufacture a displayed-result clear.
+    generation, source_generation, token, changed, captured = source_event(
+        10,
+        9,
+        "native:1:1",
+        "native:1:1",
         busy=True,
     )
     assert generation == 11
-    assert query_generation != generation
-    assert clear_owner is None
-    assert apply_clear(generation, clear_owner, displayed)
+    assert source_generation == 11
+    assert token == "native:1:1"
+    assert not changed and captured is None
     checks += 4
 
-    generation = 3
-    generation, current_token, clear_owner = source_event(
-        generation,
+    # Token change owns a clear. A later source-owned busy generation keeps the
+    # clear valid, while a user-owned generation cancels it. If that user query is
+    # then invalidated by another source busy event, the clear becomes valid again.
+    generation, source_generation, token, changed, captured = source_event(
+        20,
+        19,
         "native:1:1",
         "native:1:2",
         busy=False,
     )
-    assert clear_owner == generation and current_token == "native:1:2"
-    assert not apply_clear(generation, clear_owner, displayed=True)
+    assert changed and captured == "native:1:2"
+    assert can_apply_clear(generation, source_generation, token, captured)
     checks += 2
 
-    generation = 7
-    generation, current_token, clear_owner = source_event(
+    generation, source_generation, token, changed_again, ignored = source_event(
         generation,
-        "native:1:1",
-        "fallback:1",
-        busy=False,
+        source_generation,
+        token,
+        token,
+        busy=True,
     )
-    fresh_query_generation = generation + 1
-    assert apply_clear(fresh_query_generation, clear_owner, displayed=True)
-    assert fresh_query_generation != clear_owner
-    checks += 2
+    assert not changed_again and can_apply_clear(
+        generation,
+        source_generation,
+        token,
+        captured,
+    )
+    checks += 1
 
-    generation = 1
-    generation, current_token, clear_owner = source_event(
+    generation = user_event(generation)
+    assert not can_apply_clear(generation, source_generation, token, captured)
+    checks += 1
+
+    generation, source_generation, token, changed_again, ignored = source_event(
         generation,
-        "native:1:1",
-        None,
-        busy=False,
+        source_generation,
+        token,
+        token,
+        busy=True,
     )
-    assert clear_owner == generation and current_token is None
-    generation, current_token, clear_owner = source_event(
+    assert not changed_again and can_apply_clear(
         generation,
-        None,
+        source_generation,
+        token,
+        captured,
+    )
+    checks += 1
+
+    old_capture = captured
+    generation, source_generation, token, changed_again, new_capture = source_event(
+        generation,
+        source_generation,
+        token,
         "fallback:2",
         busy=False,
     )
-    assert clear_owner == generation and current_token == "fallback:2"
+    assert changed_again and not can_apply_clear(
+        generation,
+        source_generation,
+        token,
+        old_capture,
+    )
+    assert can_apply_clear(
+        generation,
+        source_generation,
+        token,
+        new_capture,
+    )
     checks += 2
 
-    generation = 2
-    unchanged_generation, current_token, clear_owner = source_event(
-        generation,
-        "fallback:1",
-        "fallback:1",
-        busy=False,
-    )
-    assert unchanged_generation == generation and clear_owner is None
-    checks += 1
-
     rng = random.Random(seed)
+    token_kinds = (None, "native", "fallback")
     for index in range(cases):
-        generation = rng.randint(0, 100_000)
-        token_kind = rng.randrange(3)
+        generation = rng.randint(1, 100_000)
+        latest_was_source_owned = rng.random() < 0.5
+        last_source_generation = (
+            generation if latest_was_source_owned else generation - 1
+        )
+        token_kind = rng.choice(token_kinds)
         last_token = (
             None
-            if token_kind == 0
+            if token_kind is None
             else f"native:{index % 17}:{index % 23}"
-            if token_kind == 1
+            if token_kind == "native"
             else f"fallback:{index % 29}"
         )
+
         source_changed = rng.random() < 0.45
         if source_changed:
             choices = [
@@ -118,72 +163,154 @@ def run_model(cases: int, seed: int) -> int:
                 f"native:{(index + 1) % 19}:{(index + 2) % 31}",
                 f"fallback:{(index + 3) % 37}",
             ]
-            new_token = choices[rng.randrange(len(choices))]
+            new_token = rng.choice(choices)
             if new_token == last_token:
                 new_token = f"fallback:changed:{index}"
         else:
             new_token = last_token
-
         busy = rng.random() < 0.35
-        query_generation = generation
-        displayed = rng.random() < 0.80
-        after_generation, current_token, clear_owner = source_event(
+
+        initial_generation = generation
+        initial_source_generation = last_source_generation
+        (
             generation,
+            last_source_generation,
+            current_token,
+            changed,
+            captured,
+        ) = source_event(
+            generation,
+            last_source_generation,
             last_token,
             new_token,
             busy,
         )
         expected_generation = (
-            generation
+            initial_generation
             + (1 if busy else 0)
             + (1 if source_changed else 0)
         )
-        assert after_generation == expected_generation
-        assert (clear_owner is not None) == source_changed
-        assert (query_generation == after_generation) == (
-            not busy and not source_changed
+        expected_source_generation = (
+            expected_generation
+            if busy or source_changed
+            else initial_source_generation
         )
-        immediate_display = apply_clear(
-            after_generation,
-            clear_owner,
-            displayed,
-        )
-        assert immediate_display == (False if source_changed else displayed)
+        assert generation == expected_generation
+        assert current_token == new_token
+        assert changed == source_changed
+        assert captured == (new_token if source_changed else None)
+        assert last_source_generation == expected_source_generation
+        checks += 5
 
-        fresh_query_generation = after_generation + 1
-        late_display = apply_clear(
-            fresh_query_generation,
-            clear_owner,
-            displayed,
-        )
-        assert late_display == displayed
-        assert fresh_query_generation != clear_owner
-
-        failed_elevation_generation, failed_token, failed_clear = source_event(
+        # Use a guaranteed token-change clear to exercise ownership races in every
+        # randomized state, independently of the first event's shape.
+        guaranteed_token = f"native:guaranteed:{index}"
+        if guaranteed_token == current_token:
+            guaranteed_token += ":next"
+        (
             generation,
-            last_token,
-            last_token,
-            busy=True,
-        )
-        assert failed_clear is None and failed_token == last_token
-        assert apply_clear(
-            failed_elevation_generation,
-            failed_clear,
-            displayed,
-        ) == displayed
-
-        routine_generation, routine_token, routine_clear = source_event(
+            last_source_generation,
+            current_token,
+            changed,
+            captured,
+        ) = source_event(
             generation,
-            last_token,
-            last_token,
+            last_source_generation,
+            current_token,
+            guaranteed_token,
             busy=False,
         )
-        assert (
-            routine_generation == generation
-            and routine_token == last_token
-            and routine_clear is None
+        assert changed and can_apply_clear(
+            generation,
+            last_source_generation,
+            current_token,
+            captured,
         )
-        checks += 9
+        checks += 1
+
+        generation = user_event(generation)
+        assert not can_apply_clear(
+            generation,
+            last_source_generation,
+            current_token,
+            captured,
+        )
+        checks += 1
+
+        (
+            generation,
+            last_source_generation,
+            current_token,
+            changed_after_user,
+            ignored_capture,
+        ) = source_event(
+            generation,
+            last_source_generation,
+            current_token,
+            current_token,
+            busy=True,
+        )
+        assert not changed_after_user and can_apply_clear(
+            generation,
+            last_source_generation,
+            current_token,
+            captured,
+        )
+        checks += 1
+
+        newer_token = f"fallback:newer:{index}"
+        old_capture = captured
+        (
+            generation,
+            last_source_generation,
+            current_token,
+            changed_newer,
+            newer_capture,
+        ) = source_event(
+            generation,
+            last_source_generation,
+            current_token,
+            newer_token,
+            busy=False,
+        )
+        assert changed_newer and not can_apply_clear(
+            generation,
+            last_source_generation,
+            current_token,
+            old_capture,
+        )
+        assert can_apply_clear(
+            generation,
+            last_source_generation,
+            current_token,
+            newer_capture,
+        )
+        checks += 2
+
+        (
+            generation,
+            last_source_generation,
+            current_token,
+            changed_failed,
+            failed_capture,
+        ) = source_event(
+            generation,
+            last_source_generation,
+            current_token,
+            current_token,
+            busy=True,
+        )
+        assert (
+            not changed_failed
+            and failed_capture is None
+            and can_apply_clear(
+                generation,
+                last_source_generation,
+                current_token,
+                newer_capture,
+            )
+        )
+        checks += 1
 
     return checks
 
@@ -221,19 +348,25 @@ def check_repository(root: Path) -> int:
     checks = 0
 
     for needle, label in (
+        ("private readonly object _searchSourceIdentityGate = new();", "source callback serialization gate"),
+        ("private int _lastSearchSourceOwnedGeneration;", "latest source-owned generation"),
         ("InitializeSearchSourceIdentityTracking", "Search lifetime initializer"),
         ("_searchEngine.StateChanged += SearchSourceIdentity_StateChanged;", "Search pre-handler subscription"),
+        ("lock (_searchSourceIdentityGate)", "source-event serialization"),
         ("if (state.IsBusy)", "all-mode busy publication barrier"),
-        ("Interlocked.Increment(ref _searchGeneration);", "Search generation invalidation"),
+        ("InvalidateSearchFromSource();", "source-owned generation invalidation"),
         ("_searchEngine.StorageSourceIdentityKey", "backing source token read"),
-        ("Interlocked.Exchange(\n            ref _lastSearchSourceIdentityKey,", "atomic previous-token exchange"),
+        ("Interlocked.Exchange(\n                ref _lastSearchSourceIdentityKey,", "atomic previous-token exchange"),
         ("StringComparison.Ordinal", "exact backing-token comparison"),
-        ("var invalidationGeneration = Interlocked.Increment(ref _searchGeneration);", "display invalidation owner"),
+        ("QueueSearchPresentationInvalidation(sourceIdentityKey);", "token-change display invalidation"),
+        ("_lastSearchSourceOwnedGeneration = Interlocked.Increment(ref _searchGeneration);", "source-owned request token"),
         ("DispatcherQueue.TryEnqueue", "UI-thread presentation invalidation"),
         ("await _searchGate.WaitAsync(_lifetimeCancellation.Token);", "stale request gate drain"),
         ("_searchGate.Release();", "stale request gate release"),
         ("await Task.Yield();", "post-request UI turn ordering"),
-        ("invalidationGeneration != Volatile.Read(ref _searchGeneration)", "fresh-query clear suppression"),
+        ("var currentGeneration = Volatile.Read(ref _searchGeneration);", "current request generation read"),
+        ("currentGeneration != _lastSearchSourceOwnedGeneration", "user-owned generation suppression"),
+        ("sourceIdentityKey,\n                        _searchEngine.StorageSourceIdentityKey", "captured/current token equality"),
         ("catch (ObjectDisposedException) when (_closed)", "shutdown-safe queued invalidation"),
         ("_results.Clear();", "old presentation clear"),
         ("Search source changed. Search again", "explicit stale-source recovery wording"),
@@ -251,17 +384,48 @@ def check_repository(root: Path) -> int:
         "direct Search work from source callback",
     )
 
+    handler_at = search_lifetime.index(
+        "private void SearchSourceIdentity_StateChanged(DesktopSearchEngineState state)"
+    )
+    handler_lock_at = search_lifetime.index("lock (_searchSourceIdentityGate)", handler_at)
+    busy_at = search_lifetime.index("if (state.IsBusy)", handler_lock_at)
+    token_at = search_lifetime.index(
+        "var sourceIdentityKey = _searchEngine.StorageSourceIdentityKey;",
+        busy_at,
+    )
+    queue_at = search_lifetime.index(
+        "QueueSearchPresentationInvalidation(sourceIdentityKey);",
+        token_at,
+    )
+    if not handler_at < handler_lock_at < busy_at < token_at < queue_at:
+        raise AssertionError(
+            "Search source callback must serialize busy/token invalidation before queueing presentation work"
+        )
+    checks += 1
+
     wait_at = search_lifetime.index("await _searchGate.WaitAsync(_lifetimeCancellation.Token);")
     release_at = search_lifetime.index("_searchGate.Release();", wait_at)
     yield_at = search_lifetime.index("await Task.Yield();", release_at)
-    invalidation_check_at = search_lifetime.index(
-        "invalidationGeneration != Volatile.Read(ref _searchGeneration)",
-        yield_at,
+    final_lock_at = search_lifetime.index("lock (_searchSourceIdentityGate)", yield_at)
+    current_generation_at = search_lifetime.index(
+        "var currentGeneration = Volatile.Read(ref _searchGeneration);",
+        final_lock_at,
     )
-    clear_at = search_lifetime.index("_results.Clear();", invalidation_check_at)
-    if not wait_at < release_at < yield_at < invalidation_check_at < clear_at:
+    source_owner_at = search_lifetime.index(
+        "currentGeneration != _lastSearchSourceOwnedGeneration",
+        current_generation_at,
+    )
+    current_token_at = search_lifetime.index(
+        "_searchEngine.StorageSourceIdentityKey",
+        source_owner_at,
+    )
+    clear_at = search_lifetime.index("_results.Clear();", current_token_at)
+    if not (
+        wait_at < release_at < yield_at < final_lock_at
+        < current_generation_at < source_owner_at < current_token_at < clear_at
+    ):
         raise AssertionError(
-            "source-change presentation must drain stale Search work, yield, then revalidate before clearing"
+            "presentation invalidation must drain stale Search work, yield, then validate source ownership/token before clearing"
         )
     checks += 1
 
