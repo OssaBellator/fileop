@@ -123,6 +123,12 @@ public static class StorageKnownLocationReviewClassifier
         var candidates = new List<StorageReviewCandidate>();
         foreach (var source in analysis.StaleLargeFiles)
         {
+            if (!IsFullyQualifiedPathWithinRoot(source.Path, analysis.RootPath) ||
+                !IsPathMetadataConsistent(source))
+            {
+                continue;
+            }
+
             var classified = provenance switch
             {
                 StorageReviewProvenance.Downloads => ClassifyDownloads(source),
@@ -225,6 +231,63 @@ public static class StorageKnownLocationReviewClassifier
             source.LogicalBytes,
             source.AllocatedBytes,
             source.LastWriteTime);
+
+    private static bool IsFullyQualifiedPathWithinRoot(string? path, string? rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(rootPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!Path.IsPathFullyQualified(path) || !Path.IsPathFullyQualified(rootPath))
+            {
+                return false;
+            }
+
+            var fullPath = Path.GetFullPath(path);
+            var fullRoot = Path.GetFullPath(rootPath);
+            var comparablePath = fullPath.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            var comparableRoot = fullRoot.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            if (string.Equals(
+                    comparablePath,
+                    comparableRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var rootedPrefix = comparableRoot + Path.DirectorySeparatorChar;
+            return comparablePath.StartsWith(rootedPrefix, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsPathMetadataConsistent(StorageOptimizationFileCandidate source)
+    {
+        try
+        {
+            var fileName = Path.GetFileName(source.Path);
+            var extension = Path.GetExtension(source.Path);
+            return !string.IsNullOrWhiteSpace(fileName) &&
+                string.Equals(fileName, source.Name, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(extension, source.Extension, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
 
     private static string CreateAvailableDetail(
         StorageOptimizationAnalysis analysis,
