@@ -66,11 +66,11 @@ The Core readiness detail uses the same current wording: a consistent preview sa
 
 ## Cross-volume lifecycle
 
-Readiness is rebound to the exact candidate in the current cached native known-location review and serialized through the existing Storage gate. The review's active-primary source is checked again before the result is rendered.
+Readiness is rebound to the exact candidate in the current cached native known-location review and serialized through the existing Storage gate. The review snapshot preserves both the active primary root and its `VolumeIdentity`; readiness requires both to match the current native source before starting its path checks.
 
 For a cross-volume candidate, the known-location producer has already required a current checkpointed secondary native index. The readiness service then performs its own current path/identity checks directly against that candidate and known-location root. Files handoff can remain unavailable for that candidate without disabling readiness.
 
-The coordinator retains the exact review object while the Windows read-only check is in flight. Before rendering, it requires that object still be the current cached review and that the active primary native source remain available and unchanged. A refresh/replacement therefore invalidates an in-flight readiness result instead of allowing old evidence to repaint over a newer review.
+The coordinator retains the exact review object while the Windows read-only check is in flight. Before rendering, it requires that object still be the current cached review and rechecks the active primary root **and volume identity**. A same-drive-letter volume replacement therefore invalidates stale review evidence instead of passing merely because the root string is unchanged.
 
 Any new known-location review loading/unavailable/completed state clears the previous readiness result as current evidence.
 
@@ -78,8 +78,8 @@ Any new known-location review loading/unavailable/completed state clears the pre
 
 `tools/verify_cleanup_readiness.py` is wired into `tools/test-local.ps1 -OfflineOnly`.
 
-Its deterministic/randomized model covers current/changed/blocked/unavailable states, reparse and canonical-escape boundaries, volume mismatch, two-current-read identity stability, indexed size/time drift and overlapping known-location rows. The overlap model requires a unique full path/root/provenance/rule match and rejects duplicate exact bindings.
+Its deterministic/randomized model covers current/changed/blocked/unavailable states, reparse and canonical-escape boundaries, volume mismatch, two-current-read identity stability, indexed size/time drift, overlapping known-location rows, and same-root primary-volume identity replacement. The overlap model requires a unique full path/root/provenance/rule match and rejects duplicate exact bindings.
 
-Repository guards pin zero-access metadata reads, the existing canonical resolver, exact UI-row/coordinator binding, post-read review-object freshness, protocol v8, absence of mutation APIs in the readiness path, `CleanupMutationAuthorized == false`, current delete-boundary wording, and the separate Files delete authorization/orchestration boundary.
+Repository guards pin zero-access metadata reads, the existing canonical resolver, exact UI-row/coordinator binding, snapshot primary-volume identity persistence, pre/post-read source identity checks, post-read review-object freshness, protocol v8, absence of mutation APIs in the readiness path, `CleanupMutationAuthorized == false`, current delete-boundary wording, and the separate Files delete authorization/orchestration boundary.
 
 Focused .NET tests cover Core readiness semantics plus a Windows-only current-handle metadata reader. The complete Windows local gate remains mandatory before merging changes to this boundary.
