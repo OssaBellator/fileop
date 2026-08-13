@@ -5,6 +5,7 @@ public sealed partial class MainWindow
     private readonly object _searchSourceIdentityGate = new();
     private string? _lastSearchSourceIdentityKey;
     private long _searchSourceChangeSequence;
+    private bool _searchSourceIdentityEstablished;
     private bool _searchSourceIdentityTrackingInitialized;
 
     internal void InitializeSearchSourceIdentityTracking()
@@ -16,6 +17,7 @@ public sealed partial class MainWindow
 
         _searchSourceIdentityTrackingInitialized = true;
         _lastSearchSourceIdentityKey = _searchEngine.StorageSourceIdentityKey;
+        _searchSourceIdentityEstablished = _lastSearchSourceIdentityKey is not null;
 
         // Storage source identity tracking is installed first and updates the
         // shared backing-source token. Run this Search publication boundary next,
@@ -65,13 +67,26 @@ public sealed partial class MainWindow
                 return;
             }
 
+            Interlocked.Increment(ref _searchGeneration);
+
+            // Startup has no prior Search presentation to invalidate. Establish the
+            // first usable source token without queueing a stale-presentation clear;
+            // otherwise that clear can race MainWindow_Activated's initial search
+            // and erase freshly published rows/status. Once any usable source has
+            // been established, every later token transition (including through
+            // null) owns the normal stale-presentation boundary below.
+            if (!_searchSourceIdentityEstablished && sourceIdentityKey is not null)
+            {
+                _searchSourceIdentityEstablished = true;
+                return;
+            }
+
             // A real backing-token change owns one final presentation clear. Do
             // not let unrelated request-generation increments (text debounce,
             // elevation invalidation, or a racing query) cancel that stale-source
             // boundary. A newer source change advances this independent sequence
             // and supersedes the older queued clear even if a token later cycles
             // back to the same string value.
-            Interlocked.Increment(ref _searchGeneration);
             var sourceChangeSequence = Interlocked.Increment(
                 ref _searchSourceChangeSequence);
             QueueSearchPresentationInvalidation(
