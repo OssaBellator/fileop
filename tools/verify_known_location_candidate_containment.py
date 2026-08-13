@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify known-location review candidates remain inside their fully-qualified review root."""
+"""Verify known-location review candidate path and metadata provenance."""
 from __future__ import annotations
 
 import argparse
@@ -32,6 +32,26 @@ def is_within_root(path: str | None, root: str | None) -> bool:
     return normalized_path.startswith(normalized_root.rstrip("\\") + "\\")
 
 
+def metadata_matches(
+    path: str | None,
+    name: str | None,
+    extension: str | None,
+) -> bool:
+    if normalize_windows_path(path) is None or path is None:
+        return False
+    value = path.replace("/", "\\")
+    candidate_name = ntpath.basename(value)
+    if not candidate_name:
+        return False
+    candidate_extension = ntpath.splitext(candidate_name)[1]
+    return (
+        name is not None
+        and extension is not None
+        and candidate_name.casefold() == name.casefold()
+        and candidate_extension.casefold() == extension.casefold()
+    )
+
+
 def run_model(cases: int, seed: int) -> int:
     checks = 0
     fixed = (
@@ -56,6 +76,12 @@ def run_model(cases: int, seed: int) -> int:
     source_count = len(rows)
     assert source_count == 2
     checks += 2
+
+    assert metadata_matches(r"C:\review\archive.zip", "archive.zip", ".zip")
+    assert metadata_matches(r"C:\review\ARCHIVE.ZIP", "archive.zip", ".zip")
+    assert not metadata_matches(r"C:\review\photo.jpg", "photo.jpg", ".zip")
+    assert not metadata_matches(r"C:\review\actual.zip", "alias.zip", ".zip")
+    checks += 4
 
     rng = random.Random(seed)
     drives = "CDEFGH"
@@ -101,7 +127,12 @@ def run_model(cases: int, seed: int) -> int:
         assert filtered_count <= source_count
         if source_count >= cap and filtered_count < cap:
             assert upstream_truncated and not (filtered_count >= cap)
-        checks += 4
+
+        healthy_path = root + f"\\sub\\F{index}.ZIP"
+        assert metadata_matches(healthy_path, f"f{index}.zip", ".zip")
+        assert not metadata_matches(healthy_path, f"f{index}.zip", ".iso")
+        assert not metadata_matches(healthy_path, f"alias{index}.zip", ".zip")
+        checks += 7
 
     return checks
 
@@ -120,30 +151,49 @@ def forbid(text: str, needle: str, label: str) -> int:
 
 def check_repository(root: Path) -> int:
     model = (root / "src/FileOp.Core/Storage/StorageKnownLocationReview.cs").read_text(encoding="utf-8")
+    analytics = (root / "src/FileOp.Core/Storage/SqliteStorageOptimizationAnalytics.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/StorageKnownLocationReviewTests.cs").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
     checks = 0
 
     for needle, label in (
-        ("if (!IsFullyQualifiedPathWithinRoot(source.Path, analysis.RootPath))", "pre-classification containment filter"),
+        ("if (!IsFullyQualifiedPathWithinRoot(source.Path, analysis.RootPath) ||\n                !IsPathMetadataConsistent(source))", "pre-classification path/metadata filter"),
         ("private static bool IsFullyQualifiedPathWithinRoot", "containment helper"),
         ("!Path.IsPathFullyQualified(path)", "candidate fully-qualified requirement"),
         ("!Path.IsPathFullyQualified(rootPath)", "root fully-qualified requirement"),
         ("var fullPath = Path.GetFullPath(path);", "candidate normalization"),
         ("var fullRoot = Path.GetFullPath(rootPath);", "root normalization"),
-        ("StringComparison.OrdinalIgnoreCase", "Windows case-insensitive containment"),
+        ("StringComparison.OrdinalIgnoreCase", "Windows case-insensitive provenance comparison"),
         ("var rootedPrefix = comparableRoot + Path.DirectorySeparatorChar;", "separator-bound descendant check"),
+        ("private static bool IsPathMetadataConsistent(StorageOptimizationFileCandidate source)", "path metadata helper"),
+        ("var fileName = Path.GetFileName(source.Path);", "name derivation from accepted path"),
+        ("var extension = Path.GetExtension(source.Path);", "extension derivation from accepted path"),
+        ("string.Equals(fileName, source.Name, StringComparison.OrdinalIgnoreCase)", "name/path binding"),
+        ("string.Equals(extension, source.Extension, StringComparison.OrdinalIgnoreCase)", "extension/path binding"),
         ("exception is ArgumentException or NotSupportedException or PathTooLongException", "nonthrowing malformed-path filter"),
         ("analysis.StaleLargeFiles.Count,", "upstream source count preservation"),
         ("analysis.StaleLargeFiles.Count >= analysis.Policy.MaxStaleLargeFiles", "upstream truncation preservation"),
     ):
         checks += require(model, needle, label)
 
-    containment_at = model.index("if (!IsFullyQualifiedPathWithinRoot(source.Path, analysis.RootPath))")
-    classify_at = model.index("var classified = provenance switch", containment_at)
-    if not containment_at < classify_at:
-        raise AssertionError("candidate containment must run before provenance/extension classification")
+    path_filter_at = model.index("if (!IsFullyQualifiedPathWithinRoot(source.Path, analysis.RootPath) ||")
+    metadata_filter_at = model.index("!IsPathMetadataConsistent(source)", path_filter_at)
+    classify_at = model.index("var classified = provenance switch", metadata_filter_at)
+    if not path_filter_at < metadata_filter_at < classify_at:
+        raise AssertionError("candidate path and metadata validation must run before provenance/extension classification")
+    checks += 1
+
+    # Healthy production Optimize rows derive path/name/extension from the same SQL
+    # row. Keep that premise pinned so the defensive metadata check cannot silently
+    # become incompatible with a future analytics rewrite.
+    select_at = analytics.index("SELECT\n                path,\n                name,\n                extension,")
+    candidate_at = analytics.index("new StorageOptimizationFileCandidate(", select_at)
+    path_at = analytics.index("reader.GetString(0),", candidate_at)
+    name_at = analytics.index("reader.GetString(1),", path_at)
+    extension_at = analytics.index("extension,", name_at)
+    if not select_at < candidate_at < path_at < name_at < extension_at:
+        raise AssertionError("Optimize candidates must keep path/name/extension bound to the same SQLite row")
     checks += 1
 
     for needle in (
@@ -151,7 +201,11 @@ def check_repository(root: Path) -> int:
         "CandidateContainmentRejectsSiblingOtherDriveAndRelativePaths",
         "CandidateContainmentRejectsMalformedPathWithoutDiscardingValidNeighbor",
         "CandidateContainmentSupportsUncRootsWithoutSiblingPrefixLeakage",
+        "CandidateMetadataRejectsExtensionSpoofWithoutDiscardingValidNeighbor",
+        "CandidateMetadataRejectsMismatchedNameForUserTemp",
+        "CandidateMetadataComparisonIsCaseInsensitive",
         "FilteredCandidatesStillCountTowardUpstreamStaleCap",
+        "MetadataFilteredCandidatesStillCountTowardUpstreamStaleCap",
     ):
         checks += require(tests, needle, f"Windows test {needle}")
 
@@ -179,7 +233,7 @@ def main() -> int:
     source_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
     suffix = f" and {source_checks:,} source/test checks" if args.repo_root else ""
     print(
-        "PASS: known-location candidate containment verifier: "
+        "PASS: known-location candidate provenance verifier: "
         f"{model_checks:,} model checks across {args.cases:,} randomized states{suffix}."
     )
     return 0
