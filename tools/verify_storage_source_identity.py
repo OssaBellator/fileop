@@ -60,10 +60,13 @@ def track_native(
     identity: int | None,
 ) -> tuple[int, bool, int | None, int | None]:
     if mode == "Native" and session is not None and identity is not None:
-        if tracked_session != session or tracked_identity != identity:
-            return generation + 1, not busy, session, identity
+        changed = tracked_session != session or tracked_identity != identity
+        tracked_session = session
+        tracked_identity = identity
         if busy:
-            return generation + (1 if active else 0), False, tracked_session, tracked_identity
+            return generation, False, tracked_session, tracked_identity
+        if changed or not active:
+            generation += 1
         return generation, True, tracked_session, tracked_identity
     if mode != "Native":
         return generation, False, None, None
@@ -129,7 +132,7 @@ def run_model(cases: int) -> int:
         repeated = track_native(*native_state, "Native", False, session, native_identity)
         assert repeated == native_state
         busy = track_native(*repeated, "Native", True, session, native_identity)
-        assert busy == (native_generation + 1, False, session, native_identity)
+        assert busy == (native_generation, False, session, native_identity)
         repeated_busy = track_native(*busy, "Native", True, session, native_identity)
         assert repeated_busy == busy
         recovered = track_native(
@@ -236,13 +239,15 @@ def check_repository(root: Path) -> int:
         ("engine", "_nativeStorageSourceGeneration", "native source generation"),
         ("engine", "ReferenceEquals(_trackedNativeStorageSession, nativeSession)", "native helper-session tracking"),
         ("engine", "_trackedNativeStorageVolumeIdentity != nativeVolume.VolumeIdentity", "native physical identity tracking"),
-        ("engine", "Interlocked.Exchange(ref _nativeStorageSourceActive, 0) == 1", "single native maintenance edge"),
+        ("engine", "Volatile.Write(ref _nativeStorageSourceActive, 0);", "native maintenance inactive edge"),
+        ("engine", "var wasActive = Interlocked.Exchange(ref _nativeStorageSourceActive, 1);", "native recovery edge"),
+        ("engine", "sessionChanged || identityChanged || wasActive == 0", "native recovery/source-change advance"),
         ("engine", "Interlocked.Increment(ref _nativeStorageSourceGeneration)", "native generation advance"),
-        ("engine", "_fallbackStorageSourceGeneration", "fallback source generation"),
         ("engine", "Interlocked.Exchange(ref _fallbackStorageSourceActive, 1)", "single fallback publication edge"),
         ("lifecycle", "_primaryVolume = preparation.Volume", "native primary assignment"),
         ("lifecycle", "_fallbackReady = true;", "fallback completed snapshot marker"),
         ("window", "InitializeStorageSourceIdentityTracking", "MainWindow identity initialization"),
+        ("window", "state.Mode == DesktopSearchMode.Native && state.IsBusy", "native busy Optimize barrier"),
         ("window", "_searchEngine.StateChanged += StorageSourceIdentity_StateChanged;", "identity pre-handler"),
         ("window", "_storageSourceKey = null;", "folder cache invalidation"),
         ("window", "_filesSourceKey = null;", "Files cache invalidation"),
@@ -258,6 +263,7 @@ def check_repository(root: Path) -> int:
         ("main", "CreateStorageSourceKey", "shared root cache key"),
         ("files", "_filesSourceKey", "Files shared root-key consumer"),
         ("types", "_storageTypesSourceKey", "Types shared root-key consumer"),
+        ("types", "if (string.Equals(sourceKey, _storageTypesSourceKey", "Types key-driven reload contract"),
         ("history", "_storageHistorySourceKey", "History shared root-key consumer"),
         ("optimize", "ReferenceEquals(analysis, _storageOptimizationAnalysis)", "same-size stale-publication guard"),
         ("gate", "verify_storage_source_identity.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
@@ -295,6 +301,12 @@ def check_repository(root: Path) -> int:
     checks += 1
 
     window = text["window"]
+    busy_at = window.index("state.Mode == DesktopSearchMode.Native && state.IsBusy")
+    key_at = window.index("var sourceIdentityKey = _searchEngine.StorageSourceIdentityKey;")
+    if busy_at >= key_at:
+        raise AssertionError("native busy Optimize invalidation must precede identity equality return")
+    checks += 1
+
     remove_at = window.index("_searchEngine.StateChanged -= SearchEngine_StateChanged;")
     identity_at = window.index("_searchEngine.StateChanged += StorageSourceIdentity_StateChanged;")
     restore_at = window.index("_searchEngine.StateChanged += SearchEngine_StateChanged;")
