@@ -53,7 +53,19 @@ internal sealed partial class DesktopSearchEngine
                 var volumesBefore = await session.Client
                     .GetVolumesAsync(_lifetimeCancellation.Token)
                     .ConfigureAwait(false);
-                var primaryBefore = FindIndexedVolumeByRoot(volumesBefore.Volumes, activeRoot);
+                var primaryBefore = FindUniqueIndexedVolumeByRoot(
+                    volumesBefore.Volumes,
+                    activeRoot,
+                    out var primaryBeforeAmbiguous);
+                if (primaryBeforeAmbiguous)
+                {
+                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                        provenance,
+                        StorageReviewLocationStatus.Unavailable,
+                        fullPath,
+                        $"{FormatProvenance(provenance)} cannot bind the active primary source because the native volume catalog contains multiple descriptors for {activeRoot}.");
+                }
+
                 if (primaryBefore is null ||
                     primaryBefore.VolumeIdentity != primaryVolume.VolumeIdentity ||
                     !string.Equals(
@@ -68,7 +80,19 @@ internal sealed partial class DesktopSearchEngine
                         $"{FormatProvenance(provenance)} active primary indexed-volume identity or root no longer matches the selected native source, so no cross-volume evidence was captured.");
                 }
 
-                var target = FindIndexedVolumeByRoot(volumesBefore.Volumes, locationRoot);
+                var target = FindUniqueIndexedVolumeByRoot(
+                    volumesBefore.Volumes,
+                    locationRoot,
+                    out var targetAmbiguous);
+                if (targetAmbiguous)
+                {
+                    return StorageKnownLocationReviewClassifier.CreateUnavailable(
+                        provenance,
+                        StorageReviewLocationStatus.Unavailable,
+                        fullPath,
+                        $"{FormatProvenance(provenance)} cannot bind {locationRoot} to one indexed source because the native volume catalog contains multiple matching descriptors.");
+                }
+
                 if (target is null)
                 {
                     return StorageKnownLocationReviewClassifier.CreateUnavailable(
@@ -130,8 +154,12 @@ internal sealed partial class DesktopSearchEngine
                 var volumesAfter = await session.Client
                     .GetVolumesAsync(_lifetimeCancellation.Token)
                     .ConfigureAwait(false);
-                var current = FindIndexedVolumeByRoot(volumesAfter.Volumes, locationRoot);
-                if (current is null ||
+                var current = FindUniqueIndexedVolumeByRoot(
+                    volumesAfter.Volumes,
+                    locationRoot,
+                    out var currentAmbiguous);
+                if (currentAmbiguous ||
+                    current is null ||
                     current.VolumeIdentity != target.VolumeIdentity ||
                     !string.Equals(
                         NormalizeRoot(current.RootPath),
@@ -142,7 +170,9 @@ internal sealed partial class DesktopSearchEngine
                         provenance,
                         StorageReviewLocationStatus.Unavailable,
                         fullPath,
-                        $"{FormatProvenance(provenance)} indexed-volume identity or root changed while evidence was being captured, so the result was discarded.");
+                        currentAmbiguous
+                            ? $"{FormatProvenance(provenance)} indexed-volume source became ambiguous while evidence was being captured, so the result was discarded."
+                            : $"{FormatProvenance(provenance)} indexed-volume identity or root changed while evidence was being captured, so the result was discarded.");
                 }
 
                 if (!current.HasCheckpoint)
@@ -163,8 +193,12 @@ internal sealed partial class DesktopSearchEngine
                         $"{FormatProvenance(provenance)} indexed volume {current.RootPath} lost its durable checkpoint while evidence was being captured, so the result was discarded.");
                 }
 
-                var primaryAfter = FindIndexedVolumeByRoot(volumesAfter.Volumes, activeRoot);
-                if (primaryAfter is null ||
+                var primaryAfter = FindUniqueIndexedVolumeByRoot(
+                    volumesAfter.Volumes,
+                    activeRoot,
+                    out var primaryAfterAmbiguous);
+                if (primaryAfterAmbiguous ||
+                    primaryAfter is null ||
                     primaryAfter.VolumeIdentity != primaryBefore.VolumeIdentity ||
                     !string.Equals(
                         NormalizeRoot(primaryAfter.RootPath),
@@ -175,7 +209,9 @@ internal sealed partial class DesktopSearchEngine
                         provenance,
                         StorageReviewLocationStatus.Unavailable,
                         fullPath,
-                        $"{FormatProvenance(provenance)} active primary indexed-volume identity or root changed while secondary-volume evidence was being captured, so the result was discarded.");
+                        primaryAfterAmbiguous
+                            ? $"{FormatProvenance(provenance)} active primary indexed-volume source became ambiguous while secondary-volume evidence was being captured, so the result was discarded."
+                            : $"{FormatProvenance(provenance)} active primary indexed-volume identity or root changed while secondary-volume evidence was being captured, so the result was discarded.");
                 }
 
                 if (_primaryVolume is not { } currentPrimary ||
@@ -212,18 +248,36 @@ internal sealed partial class DesktopSearchEngine
         }
     }
 
-    private static IndexingVolumeDescriptor? FindIndexedVolumeByRoot(
+    private static IndexingVolumeDescriptor? FindUniqueIndexedVolumeByRoot(
         IReadOnlyList<IndexingVolumeDescriptor> volumes,
-        string rootPath)
+        string rootPath,
+        out bool ambiguous)
     {
         ArgumentNullException.ThrowIfNull(volumes);
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
         var normalizedRoot = NormalizeRoot(rootPath);
-        return volumes.FirstOrDefault(volume =>
-            string.Equals(
-                NormalizeRoot(volume.RootPath),
-                normalizedRoot,
-                StringComparison.OrdinalIgnoreCase));
+        IndexingVolumeDescriptor? match = null;
+        ambiguous = false;
+        foreach (var volume in volumes)
+        {
+            if (!string.Equals(
+                    NormalizeRoot(volume.RootPath),
+                    normalizedRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (match is not null)
+            {
+                ambiguous = true;
+                return null;
+            }
+
+            match = volume;
+        }
+
+        return match;
     }
 
     private static bool ReviewPathsEqual(string left, string right)
