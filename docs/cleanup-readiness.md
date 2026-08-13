@@ -4,7 +4,7 @@
 
 Known-location review evidence can identify an old, large package/archive or current-user Temp candidate, but provenance, age, extension and size do not make deletion safe.
 
-This slice adds an explicit **Check readiness** action that revalidates current path evidence without creating or authorizing a cleanup operation.
+**Check readiness** revalidates current path evidence without creating or authorizing a cleanup operation. It remains valid for a reviewed candidate on another indexed volume because the readiness service resolves the candidate/root directly and does not depend on Files' active browse volume.
 
 ## Evidence checked
 
@@ -39,23 +39,26 @@ The UI states that limitation explicitly.
 
 ## Delete/recovery boundary
 
-FileOp's current durable action-history/recovery path supports the existing Copy workflow; it does not yet provide a reviewed delete executor with durable delete recovery/undo semantics.
+FileOp now has a separately reviewed Files file-delete session with durable delete action history, recovery discovery, canonical execution validation, explicit user confirmation, and the identity-bound same-handle mutation pipeline.
 
-Accordingly this preview does not:
+Cleanup readiness still does **not** grant access to that mutation boundary. It does not:
 
 - add `FileOperationKind.Delete`;
 - create a Copy/Move plan as a proxy for deletion;
-- run a deletion executor;
+- issue a `FileDeleteOperationUserAuthorizationReceipt`;
+- run `FileDeleteOperationOrchestrator`;
 - queue a cleanup action;
-- expose a delete button;
+- expose a Storage delete button;
 - call the indexing helper or change protocol v8;
 - claim that `CurrentEvidenceConsistent` means safe to delete.
 
-A later cleanup implementation must add a separately reviewed destructive-operation contract with action-time identity/content revalidation, recovery/history semantics, authorization and explicit user intent.
+If the user later chooses permanent deletion, they must select the file in Files and independently pass the Files delete session's fresh preflight, recovery checks, canonical identity/protected-location validation and explicit confirmation. Readiness evidence is not reusable consent or mutation authority.
 
-## Lifecycle
+## Cross-volume lifecycle
 
-Readiness is rebound to the exact candidate in the current cached native known-location review and serialized through the existing Storage gate. The review/root/source is checked again before the result is rendered.
+Readiness is rebound to the exact candidate in the current cached native known-location review and serialized through the existing Storage gate. The review's active-primary source is checked again before the result is rendered.
+
+For a cross-volume candidate, the known-location producer has already required a current checkpointed secondary native index. The readiness service then performs its own current path/identity checks directly against that candidate and known-location root. Files handoff can remain unavailable for that candidate without disabling readiness.
 
 Any new known-location review loading/unavailable/completed state clears the previous readiness result as current evidence.
 
@@ -63,6 +66,6 @@ Any new known-location review loading/unavailable/completed state clears the pre
 
 `tools/verify_cleanup_readiness.py` is wired into `tools/test-local.ps1 -OfflineOnly`.
 
-Its deterministic model covers current/changed/blocked/unavailable states, reparse and canonical-escape boundaries, volume mismatch, two-current-read identity stability and indexed size/time drift. Repository guards pin zero-access metadata reads, the existing canonical resolver, protocol v8, absence of delete/mutation APIs, `CleanupMutationAuthorized == false`, and the absence of `FileOperationKind.Delete`.
+Its deterministic model covers current/changed/blocked/unavailable states, reparse and canonical-escape boundaries, volume mismatch, two-current-read identity stability and indexed size/time drift. Repository guards pin zero-access metadata reads, the existing canonical resolver, protocol v8, absence of mutation APIs in the readiness path, `CleanupMutationAuthorized == false`, and the separate Files delete authorization/orchestration boundary.
 
-Focused .NET tests cover Core readiness semantics plus a Windows-only current-handle metadata reader. Native Windows/.NET/WinUI execution is not claimed in this sandbox.
+Focused .NET tests cover Core readiness semantics plus a Windows-only current-handle metadata reader. The complete Windows local gate remains mandatory before merging changes to this boundary.
