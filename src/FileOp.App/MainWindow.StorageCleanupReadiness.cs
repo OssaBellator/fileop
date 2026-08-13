@@ -91,6 +91,29 @@ public sealed partial class MainWindow
                 return;
             }
 
+            try
+            {
+                if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
+                        activeVolumeIdentity,
+                        activeRoot,
+                        _lifetimeCancellation.Token))
+                {
+                    _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
+                        "The native volume catalog no longer matches this known-location review. Refresh Optimize before checking cleanup readiness.");
+                    return;
+                }
+            }
+            catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
+                    $"Cleanup readiness could not confirm the current indexed source: {exception.Message}");
+                return;
+            }
+
             _storageOptimizationView.SetKnownLocationCleanupReadinessLoading(matchedCandidate.Name);
 
             StorageCleanupReadinessPreview preview;
@@ -129,6 +152,29 @@ public sealed partial class MainWindow
             {
                 _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
                     "The active indexed source or review changed while cleanup readiness was being checked. Refresh Optimize before using the result.");
+                return;
+            }
+
+            try
+            {
+                if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
+                        activeVolumeIdentity,
+                        activeRoot,
+                        _lifetimeCancellation.Token))
+                {
+                    _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
+                        "The native volume catalog changed while cleanup readiness was being checked. Refresh Optimize before using the result.");
+                    return;
+                }
+            }
+            catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
+                    $"Cleanup readiness could not re-confirm the indexed source: {exception.Message}");
                 return;
             }
 
