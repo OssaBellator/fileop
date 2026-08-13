@@ -45,23 +45,23 @@ internal sealed partial class DesktopSearchEngine
             {
                 _trackedNativeStorageSession = nativeSession;
                 _trackedNativeStorageVolumeIdentity = nativeVolume.VolumeIdentity;
-                Interlocked.Increment(ref _nativeStorageSourceGeneration);
-                Volatile.Write(ref _nativeStorageSourceActive, state.IsBusy ? 0 : 1);
             }
-            else if (state.IsBusy)
+
+            if (state.IsBusy)
             {
-                // A busy native maintenance epoch can replace the SQLite snapshot
-                // in place while preserving the physical VolumeIdentity. Advance
-                // once when that epoch starts; repeated busy status updates do not
-                // churn the cache identity, and recovery reuses this new generation.
-                if (Interlocked.Exchange(ref _nativeStorageSourceActive, 0) == 1)
-                {
-                    Interlocked.Increment(ref _nativeStorageSourceGeneration);
-                }
+                // Mark the current healthy source epoch inactive, but defer the
+                // generation advance until native service availability recovers.
+                // That makes every root-keyed feature observe its forced cache miss
+                // when it is actually able to reload rather than while it is busy.
+                Volatile.Write(ref _nativeStorageSourceActive, 0);
             }
             else
             {
-                Volatile.Write(ref _nativeStorageSourceActive, 1);
+                var wasActive = Interlocked.Exchange(ref _nativeStorageSourceActive, 1);
+                if (sessionChanged || identityChanged || wasActive == 0)
+                {
+                    Interlocked.Increment(ref _nativeStorageSourceGeneration);
+                }
             }
         }
         else if (state.Mode != DesktopSearchMode.Native)
