@@ -50,24 +50,25 @@ public sealed partial class MainWindow
         }
 
         var sourceIdentityKey = _searchEngine.StorageSourceIdentityKey;
+        var previousSourceIdentityKey = Interlocked.Exchange(
+            ref _lastStorageSourceIdentityKey,
+            sourceIdentityKey);
         if (string.Equals(
                 sourceIdentityKey,
-                _lastStorageSourceIdentityKey,
+                previousSourceIdentityKey,
                 StringComparison.Ordinal))
         {
             return;
         }
 
-        _lastStorageSourceIdentityKey = sourceIdentityKey;
-
         // These assignments are deliberately UI-free. StateChanged can arrive on
         // a background thread; the existing feature handlers perform collection
         // resets on the DispatcherQueue after observing the forced key miss.
-        _storageSourceKey = null;
-        _filesSourceKey = null;
-        _storageTypesSourceKey = null;
-        _storageHistorySourceKey = null;
-        _storageOptimizationSourceKey = null;
+        Interlocked.Exchange(ref _storageSourceKey, null);
+        Interlocked.Exchange(ref _filesSourceKey, null);
+        Interlocked.Exchange(ref _storageTypesSourceKey, null);
+        Interlocked.Exchange(ref _storageHistorySourceKey, null);
+        Interlocked.Exchange(ref _storageOptimizationSourceKey, null);
 
         // Same-size verification suppresses stale publication by comparing its
         // captured analysis object by reference rather than by generation. Clear
