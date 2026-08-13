@@ -11,9 +11,9 @@ def source_event(
     generation: int,
     last_token: str | None,
     new_token: str | None,
-    native_busy: bool,
+    busy: bool,
 ) -> tuple[int, str | None, int | None]:
-    if native_busy:
+    if busy:
         generation += 1
 
     clear_owner: int | None = None
@@ -42,7 +42,7 @@ def run_model(cases: int, seed: int) -> int:
         generation,
         token,
         token,
-        native_busy=True,
+        busy=True,
     )
     assert generation == 11
     assert query_generation != generation
@@ -55,7 +55,7 @@ def run_model(cases: int, seed: int) -> int:
         generation,
         "native:1:1",
         "native:1:2",
-        native_busy=False,
+        busy=False,
     )
     assert clear_owner == generation and current_token == "native:1:2"
     assert not apply_clear(generation, clear_owner, displayed=True)
@@ -66,7 +66,7 @@ def run_model(cases: int, seed: int) -> int:
         generation,
         "native:1:1",
         "fallback:1",
-        native_busy=False,
+        busy=False,
     )
     fresh_query_generation = generation + 1
     assert apply_clear(fresh_query_generation, clear_owner, displayed=True)
@@ -78,14 +78,14 @@ def run_model(cases: int, seed: int) -> int:
         generation,
         "native:1:1",
         None,
-        native_busy=False,
+        busy=False,
     )
     assert clear_owner == generation and current_token is None
     generation, current_token, clear_owner = source_event(
         generation,
         None,
         "fallback:2",
-        native_busy=False,
+        busy=False,
     )
     assert clear_owner == generation and current_token == "fallback:2"
     checks += 2
@@ -95,7 +95,7 @@ def run_model(cases: int, seed: int) -> int:
         generation,
         "fallback:1",
         "fallback:1",
-        native_busy=False,
+        busy=False,
     )
     assert unchanged_generation == generation and clear_owner is None
     checks += 1
@@ -124,24 +124,24 @@ def run_model(cases: int, seed: int) -> int:
         else:
             new_token = last_token
 
-        native_busy = rng.random() < 0.35
+        busy = rng.random() < 0.35
         query_generation = generation
         displayed = rng.random() < 0.80
         after_generation, current_token, clear_owner = source_event(
             generation,
             last_token,
             new_token,
-            native_busy,
+            busy,
         )
         expected_generation = (
             generation
-            + (1 if native_busy else 0)
+            + (1 if busy else 0)
             + (1 if source_changed else 0)
         )
         assert after_generation == expected_generation
         assert (clear_owner is not None) == source_changed
         assert (query_generation == after_generation) == (
-            not native_busy and not source_changed
+            not busy and not source_changed
         )
         immediate_display = apply_clear(
             after_generation,
@@ -163,7 +163,7 @@ def run_model(cases: int, seed: int) -> int:
             generation,
             last_token,
             last_token,
-            native_busy=True,
+            busy=True,
         )
         assert failed_clear is None and failed_token == last_token
         assert apply_clear(
@@ -176,7 +176,7 @@ def run_model(cases: int, seed: int) -> int:
             generation,
             last_token,
             last_token,
-            native_busy=False,
+            busy=False,
         )
         assert (
             routine_generation == generation
@@ -212,6 +212,7 @@ def check_repository(root: Path) -> int:
     engine_lifetime = (
         root / "src/FileOp.App/DesktopSearchEngine.StorageSourceIdentity.cs"
     ).read_text(encoding="utf-8")
+    engine = (root / "src/FileOp.App/DesktopSearchEngine.cs").read_text(encoding="utf-8")
     files = (root / "src/FileOp.App/MainWindow.Files.cs").read_text(encoding="utf-8")
     protocol = (
         root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs"
@@ -222,7 +223,7 @@ def check_repository(root: Path) -> int:
     for needle, label in (
         ("InitializeSearchSourceIdentityTracking", "Search lifetime initializer"),
         ("_searchEngine.StateChanged += SearchSourceIdentity_StateChanged;", "Search pre-handler subscription"),
-        ("if (state.Mode == DesktopSearchMode.Native && state.IsBusy)", "Native busy publication barrier"),
+        ("if (state.IsBusy)", "all-mode busy publication barrier"),
         ("Interlocked.Increment(ref _searchGeneration);", "Search generation invalidation"),
         ("_searchEngine.StorageSourceIdentityKey", "backing source token read"),
         ("Interlocked.Exchange(\n            ref _lastSearchSourceIdentityKey,", "atomic previous-token exchange"),
@@ -261,6 +262,20 @@ def check_repository(root: Path) -> int:
     if not wait_at < release_at < yield_at < invalidation_check_at < clear_at:
         raise AssertionError(
             "source-change presentation must drain stale Search work, yield, then revalidate before clearing"
+        )
+    checks += 1
+
+    elevation_busy_at = engine.index(
+        'Status = "Requesting helper-only administrative indexing access…"'
+    )
+    elevation_gate_at = engine.index(
+        "await _searchOperationGate.WaitAsync(token)",
+        elevation_busy_at,
+    )
+    elevation_busy_block = engine[elevation_busy_at:elevation_gate_at]
+    if "IsBusy = true" not in elevation_busy_block or "Mode =" in elevation_busy_block:
+        raise AssertionError(
+            "elevation must publish busy while preserving the current mode, including Fallback"
         )
     checks += 1
 
