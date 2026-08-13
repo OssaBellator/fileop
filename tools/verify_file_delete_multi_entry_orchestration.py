@@ -125,6 +125,16 @@ def execute(state: OrchestrationState) -> OrchestrationResult:
     )
 
 
+def settled_observation_outcome(previous: str, current: str) -> str:
+    if previous not in ("C", "F"):
+        raise ValueError("previous observation must be safely settled")
+    if current in ("M", "R"):
+        return "recovery-stop"
+    if current == previous:
+        return "stable"
+    return "history-regression"
+
+
 def run_model(cases: int, seed: int) -> int:
     baseline = OrchestrationState(
         entries=("P", "P", "P"),
@@ -141,6 +151,17 @@ def run_model(cases: int, seed: int) -> int:
     assert result.terminal_state == "Succeeded"
     assert result.events[-1] == "complete"
     checks = 5
+
+    for previous in ("C", "F"):
+        for current in ("P", "C", "F", "M", "R"):
+            outcome = settled_observation_outcome(previous, current)
+            if current in ("M", "R"):
+                assert outcome == "recovery-stop"
+            elif current == previous:
+                assert outcome == "stable"
+            else:
+                assert outcome == "history-regression"
+            checks += 1
 
     rng = random.Random(seed)
     for _ in range(cases):
@@ -222,6 +243,7 @@ def check_repository(root: Path) -> int:
     orchestrator = (root / "src/FileOp.Core/Operations/FileDeleteOperationOrchestrator.cs").read_text(encoding="utf-8")
     tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationOrchestratorTests.cs").read_text(encoding="utf-8")
     recovery_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationOrchestratorRecoveryTerminalTests.cs").read_text(encoding="utf-8")
+    regression_tests = (root / "tests/FileOp.Windows.Tests/FileDeleteOperationOrchestratorHistoryRegressionTests.cs").read_text(encoding="utf-8")
     native_tests = (root / "tests/FileOp.Windows.Tests/WindowsFileDeleteOperationOrchestratorTests.cs").read_text(encoding="utf-8")
     docs = (root / "docs/file-delete-multi-entry-orchestration.md").read_text(encoding="utf-8")
     gate = (root / "tools/test-local.ps1").read_text(encoding="utf-8")
@@ -234,6 +256,8 @@ def check_repository(root: Path) -> int:
         (orchestrator, ".GetAsync(authorization.PlanId, cancellationToken)", "existing history requirement"),
         (orchestrator, "FileDeleteOperationActionEntryState.Committed", "committed observation"),
         (orchestrator, "FileDeleteOperationActionEntryState.Failed", "failed observation"),
+        (orchestrator, "CreateSettledEntryObservations", "settled-entry observation memory"),
+        (orchestrator, "destructive replay is refused", "settled-entry regression rejection"),
         (orchestrator, "ThrowIfRecoverySensitive", "operation-wide recovery stop"),
         (orchestrator, "FileDeleteOperationPreMutationPreparation", "reviewed read-only preparation"),
         (orchestrator, "FileDeleteOperationFinalMutationLeasePreparation", "reviewed final lease acquisition"),
@@ -252,6 +276,8 @@ def check_repository(root: Path) -> int:
         (tests, "PostMutationReleaseFailureStopsBeforeNextOrdinalAndRetainsCleanupOwner", "cleanup ownership regression"),
         (recovery_tests, "CompletionReturningRecoveryRequiredIsSurfacedAsRecovery", "direct recovery completion regression"),
         (recovery_tests, "CompletionThrowThenObservedRecoveryRequiredIsSurfacedAsRecovery", "inspected recovery completion regression"),
+        (regression_tests, "PreviouslyCommittedEntryRegressionToPendingIsRejectedBeforeProviderAcquisition", "committed history regression regression"),
+        (regression_tests, "PreviouslyFailedEntryRegressionToPendingIsRejectedBeforeProviderAcquisition", "failed history regression regression"),
         (native_tests, "TwoAuthorizedFilesDeleteSequentiallyAndCompleteSucceededHistory", "native two-file orchestration regression"),
         (docs, "Persisted history never recreates any of these live capabilities", "history-not-authority documentation"),
         (docs, "does not translate arbitrary pre-barrier exceptions into durable `Failed` entries", "conservative failure classification documentation"),
