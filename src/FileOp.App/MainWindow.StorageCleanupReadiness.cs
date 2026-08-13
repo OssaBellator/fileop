@@ -40,7 +40,7 @@ public sealed partial class MainWindow
                 !_searchEngine.StorageOptimizationAvailable)
             {
                 _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
-                    "Known-location review evidence is no longer current for an active native indexed volume. Refresh Optimize before checking cleanup readiness.");
+                    "Known-location review evidence is no longer current for an active native indexed source. Refresh Optimize before checking cleanup readiness.");
                 return;
             }
 
@@ -63,11 +63,10 @@ public sealed partial class MainWindow
                 matchedLocation.Status != StorageReviewLocationStatus.Available ||
                 string.IsNullOrWhiteSpace(matchedLocation.RootPath) ||
                 !PathsEqual(review.ActiveVolumeRootPath, activeRoot) ||
-                !IsPathWithinRoot(matchedLocation.RootPath, activeRoot) ||
                 !IsPathWithinRoot(matchedCandidate.Path, matchedLocation.RootPath))
             {
                 _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
-                    "That path is not an available candidate in the current known-location review for this indexed volume.");
+                    "That path is not an available candidate in the current known-location review. Cross-volume review candidates remain eligible for this read-only current-path check.");
                 return;
             }
 
@@ -106,7 +105,7 @@ public sealed partial class MainWindow
                 !_searchEngine.StorageOptimizationAvailable)
             {
                 _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
-                    "The indexed source or review changed while cleanup readiness was being checked. Refresh Optimize before using the result.");
+                    "The active indexed source or review changed while cleanup readiness was being checked. Refresh Optimize before using the result.");
                 return;
             }
 
