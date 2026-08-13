@@ -13,6 +13,8 @@ The review itself never authorizes cleanup. Permanent deletion, if later chosen 
 
 The desktop resolves each current-user known-location path and asks the existing native index for the exact subtree. It does not recursively enumerate Downloads or Temp in the desktop process and does not introduce another filesystem crawler.
 
+Known-folder/Temp resolver outputs must be fully qualified before they become review provenance. FileOp does not resolve drive-relative (`D:Temp`) or current-drive-rooted (`\Temp`) strings against the desktop process and then treat the result as evidence.
+
 Protocol remains v8. The existing protocol already binds storage optimization analysis to `VolumeIdentity`, `VolumeRootPath`, and `DirectoryPath`, so cross-volume review requires no new Indexer operation.
 
 ### Current baseline
@@ -54,7 +56,7 @@ The Temp root comes from `Path.GetTempPath()` under the desktop user's environme
 
 Rule `user-temp.old-large-file.v1` surfaces stale-large indexed files underneath that exact current-user Temp root. It does not infer type from extension. Being in Temp is still only review evidence.
 
-The SQLite Optimize analyzer canonicalizes indexed directory scope by removing a trailing directory separator from non-volume-root paths. Cross-volume review therefore compares the returned analysis root and requested known-location path with equivalent normalized Windows path semantics; a formatting-only `D:\Temp\` versus `D:\Temp` difference is not treated as source drift.
+The SQLite Optimize analyzer canonicalizes indexed directory scope by removing a trailing directory separator from non-volume-root paths. Review compares the returned analysis root and requested known-location path with equivalent normalized Windows path semantics; a formatting-only `D:\Temp\` versus `D:\Temp` difference is not treated as source drift. Both inputs must already be fully qualified, so normalization never imports the desktop process's current-directory/current-drive context into provenance.
 
 ## Cross-volume indexed-source boundary
 
@@ -62,20 +64,20 @@ Same-volume known locations continue to use the active primary native Optimize s
 
 When a known location is outside the active primary volume, FileOp now:
 
-1. derives the location's filesystem root;
+1. requires the resolved location path to be fully qualified and derives its filesystem root;
 2. reads the already connected helper's indexed-volume descriptors;
-3. requires exactly one descriptor for the normalized active-primary root and exactly one descriptor for the normalized secondary root; an absent secondary remains outside the active volume, duplicate root matches are treated as an ambiguous catalog, and a syntactically malformed descriptor root makes the catalog unusable for that review rather than being skipped or normalized through an exception;
+3. requires exactly one descriptor for the normalized active-primary root and exactly one descriptor for the normalized secondary root; an absent secondary remains outside the active volume, duplicate root matches are treated as an ambiguous catalog, and a malformed or syntactically valid non-root descriptor makes the catalog unusable for that review rather than being skipped or normalized through an exception;
 4. verifies that the service-reported primary descriptor identity/root still matches the selected primary native source;
 5. distinguishes a genuine durable-checkpoint absence (`State == SnapshotRequired`) from a temporarily unavailable descriptor; helper busy descriptors intentionally report `HasCheckpoint == false` while maintenance owns the index, so other no-checkpoint states are treated as transient rather than as evidence that a rebuild is required;
 6. requires the selected secondary volume to have an available existing checkpoint;
 7. performs bounded journal catch-up with the existing `SyncVolume` / `CatchUpAsync` path;
 8. requires catch-up to reach `IsCurrent == true`;
 9. submits `AnalyzeStorageOptimization` with that exact secondary `VolumeIdentity`, `VolumeRootPath`, and known-location path;
-10. verifies the returned analysis root is the same normalized Windows path as the requested known location; a malformed returned path fails this comparison without throwing through the review;
+10. verifies the returned analysis root is a fully-qualified equivalent normalized Windows path to the requested known location; malformed, drive-relative or current-drive-rooted returned paths fail this comparison without throwing through the review;
 11. re-reads indexed-volume descriptors after analysis, requiring unique, well-formed primary/secondary root matches, the same identities/roots and a still-available secondary checkpoint;
 12. verifies that the selected primary source still has the same identity/root before accepting the secondary evidence.
 
-A redirected location with no matching indexed volume remains `OutsideActiveVolume`. A duplicate/ambiguous root match, malformed catalog root, genuine missing checkpoint, required rebuild/elevation, bounded catch-up that remains behind, transient busy/maintenance descriptor, lost checkpoint, malformed analysis root, or source identity/root drift marks that location unavailable. FileOp does **not** silently rebuild a secondary volume and does not scan the path directly.
+A redirected location with no matching indexed volume remains `OutsideActiveVolume`. A duplicate/ambiguous root match, malformed catalog root, genuine missing checkpoint, required rebuild/elevation, bounded catch-up that remains behind, transient busy/maintenance descriptor, lost checkpoint, malformed/non-fully-qualified analysis root, or source identity/root drift marks that location unavailable. FileOp does **not** silently rebuild a secondary volume and does not scan the path directly.
 
 Malformed catalog state is distinct from “not indexed”: FileOp does not reinterpret a catalog containing an invalid root as proof that the requested secondary volume is absent. It fails the binding closed so corrupted/helper-invalid namespace metadata cannot silently change the review classification.
 
@@ -83,9 +85,9 @@ The primary Search/Storage volume is never replaced merely to review a redirecte
 
 Every **available** known-location result persists the `VolumeIdentity` of the indexed volume that produced it. Same-volume locations record the active primary identity; cross-volume locations record the exact secondary identity selected above. Unavailable locations do not invent source identity evidence.
 
-After both known locations have been evaluated, the producer performs one final service-catalog freshness check for the active primary **and every available location source**. It reads the catalog once under the existing search/native gate order, requires one unique **well-formed** descriptor per source root, requires each identity/root to match the captured review, and requires each descriptor to still expose a checkpoint. Publication is therefore refused if an earlier secondary location is replaced, becomes ambiguous, loses its checkpoint, becomes malformed, or enters a descriptor state that cannot currently prove checkpoint availability while a later location is being captured. The same check still closes the same-drive-letter primary replacement interval before background sync reports a transition.
+After both known locations have been evaluated, the producer performs one final service-catalog freshness check for the active primary **and every available location source**. It reads the catalog once under the existing search/native gate order, requires one unique **well-formed filesystem-root** descriptor per source root, requires each identity/root to match the captured review, and requires each descriptor to still expose a checkpoint. Publication is therefore refused if an earlier secondary location is replaced, becomes ambiguous, loses its checkpoint, becomes malformed, or enters a descriptor state that cannot currently prove checkpoint availability while a later location is being captured. The same check still closes the same-drive-letter primary replacement interval before background sync reports a transition.
 
-The current native volume catalog is drive-letter-rooted (`DriveInfo.GetDrives()` with drive-letter root filtering). The cross-volume verifier pins that contract because the current `Path.GetPathRoot` selector depends on it. If native discovery later exposes directory-mounted volumes, selection must move to descriptor-containment/longest-root semantics rather than silently assuming the host drive root.
+The current native volume catalog is drive-letter-rooted (`DriveInfo.GetDrives()` with drive-letter root filtering). Review-side root normalization requires a descriptor path to normalize to its actual filesystem root. A legitimate UNC share can still be a structurally valid expected known-location root, but today's drive-letter catalog has no matching descriptor. If native discovery later exposes directory-mounted volumes, selection must move to descriptor-containment/longest-root semantics rather than silently assuming the host drive root.
 
 ## Candidate actions
 
@@ -103,13 +105,13 @@ Each candidate keeps logical bytes, allocated bytes when known, last-write time,
 
 Known-location review has its own status inside Optimize. Failure of one location does not erase successful base Optimize or Performance evidence.
 
-Source changes invalidate cached review. Transient native-index busy/freshness failures, malformed native catalog roots, and malformed helper analysis roots fail the affected review closed rather than substituting crawler evidence or throwing a path-normalization failure through the review surface. A temporary descriptor state is not reported as a missing durable checkpoint merely because the helper deliberately suppresses checkpoint claims while maintenance owns the index.
+Source changes invalidate cached review. Transient native-index busy/freshness failures, malformed/non-root native catalog descriptors, malformed or non-fully-qualified local known-location paths, and malformed/non-fully-qualified helper analysis roots fail the affected review closed rather than substituting crawler evidence or throwing path-normalization failures through the review surface. A temporary descriptor state is not reported as a missing durable checkpoint merely because the helper deliberately suppresses checkpoint claims while maintenance owns the index.
 
 Full Optimize/Performance refreshes remain blocked during explicit Disk I/O attribution capture so known-location queries are not added as avoidable FileOp workload during measurement.
 
 ## Windows Downloads path resolution
 
-`WindowsKnownFolderPathResolver` uses `SHGetKnownFolderPath` with Downloads known-folder ID `{374DE290-123F-4565-9164-39C4925E467B}` and current-user token semantics. It balances COM initialization, frees the returned path buffer, does not enumerate the folder, and does not read the registry.
+`WindowsKnownFolderPathResolver` uses `SHGetKnownFolderPath` with Downloads known-folder ID `{374DE290-123F-4565-9164-39C4925E467B}` and current-user token semantics. It balances COM initialization, frees the returned path buffer, does not enumerate the folder, and does not read the registry. Resolver/path-format failures are isolated into an unavailable Downloads review rather than aborting the whole known-location snapshot.
 
 ## Deliberate non-goals
 
@@ -137,7 +139,7 @@ This slice does not:
 
 `tools/verify_known_location_source_identity.py` specifically models the additional lifetime after each individual location capture: same-volume and secondary source identity persistence, missing or duplicate descriptors, physical-volume replacement, checkpoint loss/temporary no-checkpoint descriptors, and final all-location publication binding. Its source guards require both producers to persist `SourceVolumeIdentity` and require cleanup readiness to pass the matched owning location into both pre/post-read catalog checks.
 
-`tools/verify_known_location_malformed_catalog.py` models malformed expected roots, malformed service descriptor roots, duplicate-root ambiguity, and malformed returned analysis paths. It requires malformed catalog state to fail closed as invalid rather than being skipped or misclassified as an absent volume, pins non-throwing root/path normalization in both capture and final freshness checks, and keeps protocol v8 unchanged.
+`tools/verify_known_location_malformed_catalog.py` models malformed expected/catalog roots, syntactically valid non-root descriptors, duplicate-root ambiguity, structurally valid UNC roots, malformed local resolver paths, drive-relative/current-drive-rooted paths, and malformed returned analysis paths. It requires invalid catalog/path state to fail closed rather than being skipped, resolved against process-local state, or misclassified as an absent volume; its source guards pin the same behavior in capture and final freshness while keeping protocol v8 unchanged.
 
 `tools/verify_known_location_files_handoff.py` continues to model the primary-volume Files containment rule. `tools/verify_cleanup_readiness.py` pins that readiness can operate on a cross-volume review candidate without becoming mutation authority.
 
