@@ -139,6 +139,12 @@ def require(text: str, needle: str, label: str) -> int:
     return 1
 
 
+def forbid(text: str, needle: str, label: str) -> int:
+    if needle in text:
+        raise AssertionError(f"forbidden {label}: {needle}")
+    return 1
+
+
 def check_repository(root: Path) -> int:
     paths = {
         "engine": "src/FileOp.App/DesktopSearchEngine.StorageSourceIdentity.cs",
@@ -172,6 +178,8 @@ def check_repository(root: Path) -> int:
         ("window", "_storageTypesSourceKey = null;", "Types cache invalidation"),
         ("window", "_storageHistorySourceKey = null;", "History cache invalidation"),
         ("window", "_storageOptimizationSourceKey = null;", "Optimize cache invalidation"),
+        ("window", "_storageOptimizationAnalysis = null;", "same-size source reference invalidation"),
+        ("window", "_storageKnownLocationReview = null;", "known-location source reference invalidation"),
         ("window", "Interlocked.Increment(ref _storageGeneration);", "folder in-flight invalidation"),
         ("window", "Interlocked.Increment(ref _storageTypeGeneration);", "Types in-flight invalidation"),
         ("window", "Interlocked.Increment(ref _storageHistoryGeneration);", "History in-flight invalidation"),
@@ -181,11 +189,18 @@ def check_repository(root: Path) -> int:
         ("types", "_storageTypesSourceKey", "Types shared root-key consumer"),
         ("history", "_storageHistorySourceKey", "History shared root-key consumer"),
         ("optimize", "_storageOptimizationSourceKey", "Optimize shared root-key consumer"),
+        ("optimize", "ReferenceEquals(analysis, _storageOptimizationAnalysis)", "same-size stale-publication guard"),
         ("gate", "verify_storage_source_identity.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
         ("protocol", "public const int CurrentVersion = 8;", "protocol v8"),
     )
     for source, needle, label in required:
         checks += require(text[source], needle, label)
+
+    checks += forbid(
+        text["window"],
+        "Interlocked.Increment(ref _performanceDiskIoGeneration);",
+        "indexed-source invalidation of system-wide Disk I/O capture",
+    )
 
     app_identity_at = text["app"].index("window.InitializeStorageSourceIdentityTracking();")
     app_files_at = text["app"].index("window.InitializeFilesFeature();")
