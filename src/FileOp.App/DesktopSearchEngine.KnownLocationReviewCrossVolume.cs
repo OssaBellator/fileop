@@ -233,6 +233,7 @@ internal sealed partial class DesktopSearchEngine
                     provenance);
                 return classified with
                 {
+                    SourceVolumeIdentity = target.VolumeIdentity,
                     Detail = classified.Detail +
                         $" Evidence came from current checkpointed indexed volume {target.RootPath}; the active Files/Storage volume remains {activeRoot}.",
                 };
