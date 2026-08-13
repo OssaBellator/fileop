@@ -46,6 +46,8 @@ public sealed record StorageKnownLocationReview(
     bool SourceMayBeTruncated,
     IReadOnlyList<StorageReviewCandidate> Candidates)
 {
+    public ulong? SourceVolumeIdentity { get; init; }
+
     public long CandidateMeasuredBytes
     {
         get
