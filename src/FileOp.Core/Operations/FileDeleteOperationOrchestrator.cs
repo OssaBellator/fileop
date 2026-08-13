@@ -109,6 +109,7 @@ public static class FileDeleteOperationOrchestrator
         }
 
         ThrowIfRecoverySensitive(baseline);
+        var settledEntryObservations = CreateSettledEntryObservations(baseline);
 
         var mutatedEntryCount = 0;
         var previouslyTerminalEntryCount = 0;
@@ -122,6 +123,7 @@ public static class FileDeleteOperationOrchestrator
             var current = await LoadCurrentAsync(
                     authorization,
                     baseline,
+                    settledEntryObservations,
                     historyStore,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -189,6 +191,9 @@ public static class FileDeleteOperationOrchestrator
                     CancellationToken.None)
                 .ConfigureAwait(false);
             ValidatePerEntryCommit(authorization, baseline, ordinal, committed);
+            ValidateAndObserveSettledEntries(
+                settledEntryObservations,
+                committed.CommittedHistory);
             mutatedEntryCount++;
         }
 
@@ -197,6 +202,7 @@ public static class FileDeleteOperationOrchestrator
         var finalHistory = await LoadCurrentAsync(
                 authorization,
                 baseline,
+                settledEntryObservations,
                 historyStore,
                 CancellationToken.None)
             .ConfigureAwait(false);
@@ -230,6 +236,7 @@ public static class FileDeleteOperationOrchestrator
                 .CompleteAsync(authorization.PlanId, CancellationToken.None)
                 .ConfigureAwait(false);
             ValidateHistoryAgainstBaseline(authorization, baseline, completed);
+            ValidateAndObserveSettledEntries(settledEntryObservations, completed);
             return CreateTerminalResult(
                 authorization,
                 completed,
@@ -246,6 +253,7 @@ public static class FileDeleteOperationOrchestrator
             return await ResolveCompletionOutcomeAsync(
                     authorization,
                     baseline,
+                    settledEntryObservations,
                     historyStore,
                     mutatedEntryCount,
                     previouslyTerminalEntryCount,
@@ -257,6 +265,7 @@ public static class FileDeleteOperationOrchestrator
     private static async ValueTask<FileDeleteOperationOrchestrationResult> ResolveCompletionOutcomeAsync(
         FileDeleteOperationUserAuthorizationReceipt authorization,
         FileDeleteOperationActionHistory baseline,
+        FileDeleteOperationActionEntry?[] settledEntryObservations,
         IFileDeleteOperationActionHistoryStore historyStore,
         int mutatedEntryCount,
         int previouslyTerminalEntryCount,
@@ -286,6 +295,7 @@ public static class FileDeleteOperationOrchestrator
         }
 
         ValidateHistoryAgainstBaseline(authorization, baseline, observed);
+        ValidateAndObserveSettledEntries(settledEntryObservations, observed);
         if (observed.TerminalState.HasValue)
         {
             return CreateTerminalResult(
@@ -315,6 +325,7 @@ public static class FileDeleteOperationOrchestrator
     private static async ValueTask<FileDeleteOperationActionHistory> LoadCurrentAsync(
         FileDeleteOperationUserAuthorizationReceipt authorization,
         FileDeleteOperationActionHistory baseline,
+        FileDeleteOperationActionEntry?[] settledEntryObservations,
         IFileDeleteOperationActionHistoryStore historyStore,
         CancellationToken cancellationToken)
     {
@@ -324,6 +335,7 @@ public static class FileDeleteOperationOrchestrator
             ?? throw new InvalidOperationException(
                 "Delete action history disappeared during multi-entry orchestration.");
         ValidateHistoryAgainstBaseline(authorization, baseline, history);
+        ValidateAndObserveSettledEntries(settledEntryObservations, history);
         return history;
     }
 
@@ -417,6 +429,64 @@ public static class FileDeleteOperationOrchestrator
             {
                 throw new InvalidOperationException(
                     $"Delete action history changed static entry provenance for ordinal {ordinal}.");
+            }
+        }
+    }
+
+    private static FileDeleteOperationActionEntry?[] CreateSettledEntryObservations(
+        FileDeleteOperationActionHistory history)
+    {
+        var observations = new FileDeleteOperationActionEntry?[history.Entries.Count];
+        ValidateAndObserveSettledEntries(observations, history);
+        return observations;
+    }
+
+    private static void ValidateAndObserveSettledEntries(
+        FileDeleteOperationActionEntry?[] observations,
+        FileDeleteOperationActionHistory history)
+    {
+        if (observations.Length != history.Entries.Count)
+        {
+            throw new InvalidOperationException(
+                "Delete action history changed entry count while validating settled-entry observations.");
+        }
+
+        for (var ordinal = 0; ordinal < observations.Length; ordinal++)
+        {
+            var observed = observations[ordinal];
+            if (observed is null)
+            {
+                continue;
+            }
+
+            var current = history.Entries[ordinal];
+            if (current.State is FileDeleteOperationActionEntryState.MutationStarted or
+                FileDeleteOperationActionEntryState.RecoveryRequired)
+            {
+                // Recovery-sensitive evidence is always allowed to escalate safety. The caller
+                // will stop orchestration before any later provider acquisition or mutation.
+                continue;
+            }
+
+            if (current != observed)
+            {
+                throw new InvalidOperationException(
+                    $"Delete action history regressed or rewrote previously observed settled entry {ordinal}; destructive replay is refused.");
+            }
+        }
+
+        for (var ordinal = 0; ordinal < observations.Length; ordinal++)
+        {
+            if (observations[ordinal] is not null)
+            {
+                continue;
+            }
+
+            var current = history.Entries[ordinal];
+            if (current.State is FileDeleteOperationActionEntryState.Committed or
+                FileDeleteOperationActionEntryState.Failed)
+            {
+                observations[ordinal] = current;
             }
         }
     }
