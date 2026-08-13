@@ -111,6 +111,98 @@ public sealed class StorageKnownLocationReviewTests
     }
 
     [TestMethod]
+    public void CandidateContainmentAcceptsRootNestedAndCaseEquivalentPaths()
+    {
+        const string root = @"C:\review";
+        var analysis = Analysis(
+            root,
+            FileAt(root, "root.zip", ".zip"),
+            FileAt(@"C:\review\nested\archive.zip", "archive.zip", ".zip"),
+            FileAt(@"c:\REVIEW\nested\image.iso", "image.iso", ".iso"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.Downloads);
+
+        CollectionAssert.AreEqual(
+            new[] { "root.zip", "archive.zip", "image.iso" },
+            review.Candidates.Select(static candidate => candidate.Name).ToArray());
+    }
+
+    [TestMethod]
+    public void CandidateContainmentRejectsSiblingOtherDriveAndRelativePaths()
+    {
+        const string root = @"C:\review";
+        var analysis = Analysis(
+            root,
+            FileAt(@"C:\review\good.work", "good.work", ".work"),
+            FileAt(@"C:\review2\sibling.work", "sibling.work", ".work"),
+            FileAt(@"D:\review\other.work", "other.work", ".work"),
+            FileAt(@"C:relative.work", "relative.work", ".work"),
+            FileAt(@"\review\current-drive.work", "current-drive.work", ".work"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.UserTemp);
+
+        Assert.AreEqual(1, review.Candidates.Count);
+        Assert.AreEqual("good.work", review.Candidates[0].Name);
+    }
+
+    [TestMethod]
+    public void CandidateContainmentRejectsMalformedPathWithoutDiscardingValidNeighbor()
+    {
+        const string root = @"C:\review";
+        var analysis = Analysis(
+            root,
+            FileAt("C:\\review\\bad\0.zip", "bad.zip", ".zip"),
+            FileAt(@"C:\review\good.zip", "good.zip", ".zip"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.Downloads);
+
+        Assert.AreEqual(1, review.Candidates.Count);
+        Assert.AreEqual("good.zip", review.Candidates[0].Name);
+    }
+
+    [TestMethod]
+    public void CandidateContainmentSupportsUncRootsWithoutSiblingPrefixLeakage()
+    {
+        const string root = @"\\server\share\review";
+        var analysis = Analysis(
+            root,
+            FileAt(@"\\server\share\review\nested\good.zip", "good.zip", ".zip"),
+            FileAt(@"\\server\share\review2\bad.zip", "bad.zip", ".zip"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.Downloads);
+
+        Assert.AreEqual(1, review.Candidates.Count);
+        Assert.AreEqual("good.zip", review.Candidates[0].Name);
+    }
+
+    [TestMethod]
+    public void FilteredCandidatesStillCountTowardUpstreamStaleCap()
+    {
+        var policy = StorageOptimizationPolicy.Default with { MaxStaleLargeFiles = 2 };
+        var analysis = Analysis(
+            @"C:\review",
+            policy,
+            FileAt(@"C:\review\good.zip", "good.zip", ".zip"),
+            FileAt(@"C:\review2\bad.zip", "bad.zip", ".zip"));
+
+        var review = StorageKnownLocationReviewClassifier.Classify(
+            analysis,
+            StorageReviewProvenance.Downloads);
+
+        Assert.AreEqual(1, review.Candidates.Count);
+        Assert.AreEqual(2, review.SourceStaleCandidateCount);
+        Assert.IsTrue(review.SourceMayBeTruncated);
+    }
+
+    [TestMethod]
     public void ReachingUpstreamStaleCapIsMarkedPotentiallyTruncated()
     {
         var policy = StorageOptimizationPolicy.Default with { MaxStaleLargeFiles = 2 };
@@ -176,8 +268,19 @@ public sealed class StorageKnownLocationReviewTests
     private static StorageOptimizationAnalysis Analysis(
         StorageOptimizationPolicy policy,
         params StorageOptimizationFileCandidate[] files) =>
+        Analysis(@"C:\review", policy, files);
+
+    private static StorageOptimizationAnalysis Analysis(
+        string rootPath,
+        params StorageOptimizationFileCandidate[] files) =>
+        Analysis(rootPath, StorageOptimizationPolicy.Default, files);
+
+    private static StorageOptimizationAnalysis Analysis(
+        string rootPath,
+        StorageOptimizationPolicy policy,
+        params StorageOptimizationFileCandidate[] files) =>
         new(
-            @"C:\review",
+            rootPath,
             new DateTimeOffset(2026, 8, 11, 0, 0, 0, TimeSpan.Zero),
             policy,
             files,
@@ -189,8 +292,16 @@ public sealed class StorageKnownLocationReviewTests
         string extension,
         long logicalBytes = 1024,
         long? allocatedBytes = 1024) =>
+        FileAt(Path.Combine(@"C:\review", name), name, extension, logicalBytes, allocatedBytes);
+
+    private static StorageOptimizationFileCandidate FileAt(
+        string path,
+        string name,
+        string extension,
+        long logicalBytes = 1024,
+        long? allocatedBytes = 1024) =>
         new(
-            Path.Combine(@"C:\review", name),
+            path,
             name,
             extension,
             StorageFileCategory.Other,
