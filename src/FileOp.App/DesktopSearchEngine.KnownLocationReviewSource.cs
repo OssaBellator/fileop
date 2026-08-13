@@ -82,6 +82,11 @@ internal sealed partial class DesktopSearchEngine
                     string? sourceRoot;
                     try
                     {
+                        if (!Path.IsPathFullyQualified(location.RootPath))
+                        {
+                            return false;
+                        }
+
                         sourceRoot = Path.GetPathRoot(location.RootPath);
                     }
                     catch (Exception exception)
