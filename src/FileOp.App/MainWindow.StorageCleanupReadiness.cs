@@ -93,13 +93,14 @@ public sealed partial class MainWindow
 
             try
             {
-                if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
+                if (!await _searchEngine.AreNativeReviewSourcesCurrentAsync(
                         activeVolumeIdentity,
                         activeRoot,
+                        [matchedLocation],
                         _lifetimeCancellation.Token))
                 {
                     _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
-                        "The native volume catalog no longer matches this known-location review. Refresh Optimize before checking cleanup readiness.");
+                        "The indexed source for this known-location review no longer matches the native volume catalog. Refresh Optimize before checking cleanup readiness.");
                     return;
                 }
             }
@@ -157,13 +158,14 @@ public sealed partial class MainWindow
 
             try
             {
-                if (!await _searchEngine.IsNativeReviewSourceCurrentAsync(
+                if (!await _searchEngine.AreNativeReviewSourcesCurrentAsync(
                         activeVolumeIdentity,
                         activeRoot,
+                        [matchedLocation],
                         _lifetimeCancellation.Token))
                 {
                     _storageOptimizationView.SetKnownLocationCleanupReadinessUnavailable(
-                        "The native volume catalog changed while cleanup readiness was being checked. Refresh Optimize before using the result.");
+                        "The indexed source for this review changed while cleanup readiness was being checked. Refresh Optimize before using the result.");
                     return;
                 }
             }
