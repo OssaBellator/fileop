@@ -17,6 +17,7 @@ public partial class App : Application
     {
         var window = new MainWindow();
         window.InitializeStorageSourceIdentityTracking();
+        window.InitializeSearchSourceIdentityTracking();
         window.InitializeFilesFeature();
         MainWindow = window;
         _window = window;
