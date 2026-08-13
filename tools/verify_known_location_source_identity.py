@@ -261,6 +261,7 @@ def check_repository(root: Path) -> int:
         "producer": root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReview.cs",
         "cross": root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReviewCrossVolume.cs",
         "source": root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReviewSource.cs",
+        "optimize": root / "src/FileOp.App/DesktopSearchEngine.StorageOptimization.cs",
         "readiness": root / "src/FileOp.App/MainWindow.StorageCleanupReadiness.cs",
         "gate": root / "tools/test-local.ps1",
     }
@@ -275,6 +276,7 @@ def check_repository(root: Path) -> int:
         ("source", "Path.GetPathRoot(location.RootPath)", "location source-root derivation"),
         ("source", "currentDescriptor.HasCheckpoint", "current checkpoint requirement"),
         ("source", "MatchesExpectedSource(", "unique catalog source matching"),
+        ("optimize", "ReviewPathsEqual(response.Analysis.RootPath, fullPath)", "same-volume optimization response-root binding"),
         ("readiness", "[matchedLocation]", "readiness owning-location source binding"),
         ("gate", "verify_known_location_source_identity.py", "offline gate wiring"),
     )
