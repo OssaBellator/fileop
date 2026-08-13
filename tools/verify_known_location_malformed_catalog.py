@@ -169,6 +169,7 @@ def check_repository(root: Path) -> int:
 
     required_producer = (
         ("TryNormalizeReviewRoot(capturedPrimary.RootPath, out var capturedRoot)", "active primary root validation"),
+        ("exception is ArgumentException or\n            COMException or\n            InvalidDataException or\n            IOException or\n            NotSupportedException", "Downloads resolver path exception isolation"),
         ("fullPath = Path.GetFullPath(locationPath);", "per-location path normalization"),
         ("resolved to an invalid filesystem path", "local malformed-path refusal"),
         ("exception is ArgumentException or NotSupportedException or PathTooLongException", "local path exception filter"),
