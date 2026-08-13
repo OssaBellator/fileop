@@ -91,6 +91,11 @@ public sealed partial class MainWindow
         int invalidationGeneration,
         string? sourceIdentityKey)
     {
+        if (_closed)
+        {
+            return;
+        }
+
         try
         {
             // RunSearchAsync releases this gate before its outer error handler can
@@ -118,6 +123,9 @@ public sealed partial class MainWindow
             }
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (_closed)
         {
         }
     }
