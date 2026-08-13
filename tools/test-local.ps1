@@ -75,6 +75,10 @@ Invoke-Step "Offline known-location source identity verifier" {
     python tools/verify_known_location_source_identity.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline malformed known-location catalog verifier" {
+    python tools/verify_known_location_malformed_catalog.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline known-location Files handoff verifier" {
     python tools/verify_known_location_files_handoff.py --repo-root $repoRoot --cases 50000
 }
