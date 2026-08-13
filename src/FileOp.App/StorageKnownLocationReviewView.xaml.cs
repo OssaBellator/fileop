@@ -141,14 +141,14 @@ public sealed record StorageKnownLocationCandidateRow(
     {
         try
         {
-            var fullPath = Path.GetFullPath(path);
-            var fullRoot = Path.GetFullPath(rootPath);
+            var fullPath = System.IO.Path.GetFullPath(path);
+            var fullRoot = System.IO.Path.GetFullPath(rootPath);
             var comparablePath = fullPath.TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar);
+                System.IO.Path.DirectorySeparatorChar,
+                System.IO.Path.AltDirectorySeparatorChar);
             var comparableRoot = fullRoot.TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar);
+                System.IO.Path.DirectorySeparatorChar,
+                System.IO.Path.AltDirectorySeparatorChar);
             if (string.Equals(
                     comparablePath,
                     comparableRoot,
@@ -158,7 +158,7 @@ public sealed record StorageKnownLocationCandidateRow(
             }
 
             return fullPath.StartsWith(
-                comparableRoot + Path.DirectorySeparatorChar,
+                comparableRoot + System.IO.Path.DirectorySeparatorChar,
                 StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception exception)
