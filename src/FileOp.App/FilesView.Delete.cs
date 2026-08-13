@@ -36,8 +36,16 @@ public sealed partial class FilesView
         _deleteFeatureInitialized = true;
         LeftPane.IntentStateChanged += DeletePane_IntentStateChanged;
         RightPane.IntentStateChanged += DeletePane_IntentStateChanged;
+        if (Application.Current is App app && app.MainWindow is { } window)
+        {
+            DeleteSessionFinished += window.FilesView_DeleteSessionFinished;
+            window.Closed += FilesDeleteHostWindow_Closed;
+        }
         UpdateDeleteAvailability();
     }
+
+    private async void FilesDeleteHostWindow_Closed(object sender, WindowEventArgs args) =>
+        await TryReleasePendingDeleteCleanupAsync();
 
     private void DeletePane_IntentStateChanged(object? sender, EventArgs e) =>
         UpdateDeleteAvailability();
@@ -410,7 +418,7 @@ public sealed partial class FilesView
         await using var reader = new SqliteFileDeleteOperationRecoveryHistoryReader(historyPath);
         var candidates = await reader.GetRecoveryCandidatesAsync(
             limit: 1,
-            CancellationToken.None);
+            cancellationToken: CancellationToken.None);
         return candidates.Count == 0 ? null : candidates[0];
     }
 
