@@ -219,6 +219,8 @@ def check_repository(root: Path) -> int:
         ("TryNormalizeReviewRoot(expectedRoot, out _)", "expected freshness root validation"),
         ("ReviewRootsEqual(selectedPrimary.RootPath, expectedRoot)", "selected source safe comparison"),
         ("ReviewRootsEqual(currentPrimary.RootPath, expectedRoot)", "current source safe comparison"),
+        ("if (!Path.IsPathFullyQualified(location.RootPath))", "cached location fully-qualified requirement"),
+        ("Path.GetPathRoot(location.RootPath)", "cached location source-root derivation"),
         ("out var invalidCatalog", "freshness malformed-catalog status"),
         ("return !invalidCatalog &&", "freshness malformed-catalog refusal"),
         ("ReviewRootsEqual(currentDescriptor.RootPath, expectedRoot)", "fresh descriptor safe comparison"),
