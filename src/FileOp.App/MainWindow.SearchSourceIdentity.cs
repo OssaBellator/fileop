@@ -5,6 +5,7 @@ public sealed partial class MainWindow
     private readonly object _searchSourceIdentityGate = new();
     private string? _lastSearchSourceIdentityKey;
     private int _lastSearchSourceOwnedGeneration;
+    private long _searchSourceInvalidationCount;
     private bool _searchSourceIdentityTrackingInitialized;
 
     internal void InitializeSearchSourceIdentityTracking()
@@ -66,36 +67,56 @@ public sealed partial class MainWindow
             }
 
             // An actual token change also invalidates already-displayed Search
-            // evidence. Later source-owned busy invalidations must not cancel this
-            // pending clear; only a later user-owned Search generation may do so.
+            // evidence. Capture the latest source-owned generation and source-event
+            // count. Later source-only invalidations may advance both equally, but
+            // any intervening user/query generation permanently supersedes this
+            // particular clear until a newer token change queues another one.
             InvalidateSearchFromSource();
-            QueueSearchPresentationInvalidation(sourceIdentityKey);
+            QueueSearchPresentationInvalidation(
+                _lastSearchSourceOwnedGeneration,
+                Volatile.Read(ref _searchSourceInvalidationCount),
+                sourceIdentityKey);
         }
     }
 
     private void InvalidateSearchFromSource()
     {
         // StateChanged callbacks are not globally serialized. The dedicated source
-        // lock above keeps source-owned increments ordered while user Search work may
-        // still increment _searchGeneration concurrently with Interlocked operations.
+        // lock above keeps source-owned invalidations ordered while user Search work
+        // may still increment _searchGeneration concurrently. Increment the source
+        // count first: if a user generation lands between these two operations, the
+        // following source generation invalidates that user request as intended.
+        Interlocked.Increment(ref _searchSourceInvalidationCount);
         _lastSearchSourceOwnedGeneration = Interlocked.Increment(ref _searchGeneration);
     }
 
-    private void QueueSearchPresentationInvalidation(string? sourceIdentityKey)
+    private void QueueSearchPresentationInvalidation(
+        int invalidationGeneration,
+        long sourceInvalidationCount,
+        string? sourceIdentityKey)
     {
         if (DispatcherQueue.HasThreadAccess)
         {
-            _ = ApplySearchPresentationInvalidationAsync(sourceIdentityKey);
+            _ = ApplySearchPresentationInvalidationAsync(
+                invalidationGeneration,
+                sourceInvalidationCount,
+                sourceIdentityKey);
             return;
         }
 
         DispatcherQueue.TryEnqueue(() =>
         {
-            _ = ApplySearchPresentationInvalidationAsync(sourceIdentityKey);
+            _ = ApplySearchPresentationInvalidationAsync(
+                invalidationGeneration,
+                sourceInvalidationCount,
+                sourceIdentityKey);
         });
     }
 
-    private async Task ApplySearchPresentationInvalidationAsync(string? sourceIdentityKey)
+    private async Task ApplySearchPresentationInvalidationAsync(
+        int invalidationGeneration,
+        long sourceInvalidationCount,
+        string? sourceIdentityKey)
     {
         if (_closed)
         {
@@ -108,7 +129,6 @@ public sealed partial class MainWindow
             // handler runs on the UI context after releasing the gate. Releasing
             // immediately here and yielding one UI turn ensures that stale status
             // publication finishes before this source-change message is applied.
-            // A fresh query may increment _searchGeneration during the same interval.
             await _searchGate.WaitAsync(_lifetimeCancellation.Token);
             _searchGate.Release();
             await Task.Yield();
@@ -116,8 +136,16 @@ public sealed partial class MainWindow
             lock (_searchSourceIdentityGate)
             {
                 var currentGeneration = Volatile.Read(ref _searchGeneration);
+                var currentSourceInvalidationCount = Volatile.Read(
+                    ref _searchSourceInvalidationCount);
+                var sourceInvalidationDelta =
+                    currentSourceInvalidationCount - sourceInvalidationCount;
+                var generationDelta = unchecked(
+                    (uint)(currentGeneration - invalidationGeneration));
                 if (_closed ||
-                    currentGeneration != _lastSearchSourceOwnedGeneration ||
+                    sourceInvalidationDelta < 0 ||
+                    sourceInvalidationDelta > uint.MaxValue ||
+                    generationDelta != (uint)sourceInvalidationDelta ||
                     !string.Equals(
                         sourceIdentityKey,
                         _searchEngine.StorageSourceIdentityKey,
@@ -126,10 +154,10 @@ public sealed partial class MainWindow
                     return;
                 }
 
-                // If currentGeneration is still the latest source-owned generation,
-                // no newer user Search request is eligible to publish. A later busy
-                // source event may have advanced it, which intentionally keeps this
-                // clear valid because that event also invalidated any intervening query.
+                // The generation advanced only by source-owned invalidations since
+                // this clear was queued. A user Search generation would make the
+                // deltas differ and permanently supersede this clear; a later actual
+                // token change queues its own clear and fails the token equality here.
                 _results.Clear();
                 SetSearchStatus(sourceIdentityKey is null
                     ? "Search source is changing. Search will be available when indexing is ready."
