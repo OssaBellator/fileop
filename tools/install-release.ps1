@@ -62,14 +62,26 @@ if (-not [string]::Equals(
 }
 New-Item -ItemType Directory -Path $parent -Force | Out-Null
 
-$temp = Join-Path ([IO.Path]::GetTempPath()) ("FileOp.Install." + [Guid]::NewGuid().ToString('N'))
-$stage = Join-Path $parent (".FileOp.stage." + [Guid]::NewGuid().ToString('N'))
+# All post-hash package handling happens below the protected Program Files parent.
+# The caller's package may be on a user-writable path, so copy it into this protected
+# work directory and re-hash the protected copy before extraction. This closes the
+# verify-then-extract and verify-then-copy TOCTOU windows for the same unelevated user.
+$work = Join-Path $parent (".FileOp.work." + [Guid]::NewGuid().ToString('N'))
+$stage = Join-Path $work 'payload'
+$protectedPackage = Join-Path $work 'fileop-release.zip'
 $backup = Join-Path $parent (".FileOp.backup." + [Guid]::NewGuid().ToString('N'))
 $backupCreated = $false
 try {
-    New-Item -ItemType Directory -Path $temp -Force | Out-Null
-    Expand-Archive -LiteralPath $package -DestinationPath $temp -Force
-    $manifestPath = Join-Path $temp 'fileop-release-manifest.json'
+    New-Item -ItemType Directory -Path $work -Force | Out-Null
+    Copy-Item -LiteralPath $package -Destination $protectedPackage
+    $protectedPackageHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $protectedPackage).Hash.ToLowerInvariant()
+    if ($protectedPackageHash -ne $expectedPackageHash) {
+        throw "The protected package copy no longer matches the independently supplied SHA-256. Expected $expectedPackageHash, got $protectedPackageHash."
+    }
+
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    Expand-Archive -LiteralPath $protectedPackage -DestinationPath $stage -Force
+    $manifestPath = Join-Path $stage 'fileop-release-manifest.json'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         throw 'The package is missing fileop-release-manifest.json.'
     }
@@ -83,7 +95,7 @@ try {
         throw "The package signer pin does not match the independently supplied trusted signer. Expected $expectedThumbprint, manifest contains $manifestThumbprint."
     }
 
-    $tempRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($temp))
+    $stageRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($stage))
     $manifestPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in $manifest.Files) {
         $relative = ([string]$entry.Path).Replace('/', [IO.Path]::DirectorySeparatorChar)
@@ -94,14 +106,14 @@ try {
         if (-not $manifestPaths.Add($relative)) {
             throw "Duplicate package manifest path: $relative"
         }
-        $path = [IO.Path]::GetFullPath((Join-Path $temp $relative))
+        $path = [IO.Path]::GetFullPath((Join-Path $stage $relative))
         $pathParent = [IO.Path]::GetDirectoryName($path)
         if ([string]::IsNullOrWhiteSpace($pathParent) -or
-            -not ($path.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase))) {
-            throw "Package manifest path escapes the extraction root: $relative"
+            -not ($path.StartsWith($stageRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase))) {
+            throw "Package manifest path escapes the protected extraction root: $relative"
         }
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Package file is missing: $relative" }
-        $file = Get-Item -LiteralPath $path
+        $file = Get-Item -LiteralPath $path -Force
         if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) {
             throw "Package payload may not contain a reparse point: $relative"
         }
@@ -114,8 +126,8 @@ try {
         }
     }
 
-    foreach ($file in Get-ChildItem -LiteralPath $temp -Recurse -File) {
-        $relative = [IO.Path]::GetRelativePath($temp, $file.FullName)
+    foreach ($file in Get-ChildItem -LiteralPath $stage -Recurse -File -Force) {
+        $relative = [IO.Path]::GetRelativePath($stage, $file.FullName)
         if ([string]::Equals($relative, 'fileop-release-manifest.json', [StringComparison]::OrdinalIgnoreCase)) {
             continue
         }
@@ -124,7 +136,7 @@ try {
         }
     }
 
-    $signedFiles = Get-ChildItem -LiteralPath $temp -Recurse -File |
+    $signedFiles = Get-ChildItem -LiteralPath $stage -Recurse -File -Force |
         Where-Object { $_.Extension -in '.exe', '.dll' -and $_.Name -like 'FileOp.*' }
     foreach ($file in $signedFiles) {
         $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
@@ -139,8 +151,6 @@ try {
     if (-not ($signedFiles | Where-Object Name -eq 'FileOp.App.exe')) { throw 'Package has no signed FileOp.App.exe.' }
     if (-not ($signedFiles | Where-Object Name -eq 'FileOp.Indexer.exe')) { throw 'Package has no signed FileOp.Indexer.exe.' }
 
-    New-Item -ItemType Directory -Path $stage -Force | Out-Null
-    Copy-Item -Path (Join-Path $temp '*') -Destination $stage -Recurse -Force
     if (Test-Path -LiteralPath $install) {
         $existingInstall = Get-Item -LiteralPath $install -Force
         if ($existingInstall.Attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -150,6 +160,8 @@ try {
         $backupCreated = $true
     }
     try {
+        # The verified payload has remained under the protected Program Files parent
+        # since extraction. No user-writable intermediate copy exists after verification.
         Move-Item -LiteralPath $stage -Destination $install
     }
     catch {
@@ -167,8 +179,7 @@ try {
     Write-Host "PASS: FileOp $($manifest.Version) installed at $install with independently pinned package hash and signer $expectedThumbprint" -ForegroundColor Green
 }
 finally {
-    if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
-    if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
     if ($backupCreated -and (Test-Path -LiteralPath $backup) -and -not (Test-Path -LiteralPath $install)) {
         Move-Item -LiteralPath $backup -Destination $install -ErrorAction SilentlyContinue
     }
