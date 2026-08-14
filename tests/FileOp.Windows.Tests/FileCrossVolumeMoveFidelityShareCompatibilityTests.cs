@@ -16,6 +16,7 @@ public sealed class FileCrossVolumeMoveFidelityShareCompatibilityTests
     private const uint FileReadAttributes = 0x00000080u;
     private const uint FileWriteAttributes = 0x00000100u;
     private const uint Synchronize = 0x00100000u;
+    private const uint PageReadWrite = 0x00000004u;
     private const int ErrorSharingViolation = 32;
 
     [TestMethod]
@@ -84,6 +85,54 @@ public sealed class FileCrossVolumeMoveFidelityShareCompatibilityTests
                 deleteCapability.IsInvalid,
                 "A source DELETE capability that omits FILE_SHARE_WRITE must not be acquired while a main-stream writer is already live.");
             Assert.AreEqual(ErrorSharingViolation, error);
+        });
+    }
+
+    [TestMethod]
+    public void WritableMainStreamMappingPreventsDeleteCapabilityAcquisitionEvenAfterFileHandleCloses()
+    {
+        WithTemporaryFile(path =>
+        {
+            SafeFileHandle mapping;
+            using (var writer = CreateFileW(
+                path,
+                FileReadData | FileWriteData | Synchronize,
+                FileShare.Read | FileShare.Write | FileShare.Delete,
+                IntPtr.Zero,
+                FileMode.Open,
+                0,
+                IntPtr.Zero))
+            {
+                var writerError = Marshal.GetLastWin32Error();
+                Assert.IsFalse(writer.IsInvalid, $"Expected writable source handle; Win32 error {writerError}.");
+
+                mapping = CreateFileMappingW(
+                    writer,
+                    IntPtr.Zero,
+                    PageReadWrite,
+                    0,
+                    0,
+                    null);
+                var mappingError = Marshal.GetLastWin32Error();
+                Assert.IsFalse(mapping.IsInvalid, $"Expected writable mapping; Win32 error {mappingError}.");
+            }
+
+            using (mapping)
+            using (var deleteCapability = CreateFileW(
+                path,
+                Delete | FileReadAttributes | Synchronize,
+                FileShare.Read,
+                IntPtr.Zero,
+                FileMode.Open,
+                0,
+                IntPtr.Zero))
+            {
+                var error = Marshal.GetLastWin32Error();
+                Assert.IsTrue(
+                    deleteCapability.IsInvalid,
+                    "A writable main-stream mapping must prevent acquisition of the FILE_SHARE_READ-only destructive source lease even after the mapping's file handle is closed.");
+                Assert.AreEqual(ErrorSharingViolation, error);
+            }
         });
     }
 
@@ -259,6 +308,20 @@ public sealed class FileCrossVolumeMoveFidelityShareCompatibilityTests
         FileMode dwCreationDisposition,
         uint dwFlagsAndAttributes,
         IntPtr hTemplateFile);
+
+    [DllImport(
+        "kernel32.dll",
+        CharSet = CharSet.Unicode,
+        SetLastError = true,
+        ExactSpelling = true,
+        CallingConvention = CallingConvention.Winapi)]
+    private static extern SafeFileHandle CreateFileMappingW(
+        SafeFileHandle hFile,
+        IntPtr lpFileMappingAttributes,
+        uint flProtect,
+        uint dwMaximumSizeHigh,
+        uint dwMaximumSizeLow,
+        string? lpName);
 
     [DllImport(
         "kernel32.dll",
