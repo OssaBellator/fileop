@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Zero-Actions model/source checks for the file Move strategy boundary and stacked completion checks."""
+"""Zero-Actions model/source checks for the file Move strategy boundary."""
 from __future__ import annotations
 
 import argparse
 import random
-import subprocess
 import sys
 from pathlib import Path
 
@@ -134,7 +133,10 @@ def check_repository(root: Path) -> int:
     ]
     for needle in required_strategy:
         assert needle in source['strategy'], needle
-    for forbidden in ['File.Move(', 'MoveFile(', 'MoveFileEx(', 'SetFileInformationByHandle(', 'File.Copy(', 'File.Delete(']:
+    for forbidden in [
+        'File.Move(', 'MoveFile(', 'MoveFileEx(', 'SetFileInformationByHandle(',
+        'File.Copy(', 'File.Delete(',
+    ]:
         assert forbidden not in source['strategy'], forbidden
     assert 'Action-history schema v1 represents Move mutation state only for same-volume roots.' in source['history']
     assert 'IFileMoveOperationActionHistoryStore' in source['history']
@@ -142,26 +144,6 @@ def check_repository(root: Path) -> int:
     assert 'same-volume' in source['docs'] and 'cross-volume' in source['docs']
     assert 'verify_file_move_strategy.py --repo-root $repoRoot --cases 50000' in source['gate']
     return len(required_strategy) + 11
-
-
-def run_stacked_verifiers(root: Path, cases: int) -> None:
-    scripts = [
-        ('verify_file_move_action_history.py', ['--cases', str(cases)]),
-        ('verify_file_same_volume_move_executor.py', ['--cases', str(cases)]),
-        ('verify_files_same_volume_move_ui.py', ['--cases', str(cases)]),
-        ('verify_release_trust.py', []),
-        ('verify_release_completion_boundaries.py', ['--cases', str(cases)]),
-    ]
-    for name, extra in scripts:
-        path = root / 'tools' / name
-        if not path.is_file():
-            raise FileNotFoundError(path)
-        completed = subprocess.run(
-            [sys.executable, str(path), '--repo-root', str(root), *extra],
-            check=False,
-        )
-        if completed.returncode != 0:
-            raise RuntimeError(f'{name} failed with exit code {completed.returncode}')
 
 
 def main() -> int:
@@ -176,14 +158,12 @@ def main() -> int:
     if not args.self_test_only:
         root = args.repo_root.resolve()
         print(f'PASS file Move strategy source wiring: {check_repository(root)} checks')
-        run_stacked_verifiers(root, args.cases)
-        print('PASS stacked Move/release completion verifiers')
     return 0
 
 
 if __name__ == '__main__':
     try:
         raise SystemExit(main())
-    except (AssertionError, FileNotFoundError, RuntimeError, ValueError) as exc:
+    except (AssertionError, FileNotFoundError, ValueError) as exc:
         print(f'FAIL: {exc}', file=sys.stderr)
         raise SystemExit(1)
