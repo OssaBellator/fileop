@@ -59,17 +59,18 @@ def check_repository(root: Path) -> int:
     assert 'if (elevated)' in session[:trust_call]
 
     policy = source['policy']
-    for needle in [
+    required_policy = [
         'IndexingServiceHelperLocator.ResolveAdjacentHelper(AppContext.BaseDirectory)',
         'if (!string.Equals(requested, adjacent, StringComparison.OrdinalIgnoreCase))',
         'restricted to the exact FileOp.Indexer.exe installed beside the running FileOp application',
         'WindowsAuthenticodeFileTrust.VerifyPinnedEmbeddedSignature(adjacent)',
         'WindowsElevatedHelperPathProtection.RequireProtectedLaunchPath(adjacent)',
-    ]:
+    ]
+    for needle in required_policy:
         assert needle in policy, needle
 
     package = source['package']
-    for needle in [
+    required_package = [
         'FileOpRequireTrustedIndexerSigner=true',
         'FileOpTrustedIndexerSignerThumbprints=$thumbprint',
         'signtool.exe',
@@ -79,13 +80,21 @@ def check_repository(root: Path) -> int:
         'Get-FileHash -Algorithm SHA256',
         'fileop-release-manifest.json',
         'Compress-Archive',
-    ]:
+        '$digestPath = "$zipPath.sha256"',
+        '$zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()',
+        'independently authenticated release metadata',
+    ]
+    for needle in required_package:
         assert needle in package, needle
 
     install = source['install']
-    for needle in [
-        '[Parameter(Mandatory = $true)][ValidatePattern',
+    required_install = [
+        '[string]$TrustedPackageSha256',
         '[string]$TrustedSignerThumbprint',
+        '$expectedPackageHash = $TrustedPackageSha256.ToLowerInvariant()',
+        '$actualPackageHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $package).Hash.ToLowerInvariant()',
+        '$actualPackageHash -ne $expectedPackageHash',
+        'independently supplied release metadata',
         '$expectedThumbprint = ($TrustedSignerThumbprint',
         '$manifestThumbprint -ne $expectedThumbprint',
         'independently supplied trusted signer',
@@ -93,7 +102,11 @@ def check_repository(root: Path) -> int:
         "Get-Process -Name 'FileOp.App'",
         "$segments = @($relative -split '[\\\\/]')",
         '$path.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar',
+        '$manifestPaths.Add($relative)',
+        '[IO.FileAttributes]::ReparsePoint',
+        '$file.Length -ne [long]$entry.Length',
         'Get-FileHash -Algorithm SHA256',
+        'unexpected file not listed by the manifest',
         'Get-AuthenticodeSignature',
         '$actual -ne $expectedThumbprint',
         'New-Item -ItemType Directory -Path $stage -Force',
@@ -101,8 +114,13 @@ def check_repository(root: Path) -> int:
         'Move-Item -LiteralPath $install -Destination $backup',
         'Move-Item -LiteralPath $stage -Destination $install',
         'Move-Item -LiteralPath $backup -Destination $install',
-    ]:
+    ]
+    for needle in required_install:
         assert needle in install, needle
+
+    package_hash_check = install.index('$actualPackageHash -ne $expectedPackageHash')
+    extraction = install.index('Expand-Archive -LiteralPath $package')
+    assert package_hash_check < extraction
 
     uninstall = source['uninstall']
     assert 'PurgeUserData' in uninstall
@@ -112,11 +130,24 @@ def check_repository(root: Path) -> int:
     docs = source['docs'].casefold()
     assert 'does not accept an environment variable as a signer trust root' in docs
     assert 'independently supplied' in docs
-    assert 'editing a zip and its manifest therefore cannot choose a new trusted signer' in docs
+    assert 'whole-package authenticity' in docs
+    assert 'must not learn its trusted package hash from the zip' in docs
+    assert 'editing a zip, manifest, dependency or data file' in docs
     assert 'verify_release_trust.py --repo-root $repoRoot' in source['gate']
 
     assert 'GetEnvironmentVariable("FileOpTrustedIndexerSignerThumbprints"' not in source['trust']
-    return len(required_project) + len(required_trust) + 4 + 5 + 9 + 17 + 3 + 4
+    return (
+        len(required_project)
+        + len(required_trust)
+        + 4
+        + len(required_policy)
+        + len(required_package)
+        + len(required_install)
+        + 1
+        + 3
+        + 6
+        + 1
+    )
 
 
 def main() -> int:
