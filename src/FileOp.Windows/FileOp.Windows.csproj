@@ -4,6 +4,18 @@
     <RootNamespace>FileOp.Windows</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup Condition="'$(FileOpTrustedIndexerSignerThumbprints)' != ''">
+    <AssemblyMetadata Include="FileOpTrustedIndexerSignerThumbprints"
+                      Value="$(FileOpTrustedIndexerSignerThumbprints)" />
+  </ItemGroup>
+
+  <Target Name="ValidateRequiredIndexerSignerPolicy"
+          BeforeTargets="CoreCompile"
+          Condition="'$(FileOpRequireTrustedIndexerSigner)' == 'true'">
+    <Error Condition="'$(FileOpTrustedIndexerSignerThumbprints)' == ''"
+           Text="Production helper trust requires FileOpTrustedIndexerSignerThumbprints (semicolon-separated SHA-1 certificate thumbprints)." />
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />

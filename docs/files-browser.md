@@ -8,7 +8,7 @@ Native mode browses the primary whole-volume NTFS index. Fallback mode browses t
 
 Files now has two distinct kinds of operation UI that must not be conflated:
 
-- a session-only **Copy/Move planning queue** whose reviewed regular-file Copy plans can execute after a successful read-only preflight; Move remains planning-only;
+- a session-only **Copy/Move planning queue** whose reviewed regular-file Copy plans and reviewed **same-volume local regular-file Move** plans can execute after successful read-only preflight and fresh execution validation; cross-volume and directory Move remain non-executable;
 - a separately reviewed **file-only permanent-delete session**, which is a real destructive action with its own recovery, authorization and mutation boundary.
 
 Browse selection, prepared intent, preflight evidence and Storage handoff are never themselves mutation authority.
@@ -45,7 +45,7 @@ Both panes share one `DesktopSearchEngine` and authenticated helper session. Bro
 
 A page result is accepted only when the pane generation and active tab still match the request. Stale queued work is discarded before transmission when possible; an already-transmitted helper request is allowed to complete and its stale result is ignored.
 
-Source transitions invalidate cached rows and selection conservatively so a selection cannot silently migrate into a different namespace/source context. A real backing-source identity transition also clears prepared and non-running queued operation plans. If a reviewed Copy has already started, that active operation remains governed by its direct filesystem identity/history boundary and is not converted into source-token authority or automatic replay.
+Source transitions invalidate cached rows and selection conservatively so a selection cannot silently migrate into a different namespace/source context. A real backing-source identity transition also clears prepared and non-running queued operation plans. If a reviewed Copy or same-volume Move has already started, that active operation remains governed by its direct filesystem identity/history boundary and is not converted into source-token authority or automatic replay.
 
 ## Ordering and continuation
 
@@ -75,36 +75,42 @@ The queue retains explicit collision intent such as Ask later, Skip existing and
 
 ### Preflight and execution-grade contracts
 
-The repository contains the reviewed operation layers used by executable file Copy:
+The repository contains distinct reviewed operation layers for executable file Copy and same-volume file Move:
 
 - read-only Windows preflight;
 - canonical execution-grade validation contracts;
 - durable action-history/recovery models;
-- a production **file Copy** executor and identity-bound Windows copy mutation primitive.
+- a production **file Copy** executor and identity-bound Windows copy mutation primitive;
+- a same-volume **file Move** executor and identity-preserving Windows handle-relative rename primitive;
+- a Windows Move namespace-capability validator that rejects case-sensitive or unavailable directory capability before durable mutation history.
 
-A queued regular-file Copy can run only when its exact point-in-time preflight is `Ready` and the active source/destination pane, tab and directory context still matches the immutable plan. The executor then performs its own fresh canonical/identity validation before durable history begins and revalidates each file again before crossing `MutationStarted`.
+A queued regular-file Copy or same-volume Move can run only when its exact point-in-time preflight is `Ready` and the active source/destination pane, tab and directory context still matches the immutable plan. A fresh preflight already in flight also keeps both Run paths disabled even if an older Ready snapshot exists.
 
-The Files UI does not call `File.Copy`, route mutation through the Indexer, or reconstruct a new path-only operation from the row. It passes the same immutable plan to `FileCopyOperationExecutor`, which owns durable `BeginAsync`, per-entry mutation barriers, commit/recovery transitions and the identity-bound `WindowsFileCopyMutationPrimitive`.
+Each executor performs its own fresh canonical/identity validation before durable history begins and revalidates each mutation entry again before crossing `MutationStarted`. Move additionally requires both canonical roots to use the ordinary case-insensitive namespace semantics represented by the current path model.
 
-The current executable slice remains deliberately narrow:
+The Files UI does not call `File.Copy`, `File.Move`, route mutation through the Indexer, or reconstruct a new path-only operation from the row. It passes the same immutable plan to the reviewed executor that owns durable `BeginAsync`, per-entry mutation barriers, commit/recovery transitions and the identity-bound Windows mutation primitive.
+
+The current executable slices remain deliberately narrow:
 
 - regular-file Copy only; directory Copy is rejected;
-- Move execution remains disabled;
+- regular-file Move executes only as a same-volume local rename; directory Move and cross-volume Move mutation are rejected;
+- a cross-volume Move is classified as requiring a separately reviewed Copy-plus-source-delete transaction and is left queued/non-executable because existing Copy authority is not source-delete authority;
+- per-directory case-sensitive NTFS or unavailable namespace-capability evidence blocks Move before durable mutation history; exact-case mutation is not claimed;
 - `Ask later` collisions remain non-executable until an explicit decision is supplied; a `Skip existing` plan can durably skip existing destinations and `Stop on collision` fails closed at validation;
-- no overwrite/replacement path exists in the mutation primitive;
-- terminal or recovery-sensitive execution makes that operation ID single-use; the UI removes it from the runnable queue rather than offering replay;
+- no overwrite/replacement path exists in the Copy or Move mutation boundary;
+- terminal or recovery-sensitive execution makes that operation ID single-use; the UI removes an invoked plan from the runnable queue rather than offering replay;
 - durable history is recovery evidence, not automatic restart-time mutation authority;
-- destination panes currently displaying the affected directory refresh through the ordinary indexed browse coordination after execution settles.
+- destination panes refresh after Copy; both matching source and destination panes refresh after an invoked Move settles.
 
-See `docs/file-copy-executor.md`, `docs/windows-file-copy-mutation.md` and the `docs/file-operation-*.md` recovery/history series.
+See `docs/file-copy-executor.md`, `docs/windows-file-copy-mutation.md`, `docs/file-move-execution-strategy.md` and the `docs/file-operation-*.md` recovery/history series.
 
-A preflight result is still not mutation authorization. It can become stale, and the executor's action-time canonical identity checks remain mandatory even when the visible preflight row says Ready.
+A preflight result is still not mutation authorization. It can become stale, and each executor's action-time canonical identity checks remain mandatory even when the visible preflight row says Ready.
 
-### Copy progress, cancellation and durable outcome
+### Copy / Move progress, cancellation and durable outcome
 
-While a Copy is active, Files displays entry-level `completed / total` progress from the executor's `FileOperationExecutionSnapshot`. It does not invent byte-level progress or infer completion from the destination directory. Planning, queue mutation and a second Copy remain disabled until the active execution settles.
+While Copy or Move is active, Files displays entry-level `completed / total` progress from the executor's `FileOperationExecutionSnapshot`. It does not invent byte-level progress or infer completion from directory state. Planning, queue mutation and the other filesystem executor remain disabled until the active execution settles.
 
-**Cancel Copy** calls the active executor's `RequestCancellationAsync(operationId)`. Cancellation can stop validation and can settle running work at the executor's reviewed boundary between entries. Once `MutationStarted` is durable for one entry, cancellation is intentionally not passed into that entry's identity-bound mutation / durable commit critical section. A cancellation request therefore means “stop at the next safe boundary”, not “tear down the current filesystem write immediately”.
+**Cancel Copy** and **Cancel Move** call the active executor's `RequestCancellationAsync(operationId)`. Cancellation can stop validation and can settle running work at the reviewed boundary between entries. Once `MutationStarted` is durable for one entry, cancellation is intentionally not passed into that entry's identity-bound mutation / durable commit critical section. A cancellation request therefore means “stop at the next safe boundary”, not “tear down the current filesystem write immediately”.
 
 After execution settles, Files re-reads the same persistent action-history operation before presenting the final status. The UI distinguishes:
 
@@ -115,6 +121,8 @@ After execution settles, Files re-reads the same persistent action-history opera
 - non-terminal or unreadable durable history, which is treated conservatively rather than as success.
 
 Recovery-sensitive or ambiguous history never becomes consent, overwrite/delete authority or automatic replay. The original operation ID remains single-use, and any later attempt begins from a fresh plan and fresh validation.
+
+For Move specifically, a committed entry must preserve the validated source file identity at its destination and cannot reuse Copy-only destination-delete undo, content-fingerprint or hard-link evidence.
 
 ## Permanent file deletion
 
@@ -195,7 +203,7 @@ This equivalence is a **browse** statement only. The crawler snapshot does not p
 
 ## Validation without hosted Actions
 
-`tools/test-local.ps1` is the authoritative validation inventory. The Files boundary is covered by dedicated offline verifiers for browse/UI state, operation state/preflight/execution validation, the Files Copy execution/cancellation/recovery wiring, delete history/preparation/final capability/mutation/orchestration, recovery discovery and the user-facing Files delete session.
+`tools/test-local.ps1` is the authoritative validation inventory. The Files boundary is covered by dedicated offline verifiers for browse/UI state, operation state/preflight/execution validation, Files Copy execution/cancellation/recovery, Move strategy/history/executor/UI, delete history/preparation/final capability/mutation/orchestration, recovery discovery and the user-facing Files delete session.
 
 Run portable model/source validation through the aggregate gate:
 
@@ -209,10 +217,14 @@ The complete Windows gate adds Core/Windows/Indexer builds, the regression/integ
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
 ```
 
+The focused native handoff scenarios for the final consolidation stack are listed in `docs/windows-release-validation.md`.
+
 See `docs/local-validation.md` for the validation workflow.
 
 ## Remaining queue boundary
 
-Regular-file Copy is now the first queue operation wired to a production executor, with progress, safe cancellation and recovery-sensitive terminal reporting. Explicit overwrite/replacement decision semantics remain separate because the current mutation primitive is exclusive-create only. The next major operation boundary is separately reviewed Move semantics; directory Copy and directory Move remain disabled until their mutation and recovery policies are explicit.
+Regular-file Copy and same-volume local regular-file Move are now the queue operations wired to reviewed production mutation executors, with progress, safe cancellation and recovery-sensitive terminal reporting. Explicit overwrite/replacement remains separate because the current mutation primitives do not authorize replacement.
 
-Permanent file deletion should stay outside that generic queue unless a future design can preserve the stricter delete recovery/authorization semantics rather than weakening them into a generic operation kind.
+Cross-volume Move still requires a separately reviewed composite Copy-plus-source-delete transaction with its own durable source-delete authorization/recovery boundary. Directory Copy and directory Move remain disabled until recursive fidelity, mutation and recovery policies are implemented rather than inferred.
+
+Permanent file deletion stays outside that generic queue unless a future design can preserve the stricter delete recovery/authorization semantics rather than weakening them into a generic operation kind.

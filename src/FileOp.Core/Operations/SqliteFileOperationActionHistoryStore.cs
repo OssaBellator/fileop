@@ -10,7 +10,10 @@ using Microsoft.Data.Sqlite;
 
 namespace FileOp.Core.Operations;
 
-public sealed class SqliteFileOperationActionHistoryStore : IFileOperationActionHistoryStore, IDisposable
+public sealed class SqliteFileOperationActionHistoryStore :
+    IFileOperationActionHistoryStore,
+    IFileMoveOperationActionHistoryStore,
+    IDisposable
 {
     private const int SchemaVersion = 1;
     private const int MaximumRecentLimit = 4_096;
@@ -272,6 +275,183 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 ordinal,
                 destinationContentFingerprint,
                 cancellationToken).ConfigureAwait(false);
+
+            var history = await LoadRequiredAsync(
+                connection,
+                operationId,
+                cancellationToken,
+                transaction).ConfigureAwait(false);
+            transaction.Commit();
+            return history;
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    public async ValueTask<FileOperationActionHistory> CommitSameVolumeMoveAsync(
+        Guid operationId,
+        int ordinal,
+        FileIdentity destinationIdentity,
+        DateTimeOffset committedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ValidateOrdinal(ordinal);
+        var operationKey = FormatOperationId(operationId);
+        var committedAt = NormalizeUtc(committedAtUtc);
+
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            var current = await LoadRequiredAsync(
+                connection,
+                operationId,
+                cancellationToken,
+                transaction).ConfigureAwait(false);
+            ValidateSameVolumeMoveMutation(current, ordinal, destinationIdentity);
+
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE file_operation_action_entries
+                SET state = @committed,
+                    completed_utc_ticks = @completed_utc_ticks,
+                    destination_volume_serial = @destination_volume_serial,
+                    destination_file_reference = @destination_file_reference,
+                    undo_kind = @undo_kind,
+                    failure_code = NULL,
+                    failure_message = NULL,
+                    failure_path = NULL,
+                    failure_retryable = NULL
+                WHERE operation_id = @operation_id
+                  AND ordinal = @ordinal
+                  AND state = @mutation_started
+                  AND EXISTS(
+                      SELECT 1
+                      FROM file_operation_actions AS action
+                      WHERE action.operation_id = @operation_id
+                        AND action.terminal_state IS NULL
+                        AND action.kind = @move_kind
+                  );
+                """;
+            command.Parameters.AddWithValue("@committed", (int)FileOperationActionEntryState.Committed);
+            command.Parameters.AddWithValue("@completed_utc_ticks", ToUtcTicks(committedAt));
+            command.Parameters.AddWithValue(
+                "@destination_volume_serial",
+                ToSqliteInteger(destinationIdentity.VolumeSerialNumber));
+            command.Parameters.AddWithValue(
+                "@destination_file_reference",
+                ToSqliteInteger(destinationIdentity.FileReferenceNumber));
+            command.Parameters.AddWithValue("@undo_kind", (int)FileOperationUndoKind.None);
+            command.Parameters.AddWithValue("@operation_id", operationKey);
+            command.Parameters.AddWithValue("@ordinal", ordinal);
+            command.Parameters.AddWithValue(
+                "@mutation_started",
+                (int)FileOperationActionEntryState.MutationStarted);
+            command.Parameters.AddWithValue("@move_kind", (int)FileOperationKind.Move);
+
+            var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            if (changed != 1)
+            {
+                throw new InvalidOperationException(
+                    "A same-volume Move entry can be committed only once, after MutationStarted, while its Move operation remains active.");
+            }
+
+            var history = await LoadRequiredAsync(
+                connection,
+                operationId,
+                cancellationToken,
+                transaction).ConfigureAwait(false);
+            transaction.Commit();
+            return history;
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    public async ValueTask<FileOperationActionHistory> MarkSameVolumeMoveRecoveryRequiredAsync(
+        Guid operationId,
+        int ordinal,
+        FileOperationFailure failure,
+        DateTimeOffset failedAtUtc,
+        FileIdentity? observedDestinationIdentity = null,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ValidateFailure(failure);
+        ValidateOrdinal(ordinal);
+        var operationKey = FormatOperationId(operationId);
+        var failedAt = NormalizeUtc(failedAtUtc);
+
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            var current = await LoadRequiredAsync(
+                connection,
+                operationId,
+                cancellationToken,
+                transaction).ConfigureAwait(false);
+            ValidateSameVolumeMoveMutation(current, ordinal, observedDestinationIdentity);
+
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE file_operation_action_entries
+                SET state = @recovery_required,
+                    completed_utc_ticks = @completed_utc_ticks,
+                    destination_volume_serial = @destination_volume_serial,
+                    destination_file_reference = @destination_file_reference,
+                    undo_kind = @undo_kind,
+                    failure_code = @failure_code,
+                    failure_message = @failure_message,
+                    failure_path = @failure_path,
+                    failure_retryable = @failure_retryable
+                WHERE operation_id = @operation_id
+                  AND ordinal = @ordinal
+                  AND state = @mutation_started
+                  AND EXISTS(
+                      SELECT 1
+                      FROM file_operation_actions AS action
+                      WHERE action.operation_id = @operation_id
+                        AND action.terminal_state IS NULL
+                        AND action.kind = @move_kind
+                  );
+                """;
+            command.Parameters.AddWithValue(
+                "@recovery_required",
+                (int)FileOperationActionEntryState.RecoveryRequired);
+            command.Parameters.AddWithValue("@completed_utc_ticks", ToUtcTicks(failedAt));
+            command.Parameters.Add("@destination_volume_serial", SqliteType.Integer).Value =
+                observedDestinationIdentity is { } identity
+                    ? ToSqliteInteger(identity.VolumeSerialNumber)
+                    : DBNull.Value;
+            command.Parameters.Add("@destination_file_reference", SqliteType.Integer).Value =
+                observedDestinationIdentity is { } reference
+                    ? ToSqliteInteger(reference.FileReferenceNumber)
+                    : DBNull.Value;
+            command.Parameters.AddWithValue("@undo_kind", (int)FileOperationUndoKind.None);
+            SetFailureParameters(command, failure);
+            command.Parameters.AddWithValue("@operation_id", operationKey);
+            command.Parameters.AddWithValue("@ordinal", ordinal);
+            command.Parameters.AddWithValue(
+                "@mutation_started",
+                (int)FileOperationActionEntryState.MutationStarted);
+            command.Parameters.AddWithValue("@move_kind", (int)FileOperationKind.Move);
+
+            var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            if (changed != 1)
+            {
+                throw new InvalidOperationException(
+                    "A same-volume Move entry can require recovery only after MutationStarted while its Move operation remains active.");
+            }
 
             var history = await LoadRequiredAsync(
                 connection,
@@ -941,6 +1121,48 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
         }
     }
 
+    private static void ValidateSameVolumeMoveMutation(
+        FileOperationActionHistory history,
+        int ordinal,
+        FileIdentity? observedDestinationIdentity)
+    {
+        if (history.Kind != FileOperationKind.Move ||
+            history.TerminalState.HasValue ||
+            history.SourceDirectoryIdentity is not FileIdentity sourceDirectoryIdentity ||
+            history.DestinationDirectoryIdentity is not FileIdentity destinationDirectoryIdentity ||
+            sourceDirectoryIdentity.VolumeSerialNumber != destinationDirectoryIdentity.VolumeSerialNumber)
+        {
+            throw new InvalidOperationException(
+                "Same-volume Move history requires an active Move operation whose canonical roots are identity-bound to one volume.");
+        }
+
+        if (ordinal >= history.Entries.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(ordinal));
+        }
+
+        var entry = history.Entries[ordinal];
+        if (entry.Entry.IsDirectory ||
+            entry.State != FileOperationActionEntryState.MutationStarted ||
+            entry.SourceIdentity is not FileIdentity sourceIdentity ||
+            sourceIdentity.VolumeSerialNumber != sourceDirectoryIdentity.VolumeSerialNumber ||
+            entry.DestinationIdentity.HasValue ||
+            entry.UndoKind != FileOperationUndoKind.None ||
+            entry.DestinationContentFingerprint is not null ||
+            entry.DestinationHardLinkCount.HasValue)
+        {
+            throw new InvalidOperationException(
+                "Same-volume Move history can settle only a regular file at its durable MutationStarted boundary with unchanged source identity evidence.");
+        }
+
+        if (observedDestinationIdentity is FileIdentity destinationIdentity &&
+            destinationIdentity != sourceIdentity)
+        {
+            throw new InvalidOperationException(
+                "A same-volume rename/move must preserve the exact filesystem object identity at the destination.");
+        }
+    }
+
     private static void ValidateCompletion(
         FileOperationActionHistory history,
         FileOperationActionTerminalState terminalState)
@@ -1301,7 +1523,8 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
             }
 
             if (entry.DestinationContentFingerprint is not null &&
-                (entry.State is not FileOperationActionEntryState.Committed and
+                (history.Kind != FileOperationKind.Copy ||
+                 entry.State is not FileOperationActionEntryState.Committed and
                     not FileOperationActionEntryState.RecoveryRequired ||
                  !entry.DestinationIdentity.HasValue))
             {
@@ -1331,12 +1554,32 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
 
                 case FileOperationActionEntryState.Committed:
                     RequireEntryShape(entry, mutationStarted: true, completed: true, failure: false);
-                    if (history.Kind != FileOperationKind.Copy ||
-                        entry.UndoKind != FileOperationUndoKind.DeleteCreatedDestination ||
-                        !entry.DestinationIdentity.HasValue)
+                    if (history.Kind == FileOperationKind.Copy)
                     {
-                        throw new InvalidDataException(
-                            "Committed action history must be a Copy with an exact destination identity and delete-destination undo metadata.");
+                        if (entry.UndoKind != FileOperationUndoKind.DeleteCreatedDestination ||
+                            !entry.DestinationIdentity.HasValue)
+                        {
+                            throw new InvalidDataException(
+                                "Committed Copy history requires an exact destination identity and delete-destination undo metadata.");
+                        }
+                    }
+                    else if (history.Kind == FileOperationKind.Move)
+                    {
+                        RequireNoUndo(entry);
+                        if (entry.Entry.IsDirectory ||
+                            entry.SourceIdentity is not FileIdentity sourceIdentity ||
+                            entry.DestinationIdentity is not FileIdentity destinationIdentity ||
+                            destinationIdentity != sourceIdentity ||
+                            entry.DestinationContentFingerprint is not null ||
+                            entry.DestinationHardLinkCount.HasValue)
+                        {
+                            throw new InvalidDataException(
+                                "Committed same-volume Move history must preserve the exact source object identity without Copy-only evidence.");
+                        }
+                    }
+                    else
+                    {
+                        throw new InvalidDataException("Committed action history has an unsupported operation kind.");
                     }
                     break;
 
@@ -1353,6 +1596,14 @@ public sealed class SqliteFileOperationActionHistoryStore : IFileOperationAction
                 case FileOperationActionEntryState.RecoveryRequired:
                     RequireEntryShape(entry, mutationStarted: true, completed: true, failure: null);
                     RequireNoUndo(entry);
+                    if (history.Kind == FileOperationKind.Move &&
+                        entry.DestinationIdentity is FileIdentity observedDestinationIdentity &&
+                        (entry.SourceIdentity is not FileIdentity recoverySourceIdentity ||
+                         observedDestinationIdentity != recoverySourceIdentity))
+                    {
+                        throw new InvalidDataException(
+                            "Recovery-sensitive same-volume Move destination identity must match the original source identity.");
+                    }
                     break;
 
                 default:

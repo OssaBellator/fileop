@@ -55,6 +55,11 @@ public sealed partial class FilesView : UserControl
 
     private void PrepareIntent(FilesPaneView source, FilesPaneView destination)
     {
+        if (IsFileOperationExecutionBusy || _preflightRunning)
+        {
+            return;
+        }
+
         var sourcePath = source.CurrentPath;
         var destinationPath = destination.CurrentPath;
         var selectedRows = source.SelectedRows;
@@ -105,6 +110,11 @@ public sealed partial class FilesView : UserControl
 
     private void QueuePreparedIntent(FileOperationKind kind)
     {
+        if (IsFileOperationExecutionBusy || _preflightRunning)
+        {
+            return;
+        }
+
         var intent = _preparedIntent;
         if (intent is null || !TryGetCollisionPolicy(out var collisionPolicy))
         {
@@ -130,7 +140,7 @@ public sealed partial class FilesView : UserControl
             ? $"Queued copy plan for {intent.Entries.Count:N0} entr{(intent.Entries.Count == 1 ? "y" : "ies")} with {FormatCollisionPolicy(collisionPolicy)}. " +
               "Run read-only preflight next; only a Ready regular-file Copy can reach the reviewed executor, which performs fresh action-time validation."
             : $"Queued move plan for {intent.Entries.Count:N0} entr{(intent.Entries.Count == 1 ? "y" : "ies")} with {FormatCollisionPolicy(collisionPolicy)}. " +
-              "Move execution remains disabled.";
+              "Run read-only preflight next; only a Ready regular-file same-volume local Move can reach the reviewed rename executor. Cross-volume and directory Move remain non-executable.";
         ClearPreparedIntent();
         RefreshQueuePresentation();
         UpdateIntentAvailability();
@@ -148,7 +158,8 @@ public sealed partial class FilesView : UserControl
 
     private async void PreflightQueuedOperationButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_preflightRunning ||
+        if (IsFileOperationExecutionBusy ||
+            _preflightRunning ||
             OperationQueueList.SelectedItem is not FileBrowserQueuedOperationRow row)
         {
             return;
@@ -163,6 +174,8 @@ public sealed partial class FilesView : UserControl
 
         _preflightRunning = true;
         UpdateQueueActions();
+        UpdateCopyExecutionAvailability();
+        UpdateMoveExecutionAvailability();
         QueueStatusText.Text =
             $"Read-only preflight is checking current source/destination metadata for {plan.Kind.ToString().ToLowerInvariant()} plan {plan.Id}. " +
             "No filesystem changes can be made by this check.";
@@ -170,7 +183,8 @@ public sealed partial class FilesView : UserControl
         try
         {
             var result = await _preflightValidator.ValidateAsync(plan);
-            if (_queuedOperations.All(operation => operation.Id != plan.Id))
+            if (IsFileOperationExecutionBusy ||
+                _queuedOperations.All(operation => operation.Id != plan.Id))
             {
                 return;
             }
@@ -179,7 +193,7 @@ public sealed partial class FilesView : UserControl
             _preflightSnapshots[plan.Id] = snapshot;
             QueueStatusText.Text =
                 $"{result.Summary} Checked {snapshot.CheckedAtUtc.ToLocalTime():g}. " +
-                "This is a point-in-time read-only snapshot and can become stale. A Ready regular-file Copy may be run only through fresh executor validation; Move execution remains disabled.";
+                "This is a point-in-time read-only snapshot and can become stale. A Ready regular-file Copy or same-volume local Move still requires fresh execution-grade validation before mutation.";
         }
         catch (Exception exception)
         {
@@ -190,12 +204,15 @@ public sealed partial class FilesView : UserControl
         {
             _preflightRunning = false;
             RefreshQueuePresentation();
+            UpdateCopyExecutionAvailability();
+            UpdateMoveExecutionAvailability();
         }
     }
 
     private void RemoveQueuedOperationButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_preflightRunning ||
+        if (IsFileOperationExecutionBusy ||
+            _preflightRunning ||
             OperationQueueList.SelectedItem is not FileBrowserQueuedOperationRow row)
         {
             return;
@@ -209,7 +226,7 @@ public sealed partial class FilesView : UserControl
 
     private void ClearQueueButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_preflightRunning)
+        if (IsFileOperationExecutionBusy || _preflightRunning)
         {
             return;
         }
@@ -241,22 +258,34 @@ public sealed partial class FilesView : UserControl
 
     private void UpdateQueueActions()
     {
+        var executionBusy = IsFileOperationExecutionBusy;
         var hasSelection = OperationQueueList.SelectedItem is FileBrowserQueuedOperationRow;
-        OperationQueueList.IsEnabled = !_preflightRunning;
-        PreflightQueuedOperationButton.IsEnabled = hasSelection && !_preflightRunning;
-        RemoveQueuedOperationButton.IsEnabled = hasSelection && !_preflightRunning;
-        ClearQueueButton.IsEnabled = _queuedOperations.Count > 0 && !_preflightRunning;
+        OperationQueueList.IsEnabled = !executionBusy && !_preflightRunning;
+        PreflightQueuedOperationButton.IsEnabled = hasSelection && !executionBusy && !_preflightRunning;
+        RemoveQueuedOperationButton.IsEnabled = hasSelection && !executionBusy && !_preflightRunning;
+        ClearQueueButton.IsEnabled = _queuedOperations.Count > 0 && !executionBusy && !_preflightRunning;
     }
 
     private void ClearPreparedIntent()
     {
         _preparedIntent = null;
         IntentText.Text =
-            "Select one or more entries in a source pane, then prepare a direction. Queueing is planning only; no file operation is executed.";
+            "Select entries in one pane and prepare a direction. Queueing is non-mutating; executable regular-file Copy and same-volume local Move still require preflight plus fresh action-time validation.";
     }
 
     private void UpdateIntentAvailability()
     {
+        if (IsFileOperationExecutionBusy || _preflightRunning)
+        {
+            PrepareLeftToRightButton.IsEnabled = false;
+            PrepareRightToLeftButton.IsEnabled = false;
+            QueueCopyButton.IsEnabled = false;
+            QueueMoveButton.IsEnabled = false;
+            CollisionPolicyBox.IsEnabled = false;
+            return;
+        }
+
+        CollisionPolicyBox.IsEnabled = true;
         PrepareLeftToRightButton.IsEnabled = CanPrepareIntent(LeftPane, RightPane);
         PrepareRightToLeftButton.IsEnabled = CanPrepareIntent(RightPane, LeftPane);
 

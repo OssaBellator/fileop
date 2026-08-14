@@ -79,7 +79,8 @@ public sealed partial class FilesView
 
     private async Task RunSelectedCopyAsync()
     {
-        if (_copyExecutionRunning ||
+        if (IsFileOperationExecutionBusy ||
+            _preflightRunning ||
             OperationQueueList.SelectedItem is not FileBrowserQueuedOperationRow row)
         {
             return;
@@ -196,19 +197,26 @@ public sealed partial class FilesView
         }
         SetCopyExecutionUiBusy(false);
         UpdateCopyExecutionAvailability();
+        UpdateMoveExecutionAvailability();
     }
 
     private bool CanRunCopyPlan(FileOperationPlan plan, out string refusal)
     {
+        if (_preflightRunning)
+        {
+            refusal = "Wait for the current read-only preflight to finish before running Copy.";
+            return false;
+        }
+
         if (plan.Kind != FileOperationKind.Copy)
         {
-            refusal = "Only regular-file Copy execution is wired in this slice. Move execution remains disabled.";
+            refusal = "Select a queued regular-file Copy plan to use the Copy executor.";
             return false;
         }
 
         if (plan.Intent.Entries.Count == 0 || plan.Intent.Entries.Any(static entry => entry.IsDirectory))
         {
-            refusal = "This Copy executor slice supports regular files only. Directory Copy remains disabled.";
+            refusal = "This Copy executor supports regular files only. Directory Copy remains disabled.";
             return false;
         }
 
@@ -222,7 +230,7 @@ public sealed partial class FilesView
         if (preflight.Result.Status != FileOperationPreflightStatus.Ready)
         {
             refusal = preflight.Result.Status == FileOperationPreflightStatus.NeedsDecision
-                ? "This Copy still needs an explicit collision decision. Requeue it with Skip existing or Stop on collision, or wait for the separately reviewed decision UX."
+                ? "This Copy still needs an explicit collision decision. Resolve Ask-later to Skip existing or Stop on collision; overwrite/replacement remains unsupported."
                 : $"This Copy is blocked by read-only preflight: {preflight.Result.Summary}";
             return false;
         }
@@ -373,6 +381,8 @@ public sealed partial class FilesView
             RemoveQueuedOperationButton.IsEnabled = false;
             ClearQueueButton.IsEnabled = false;
             RunQueuedCopyButton.IsEnabled = false;
+            RunQueuedMoveButton.IsEnabled = false;
+            CancelQueuedMoveButton.IsEnabled = false;
             CancelQueuedCopyButton.Visibility = Visibility.Visible;
             UpdateCopyCancellationAvailability();
             return;
@@ -403,15 +413,12 @@ public sealed partial class FilesView
 
         if (_copyExecutionRunning)
         {
-            // Base pane/queue handlers may recalculate their own controls when
-            // selection or source state changes. Reassert Copy's exclusive UI
-            // ownership last so no second plan/preflight can be started while the
-            // reviewed executor is active.
             SetCopyExecutionUiBusy(true);
             return;
         }
 
-        if (OperationQueueList.SelectedItem is not FileBrowserQueuedOperationRow row)
+        if (_moveExecutionRunning ||
+            OperationQueueList.SelectedItem is not FileBrowserQueuedOperationRow row)
         {
             RunQueuedCopyButton.IsEnabled = false;
             return;
@@ -425,16 +432,22 @@ public sealed partial class FilesView
     {
         ClearPreparedIntent();
 
-        if (_copyExecutionRunning && _activeCopyOperationId is Guid activeId)
+        Guid? activeId = _copyExecutionRunning
+            ? _activeCopyOperationId
+            : _moveExecutionRunning
+                ? _activeMoveOperationId
+                : null;
+        if (activeId is Guid runningId)
         {
-            _queuedOperations.RemoveAll(operation => operation.Id != activeId);
-            foreach (var operationId in _preflightSnapshots.Keys.Where(id => id != activeId).ToArray())
+            _queuedOperations.RemoveAll(operation => operation.Id != runningId);
+            foreach (var operationId in _preflightSnapshots.Keys.Where(id => id != runningId).ToArray())
             {
                 _preflightSnapshots.Remove(operationId);
             }
 
-            QueueStatusText.Text =
-                "The indexed backing source changed. Non-running plans were discarded. The already-started Copy remains governed by its direct filesystem identity/history boundary and will not be replayed automatically.";
+            QueueStatusText.Text = _copyExecutionRunning
+                ? "The indexed backing source changed. Non-running plans were discarded. The already-started Copy remains governed by its direct filesystem identity/history boundary and will not be replayed automatically."
+                : "The indexed backing source changed. Non-running plans were discarded. The already-started same-volume Move remains governed by its direct filesystem identity/history boundary and will not be replayed automatically.";
         }
         else
         {
@@ -447,6 +460,7 @@ public sealed partial class FilesView
         RefreshQueuePresentation();
         UpdateIntentAvailability();
         UpdateCopyExecutionAvailability();
+        UpdateMoveExecutionAvailability();
     }
 
     private static string GetFileOperationHistoryDatabasePath() =>

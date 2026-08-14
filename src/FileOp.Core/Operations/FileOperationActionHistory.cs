@@ -84,13 +84,33 @@ public sealed record FileOperationActionHistory
                 "Action-history root identity evidence must contain both source and destination identities, or neither.");
         }
 
+        if (Kind == FileOperationKind.Move &&
+            SourceDirectoryIdentity is FileIdentity sourceRootIdentity &&
+            DestinationDirectoryIdentity is FileIdentity destinationRootIdentity &&
+            sourceRootIdentity.VolumeSerialNumber != destinationRootIdentity.VolumeSerialNumber)
+        {
+            throw new ArgumentException(
+                "Action-history schema v1 represents Move mutation state only for same-volume roots. Cross-volume Move requires a separate composite transaction journal.");
+        }
+
         var entrySnapshot = Entries.ToArray();
         if (entrySnapshot.Any(entry =>
             entry.State != FileOperationActionEntryState.Skipped &&
-            (Kind != FileOperationKind.Copy || entry.Entry.IsDirectory)))
+            entry.Entry.IsDirectory))
         {
             throw new ArgumentException(
-                "Action-history schema v1 supports mutation state only for Copy files; directory or non-Copy entries may be recorded only as skipped.",
+                "Action-history schema v1 supports mutation state only for regular files; directory entries may be recorded only as skipped.",
+                nameof(Entries));
+        }
+
+        if (Kind == FileOperationKind.Move &&
+            entrySnapshot.Any(entry =>
+                entry.UndoKind != FileOperationUndoKind.None ||
+                entry.DestinationContentFingerprint is not null ||
+                entry.DestinationHardLinkCount.HasValue))
+        {
+            throw new ArgumentException(
+                "Move history cannot reuse Copy undo, content-fingerprint, or destination hard-link evidence.",
                 nameof(Entries));
         }
 
@@ -203,6 +223,29 @@ public interface IFileOperationActionHistoryStore
 
     ValueTask<IReadOnlyList<FileOperationActionHistory>> GetRecentAsync(
         int limit = 100,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Optional Move-specific durable persistence capability. Keeping this separate from
+/// IFileOperationActionHistoryStore preserves existing implementations and prevents
+/// Copy commit/recovery methods from being reinterpreted as Move semantics.
+/// </summary>
+public interface IFileMoveOperationActionHistoryStore : IFileOperationActionHistoryStore
+{
+    ValueTask<FileOperationActionHistory> CommitSameVolumeMoveAsync(
+        Guid operationId,
+        int ordinal,
+        FileIdentity destinationIdentity,
+        DateTimeOffset committedAtUtc,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<FileOperationActionHistory> MarkSameVolumeMoveRecoveryRequiredAsync(
+        Guid operationId,
+        int ordinal,
+        FileOperationFailure failure,
+        DateTimeOffset failedAtUtc,
+        FileIdentity? observedDestinationIdentity = null,
         CancellationToken cancellationToken = default);
 }
 

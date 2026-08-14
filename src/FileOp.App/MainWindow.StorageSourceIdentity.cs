@@ -132,6 +132,7 @@ public sealed partial class MainWindow
             if (!_closed)
             {
                 _filesView.ResetOperationPlanningForSourceChange();
+                _filesView.ReassertOperationExecutionBusyAfterSourceChange();
             }
             return;
         }
@@ -141,6 +142,7 @@ public sealed partial class MainWindow
             if (!_closed && _filesInitialized)
             {
                 _filesView.ResetOperationPlanningForSourceChange();
+                _filesView.ReassertOperationExecutionBusyAfterSourceChange();
             }
         });
     }
