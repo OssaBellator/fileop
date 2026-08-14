@@ -4,9 +4,10 @@
 
 An adjacent `FileOp.Indexer.exe` is not trusted merely because it is next to the desktop app. Before an elevated helper launch, FileOp now requires:
 
-1. an embedded Authenticode signature accepted by Windows Authenticode policy;
-2. the signer certificate thumbprint to match the semicolon-separated thumbprints compiled into `FileOp.Windows` as `FileOpTrustedIndexerSignerThumbprints` assembly metadata;
-3. the current unelevated token to be unable to open the helper file, its containing directory, or that directory's parent with any tested write/delete/ACL-ownership mutation right.
+1. the requested executable to be the exact `FileOp.Indexer.exe` resolved beside the running FileOp application;
+2. an embedded Authenticode signature accepted by Windows Authenticode policy;
+3. the signer certificate thumbprint to match the semicolon-separated thumbprints compiled into `FileOp.Windows` as `FileOpTrustedIndexerSignerThumbprints` assembly metadata;
+4. the current unelevated token to be unable to open the helper file, its containing directory, or that directory's parent with any tested write/delete/ACL-ownership mutation right.
 
 Release builds do not accept an environment variable as a signer trust root. Debug builds have one explicit local-development bypass, `FILEOP_ALLOW_UNSIGNED_ELEVATED_HELPER_FOR_DEVELOPMENT=1`; that code is excluded from Release compilation.
 
@@ -30,13 +31,15 @@ The manifest hashes the already-signed artifacts. It is an integrity inventory f
 
 ## Install and update
 
-`tools/install-release.ps1` requires an elevated PowerShell process and defaults to `%ProgramFiles%\FileOp`.
+`tools/install-release.ps1` requires an elevated PowerShell process, an **independently supplied** `-TrustedSignerThumbprint`, and defaults to `%ProgramFiles%\FileOp`.
+
+The expected signer is deliberately not learned from the package. The package manifest contains its build signer for consistency checking, but the installer first normalizes the caller-supplied trust pin, requires the manifest to match that independent value, then requires every FileOp PE signature to match it as well. Editing a ZIP and its manifest therefore cannot choose a new trusted signer.
 
 Before replacing an installation it:
 
 - expands the package into a temporary directory;
-- validates every manifest path and SHA-256;
-- verifies every FileOp PE signature and signer thumbprint;
+- validates every manifest path remains inside that extraction root and verifies each SHA-256;
+- verifies every FileOp PE signature and requires its signer to match the independently supplied thumbprint;
 - requires signed `FileOp.App.exe` and `FileOp.Indexer.exe`;
 - refuses to update while FileOp is running;
 - stages the verified package under the installation parent;
@@ -60,4 +63,4 @@ Any future persistent schema migration must be backward/forward policy-aware bef
 
 ## Remaining release validation
 
-The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for unsigned, wrong-signer and user-writable helper paths.
+The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for unsigned, wrong-signer, manifest-signer mismatch and user-writable helper paths.
