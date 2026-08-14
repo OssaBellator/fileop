@@ -39,12 +39,19 @@ try {
     $thumbprint = ([string]$manifest.TrustedSignerThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
     if ($thumbprint.Length -ne 40) { throw 'The package manifest has an invalid trusted signer thumbprint.' }
 
+    $tempRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($temp))
     foreach ($entry in $manifest.Files) {
         $relative = ([string]$entry.Path).Replace('/', [IO.Path]::DirectorySeparatorChar)
-        if ([IO.Path]::IsPathRooted($relative) -or $relative.Split([IO.Path]::DirectorySeparatorChar) -contains '..') {
+        $segments = @($relative -split '[\\/]')
+        if ([IO.Path]::IsPathRooted($relative) -or $segments -contains '..' -or $segments -contains '') {
             throw "Unsafe package manifest path: $relative"
         }
-        $path = Join-Path $temp $relative
+        $path = [IO.Path]::GetFullPath((Join-Path $temp $relative))
+        $pathParent = [IO.Path]::GetDirectoryName($path)
+        if ([string]::IsNullOrWhiteSpace($pathParent) -or
+            -not ($path.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase))) {
+            throw "Package manifest path escapes the extraction root: $relative"
+        }
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Package file is missing: $relative" }
         $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
         if ($hash -ne ([string]$entry.Sha256).ToLowerInvariant()) {
@@ -67,7 +74,8 @@ try {
     if (-not ($signedFiles | Where-Object Name -eq 'FileOp.App.exe')) { throw 'Package has no signed FileOp.App.exe.' }
     if (-not ($signedFiles | Where-Object Name -eq 'FileOp.Indexer.exe')) { throw 'Package has no signed FileOp.Indexer.exe.' }
 
-    Copy-Item -LiteralPath $temp -Destination $stage -Recurse
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    Copy-Item -Path (Join-Path $temp '*') -Destination $stage -Recurse -Force
     if (Test-Path -LiteralPath $install) {
         Move-Item -LiteralPath $install -Destination $backup
         $backupCreated = $true
