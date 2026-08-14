@@ -107,6 +107,7 @@ def check_repository(root: Path) -> int:
         'primitive': root / 'src/FileOp.Windows/Operations/WindowsFileSameVolumeMoveMutationPrimitive.cs',
         'move_validator': root / 'src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs',
         'namespace': root / 'src/FileOp.Windows/Operations/WindowsFileOperationNamespaceCapability.cs',
+        'tests': root / 'tests/FileOp.Windows.Tests/WindowsMoveOperationExecutionValidatorTests.cs',
         'gate': root / 'tools/test-local.ps1',
     }
     missing = [str(path) for path in paths.values() if not path.is_file()]
@@ -154,8 +155,12 @@ def check_repository(root: Path) -> int:
 
     required_validator = [
         'public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator',
+        'IFileOperationNamespaceCapabilityProbe? namespaceProbe = null',
         '_inner = inner ?? new WindowsFileOperationExecutionValidator();',
-        '_namespaceProbe.RequireSupportedMutationRoots(validation);',
+        'validation.SourceDirectory.CanonicalPath',
+        'validation.DestinationDirectory.CanonicalPath',
+        '_namespaceProbe.QueryDirectory(path)',
+        'if (!capability.CanUseCurrentMutationModel)',
         'plan.Kind != FileOperationKind.Move || !validation.CanBeginMutation',
         'FileOperationExecutionValidationStatus.Blocked',
         'before durable mutation history',
@@ -165,6 +170,7 @@ def check_repository(root: Path) -> int:
         assert needle in source['move_validator'], needle
 
     required_namespace = [
+        'public interface IFileOperationNamespaceCapabilityProbe',
         'FileCaseSensitiveInformation = 71',
         'FileCsFlagCaseSensitiveDir = 0x00000001',
         'UnsupportedCaseSensitiveDirectory',
@@ -175,6 +181,20 @@ def check_repository(root: Path) -> int:
     for needle in required_namespace:
         assert needle in source['namespace'], needle
 
+    required_tests = [
+        'CaseSensitiveSourceBlocksReadyMoveBeforeMutationHistory',
+        'CaseSensitiveDestinationBlocksReadyMoveAfterCheckingBothRoots',
+        'UnavailableNamespaceCapabilityBlocksReadyMove',
+        'SupportedNamespacesReturnOriginalReadyMoveValidation',
+        'NonMoveValidationDoesNotInvokeMoveNamespaceCapability',
+        'Assert.AreEqual(1, probe.QueryCalls);',
+        'Assert.AreEqual(2, probe.QueryCalls);',
+        'Assert.AreEqual(0, probe.QueryCalls);',
+        'No MutationStarted record',
+    ]
+    for needle in required_tests:
+        assert needle in source['tests'], needle
+
     assert source['move'].index('FileMoveExecutionStrategyClassifier.Classify(executionValidation)') < source['move'].index('_moveExecutionRunning = true;')
     assert '_filesView.ReassertOperationExecutionBusyAfterSourceChange();' in source['source']
     assert 'FileSameVolumeMoveOperationExecutor : IFileOperationExecutor' in source['executor']
@@ -183,7 +203,10 @@ def check_repository(root: Path) -> int:
         assert forbidden not in source['move'], forbidden
     assert 'verify_files_same_volume_move_ui.py --repo-root $repoRoot --cases 50000' in source['gate']
 
-    return len(required_xaml) + len(required_move) + len(required_validator) + len(required_namespace) + 9
+    return (
+        len(required_xaml) + len(required_move) + len(required_validator) +
+        len(required_namespace) + len(required_tests) + 9
+    )
 
 
 def main() -> int:
