@@ -73,6 +73,8 @@ Docs-only changes can be reviewed/merged independently when they alter no source
 
 Do not trigger GitHub Actions merely to duplicate a local gate when hosted quota is unavailable. A review should instead record what was executed locally and what remains outstanding.
 
+The hosted `build` workflow ignores changes confined to `docs/**` and Markdown files on both `pull_request` and `push` triggers. This prevents documentation-only reviews and merges from consuming hosted runner capacity. Any source, project, tool, test, workflow or other non-documentation change remains eligible for the normal hosted build; the path filter is a cost/queue policy, not a replacement for validation.
+
 Commit-message workflow-skip instructions may suppress some `push`/`pull_request` workflows, but they are not validation. Skipped required checks can also remain pending under branch protection, so do not rely on skip instructions as a merge mechanism.
 
 The repository's preferred zero-Actions path is the explicit local gate above.
