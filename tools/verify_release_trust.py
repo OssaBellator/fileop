@@ -39,6 +39,12 @@ def check_repository(root: Path) -> int:
         'WinVerifyTrust(',
         'WtdRevokeWholeChain',
         'WtdProvFlagsRevocationCheckChainExcludeRoot',
+        'WssVerifySpecific = 0x00000001',
+        'WssGetSecondarySigCount = 0x00000002',
+        'Flags = WssVerifySpecific | WssGetSecondarySigCount',
+        'signatureSettings.VerifiedSignatureIndex != 0',
+        'signatureSettings.SecondarySignatureCount != 0',
+        'rejects ambiguous multi-signature binaries',
         'X509Certificate.CreateFromSignedFile(fullPath)',
         'trustedThumbprints.Contains(thumbprint',
         '#if DEBUG',
@@ -50,6 +56,7 @@ def check_repository(root: Path) -> int:
     ]
     for needle in required_trust:
         assert needle in source['trust'], needle
+    assert source['trust'].index('VerifySingleAuthenticodeSignature(fullPath);') < source['trust'].index('X509Certificate.CreateFromSignedFile(fullPath)')
 
     session = source['session']
     trust_call = session.index('IndexingServiceHelperTrustPolicy.RequireTrustedForElevation(executable);')
@@ -142,19 +149,20 @@ def check_repository(root: Path) -> int:
     assert 'whole-package authenticity' in docs
     assert 'must not learn its trusted package hash from the zip' in docs
     assert 'editing a zip, manifest, dependency or data file' in docs
+    assert 'single embedded authenticode signature' in docs
     assert 'verify_release_trust.py --repo-root $repoRoot' in source['gate']
 
     assert 'GetEnvironmentVariable("FileOpTrustedIndexerSignerThumbprints"' not in source['trust']
     return (
         len(required_project)
         + len(required_trust)
-        + 4
+        + 5
         + len(required_policy)
         + len(required_package)
         + len(required_install)
         + 1
         + len(required_uninstall)
-        + 6
+        + 7
         + 1
     )
 
