@@ -94,15 +94,17 @@ See `docs/storage-threshold-overlay.md` and `docs/storage-threshold-preferences.
 
 ## Known-location review
 
-The current provenance-based review uses the native stale-large analysis for the current user's Downloads and Temp roots when those roots are on the active indexed volume.
+The provenance-based review uses the native stale-large analysis for the current user's Downloads and Temp roots. Same-volume locations use the active primary native source; redirected locations may use another already indexed, checkpointed native volume without switching the primary Search/Storage source or changing protocol v8.
 
 Downloads uses explicit package/archive/disk-image extension allow-lists after a file is already in the bounded native stale-large source set. `.exe` is deliberately not inferred to be an installer. User Temp uses location provenance without extension guessing.
 
 Every row exposes a rule ID/reason, and the UI states that location, age, size and extension do **not** establish safe deletion. Aggregate bytes are candidate measured bytes, not guaranteed reclaim.
 
-On current `main`, a known location on another volume is reported outside the active source rather than silently scanned. If the native stale-large source reaches its cap, the review is marked potentially incomplete.
+Cross-volume evidence is accepted only after the selected indexed source is bound to a unique current volume identity/root, has a usable checkpoint, reaches bounded catch-up currentness, and still matches after analysis. A redirected location with no matching indexed source remains outside the active volume; FileOp does not silently scan or rebuild it.
 
-Review in Files is a non-destructive handoff into the indexed browser; cleanup readiness is a separate read-only current-path check. Neither becomes delete consent.
+Candidate rows have a separate defense-in-depth provenance boundary before classification: the indexed path must be fully qualified, normalize within the reviewed root using separator-bound Windows path semantics, and agree with the row's indexed name/extension metadata. Malformed, relative, sibling-prefix, other-volume, or metadata-inconsistent rows are filtered without changing the upstream stale-candidate count/truncation disclosure.
+
+**Check readiness** is a separate read-only current-path check and can revalidate a cross-volume candidate against its exact owning indexed source. **Review in Files** remains primary-volume-only and has no direct-filesystem fallback for cross-volume candidates. Neither action becomes delete consent.
 
 See `docs/known-location-review.md`, `docs/known-location-files-handoff.md` and `docs/cleanup-readiness.md`.
 
