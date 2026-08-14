@@ -179,6 +179,8 @@ def check_repository(root: Path) -> int:
         "raw": "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs",
         "wrapper": "src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs",
         "native_fidelity": "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveFidelityVerifier.cs",
+        "production_validator": "src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs",
+        "production_validator_tests": "tests/FileOp.Windows.Tests/WindowsMoveOperationExecutionValidatorTests.cs",
         "fidelity_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityTests.cs",
         "lease_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityLeaseTests.cs",
         "share_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityShareCompatibilityTests.cs",
@@ -309,6 +311,29 @@ def check_repository(root: Path) -> int:
     assert source["native_fidelity"].count("FileShare.Read | FileShare.Delete") >= 2
     checks += 1
 
+    production_validator = source["production_validator"]
+    checks += must_contain(
+        production_validator,
+        "CrossVolumeMoveDisabledSummary",
+        "IsCrossVolume(validation)",
+        "return Block(validation, CrossVolumeMoveDisabledSummary);",
+        "ordinary-user security-fidelity (#186)",
+        "final proof-to-mutation stability (#187)",
+        "No durable history, destination Copy, or source-delete mutation",
+        "sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber",
+    )
+    assert production_validator.index("IsCrossVolume(validation)") < production_validator.index("RequireSupportedMutationRoots(validation")
+    checks += 1
+    checks += must_contain(
+        source["production_validator_tests"],
+        "CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory",
+        "destinationVolumeSerialNumber: 22",
+        "Assert.AreEqual(0, probe.QueryCalls)",
+        "SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation",
+        "#186",
+        "#187",
+    )
+
     checks += must_contain(
         source["fidelity_tests"],
         "EquivalentOrdinaryPinnedFilesMayReachLaterDeleteBarrier",
@@ -345,7 +370,11 @@ def check_repository(root: Path) -> int:
         "ThrowsExactlyAsync<ArgumentException>",
     )
 
-    checks += must_contain(source["ui"], "new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive()")
+    checks += must_contain(
+        source["ui"],
+        "new WindowsMoveOperationExecutionValidator()",
+        "new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive()",
+    )
     checks += must_not_contain(source["ui"], "new WindowsFileCrossVolumeMoveSourceDeletePrimitive())")
 
     # Capability-surface invariant: production composition may only instantiate the raw
