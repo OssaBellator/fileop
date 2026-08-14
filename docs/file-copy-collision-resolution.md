@@ -25,6 +25,8 @@ existing Ask FileOperationPlan
 
 The fresh operation ID keeps durable-history single-use semantics unambiguous. The old preflight result describes the old `Ask` plan only and is never transferred as authorization to the resolved plan.
 
+After the replacement row is created, Files reselects that new plan for convenience, but selection is not validation or authorization; **Preflight selected** must run again before Copy execution can become available.
+
 ## Supported decisions
 
 ### Skip existing
