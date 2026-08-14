@@ -144,7 +144,7 @@ def check_repository(root: Path) -> int:
         'Content="Cancel Move"',
         'x:Name="MoveProgressBar"',
         'same-volume regular-file Move can execute; cross-volume and directory Move remain disabled',
-        'cross-volume Move remains product-disabled pending #186/#187',
+        'cross-volume Move remains product-disabled pending fidelity hardening',
     ]
     for needle in required_xaml:
         assert needle in source['xaml'], needle
@@ -152,6 +152,7 @@ def check_repository(root: Path) -> int:
         'reviewed regular-file Move supports same-volume rename and cross-volume Copy plus separately authorized source deletion',
         'same-volume identity-preserving rename or a cross-volume Copy plus separate durable source-delete boundary',
         'Ready regular-file Copy and reviewed regular-file Move can execute; directory Move remains disabled.',
+        'pending #186/#187',
     ]:
         assert stale not in source['xaml'], stale
 
@@ -192,7 +193,10 @@ def check_repository(root: Path) -> int:
         'IFileOperationNamespaceCapabilityProbe? namespaceProbe = null',
         '_inner = inner ?? new WindowsFileOperationExecutionValidator();',
         'CrossVolumeMoveDisabledSummary',
-        'if (IsCrossVolume(validation))',
+        'MissingRootIdentitySummary',
+        'if (!TryClassifyVolumeRelationship(validation, out var isCrossVolume))',
+        'return Block(validation, MissingRootIdentitySummary);',
+        'if (isCrossVolume)',
         'return Block(validation, CrossVolumeMoveDisabledSummary);',
         'ordinary-user security-fidelity (#186)',
         'final proof-to-mutation stability (#187)',
@@ -207,7 +211,8 @@ def check_repository(root: Path) -> int:
     ]
     for needle in required_validator:
         assert needle in source['move_validator'], needle
-    assert source['move_validator'].index('if (IsCrossVolume(validation))') < source['move_validator'].index('RequireSupportedMutationRoots(validation')
+    assert source['move_validator'].index('TryClassifyVolumeRelationship(validation') < source['move_validator'].index('RequireSupportedMutationRoots(validation')
+    assert 'throw new InvalidOperationException' not in source['move_validator']
 
     required_namespace = [
         'public interface IFileOperationNamespaceCapabilityProbe',
@@ -226,6 +231,8 @@ def check_repository(root: Path) -> int:
         'CaseSensitiveDestinationBlocksReadyMoveAfterCheckingBothRoots',
         'UnavailableNamespaceCapabilityBlocksReadyMove',
         'SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation',
+        'MutationReadyMoveWithoutRootIdentityFailsClosedBeforeNamespaceProbe',
+        'includeDestinationRootIdentity: false',
         'CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory',
         'Assert.AreEqual(0, probe.QueryCalls)',
         'NonMoveValidationDoesNotInvokeMoveNamespaceCapability',
@@ -262,7 +269,7 @@ def check_repository(root: Path) -> int:
     return (
         len(required_xaml) + len(required_move) + len(required_validator) +
         len(required_namespace) + len(required_namespace_tests) +
-        len(required_cross_tests) + 16
+        len(required_cross_tests) + 17
     )
 
 
