@@ -14,6 +14,17 @@ using Microsoft.Win32.SafeHandles;
 namespace FileOp.Windows.Operations;
 
 /// <summary>
+/// Injectable evidence source for the destructive cross-volume Move fidelity gate.
+/// Implementations return evidence classification only; they never mint delete authority.
+/// </summary>
+internal interface IFileCrossVolumeMoveFidelityVerifier
+{
+    ValueTask<FileCrossVolumeMoveFidelityClassification> VerifyAsync(
+        FileCrossVolumeMoveSourceDeleteRequest request,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Adds a destructive-fidelity gate around the reviewed identity-bound source-delete
 /// primitive. The inner lease is acquired first, so its exact source/destination handles
 /// already deny ordinary write/delete sharing while this wrapper reads current evidence.
@@ -24,16 +35,21 @@ public sealed class WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimit
     IFileCrossVolumeMoveSourceDeletePrimitive
 {
     private readonly IFileCrossVolumeMoveSourceDeletePrimitive _inner;
+    private readonly IFileCrossVolumeMoveFidelityVerifier _fidelityVerifier;
 
     public WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive()
-        : this(new WindowsFileCrossVolumeMoveSourceDeletePrimitive())
+        : this(
+            new WindowsFileCrossVolumeMoveSourceDeletePrimitive(),
+            new WindowsFileCrossVolumeMoveFidelityVerifier())
     {
     }
 
     internal WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive(
-        IFileCrossVolumeMoveSourceDeletePrimitive inner)
+        IFileCrossVolumeMoveSourceDeletePrimitive inner,
+        IFileCrossVolumeMoveFidelityVerifier fidelityVerifier)
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        _fidelityVerifier = fidelityVerifier ?? throw new ArgumentNullException(nameof(fidelityVerifier));
     }
 
     public async ValueTask<IFileCrossVolumeMoveSourceDeleteLease> AcquireAsync(
@@ -43,20 +59,17 @@ public sealed class WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimit
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var innerLease = await _inner.AcquireAsync(request, cancellationToken)
-            .ConfigureAwait(false);
+        IFileCrossVolumeMoveSourceDeleteLease? innerLease =
+            await _inner.AcquireAsync(request, cancellationToken).ConfigureAwait(false);
         try
         {
-            var classification = await Task.Run(
-                    () => WindowsFileCrossVolumeMoveFidelityVerifier.Verify(
-                        request,
-                        cancellationToken),
-                    cancellationToken)
+            var classification = await _fidelityVerifier
+                .VerifyAsync(request, cancellationToken)
                 .ConfigureAwait(false);
             ThrowIfBlocked(classification, "before the source-delete barrier");
 
-            var lease = new FidelityLease(innerLease, request);
-            innerLease = null!;
+            var lease = new FidelityLease(innerLease, request, _fidelityVerifier);
+            innerLease = null;
             return lease;
         }
         finally
@@ -88,14 +101,18 @@ public sealed class WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimit
     {
         private IFileCrossVolumeMoveSourceDeleteLease? _inner;
         private readonly FileCrossVolumeMoveSourceDeleteRequest _request;
+        private readonly IFileCrossVolumeMoveFidelityVerifier _fidelityVerifier;
         private int _mutationAttempted;
 
         internal FidelityLease(
             IFileCrossVolumeMoveSourceDeleteLease inner,
-            FileCrossVolumeMoveSourceDeleteRequest request)
+            FileCrossVolumeMoveSourceDeleteRequest request,
+            IFileCrossVolumeMoveFidelityVerifier fidelityVerifier)
         {
             _inner = inner ?? throw new ArgumentNullException(nameof(inner));
             _request = request ?? throw new ArgumentNullException(nameof(request));
+            _fidelityVerifier = fidelityVerifier ??
+                throw new ArgumentNullException(nameof(fidelityVerifier));
             if (!ReferenceEquals(inner.Evidence.Request, request))
             {
                 throw new InvalidOperationException(
@@ -137,13 +154,10 @@ public sealed class WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimit
 
             // This is already inside the durable source-delete critical section. Do not turn
             // a late cancellation into a partially-authorized destructive retry. Revalidate
-            // synchronously to a terminal proof/refusal, then let the inner reviewed primitive
-            // perform the exact same-handle disposition without a cancellable gap.
-            var classification = await Task.Run(
-                    () => WindowsFileCrossVolumeMoveFidelityVerifier.Verify(
-                        _request,
-                        CancellationToken.None),
-                    CancellationToken.None)
+            // to a terminal proof/refusal, then let the inner reviewed primitive perform the
+            // exact same-handle disposition without a cancellable gap.
+            var classification = await _fidelityVerifier
+                .VerifyAsync(_request, CancellationToken.None)
                 .ConfigureAwait(false);
             ThrowIfBlocked(classification, "after the durable source-delete barrier");
 
@@ -162,7 +176,8 @@ public sealed class WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimit
     }
 }
 
-internal static class WindowsFileCrossVolumeMoveFidelityVerifier
+internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
+    IFileCrossVolumeMoveFidelityVerifier
 {
     private const uint FileReadData = 0x00000001u;
     private const uint ReadControl = 0x00020000u;
@@ -176,11 +191,20 @@ internal static class WindowsFileCrossVolumeMoveFidelityVerifier
     private const uint MaximumSecurityDescriptorBytes = 1024u * 1024u;
     private const int BufferSize = 1024 * 1024;
 
-    internal static FileCrossVolumeMoveFidelityClassification Verify(
+    public ValueTask<FileCrossVolumeMoveFidelityClassification> VerifyAsync(
+        FileCrossVolumeMoveSourceDeleteRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new ValueTask<FileCrossVolumeMoveFidelityClassification>(
+            Task.Run(() => Verify(request, cancellationToken), cancellationToken));
+    }
+
+    private static FileCrossVolumeMoveFidelityClassification Verify(
         FileCrossVolumeMoveSourceDeleteRequest request,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
         using var source = OpenEvidenceFile(
