@@ -46,7 +46,7 @@ Before replacing an installation it:
 - rejects unexpected extracted files that are not represented by the manifest (apart from the manifest itself);
 - verifies every FileOp PE signature and requires its signer to match the independently supplied thumbprint;
 - requires signed `FileOp.App.exe` and `FileOp.Indexer.exe`;
-- refuses to update while FileOp is running;
+- refuses to update while either `FileOp.App` or `FileOp.Indexer` is still running;
 - stages the verified package under the installation parent;
 - renames the old installation to a backup and the staged installation into place;
 - restores the backup if the replacement rename fails;
@@ -64,8 +64,8 @@ Any future persistent schema migration must be backward/forward policy-aware bef
 
 `tools/uninstall-fileop.ps1` removes the protected installation directory. Per-user FileOp data is preserved by default so uninstall/reinstall does not silently destroy indexes or recovery evidence.
 
-`-PurgeUserData` is an explicit separate choice that removes `%LOCALAPPDATA%\FileOp` after FileOp is closed.
+Uninstall also refuses to remove the installation while either `FileOp.App` or `FileOp.Indexer` is still running. `-PurgeUserData` is an explicit separate choice that removes `%LOCALAPPDATA%\FileOp` only after the FileOp processes are quiescent.
 
 ## Remaining release validation
 
-The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for package-hash mismatch, unsigned/wrong-signer binaries, manifest-signer mismatch, unexpected payload files and user-writable helper paths.
+The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for package-hash mismatch, unsigned/wrong-signer binaries, manifest-signer mismatch, unexpected payload files, running-app/helper replacement attempts and user-writable helper paths.
