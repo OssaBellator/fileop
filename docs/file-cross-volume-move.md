@@ -2,14 +2,17 @@
 
 Cross-volume Move is a destructive composite transaction. It is **not** implemented as an unchecked `Copy` followed by a path-based delete.
 
-This document describes the reviewed boundary implemented by draft PR #185. The implementation remains draft until the exact final head passes the complete Windows `tools/test-local.ps1` gate and the ordinary-user security-fidelity decision tracked by #186 plus the final proof-to-mutation stability boundary tracked by #187 are resolved or deliberately scoped.
+This document describes the reviewed transaction machinery implemented by draft PR #185. **Production Files execution does not currently enter this transaction.** `WindowsMoveOperationExecutionValidator` blocks freshly validated different-volume Move before durable history, destination Copy or source-delete mutation while #186 (ordinary-user security fidelity) and #187 (final proof-to-mutation stability) remain unresolved. The machinery stays directly testable so those boundaries can be finished without weakening its durable model.
+
+The implementation remains draft until the exact final head passes the complete Windows `tools/test-local.ps1` gate and #186/#187 are resolved or deliberately scoped.
 
 ## Scope
 
-The current boundary applies only to regular-file Move entries whose freshly validated source and destination roots have different filesystem volume identities.
+The dormant composite boundary applies only to regular-file Move entries whose freshly validated source and destination roots have different filesystem volume identities.
 
 It does not authorize:
 
+- production Files execution while the product-readiness block is active;
 - directory Move;
 - overwrite or replacement;
 - path-only source deletion;
@@ -18,7 +21,19 @@ It does not authorize:
 - automatic cleanup of a copied/source-retained result;
 - automatic recovery mutation from durable evidence.
 
-Same-volume regular-file Move continues to use the separate identity-preserving rename executor.
+Same-volume regular-file Move continues to use the separate identity-preserving production rename executor.
+
+## Production enablement boundary
+
+Read-only preflight intentionally carries path state/reparse/error evidence, not stable root filesystem identities. It therefore does not infer volume relationship from drive-letter text.
+
+Fresh Windows execution validation resolves stable canonical root identities. For a mutation-ready Move:
+
+- missing root identity fails closed as `Blocked` rather than throwing or guessing;
+- different root volume serials return `Blocked` **before namespace probing, durable history, destination Copy or source-delete capability acquisition**;
+- same-volume roots continue through the existing namespace-capability checks and same-volume executor.
+
+This preserves the composite implementation for deterministic/model testing without presenting it as a current user-reachable mutation route.
 
 ## Composite durable states
 
@@ -35,13 +50,13 @@ The important per-entry states are:
 7. `Failed` — safe terminal failure with no unresolved mutation barrier.
 8. `RecoveryRequired` — durable evidence exists for an unresolved Copy or source-delete barrier. Evidence grants no replay, rollback or delete authority.
 
-`DestinationCommitted` is intentionally a **safe duplicate state**, not an ambiguity. Cancellation or a pre-delete fidelity/capability refusal may stop there: the copied destination remains and the original source remains. FileOp reports that condition explicitly and does not clean it up automatically.
+`DestinationCommitted` is intentionally a **safe duplicate state**, not an ambiguity. In direct composite-engine execution, cancellation or a pre-delete fidelity/capability refusal may stop there: the copied destination remains and the original source remains. The engine records that condition explicitly and does not clean it up automatically.
 
 Persisted-history validation is stricter than the SQLite table shape. Entry source identity must remain on the durable source-root volume, destination evidence must remain on the durable destination-root volume, a safe `Failed` row cannot hide an unresolved Copy barrier, and source-delete recovery must retain the earlier Copy/destination chronology. A corruption regression deliberately writes a schema-valid impossible row and proves history hydration refuses it.
 
 ## Mutation ordering
 
-For one ready entry, the reviewed order is:
+For one ready entry passed directly into the dormant engine through a validator that authorizes the composite strategy, the reviewed order is:
 
 1. fresh execution-grade validation;
 2. durable `CopyMutationStarted` barrier;
@@ -95,7 +110,7 @@ This is deliberately fail-closed, but it creates an ordinary-user limitation: a 
 
 The fidelity wrapper verifies once during source-delete lease acquisition, before `SourceDeleteStarted`.
 
-If that first proof fails, the executor can terminate safely with the committed destination retained and source retained. No source-delete barrier is crossed.
+If that first proof fails, a direct composite-engine execution can terminate safely with the committed destination retained and source retained. No source-delete barrier is crossed.
 
 The wrapper verifies again after `SourceDeleteStarted` and before it delegates the exact authorization to the inner delete primitive.
 
@@ -112,7 +127,7 @@ The raw Windows source-delete primitive and the fidelity wrapper have different 
 - only Core can mint the post-barrier `FileCrossVolumeMoveSourceDeleteAuthorization`;
 - the fidelity wrapper cannot synthesize or substitute delete authority.
 
-The public Files composition root uses `WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive`, not the raw destructive primitive directly.
+The dormant Files composition code uses `WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive`, not the raw destructive primitive directly. Production validation currently returns before that executor is instantiated.
 
 ### DELETE-share compatibility of evidence reopens
 
@@ -132,15 +147,17 @@ Issue #187 tracks the required final proof-to-mutation stability mechanism: a su
 
 #186 remains separate: it defines how ordinary-user security semantics are preserved/proven or deliberately scoped. #187 defines how whatever fidelity contract is chosen remains stable through the destructive boundary.
 
-Until both decisions are resolved, failure to obtain complete evidence remains a safe source-retained refusal and #185 remains draft.
+Until both decisions are resolved, production validation remains disabled for different-volume Move and #185 remains draft.
 
-## Cancellation and user-visible outcomes
+## Cancellation and observable engine outcomes
 
-Before the Copy barrier, cancellation can stop with no mutation.
+Before the Copy barrier, direct composite-engine cancellation can stop with no mutation.
 
-After `DestinationCommitted` and before `SourceDeleteStarted`, cancellation is safe and leaves a known duplicate. Files reports that the destination copy exists and the original source was retained.
+After `DestinationCommitted` and before `SourceDeleteStarted`, cancellation is safe and leaves a known duplicate: destination Copy plus retained original source.
 
 After `SourceDeleteStarted`, cancellation does not interrupt the destructive critical section. Any failure to prove or complete the source-delete phase becomes recovery-sensitive.
+
+These are transaction-engine semantics, not current Files production outcomes. Current Files validation refuses different-volume Move before the first durable barrier or Copy.
 
 The original operation ID is single-use once execution can reach durable history. FileOp does not automatically replay the Copy, delete a retained source, or infer cleanup authority from the journal.
 
@@ -148,13 +165,15 @@ The original operation ID is single-use once execution can reach durable history
 
 GitHub-hosted Actions are not part of this feature's merge gate.
 
-Portable/model/source verification is wired into `tools/test-local.ps1 -OfflineOnly` through `tools/verify_file_cross_volume_move.py`. The model covers cancellation and both fidelity checkpoints, including:
+Portable/model/source verification is wired into `tools/test-local.ps1 -OfflineOnly` through `tools/verify_file_cross_volume_move.py` and the Files Move source verifier. The model covers cancellation and both fidelity checkpoints, including:
 
 - pre-barrier fidelity refusal => destination committed/source retained;
 - post-barrier fidelity refusal => recovery required/no inner delete;
-- successful deletion only after both fidelity proofs and the durable source-delete barrier.
+- successful deletion only after both fidelity proofs and the durable source-delete barrier;
+- production different-volume validation => blocked before namespace probe, durable history or Copy;
+- malformed mutation-ready root identity evidence => blocked rather than guessed or thrown.
 
-Deterministic managed tests cover the SQLite state machine, persisted-history invariants/corruption refusal, executor ordering, fidelity wrapper behavior with injected evidence results, and native DELETE-share compatibility.
+Deterministic managed tests cover the SQLite state machine, persisted-history invariants/corruption refusal, executor ordering, fidelity wrapper behavior with injected evidence results, product-readiness validation, and native DELETE-share compatibility.
 
 The authoritative merge gate for executable changes remains the complete Windows invocation on the **exact final PR head**:
 
