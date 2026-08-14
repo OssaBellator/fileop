@@ -7,8 +7,9 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-if ([string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
-    throw 'The canonical Program Files directory is unavailable. FileOp release install/update will not use a caller-selected fallback path.'
+$knownProgramFiles = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles)
+if ([string]::IsNullOrWhiteSpace($knownProgramFiles)) {
+    throw 'The canonical Program Files known folder is unavailable. FileOp release install/update will not use an environment-variable or caller-selected fallback path.'
 }
 
 $expectedPackageHash = $TrustedPackageSha256.ToLowerInvariant()
@@ -37,7 +38,9 @@ if ($actualPackageHash -ne $expectedPackageHash) {
 # Release tooling intentionally owns exactly one install root. A caller-selectable
 # elevated rename/delete target would turn this updater into a generic privileged
 # filesystem mutation primitive and would weaken the helper-path trust boundary.
-$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($env:ProgramFiles))
+# Resolve Program Files from the OS known-folder API rather than trusting a mutable
+# process environment variable as a privileged filesystem root.
+$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($knownProgramFiles))
 $install = [IO.Path]::GetFullPath((Join-Path $programFiles 'FileOp'))
 $expectedInstall = $programFiles + [IO.Path]::DirectorySeparatorChar + 'FileOp'
 if (-not [string]::Equals(
