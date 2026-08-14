@@ -25,7 +25,8 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
 
         Assert.AreEqual(1, probe.RequireCalls);
         Assert.AreSame(ready.Plan, result.Plan);
-        Assert.AreSame(ready.Items, result.Items);
+        Assert.AreEqual(ready.Items.Count, result.Items.Count);
+        Assert.AreSame(ready.Items[0], result.Items[0]);
         Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
         Assert.IsFalse(result.CanBeginMutation);
         StringAssert.Contains(result.Summary, "before durable mutation history");
