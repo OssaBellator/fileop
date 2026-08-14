@@ -28,9 +28,24 @@ Files and native Storage consume the same indexed metadata rows. They do not lau
 
 Files is an exact paged browser over direct-child metadata. It requests 256 entries at a time, exposes `Load more` only while a continuation cursor exists and uses keyset ordering rather than offsets.
 
-Browsing itself remains read-only, but Files now also owns the separately reviewed **file-only permanent-delete session**. Destructive authority is not inferred from a selected row, Storage recommendation or cleanup-readiness result.
+Browsing itself remains read-only. Files also owns two reviewed mutation surfaces with deliberately different authority:
 
-A permanent-delete session requires the current exact Files selection to pass the reviewed sequence:
+- the ordinary queue can execute **regular-file Copy** and **same-volume local regular-file Move** after read-only preflight and fresh execution-grade validation;
+- the separately reviewed **file-only permanent-delete session** has its own stricter recovery, confirmation, authorization and same-handle mutation boundary.
+
+The Copy/Move queue remains deliberately narrow:
+
+- Copy and Move operate on regular files only; directory Copy/Move mutation is not exposed;
+- Copy uses exclusive-create/no-overwrite semantics;
+- `Ask later` must be resolved into a fresh immutable **Skip existing** or **Stop on collision** plan before execution;
+- same-volume Move uses an identity-preserving handle-relative rename with replacement disabled;
+- cross-volume Move remains non-executable until the source-delete half has a separately reviewed durable authorization/recovery transaction;
+- per-directory case-sensitive NTFS or unavailable namespace-capability evidence blocks Move before durable mutation history; exact-case mutation is not claimed;
+- Copy and Move share one serialized Files execution surface, expose entry-level progress and settle cancellation only at reviewed safe boundaries;
+- once an operation reaches durable history, its operation ID is single-use and recovery-sensitive history is never automatic replay authority;
+- the Indexer is not used as a file Copy/Move mutation service.
+
+For permanent deletion, destructive authority is not inferred from a selected row, Storage recommendation or cleanup-readiness result. A permanent-delete session requires the current exact Files selection to pass the reviewed sequence:
 
 ```text
 per-user cross-process destructive-session lock
@@ -47,14 +62,14 @@ per-user cross-process destructive-session lock
 The current user-facing delete action is deliberately narrow:
 
 - regular files only; directory deletion is not exposed;
-- no generic `FileOperationKind.Delete` is added to the ordinary copy/move planning queue;
+- no generic `FileOperationKind.Delete` is added to the ordinary Copy/Move planning queue;
 - no Recycle Bin, undo or restore semantics are claimed;
 - unresolved `MutationStarted` / `RecoveryRequired` history blocks new authorization;
 - recovery history is never reused as consent or automatic replay authority;
 - final-lease cleanup ownership is retained and retried without granting another mutation capability;
 - Storage/Optimize and the indexing helper remain non-authorizing.
 
-See the `docs/file-delete-*.md` series for the reviewed preflight, authorization, history, stability/final-capability, mutation-barrier and orchestration contracts. `docs/files-browser.md` covers paging and browser lifecycle.
+See `docs/files-browser.md` for the full Copy/Move/browser lifecycle and the `docs/file-delete-*.md` series for the reviewed permanent-delete preflight, authorization, history, stability/final-capability, mutation-barrier and orchestration contracts.
 
 ### Folders, Types and Categories
 
@@ -122,7 +137,11 @@ These surfaces are evidence only. FileOp does not perform registry cleaning, RAM
 
 The per-session pipe is restricted to the current Windows user and exact desktop PID. Requests are versioned, framed and capped. Interrupted exchanges fault the session rather than risking request/response desynchronization.
 
-The app build places the reviewed `FileOp.Indexer` host beside `FileOp.App`. Runtime resolution accepts only the exact adjacent non-reparse executable. This is a deterministic location rule, not an Authenticode trust claim; signed packaging still needs publisher/signature verification before elevation is treated as a production trust boundary.
+Elevated helper launch is fail-closed around the installed helper identity. FileOp requires the exact adjacent non-reparse `FileOp.Indexer.exe`, verifies the primary embedded Authenticode signature through Windows policy, rejects secondary embedded signatures so signer selection is unambiguous, requires that signer thumbprint to match build-owned assembly metadata, and rejects a helper/app installation path the unelevated token can mutate through the tested write/delete/ACL-ownership rights. Release builds do not accept a runtime environment variable as a signer trust root.
+
+The release tooling builds/signs the x64 app/helper payload, emits a per-file hash manifest and a whole-ZIP SHA-256 for independently authenticated release metadata, and installs only when the caller supplies both the expected package hash and signer thumbprint. Install/update/uninstall require the app and indexer processes to be quiescent; update uses staged directory replacement with rollback and uninstall preserves per-user FileOp data unless purge is explicitly requested.
+
+These mechanisms still require a real production signing-certificate package/install/elevated-helper dry run before a release is declared production-ready. See `docs/release-packaging.md` and `docs/windows-release-validation.md`.
 
 ## Query examples
 
@@ -169,7 +188,7 @@ Run the complete Windows no-Actions gate:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
 ```
 
-The complete gate runs the offline verifiers, Core/Windows/Indexer/benchmark Release builds, the Windows regression/integration test suite, WinUI x64 Release build, bundled-helper artifact checks and a real bundled-helper process handshake. `docs/local-validation.md` documents the gate and narrower development switches.
+The complete gate runs the offline verifiers, Core/Windows/Indexer/benchmark Release builds, the Windows regression/integration test suite, WinUI x64 Release build, bundled-helper artifact checks and a real bundled-helper process handshake. `docs/local-validation.md` documents the gate and narrower development switches. `docs/windows-release-validation.md` records the focused mutation/signing scenarios required for the current release-hardening stack.
 
 Benchmarks remain manual:
 
@@ -198,12 +217,14 @@ tools/
 
 docs/
   architecture.md                     Architectural boundaries and lifecycle
-  files-browser.md                    Indexed Files browsing/paging
+  files-browser.md                    Indexed Files browsing + Copy/Move execution boundary
   storage-optimization.md             Optimize policy/safety semantics
   same-size-content-verification.md   Explicit bounded SHA-256 verification
   physical-reclaim-evidence.md        Current physical reclaim upper-bound evidence
   storage-threshold-preferences.md    Persisted same-or-stricter threshold preferences
+  release-packaging.md                Signer/package/install/update trust boundary
   local-validation.md                 No-Actions validation workflow
+  windows-release-validation.md       Focused native release validation checklist
   file-delete-*.md                    Reviewed file-delete safety/mutation contracts
 ```
 
