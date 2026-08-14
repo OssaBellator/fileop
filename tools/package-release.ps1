@@ -18,8 +18,10 @@ if ($thumbprint.Length -ne 40) {
 $signtool = Get-Command signtool.exe -ErrorAction Stop
 $stageRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "FileOp-$Version-x64"
 $zipPath = "$stageRoot.zip"
+$digestPath = "$zipPath.sha256"
 if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
 if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+if (Test-Path -LiteralPath $digestPath) { Remove-Item -LiteralPath $digestPath -Force }
 New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 
 # Compile the signer pin into FileOp.Windows. Production trust is therefore a
@@ -79,4 +81,8 @@ $manifestPath = Join-Path $stageRoot 'fileop-release-manifest.json'
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
 
 Compress-Archive -Path (Join-Path $stageRoot '*') -DestinationPath $zipPath -CompressionLevel Optimal
+$zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
+"$zipHash  $([IO.Path]::GetFileName($zipPath))" | Set-Content -LiteralPath $digestPath -Encoding ascii
 Write-Host "PASS: signed FileOp release package created at $zipPath" -ForegroundColor Green
+Write-Host "PASS: package SHA-256 for independently authenticated release metadata: $zipHash" -ForegroundColor Green
+Write-Host "Digest file: $digestPath" -ForegroundColor Green
