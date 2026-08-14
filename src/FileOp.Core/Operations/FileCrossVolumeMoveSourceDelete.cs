@@ -95,10 +95,12 @@ public sealed record FileCrossVolumeMoveSourceDeleteRequest
 /// <summary>
 /// Provider-owned value evidence for one still-live source-delete capability lease.
 /// It carries no reusable operating-system handle and grants no mutation authority by itself.
+/// Construction is public because Windows providers live in a separate assembly; possession
+/// of this value still cannot mint mutation authority without Core's exact durable barrier.
 /// </summary>
 public sealed class FileCrossVolumeMoveSourceDeleteEvidence
 {
-    internal FileCrossVolumeMoveSourceDeleteEvidence(
+    public FileCrossVolumeMoveSourceDeleteEvidence(
         FileCrossVolumeMoveSourceDeleteRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -194,7 +196,11 @@ public sealed class FileCrossVolumeMoveSourceDeleteAuthorization
 
     public bool SourceDeleteMutationAuthorized => true;
 
-    internal bool IsBoundTo(FileCrossVolumeMoveSourceDeleteEvidence evidence) =>
+    /// <summary>
+    /// Allows a separate Windows provider assembly to prove that one post-barrier authority
+    /// refers to this exact provider evidence object. The check grants no new authority.
+    /// </summary>
+    public bool IsBoundTo(FileCrossVolumeMoveSourceDeleteEvidence evidence) =>
         ReferenceEquals(Evidence, evidence) &&
         OperationId == evidence.OperationId &&
         Ordinal == evidence.Ordinal &&
