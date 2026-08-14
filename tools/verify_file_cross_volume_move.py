@@ -21,7 +21,15 @@ RECOVERY_STATES = {
 }
 
 
-def model_entry(*, cancel_at: str | None, copy_ok: bool, delete_prepare_ok: bool, delete_ok: bool) -> tuple[str, list[str]]:
+def model_entry(
+    *,
+    cancel_at: str | None,
+    copy_ok: bool,
+    delete_prepare_ok: bool,
+    pre_fidelity_ok: bool,
+    post_fidelity_ok: bool,
+    delete_ok: bool,
+) -> tuple[str, list[str]]:
     trace = ['fresh-validate']
     if cancel_at == 'before-copy':
         return 'Pending', trace + ['cancel-safe']
@@ -37,10 +45,18 @@ def model_entry(*, cancel_at: str | None, copy_ok: bool, delete_prepare_ok: bool
     trace += ['acquire-source-delete-lease']
     if not delete_prepare_ok:
         return 'DestinationCommitted', trace + ['safe-failure-source-retained']
+
+    trace += ['pre-barrier-fidelity-proof']
+    if not pre_fidelity_ok:
+        return 'DestinationCommitted', trace + ['safe-fidelity-refusal-source-retained']
     if cancel_at == 'before-delete-barrier':
         return 'DestinationCommitted', trace + ['cancel-safe-source-retained']
 
-    trace += ['source-delete-barrier', 'mint-delete-authorization', 'same-handle-delete', 'release-delete-lease']
+    trace += ['source-delete-barrier', 'mint-delete-authorization', 'post-barrier-fidelity-recheck']
+    if not post_fidelity_ok:
+        return 'RecoveryRequired', trace + ['recovery-no-delete']
+
+    trace += ['same-handle-delete', 'release-delete-lease']
     if not delete_ok:
         return 'RecoveryRequired', trace + ['recovery']
 
@@ -52,6 +68,8 @@ def check_properties(cases: int) -> int:
         cancel_at='after-destination-commit',
         copy_ok=True,
         delete_prepare_ok=True,
+        pre_fidelity_ok=True,
+        post_fidelity_ok=True,
         delete_ok=True,
     )
     assert state == 'DestinationCommitted'
@@ -62,27 +80,61 @@ def check_properties(cases: int) -> int:
         cancel_at=None,
         copy_ok=True,
         delete_prepare_ok=True,
+        pre_fidelity_ok=True,
+        post_fidelity_ok=True,
         delete_ok=True,
     )
     assert state == 'Moved'
     assert trace.index('destination-commit') < trace.index('acquire-source-delete-lease')
-    assert trace.index('acquire-source-delete-lease') < trace.index('source-delete-barrier')
+    assert trace.index('acquire-source-delete-lease') < trace.index('pre-barrier-fidelity-proof')
+    assert trace.index('pre-barrier-fidelity-proof') < trace.index('source-delete-barrier')
     assert trace.index('source-delete-barrier') < trace.index('mint-delete-authorization')
-    assert trace.index('mint-delete-authorization') < trace.index('same-handle-delete')
+    assert trace.index('mint-delete-authorization') < trace.index('post-barrier-fidelity-recheck')
+    assert trace.index('post-barrier-fidelity-recheck') < trace.index('same-handle-delete')
     assert trace.index('same-handle-delete') < trace.index('release-delete-lease') < trace.index('source-delete-commit')
 
-    rng = random.Random(20260814)
-    checks = 10
+    state, trace = model_entry(
+        cancel_at=None,
+        copy_ok=True,
+        delete_prepare_ok=True,
+        pre_fidelity_ok=False,
+        post_fidelity_ok=True,
+        delete_ok=True,
+    )
+    assert state == 'DestinationCommitted'
+    assert 'safe-fidelity-refusal-source-retained' in trace
+    assert 'source-delete-barrier' not in trace
+    assert 'same-handle-delete' not in trace
+
+    state, trace = model_entry(
+        cancel_at=None,
+        copy_ok=True,
+        delete_prepare_ok=True,
+        pre_fidelity_ok=True,
+        post_fidelity_ok=False,
+        delete_ok=True,
+    )
+    assert state == 'RecoveryRequired'
+    assert 'source-delete-barrier' in trace
+    assert 'post-barrier-fidelity-recheck' in trace
+    assert 'same-handle-delete' not in trace
+
+    rng = random.Random(20260815)
+    checks = 22
     cancel_points = [None, 'before-copy', 'after-destination-commit', 'before-delete-barrier']
     for _ in range(cases):
         cancel_at = rng.choice(cancel_points)
         copy_ok = bool(rng.getrandbits(1))
         delete_prepare_ok = bool(rng.getrandbits(1))
+        pre_fidelity_ok = bool(rng.getrandbits(1))
+        post_fidelity_ok = bool(rng.getrandbits(1))
         delete_ok = bool(rng.getrandbits(1))
         state, trace = model_entry(
             cancel_at=cancel_at,
             copy_ok=copy_ok,
             delete_prepare_ok=delete_prepare_ok,
+            pre_fidelity_ok=pre_fidelity_ok,
+            post_fidelity_ok=post_fidelity_ok,
             delete_ok=delete_ok,
         )
 
@@ -91,13 +143,25 @@ def check_properties(cases: int) -> int:
             assert trace.index('source-delete-barrier') < trace.index('same-handle-delete')
             assert 'destination-commit' in trace
             assert trace.index('destination-commit') < trace.index('source-delete-barrier')
-            checks += 3
+            assert 'pre-barrier-fidelity-proof' in trace
+            assert 'post-barrier-fidelity-recheck' in trace
+            checks += 5
         if 'cancel-safe-source-retained' in trace:
             assert state == 'DestinationCommitted'
             assert 'same-handle-delete' not in trace
             checks += 2
+        if 'safe-fidelity-refusal-source-retained' in trace:
+            assert state == 'DestinationCommitted'
+            assert 'source-delete-barrier' not in trace
+            assert 'same-handle-delete' not in trace
+            checks += 3
+        if 'recovery-no-delete' in trace:
+            assert state == 'RecoveryRequired'
+            assert 'source-delete-barrier' in trace
+            assert 'same-handle-delete' not in trace
+            checks += 3
         if state in RECOVERY_STATES:
-            assert 'recovery' in trace
+            assert 'recovery' in trace or 'recovery-no-delete' in trace
             checks += 1
         if state == 'Moved':
             assert trace[-1] == 'source-delete-commit'
@@ -114,7 +178,11 @@ def check_repository(root: Path) -> int:
         'store': root / 'src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs',
         'delete_contract': root / 'src/FileOp.Core/Operations/FileCrossVolumeMoveSourceDelete.cs',
         'executor': root / 'src/FileOp.Core/Operations/FileCrossVolumeMoveOperationExecutor.cs',
+        'fidelity': root / 'src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs',
         'delete_primitive': root / 'src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs',
+        'fidelity_primitive': root / 'src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs',
+        'fidelity_tests': root / 'tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityTests.cs',
+        'move_ui': root / 'src/FileOp.App/FilesView.Move.cs',
         'gate': root / 'tools/test-local.ps1',
     }
     missing = [str(path) for path in paths.values() if not path.is_file()]
@@ -181,6 +249,26 @@ def check_repository(root: Path) -> int:
     for needle in required_contract:
         assert needle in source['delete_contract'], needle
 
+    required_fidelity = [
+        'SourceContentChanged',
+        'DestinationContentChanged',
+        'StableBasicMetadataMismatch',
+        'SourceUnsupportedAttributes',
+        'DestinationUnsupportedAttributes',
+        'SecurityDescriptorEvidenceIncomplete',
+        'SecurityDescriptorMismatch',
+        'SourceNamedDataStreams',
+        'DestinationNamedDataStreams',
+        'SourceHardLinks',
+        'DestinationHardLinks',
+        'SourceExtendedAttributes',
+        'DestinationExtendedAttributes',
+        'CanDeleteSourceAfterDurableBarrier',
+        'FileBasicMetadataEvidence.StableCopiedAttributesMask',
+    ]
+    for needle in required_fidelity:
+        assert needle in source['fidelity'], needle
+
     required_primitive = [
         'FileShare.Read,',
         'HashMainStream(destinationFile, cancellationToken)',
@@ -196,6 +284,32 @@ def check_repository(root: Path) -> int:
     for needle in required_primitive:
         assert needle in source['delete_primitive'], needle
 
+    required_fidelity_primitive = [
+        'WindowsFileCrossVolumeMoveSourceDeletePrimitive()',
+        'WindowsFileCrossVolumeMoveFidelityVerifier.Verify(',
+        'pre-barrier',
+        'after the durable source-delete barrier',
+        'CancellationToken.None',
+        'BackupSecurityInformation',
+        'AccessSystemSecurity',
+        'NtQueryInformationFile(',
+        'FileEaInformation',
+        'WindowsFileNamedDataStreamTopologyDigest.Read(',
+        'SourceDeleteMutationAuthorized',
+        'inner.MarkDeletePendingAsync(authorization, CancellationToken.None)',
+    ]
+    for needle in required_fidelity_primitive:
+        assert needle in source['fidelity_primitive'], needle
+
+    required_tests = [
+        'EquivalentOrdinaryPinnedFilesMayReachLaterDeleteBarrier',
+        'ContentDriftOnEitherPinnedObjectBlocksSourceDeletion',
+        'MetadataOrSecurityUncertaintyBlocksSourceDeletion',
+        'StreamsHardLinksAndExtendedAttributesBlockDestructiveCompletion',
+    ]
+    for needle in required_tests:
+        assert needle in source['fidelity_tests'], needle
+
     for forbidden in [
         'File.Delete(',
         'File.Move(',
@@ -206,9 +320,19 @@ def check_repository(root: Path) -> int:
     ]:
         assert forbidden not in source['executor'], forbidden
         assert forbidden not in source['delete_primitive'], forbidden
+        assert forbidden not in source['fidelity_primitive'], forbidden
+
+    # Files must compose the fidelity-verifying wrapper, not the raw destructive primitive.
+    assert 'new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive()' in source['move_ui']
+    assert 'new WindowsFileCrossVolumeMoveSourceDeletePrimitive());' not in source['move_ui']
 
     assert 'verify_file_cross_volume_move.py --repo-root $repoRoot --cases 50000' in source['gate']
-    return 8 + len(required_history) + len(required_store) + 2 + 8 + len(required_executor) + len(required_contract) + len(required_primitive) + 12 + 1
+    return (
+        22 + len(required_history) + len(required_store) + 2 + 8 +
+        len(required_executor) + len(required_contract) + len(required_fidelity) +
+        len(required_primitive) + len(required_fidelity_primitive) + len(required_tests) +
+        18 + 3
+    )
 
 
 def main() -> int:
@@ -220,7 +344,7 @@ def main() -> int:
     if args.cases <= 0:
         parser.error('--cases must be greater than zero')
 
-    print(f'PASS cross-volume Move composite model: {check_properties(args.cases):,} checks')
+    print(f'PASS cross-volume Move composite/fidelity model: {check_properties(args.cases):,} checks')
     if not args.self_test_only:
         print(f'PASS cross-volume Move source wiring: {check_repository(args.repo_root.resolve())} checks')
     return 0
