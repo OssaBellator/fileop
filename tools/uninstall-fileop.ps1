@@ -5,8 +5,13 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-if ([string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
-    throw 'The canonical Program Files directory is unavailable. FileOp uninstall will not accept a caller-selected fallback path.'
+$knownProgramFiles = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles)
+if ([string]::IsNullOrWhiteSpace($knownProgramFiles)) {
+    throw 'The canonical Program Files known folder is unavailable. FileOp uninstall will not use an environment-variable or caller-selected fallback path.'
+}
+$knownLocalAppData = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::LocalApplicationData)
+if ([string]::IsNullOrWhiteSpace($knownLocalAppData)) {
+    throw 'The current-user LocalApplicationData known folder is unavailable. FileOp uninstall will not use an environment-variable fallback for purge state.'
 }
 
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -21,7 +26,9 @@ if ($runningFileOp) {
 
 # Uninstall owns exactly the release install root. It is intentionally not a
 # generic elevated recursive-delete wrapper around a caller-provided path.
-$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($env:ProgramFiles))
+# Privileged roots come from OS known-folder resolution, not mutable process
+# environment strings.
+$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($knownProgramFiles))
 $install = [IO.Path]::GetFullPath((Join-Path $programFiles 'FileOp'))
 $expectedInstall = $programFiles + [IO.Path]::DirectorySeparatorChar + 'FileOp'
 if (-not [string]::Equals(
@@ -39,7 +46,16 @@ if (Test-Path -LiteralPath $install) {
     Remove-Item -LiteralPath $install -Recurse -Force
 }
 
-$userData = Join-Path $env:LOCALAPPDATA 'FileOp'
+$localAppData = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($knownLocalAppData))
+$userData = [IO.Path]::GetFullPath((Join-Path $localAppData 'FileOp'))
+$expectedUserData = $localAppData + [IO.Path]::DirectorySeparatorChar + 'FileOp'
+if (-not [string]::Equals(
+        [IO.Path]::TrimEndingDirectorySeparator($userData),
+        $expectedUserData,
+        [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The FileOp per-user data root did not resolve beneath the current-user LocalApplicationData known folder.'
+}
+
 if ($PurgeUserData -and (Test-Path -LiteralPath $userData)) {
     $userDataItem = Get-Item -LiteralPath $userData -Force
     if ($userDataItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
