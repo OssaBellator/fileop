@@ -329,13 +329,17 @@ def check_repository(root: Path) -> int:
         "return Block(validation, MissingRootIdentitySummary);",
         "if (isCrossVolume)",
         "return Block(validation, CrossVolumeMoveDisabledSummary);",
-        "ordinary-user security-fidelity (#186)",
-        "final proof-to-mutation stability (#187)",
+        "Repository tracking: #186 = ordinary-user security fidelity;",
+        "#187 = final proof-to-mutation stability.",
+        "security-fidelity and final mutation-stability",
+        "Choose a destination on the same volume",
         "No durable history, destination Copy, or source-delete mutation",
     )
     assert validator.index("TryClassifyVolumeRelationship(validation") < validator.index("RequireSupportedMutationRoots(validation")
     assert "throw new InvalidOperationException" not in validator
-    checks += 2
+    assert "(#186)" not in validator.split("internal const string CrossVolumeMoveDisabledSummary", 1)[1].split(";", 1)[0]
+    assert "(#187)" not in validator.split("internal const string CrossVolumeMoveDisabledSummary", 1)[1].split(";", 1)[0]
+    checks += 4
 
     checks += must_contain(
         source["production_validator_tests"],
@@ -345,8 +349,10 @@ def check_repository(root: Path) -> int:
         "destinationVolumeSerialNumber: 22",
         "Assert.AreEqual(0, probe.QueryCalls)",
         "SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation",
-        "#186",
-        "#187",
+        "Cross-volume Move is currently disabled",
+        "Choose a destination on the same volume",
+        "result.Summary.Contains(\"#186\"",
+        "result.Summary.Contains(\"#187\"",
     )
     checks += must_contain(
         source["fidelity_tests"],
@@ -397,8 +403,6 @@ def check_repository(root: Path) -> int:
     )
     checks += must_not_contain(source["xaml"], "pending #186/#187")
 
-    # Capability-surface invariant: production composition may instantiate the raw
-    # destructive primitive only inside the fidelity wrapper. Tests can use fakes.
     raw_ctor = "new WindowsFileCrossVolumeMoveSourceDeletePrimitive("
     wrapper_path = (root / files["wrapper"]).resolve()
     for path in (root / "src").rglob("*.cs"):
