@@ -14,17 +14,19 @@ namespace FileOp.Windows.Operations;
 /// case-insensitively. A per-directory case-sensitive NTFS namespace (or inability to
 /// query that capability) must therefore fail before durable Move history begins.
 ///
-/// Cross-volume composite Move infrastructure exists behind this validator, but its
-/// destructive production path is deliberately disabled until the reviewed ordinary-user
-/// security-fidelity and final proof-to-mutation stability boundaries are complete.
-/// This block happens before durable history and before destination Copy begins.
+/// Cross-volume composite Move infrastructure exists behind this validator. Its security
+/// contract now deliberately follows Windows destination-default/inherited semantics, but
+/// destructive production execution remains disabled until the final proof-to-mutation
+/// stability boundary is kernel-backed and the exact implementation passes native Windows
+/// validation. This block happens before durable history and before destination Copy begins.
 /// </summary>
 public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator
 {
-    // Repository tracking: #186 = ordinary-user security fidelity;
-    // #187 = final proof-to-mutation stability. Keep issue IDs out of runtime UI text.
+    // Repository tracking: #186 selected the ordinary-user destination-default security
+    // contract source-side; #187 remains the proof-to-mutation stability blocker.
+    // Keep issue IDs out of runtime UI text.
     internal const string CrossVolumeMoveDisabledSummary =
-        "Cross-volume Move is currently disabled while its security-fidelity and final mutation-stability boundaries are still under review. Choose a destination on the same volume to use the supported Move path. No durable history, destination Copy, or source-delete mutation was created by this refusal.";
+        "Cross-volume Move is currently disabled while its final mutation-stability boundary is still under review. Choose a destination on the same volume to use the supported Move path. No durable history, destination Copy, or source-delete mutation was created by this refusal.";
 
     private const string MissingRootIdentitySummary =
         "Move execution validation did not retain stable source and destination root filesystem identities required for mutation classification. No durable mutation history or filesystem mutation was created.";
