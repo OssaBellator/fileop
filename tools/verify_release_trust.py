@@ -34,8 +34,8 @@ def check_repository(root: Path) -> int:
         assert needle in source['csproj'], needle
 
     required_trust = [
-        'WINTRUST_ACTION_GENERIC_VERIFY_V2'.lower(),
-        '00AAC56B-CD44-11D0-8CC2-00C04FC295EE'.lower(),
+        'GenericVerifyV2',
+        '00AAC56B-CD44-11D0-8CC2-00C04FC295EE',
         'WinVerifyTrust(',
         'WtdRevokeWholeChain',
         'WtdProvFlagsRevocationCheckChainExcludeRoot',
@@ -48,9 +48,8 @@ def check_repository(root: Path) -> int:
         'foreach (var desiredAccess in rights)',
         'CanOpenForAnyMutation(parentDirectory',
     ]
-    trust_folded = source['trust'].casefold()
     for needle in required_trust:
-        assert needle.casefold() in trust_folded, needle
+        assert needle in source['trust'], needle
 
     session = source['session']
     trust_call = session.index('IndexingServiceHelperTrustPolicy.RequireTrustedForElevation(executable);')
@@ -59,8 +58,15 @@ def check_repository(root: Path) -> int:
     assert trust_call < runas < process_start
     assert 'if (elevated)' in session[:trust_call]
 
-    assert 'WindowsAuthenticodeFileTrust.VerifyPinnedEmbeddedSignature(helperPath)' in source['policy']
-    assert 'WindowsElevatedHelperPathProtection.RequireProtectedLaunchPath(helperPath)' in source['policy']
+    policy = source['policy']
+    for needle in [
+        'IndexingServiceHelperLocator.ResolveAdjacentHelper(AppContext.BaseDirectory)',
+        'if (!string.Equals(requested, adjacent, StringComparison.OrdinalIgnoreCase))',
+        'restricted to the exact FileOp.Indexer.exe installed beside the running FileOp application',
+        'WindowsAuthenticodeFileTrust.VerifyPinnedEmbeddedSignature(adjacent)',
+        'WindowsElevatedHelperPathProtection.RequireProtectedLaunchPath(adjacent)',
+    ]:
+        assert needle in policy, needle
 
     package = source['package']
     for needle in [
@@ -80,9 +86,13 @@ def check_repository(root: Path) -> int:
     for needle in [
         "Join-Path $env:ProgramFiles 'FileOp'",
         "Get-Process -Name 'FileOp.App'",
+        "$segments = @($relative -split '[\\\\/]')",
+        '$path.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar',
         'Get-FileHash -Algorithm SHA256',
         'Get-AuthenticodeSignature',
         'TrustedSignerThumbprint',
+        'New-Item -ItemType Directory -Path $stage -Force',
+        "Copy-Item -Path (Join-Path $temp '*') -Destination $stage -Recurse -Force",
         'Move-Item -LiteralPath $install -Destination $backup',
         'Move-Item -LiteralPath $stage -Destination $install',
         'Move-Item -LiteralPath $backup -Destination $install',
@@ -94,12 +104,12 @@ def check_repository(root: Path) -> int:
     assert "Join-Path $env:LOCALAPPDATA 'FileOp'" in uninstall
     assert 'Per-user data remains' in uninstall
 
-    assert 'runtime environment variables are not accepted as trust roots'.casefold() in source['docs'].casefold() or 'does not accept an environment variable as a signer trust root'.casefold() in source['docs'].casefold()
+    assert 'does not accept an environment variable as a signer trust root'.casefold() in source['docs'].casefold()
     assert 'verify_release_trust.py --repo-root $repoRoot' in source['gate']
 
     # Release runtime trust cannot depend on a runtime pin environment variable.
     assert 'GetEnvironmentVariable("FileOpTrustedIndexerSignerThumbprints"' not in source['trust']
-    return len(required_project) + len(required_trust) + 5 + 9 + 8 + 4 + 2
+    return len(required_project) + len(required_trust) + 4 + 5 + 9 + 12 + 3 + 2
 
 
 def main() -> int:
