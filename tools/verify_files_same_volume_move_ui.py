@@ -34,8 +34,8 @@ def can_attempt(
 
 def classify_for_ui(strategy: str, cross_volume: bool) -> str:
     # Production Windows validation currently blocks every different-volume Move
-    # before mutation readiness while #186/#187 remain open. The composite engine
-    # is testable infrastructure, not a reachable Files mutation path.
+    # before mutation readiness while #187 remains open and native validation is pending.
+    # The composite engine is testable infrastructure, not a reachable Files mutation path.
     if cross_volume:
         return 'KeepQueuedProductDisabled'
     if strategy == 'Blocked':
@@ -198,9 +198,8 @@ def check_repository(root: Path) -> int:
         'return Block(validation, MissingRootIdentitySummary);',
         'if (isCrossVolume)',
         'return Block(validation, CrossVolumeMoveDisabledSummary);',
-        'Repository tracking: #186 = ordinary-user security fidelity;',
-        '#187 = final proof-to-mutation stability.',
-        'security-fidelity and final mutation-stability',
+        '#187 remains the proof-to-mutation stability blocker.',
+        'final mutation-stability boundary is still under review',
         'Choose a destination on the same volume',
         'No durable history, destination Copy, or source-delete mutation',
         'validation.SourceDirectory.CanonicalPath',
@@ -215,6 +214,7 @@ def check_repository(root: Path) -> int:
         assert needle in source['move_validator'], needle
     assert source['move_validator'].index('TryClassifyVolumeRelationship(validation') < source['move_validator'].index('RequireSupportedMutationRoots(validation')
     assert 'throw new InvalidOperationException' not in source['move_validator']
+    assert 'security-fidelity and final mutation-stability' not in source['move_validator']
 
     required_namespace = [
         'public interface IFileOperationNamespaceCapabilityProbe',
@@ -238,6 +238,8 @@ def check_repository(root: Path) -> int:
         'CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory',
         'Assert.AreEqual(0, probe.QueryCalls)',
         'Cross-volume Move is currently disabled',
+        'final mutation-stability',
+        'result.Summary.Contains("security-fidelity"',
         'Choose a destination on the same volume',
         'result.Summary.Contains("#186"',
         'result.Summary.Contains("#187"',
@@ -273,7 +275,7 @@ def check_repository(root: Path) -> int:
     return (
         len(required_xaml) + len(required_move) + len(required_validator) +
         len(required_namespace) + len(required_namespace_tests) +
-        len(required_cross_tests) + 17
+        len(required_cross_tests) + 18
     )
 
 
