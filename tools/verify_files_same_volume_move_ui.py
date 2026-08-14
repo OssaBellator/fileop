@@ -9,12 +9,23 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
-def can_attempt(*, kind: str, entries: int, has_directory: bool, preflight: str, bound: bool, copy_busy: bool, move_busy: bool) -> bool:
+def can_attempt(
+    *,
+    kind: str,
+    entries: int,
+    has_directory: bool,
+    preflight: str,
+    preflight_running: bool,
+    bound: bool,
+    copy_busy: bool,
+    move_busy: bool,
+) -> bool:
     return (
         kind == 'Move'
         and entries > 0
         and not has_directory
         and preflight == 'Ready'
+        and not preflight_running
         and bound
         and not copy_busy
         and not move_busy
@@ -32,20 +43,32 @@ def classify_for_ui(strategy: str) -> str:
 
 
 def check_properties(cases: int) -> int:
-    assert can_attempt(kind='Move', entries=1, has_directory=False, preflight='Ready', bound=True, copy_busy=False, move_busy=False)
-    assert not can_attempt(kind='Copy', entries=1, has_directory=False, preflight='Ready', bound=True, copy_busy=False, move_busy=False)
+    base = dict(
+        kind='Move',
+        entries=1,
+        has_directory=False,
+        preflight='Ready',
+        preflight_running=False,
+        bound=True,
+        copy_busy=False,
+        move_busy=False,
+    )
+    assert can_attempt(**base)
+    assert not can_attempt(**{**base, 'preflight_running': True})
+    assert not can_attempt(**{**base, 'kind': 'Copy'})
     assert classify_for_ui('SameVolumeRenameRequired') == 'Execute'
     assert classify_for_ui('SkipOnly') == 'ExecuteNoMutation'
     assert classify_for_ui('CrossVolumeCopyDeleteRequired') == 'KeepQueuedCrossVolume'
 
     rng = random.Random(20260814)
-    checks = 5
+    checks = 6
     for _ in range(cases):
         values = dict(
             kind=rng.choice(['Copy', 'Move']),
             entries=rng.randrange(0, 9),
             has_directory=bool(rng.getrandbits(1)),
             preflight=rng.choice(['Missing', 'Ready', 'NeedsDecision', 'Blocked']),
+            preflight_running=bool(rng.getrandbits(1)),
             bound=bool(rng.getrandbits(1)),
             copy_busy=bool(rng.getrandbits(1)),
             move_busy=bool(rng.getrandbits(1)),
@@ -55,6 +78,7 @@ def check_properties(cases: int) -> int:
             and values['entries'] > 0
             and not values['has_directory']
             and values['preflight'] == 'Ready'
+            and not values['preflight_running']
             and values['bound']
             and not values['copy_busy']
             and not values['move_busy']
@@ -81,6 +105,8 @@ def check_repository(root: Path) -> int:
         'source': root / 'src/FileOp.App/MainWindow.StorageSourceIdentity.cs',
         'executor': root / 'src/FileOp.Core/Operations/FileSameVolumeMoveOperationExecutor.cs',
         'primitive': root / 'src/FileOp.Windows/Operations/WindowsFileSameVolumeMoveMutationPrimitive.cs',
+        'move_validator': root / 'src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs',
+        'namespace': root / 'src/FileOp.Windows/Operations/WindowsFileOperationNamespaceCapability.cs',
         'gate': root / 'tools/test-local.ps1',
     }
     missing = [str(path) for path in paths.values() if not path.is_file()]
@@ -104,6 +130,10 @@ def check_repository(root: Path) -> int:
     required_move = [
         'public bool IsFileOperationExecutionBusy => _copyExecutionRunning || _moveExecutionRunning;',
         'if (IsFileOperationExecutionBusy ||',
+        '_preflightRunning ||',
+        'if (_preflightRunning)',
+        'Wait for the current read-only preflight to finish before running Move.',
+        'new WindowsMoveOperationExecutionValidator()',
         'FileMoveExecutionStrategyClassifier.Classify(executionValidation)',
         'FileMoveExecutionStrategy.CrossVolumeCopyDeleteRequired',
         'The queued plan was not consumed.',
@@ -120,6 +150,30 @@ def check_repository(root: Path) -> int:
     ]
     for needle in required_move:
         assert needle in source['move'], needle
+    assert source['move'].count('new WindowsMoveOperationExecutionValidator()') >= 2
+
+    required_validator = [
+        'public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator',
+        '_inner = inner ?? new WindowsFileOperationExecutionValidator();',
+        '_namespaceProbe.RequireSupportedMutationRoots(validation);',
+        'plan.Kind != FileOperationKind.Move || !validation.CanBeginMutation',
+        'FileOperationExecutionValidationStatus.Blocked',
+        'before durable mutation history',
+        'No MutationStarted record or filesystem mutation was created',
+    ]
+    for needle in required_validator:
+        assert needle in source['move_validator'], needle
+
+    required_namespace = [
+        'FileCaseSensitiveInformation = 71',
+        'FileCsFlagCaseSensitiveDir = 0x00000001',
+        'UnsupportedCaseSensitiveDirectory',
+        'Unavailable',
+        'if (!capability.CanUseCurrentMutationModel)',
+        'throw new NotSupportedException(capability.Summary)',
+    ]
+    for needle in required_namespace:
+        assert needle in source['namespace'], needle
 
     assert source['move'].index('FileMoveExecutionStrategyClassifier.Classify(executionValidation)') < source['move'].index('_moveExecutionRunning = true;')
     assert '_filesView.ReassertOperationExecutionBusyAfterSourceChange();' in source['source']
@@ -129,7 +183,7 @@ def check_repository(root: Path) -> int:
         assert forbidden not in source['move'], forbidden
     assert 'verify_files_same_volume_move_ui.py --repo-root $repoRoot --cases 50000' in source['gate']
 
-    return len(required_xaml) + len(required_move) + 8
+    return len(required_xaml) + len(required_move) + len(required_validator) + len(required_namespace) + 9
 
 
 def main() -> int:
