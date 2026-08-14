@@ -7,6 +7,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+if (-not [System.Environment]::Is64BitOperatingSystem -or -not [System.Environment]::Is64BitProcess) {
+    throw 'FileOp x64 release install/update requires a 64-bit Windows OS and a 64-bit PowerShell host so Program Files resolves to the x64 installation root.'
+}
+
 $knownProgramFiles = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles)
 if ([string]::IsNullOrWhiteSpace($knownProgramFiles)) {
     throw 'The canonical Program Files known folder is unavailable. FileOp release install/update will not use an environment-variable or caller-selected fallback path.'
