@@ -187,6 +187,10 @@ def check_repository(root: Path) -> int:
         "history_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveActionHistoryInvariantTests.cs",
         "corruption_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMovePersistedCorruptionTests.cs",
         "ui": "src/FileOp.App/FilesView.Move.cs",
+        "xaml": "src/FileOp.App/FilesView.xaml",
+        "readme": "README.md",
+        "files_doc": "docs/files-browser.md",
+        "cross_doc": "docs/file-cross-volume-move.md",
         "gate": "tools/test-local.ps1",
     }
     source: dict[str, str] = {}
@@ -220,10 +224,14 @@ def check_repository(root: Path) -> int:
         "MarkSourceDeleteStartedAsync(",
         "CommitSourceDeletedAsync(",
     )
-    checks += must_not_contain(source["store"], "UPDATE file_operation_actions", "UPDATE file_operation_action_entries")
+    checks += must_not_contain(
+        source["store"],
+        "UPDATE file_operation_actions",
+        "UPDATE file_operation_action_entries",
+    )
 
     executor = source["executor"]
-    order = [
+    ordered_calls = [
         ".MarkCopyMutationStartedAsync(",
         ".CopyNewFileAsync(",
         ".CommitDestinationAsync(",
@@ -233,8 +241,8 @@ def check_repository(root: Path) -> int:
         ".MarkDeletePendingAsync(authorization, CancellationToken.None)",
         ".CommitSourceDeletedAsync(",
     ]
-    assert [executor.index(item) for item in order] == sorted(executor.index(item) for item in order)
-    checks += len(order)
+    assert [executor.index(item) for item in ordered_calls] == sorted(executor.index(item) for item in ordered_calls)
+    checks += len(ordered_calls)
     checks += must_contain(
         executor,
         "FileMoveExecutionStrategy.CrossVolumeCopyDeleteRequired",
@@ -311,21 +319,28 @@ def check_repository(root: Path) -> int:
     assert source["native_fidelity"].count("FileShare.Read | FileShare.Delete") >= 2
     checks += 1
 
-    production_validator = source["production_validator"]
+    validator = source["production_validator"]
     checks += must_contain(
-        production_validator,
+        validator,
         "CrossVolumeMoveDisabledSummary",
-        "IsCrossVolume(validation)",
+        "MissingRootIdentitySummary",
+        "TryClassifyVolumeRelationship(",
+        "if (!TryClassifyVolumeRelationship(validation, out var isCrossVolume))",
+        "return Block(validation, MissingRootIdentitySummary);",
+        "if (isCrossVolume)",
         "return Block(validation, CrossVolumeMoveDisabledSummary);",
         "ordinary-user security-fidelity (#186)",
         "final proof-to-mutation stability (#187)",
         "No durable history, destination Copy, or source-delete mutation",
-        "sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber",
     )
-    assert production_validator.index("IsCrossVolume(validation)") < production_validator.index("RequireSupportedMutationRoots(validation")
-    checks += 1
+    assert validator.index("TryClassifyVolumeRelationship(validation") < validator.index("RequireSupportedMutationRoots(validation")
+    assert "throw new InvalidOperationException" not in validator
+    checks += 2
+
     checks += must_contain(
         source["production_validator_tests"],
+        "MutationReadyMoveWithoutRootIdentityFailsClosedBeforeNamespaceProbe",
+        "includeDestinationRootIdentity: false",
         "CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory",
         "destinationVolumeSerialNumber: 22",
         "Assert.AreEqual(0, probe.QueryCalls)",
@@ -333,7 +348,6 @@ def check_repository(root: Path) -> int:
         "#186",
         "#187",
     )
-
     checks += must_contain(
         source["fidelity_tests"],
         "EquivalentOrdinaryPinnedFilesMayReachLaterDeleteBarrier",
@@ -375,21 +389,54 @@ def check_repository(root: Path) -> int:
         "new WindowsMoveOperationExecutionValidator()",
         "new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive()",
     )
-    checks += must_not_contain(source["ui"], "new WindowsFileCrossVolumeMoveSourceDeletePrimitive())")
+    checks += must_not_contain(source["ui"], "new WindowsFileCrossVolumeMoveSourceDeletePrimitive()")
+    checks += must_contain(
+        source["xaml"],
+        "same-volume regular-file Move can execute; cross-volume and directory Move remain disabled",
+        "cross-volume Move remains product-disabled pending fidelity hardening",
+    )
+    checks += must_not_contain(source["xaml"], "pending #186/#187")
 
-    # Capability-surface invariant: production composition may only instantiate the raw
-    # destructive primitive inside the fidelity wrapper. Tests may use fakes/internal hooks.
+    # Capability-surface invariant: production composition may instantiate the raw
+    # destructive primitive only inside the fidelity wrapper. Tests can use fakes.
     raw_ctor = "new WindowsFileCrossVolumeMoveSourceDeletePrimitive("
     wrapper_path = (root / files["wrapper"]).resolve()
     for path in (root / "src").rglob("*.cs"):
         if path.resolve() == wrapper_path:
             continue
         assert raw_ctor not in path.read_text(encoding="utf-8"), (
-            f"raw cross-volume Move source-delete primitive bypass in production source: {path}"
+            f"raw cross-volume Move source-delete primitive bypass in production: {path}"
         )
         checks += 1
 
-    checks += must_contain(source["gate"], "verify_file_cross_volume_move.py --repo-root $repoRoot --cases 50000")
+    checks += must_contain(
+        source["readme"],
+        "Different-volume Move is currently product-disabled",
+        "not currently reachable through production Move validation",
+        "#186 resolves the ordinary-user security-fidelity contract",
+        "#187 resolves the final proof-to-mutation stability boundary",
+    )
+    checks += must_contain(
+        source["files_doc"],
+        "Different-volume Move is currently product-disabled",
+        "user-reachable executable slices",
+        "dormant cross-volume transaction contract",
+        "Preflight deliberately does not carry stable filesystem root identities",
+        "current Files production validation does not enter them",
+    )
+    checks += must_contain(
+        source["cross_doc"],
+        "Production Files execution does not currently enter this transaction.",
+        "missing root identity fails closed as `Blocked`",
+        "different root volume serials return `Blocked`",
+        "These are transaction-engine semantics, not current Files production outcomes.",
+    )
+
+    checks += must_contain(
+        source["gate"],
+        "verify_file_cross_volume_move.py --repo-root $repoRoot --cases 50000",
+        "verify_files_same_volume_move_ui.py --repo-root $repoRoot --cases 50000",
+    )
     return checks
 
 
@@ -401,10 +448,9 @@ def main() -> int:
     args = parser.parse_args()
     if args.cases <= 0:
         parser.error("--cases must be greater than zero")
-
-    print(f"PASS cross-volume Move composite/fidelity model: {check_properties(args.cases):,} checks")
+    print(f"PASS cross-volume Move transaction model: {check_properties(args.cases):,} checks")
     if not args.self_test_only:
-        print(f"PASS cross-volume Move source wiring: {check_repository(args.repo_root.resolve()):,} checks")
+        print(f"PASS cross-volume Move source contract: {check_repository(args.repo_root.resolve()):,} checks")
     return 0
 
 
