@@ -22,11 +22,13 @@ public sealed record FileOperationNamespaceCapability(
         State == FileOperationNamespaceCapabilityState.SupportedCaseInsensitive;
 }
 
+/// <summary>
+/// Reports namespace evidence for one already canonical directory. The caller
+/// owns policy about which operation roots must be supported.
+/// </summary>
 public interface IFileOperationNamespaceCapabilityProbe
 {
     FileOperationNamespaceCapability QueryDirectory(string canonicalDirectoryPath);
-
-    void RequireSupportedMutationRoots(FileOperationExecutionValidationResult validation);
 }
 
 /// <summary>
@@ -90,6 +92,10 @@ public sealed class WindowsFileOperationNamespaceCapabilityProbe : IFileOperatio
             "The directory uses the case-insensitive namespace semantics supported by the current FileOp operation model.");
     }
 
+    /// <summary>
+    /// Convenience guard for non-injectable callers. Move execution uses the
+    /// injectable validator policy so both roots are deterministically testable.
+    /// </summary>
     public void RequireSupportedMutationRoots(FileOperationExecutionValidationResult validation)
     {
         ArgumentNullException.ThrowIfNull(validation);
