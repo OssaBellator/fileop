@@ -1,22 +1,29 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using FileOp.Core.Models;
 using FileOp.Core.Operations;
 
 namespace FileOp.Windows.Operations;
 
 /// <summary>
-/// Adds the Windows namespace-capability boundary required by the current Move
-/// implementation on top of the ordinary canonical execution validator.
+/// Adds the Windows namespace-capability and current product-readiness boundaries
+/// required by Move on top of the ordinary canonical execution validator.
 ///
-/// The current FileOp path/identity model compares ordinary Windows namespace
-/// paths case-insensitively. A per-directory case-sensitive NTFS namespace (or
-/// an inability to query that capability) must therefore fail before durable
-/// Move history begins, and must fail again during the executor's fresh
-/// per-entry validation immediately before MutationStarted.
+/// The current FileOp path/identity model compares ordinary Windows namespace paths
+/// case-insensitively. A per-directory case-sensitive NTFS namespace (or inability to
+/// query that capability) must therefore fail before durable Move history begins.
+///
+/// Cross-volume composite Move infrastructure exists behind this validator, but its
+/// destructive production path is deliberately disabled until the reviewed ordinary-user
+/// security-fidelity and final proof-to-mutation stability boundaries are complete.
+/// This block happens before durable history and before destination Copy begins.
 /// </summary>
 public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator
 {
+    internal const string CrossVolumeMoveDisabledSummary =
+        "Cross-volume Move destructive execution is disabled pending the reviewed ordinary-user security-fidelity (#186) and final proof-to-mutation stability (#187) boundaries. No durable history, destination Copy, or source-delete mutation was created by this product-readiness refusal.";
+
     private readonly IFileOperationExecutionValidator _inner;
     private readonly IFileOperationNamespaceCapabilityProbe _namespaceProbe;
 
@@ -39,6 +46,11 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
             return validation;
         }
 
+        if (IsCrossVolume(validation))
+        {
+            return Block(validation, CrossVolumeMoveDisabledSummary);
+        }
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -47,18 +59,40 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
         }
         catch (NotSupportedException exception)
         {
-            return new FileOperationExecutionValidationResult(
-                validation.Plan,
-                validation.SourceDirectory,
-                validation.DestinationDirectory,
-                validation.Items,
-                FileOperationExecutionValidationStatus.Blocked,
-                DateTimeOffset.UtcNow,
+            return Block(
+                validation,
                 "Move execution validation blocked the current Windows namespace capability before durable mutation history: " +
                 exception.Message +
                 " No MutationStarted record or filesystem mutation was created by this capability refusal.");
         }
     }
+
+    private static bool IsCrossVolume(FileOperationExecutionValidationResult validation)
+    {
+        if (validation.SourceDirectory.Identity is not FileIdentity sourceIdentity ||
+            validation.DestinationDirectory.Identity is not FileIdentity destinationIdentity)
+        {
+            // The ordinary execution validator is responsible for requiring stable root
+            // identities before CanBeginMutation becomes true. If that contract ever
+            // changes, do not guess at volume relationship here: fail closed instead.
+            throw new InvalidOperationException(
+                "A mutation-ready Move validation must retain stable source and destination root identities before product-readiness classification.");
+        }
+
+        return sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber;
+    }
+
+    private static FileOperationExecutionValidationResult Block(
+        FileOperationExecutionValidationResult validation,
+        string summary) =>
+        new(
+            validation.Plan,
+            validation.SourceDirectory,
+            validation.DestinationDirectory,
+            validation.Items,
+            FileOperationExecutionValidationStatus.Blocked,
+            DateTimeOffset.UtcNow,
+            summary);
 
     private void RequireSupportedMutationRoots(
         FileOperationExecutionValidationResult validation,
