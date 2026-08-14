@@ -121,7 +121,7 @@ public sealed class FileCrossVolumeMoveActionHistoryInvariantTests
         FileOperationFailure? failure = null) =>
         new(
             Ordinal: 0,
-            Entry,
+            Entry: Entry,
             CanonicalSourcePath: @"C:\Source\a.txt",
             CanonicalDestinationPath: @"D:\Destination\a.txt",
             State: state,
@@ -151,6 +151,6 @@ public sealed class FileCrossVolumeMoveActionHistoryInvariantTests
             canonicalDestinationDirectoryPath: @"D:\Destination",
             sourceDirectoryIdentity: new FileIdentity(1, 10),
             destinationDirectoryIdentity: new FileIdentity(2, 20),
-            terminalState,
-            new[] { entry });
+            terminalState: terminalState,
+            entries: new[] { entry });
 }
