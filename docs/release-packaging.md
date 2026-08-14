@@ -25,20 +25,25 @@ The script:
 - verifies every signature through `signtool` and `Get-AuthenticodeSignature`;
 - requires every FileOp binary signer to match the same pinned certificate thumbprint;
 - writes `fileop-release-manifest.json` with relative path, length and signed-file SHA-256;
-- produces a versioned x64 ZIP.
+- produces a versioned x64 ZIP;
+- computes the final ZIP SHA-256 and writes a companion `.sha256` file for publication through independently authenticated release metadata.
 
-The manifest hashes the already-signed artifacts. It is an integrity inventory for install/update; elevated helper runtime trust still comes from Windows Authenticode policy plus the build-owned signer pin.
+The manifest hashes the already-signed staged artifacts and is an integrity inventory. It is not itself a package trust root. Whole-package authenticity is established at install time by comparing the ZIP against a SHA-256 obtained independently of the ZIP, while elevated helper runtime trust still comes from Windows Authenticode policy plus the build-owned signer pin.
+
+The generated `.sha256` file is publication material, not self-authentication. An installer must not learn its trusted package hash from the ZIP or from an unauthenticated sibling digest file; the release channel/operator must supply the expected hash independently.
 
 ## Install and update
 
-`tools/install-release.ps1` requires an elevated PowerShell process, an **independently supplied** `-TrustedSignerThumbprint`, and defaults to `%ProgramFiles%\FileOp`.
+`tools/install-release.ps1` requires an elevated PowerShell process, an **independently supplied** `-TrustedPackageSha256`, an **independently supplied** `-TrustedSignerThumbprint`, and defaults to `%ProgramFiles%\FileOp`.
 
-The expected signer is deliberately not learned from the package. The package manifest contains its build signer for consistency checking, but the installer first normalizes the caller-supplied trust pin, requires the manifest to match that independent value, then requires every FileOp PE signature to match it as well. Editing a ZIP and its manifest therefore cannot choose a new trusted signer.
+The expected package hash and signer are deliberately not learned from the package. The installer verifies the entire ZIP SHA-256 before extraction. It then requires the package manifest's build signer to match the caller-supplied signer pin and requires every FileOp PE signature to match it as well. Editing a ZIP, manifest, dependency or data file therefore changes the required independent package hash; editing the manifest cannot choose a new trusted signer.
 
 Before replacing an installation it:
 
+- verifies the complete ZIP against the independently supplied SHA-256 before extraction;
 - expands the package into a temporary directory;
-- validates every manifest path remains inside that extraction root and verifies each SHA-256;
+- validates every manifest path remains inside that extraction root, rejects duplicate paths, verifies each length and SHA-256, and rejects payload reparse points;
+- rejects unexpected extracted files that are not represented by the manifest (apart from the manifest itself);
 - verifies every FileOp PE signature and requires its signer to match the independently supplied thumbprint;
 - requires signed `FileOp.App.exe` and `FileOp.Indexer.exe`;
 - refuses to update while FileOp is running;
@@ -63,4 +68,4 @@ Any future persistent schema migration must be backward/forward policy-aware bef
 
 ## Remaining release validation
 
-The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for unsigned, wrong-signer, manifest-signer mismatch and user-writable helper paths.
+The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for package-hash mismatch, unsigned/wrong-signer binaries, manifest-signer mismatch, unexpected payload files and user-writable helper paths.
