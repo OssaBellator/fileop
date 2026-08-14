@@ -97,7 +97,7 @@ Use a real test/release code-signing certificate appropriate for the release cha
 
 Create the package with `tools/package-release.ps1`. Publish the resulting ZIP SHA-256 through a channel independent of the ZIP itself.
 
-Verify a positive install/update cycle with `tools/install-release.ps1` using both the independently supplied package SHA-256 and signer thumbprint.
+Verify a positive install/update cycle with `tools/install-release.ps1` using both the independently supplied package SHA-256 and signer thumbprint. The release installer has no custom install-root parameter and must resolve its binary target to the canonical `%ProgramFiles%\FileOp` path.
 
 Then prove the following negative cases fail closed:
 
@@ -113,6 +113,10 @@ Then prove the following negative cases fail closed:
 - `FileOp.Indexer.exe` carrying any secondary embedded Authenticode signature;
 - helper copied to or launched from a user-writable directory;
 - helper path other than the exact adjacent installed `FileOp.Indexer.exe`;
+- a test/refactor variant that tries to redirect install/update or uninstall away from `%ProgramFiles%\FileOp`;
+- an existing `%ProgramFiles%\FileOp` root replaced with a reparse point before install/update;
+- an existing `%ProgramFiles%\FileOp` root replaced with a reparse point before uninstall;
+- `%LOCALAPPDATA%\FileOp` replaced with a reparse point before `-PurgeUserData` uninstall;
 - install/update while `FileOp.App` is running;
 - install/update while `FileOp.Indexer` is running;
 - uninstall while either process is running.
@@ -127,7 +131,7 @@ With a valid existing installation:
 - induce a staging/replacement failure before the new directory becomes live and confirm the old installation is restored;
 - uninstall without `-PurgeUserData` and confirm `%LOCALAPPDATA%\FileOp` remains;
 - reinstall and confirm existing compatible per-user state is not silently deleted;
-- only an explicit `-PurgeUserData` uninstall may remove the per-user FileOp directory.
+- only an explicit `-PurgeUserData` uninstall may remove the per-user FileOp directory, and that purge must refuse a reparse-point user-data root.
 
 ## 7. Capability/refusal regression
 
