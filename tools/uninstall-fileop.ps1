@@ -10,8 +10,10 @@ $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.Wind
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'FileOp uninstall must run from an elevated PowerShell process.'
 }
-if (Get-Process -Name 'FileOp.App' -ErrorAction SilentlyContinue) {
-    throw 'Close FileOp before uninstalling.'
+$runningFileOp = Get-Process -Name 'FileOp.App', 'FileOp.Indexer' -ErrorAction SilentlyContinue
+if ($runningFileOp) {
+    $names = ($runningFileOp.ProcessName | Sort-Object -Unique) -join ', '
+    throw "Close FileOp and wait for its indexing helper to exit before uninstalling. Still running: $names"
 }
 
 $install = [IO.Path]::GetFullPath($InstallDirectory)
