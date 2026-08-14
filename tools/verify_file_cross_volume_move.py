@@ -182,6 +182,7 @@ def check_repository(root: Path) -> int:
         'delete_primitive': root / 'src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs',
         'fidelity_primitive': root / 'src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs',
         'fidelity_tests': root / 'tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityTests.cs',
+        'fidelity_lease_tests': root / 'tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityLeaseTests.cs',
         'move_ui': root / 'src/FileOp.App/FilesView.Move.cs',
         'gate': root / 'tools/test-local.ps1',
     }
@@ -285,9 +286,12 @@ def check_repository(root: Path) -> int:
         assert needle in source['delete_primitive'], needle
 
     required_fidelity_primitive = [
-        'WindowsFileCrossVolumeMoveSourceDeletePrimitive()',
-        'WindowsFileCrossVolumeMoveFidelityVerifier.Verify(',
-        'pre-barrier',
+        'IFileCrossVolumeMoveFidelityVerifier',
+        'new WindowsFileCrossVolumeMoveSourceDeletePrimitive()',
+        'new WindowsFileCrossVolumeMoveFidelityVerifier()',
+        '.VerifyAsync(request, cancellationToken)',
+        '.VerifyAsync(_request, CancellationToken.None)',
+        'before the source-delete barrier',
         'after the durable source-delete barrier',
         'CancellationToken.None',
         'BackupSecurityInformation',
@@ -310,6 +314,16 @@ def check_repository(root: Path) -> int:
     for needle in required_tests:
         assert needle in source['fidelity_tests'], needle
 
+    required_lease_tests = [
+        'PreBarrierFidelityRefusalRetainsSourceWithoutDeleteBarrier',
+        'PostBarrierFidelityRefusalRequiresRecoveryWithoutInnerDeleteMutation',
+        'TwoPositiveFidelityProofsPermitExactlyOneInnerDeleteMutation',
+        'Assert.AreEqual(0, inner.MutationCount)',
+        'FileCrossVolumeMoveTerminalState.RecoveryRequired',
+    ]
+    for needle in required_lease_tests:
+        assert needle in source['fidelity_lease_tests'], needle
+
     for forbidden in [
         'File.Delete(',
         'File.Move(',
@@ -331,7 +345,7 @@ def check_repository(root: Path) -> int:
         22 + len(required_history) + len(required_store) + 2 + 8 +
         len(required_executor) + len(required_contract) + len(required_fidelity) +
         len(required_primitive) + len(required_fidelity_primitive) + len(required_tests) +
-        18 + 3
+        len(required_lease_tests) + 18 + 3
     )
 
 
