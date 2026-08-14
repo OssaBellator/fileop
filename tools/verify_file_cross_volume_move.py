@@ -184,6 +184,9 @@ def check_repository(root: Path) -> int:
         'fidelity_verifier': root / 'src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveFidelityVerifier.cs',
         'fidelity_tests': root / 'tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityTests.cs',
         'fidelity_lease_tests': root / 'tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityLeaseTests.cs',
+        'fidelity_share_tests': root / 'tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityShareCompatibilityTests.cs',
+        'history_invariant_tests': root / 'tests/FileOp.Windows.Tests/FileCrossVolumeMoveActionHistoryInvariantTests.cs',
+        'history_corruption_tests': root / 'tests/FileOp.Windows.Tests/FileCrossVolumeMovePersistedCorruptionTests.cs',
         'move_ui': root / 'src/FileOp.App/FilesView.Move.cs',
         'gate': root / 'tools/test-local.ps1',
     }
@@ -199,6 +202,10 @@ def check_repository(root: Path) -> int:
         'RecoveryRequired',
         'sourceDirectoryIdentity.VolumeSerialNumber == destinationDirectoryIdentity.VolumeSerialNumber',
         'source-delete barrier must be RecoveryRequired, not Failed',
+        'source entry identity must remain bound to the durable source-root volume',
+        'destination evidence must remain bound to the durable destination-root volume',
+        'RequireNull(entry.CopyMutationStartedAtUtc, nameof(entry.CopyMutationStartedAtUtc));',
+        'RequirePresent(entry.CopyMutationStartedAtUtc, nameof(entry.CopyMutationStartedAtUtc));',
         'Independent composite journal for cross-volume Move',
     ]
     for needle in required_history:
@@ -335,6 +342,37 @@ def check_repository(root: Path) -> int:
     for needle in required_lease_tests:
         assert needle in source['fidelity_lease_tests'], needle
 
+    required_share_tests = [
+        'FidelityReadReopenMustShareDeleteWhileDeleteCapabilityIsLive',
+        'ErrorSharingViolation',
+        'FileShare.Read | FileShare.Delete',
+        'incompatibleRead.IsInvalid',
+        'compatibleRead.IsInvalid',
+    ]
+    for needle in required_share_tests:
+        assert needle in source['fidelity_share_tests'], needle
+
+    required_history_invariant_tests = [
+        'FailedStateCannotHideUnresolvedCopyMutationBarrier',
+        'SourceDeleteRecoveryRequiresEarlierCommittedDestinationChronology',
+        'SourceIdentityMustRemainBoundToDurableSourceRootVolume',
+        'DestinationEvidenceMustRemainBoundToDurableDestinationRootVolume',
+        'CopyBarrierRecoveryMayDurablyCaptureObservedDestinationEvidence',
+        'SafeFailureAfterDestinationCommitRetainsSourceDuplicateWithoutRecovery',
+    ]
+    for needle in required_history_invariant_tests:
+        assert needle in source['history_invariant_tests'], needle
+
+    required_corruption_tests = [
+        'LoaderRejectsSafeFailureThatHidesUnresolvedCopyBarrier',
+        'UPDATE file_cross_volume_move_entries',
+        'copy_mutation_started_utc_ticks = @ticks',
+        'state = 6',
+        'ThrowsExactlyAsync<ArgumentException>',
+    ]
+    for needle in required_corruption_tests:
+        assert needle in source['history_corruption_tests'], needle
+
     for forbidden in [
         'File.Delete(',
         'File.Move(',
@@ -358,7 +396,9 @@ def check_repository(root: Path) -> int:
         len(required_executor) + len(required_contract) + len(required_fidelity) +
         len(required_primitive) + len(required_fidelity_wrapper) +
         len(required_fidelity_verifier) + len(required_tests) +
-        len(required_lease_tests) + 20 + 3
+        len(required_lease_tests) + len(required_share_tests) +
+        len(required_history_invariant_tests) + len(required_corruption_tests) +
+        20 + 3
     )
 
 
