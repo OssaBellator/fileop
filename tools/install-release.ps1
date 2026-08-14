@@ -19,8 +19,10 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     throw 'FileOp install/update must run from an elevated PowerShell process so the installation directory is protected from standard-user mutation.'
 }
 
-if (Get-Process -Name 'FileOp.App' -ErrorAction SilentlyContinue) {
-    throw 'Close FileOp before installing or updating.'
+$runningFileOp = Get-Process -Name 'FileOp.App', 'FileOp.Indexer' -ErrorAction SilentlyContinue
+if ($runningFileOp) {
+    $names = ($runningFileOp.ProcessName | Sort-Object -Unique) -join ', '
+    throw "Close FileOp and wait for its indexing helper to exit before installing or updating. Still running: $names"
 }
 
 $package = [IO.Path]::GetFullPath($PackageZip)
@@ -56,7 +58,7 @@ try {
     }
 
     $tempRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($temp))
-    $manifestPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $manifestPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in $manifest.Files) {
         $relative = ([string]$entry.Path).Replace('/', [IO.Path]::DirectorySeparatorChar)
         $segments = @($relative -split '[\\/]')
