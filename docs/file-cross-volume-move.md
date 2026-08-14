@@ -2,7 +2,7 @@
 
 Cross-volume Move is a destructive composite transaction. It is **not** implemented as an unchecked `Copy` followed by a path-based delete.
 
-This document describes the reviewed boundary implemented by draft PR #185. The implementation remains draft until the exact final head passes the complete Windows `tools/test-local.ps1` gate and the ordinary-user security-fidelity decision tracked by #186 is resolved or explicitly scoped.
+This document describes the reviewed boundary implemented by draft PR #185. The implementation remains draft until the exact final head passes the complete Windows `tools/test-local.ps1` gate and the ordinary-user security-fidelity decision tracked by #186 plus the final proof-to-mutation stability boundary tracked by #187 are resolved or deliberately scoped.
 
 ## Scope
 
@@ -36,6 +36,8 @@ The important per-entry states are:
 8. `RecoveryRequired` — durable evidence exists for an unresolved Copy or source-delete barrier. Evidence grants no replay, rollback or delete authority.
 
 `DestinationCommitted` is intentionally a **safe duplicate state**, not an ambiguity. Cancellation or a pre-delete fidelity/capability refusal may stop there: the copied destination remains and the original source remains. FileOp reports that condition explicitly and does not clean it up automatically.
+
+Persisted-history validation is stricter than the SQLite table shape. Entry source identity must remain on the durable source-root volume, destination evidence must remain on the durable destination-root volume, a safe `Failed` row cannot hide an unresolved Copy barrier, and source-delete recovery must retain the earlier Copy/destination chronology. A corruption regression deliberately writes a schema-valid impossible row and proves history hydration refuses it.
 
 ## Mutation ordering
 
@@ -112,13 +114,25 @@ The raw Windows source-delete primitive and the fidelity wrapper have different 
 
 The public Files composition root uses `WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive`, not the raw destructive primitive directly.
 
-## Known concurrency/security limitation
+### DELETE-share compatibility of evidence reopens
 
-The inner lease denies ordinary write/delete sharing while fidelity evidence is collected and the complete proof is repeated immediately before delete. That substantially narrows mutation races for file contents and namespace replacement.
+The raw source lease already owns `DELETE` access and intentionally uses `FileShare.Read`, preventing ordinary later write/delete opens. A second handle that FileOp itself opens to read fidelity/security evidence must therefore include `FileShare.Delete` or Windows rejects that reopen because it is incompatible with the already-live DELETE-capable handle.
 
-Security metadata has different Windows access semantics from ordinary file data. The current design does not claim that file-share modes alone mathematically freeze every possible security-descriptor change between the final security read and delete-on-close. #186 tracks whether the final production boundary needs a stronger kernel stability mechanism, a tightly scoped privileged broker that owns proof plus mutation, or a deliberately narrower reviewed product contract.
+The native verifier consequently uses `FileShare.Read | FileShare.Delete` for its evidence/security reopens. That does **not** weaken the raw lease: the earlier raw handle still omitted write/delete sharing, so outside callers cannot use the verifier's compatibility flag to acquire a new write/delete capability while the lease remains live.
 
-Until that decision is resolved, a failure to obtain complete security evidence remains a safe source-retained refusal.
+A native Windows regression test pins this behavior by demonstrating the sharing violation for a read-only-share reopen and successful compatible reopen when DELETE is shared.
+
+## Remaining concurrency/stability limitation
+
+The inner lease denies ordinary new write/delete sharing while fidelity evidence is collected and the complete proof is repeated immediately before delete. That substantially narrows mutation races for file contents and namespace replacement.
+
+It is not, by itself, a kernel-backed freeze of every metadata dimension. Security metadata has different Windows access semantics from ordinary file data, and hard-link creation is a set-information operation. A compatible handle that existed before FileOp acquired its lease can survive the later DELETE-capable open and may still be able to issue relevant metadata operations.
+
+Issue #187 tracks the required final proof-to-mutation stability mechanism: a suitable oplock/lease, tightly scoped broker that owns proof plus mutation, or another reviewed kernel-backed primitive. A third best-effort path read immediately before deletion is not considered a solution because it merely reduces the timing window again.
+
+#186 remains separate: it defines how ordinary-user security semantics are preserved/proven or deliberately scoped. #187 defines how whatever fidelity contract is chosen remains stable through the destructive boundary.
+
+Until both decisions are resolved, failure to obtain complete evidence remains a safe source-retained refusal and #185 remains draft.
 
 ## Cancellation and user-visible outcomes
 
@@ -140,7 +154,7 @@ Portable/model/source verification is wired into `tools/test-local.ps1 -OfflineO
 - post-barrier fidelity refusal => recovery required/no inner delete;
 - successful deletion only after both fidelity proofs and the durable source-delete barrier.
 
-Deterministic managed tests cover the SQLite state machine, executor ordering, and fidelity wrapper behavior with injected evidence results.
+Deterministic managed tests cover the SQLite state machine, persisted-history invariants/corruption refusal, executor ordering, fidelity wrapper behavior with injected evidence results, and native DELETE-share compatibility.
 
 The authoritative merge gate for executable changes remains the complete Windows invocation on the **exact final PR head**:
 
@@ -148,4 +162,4 @@ The authoritative merge gate for executable changes remains the complete Windows
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
 ```
 
-Do not mark #185 ready or merge it based only on source review or randomized-model results.
+Do not mark #185 ready or merge it based only on source review or randomized-model results. A green Windows gate also does not by itself resolve #186/#187.
