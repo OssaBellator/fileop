@@ -18,6 +18,7 @@ public sealed class FileCrossVolumeMoveFidelityTests
         Assert.IsTrue(classification.CanDeleteSourceAfterDurableBarrier);
         Assert.AreEqual(0, classification.Blockers.Count);
         StringAssert.Contains(classification.Summary, "destination-default");
+        StringAssert.Contains(classification.Summary, "hard-link topology is path-entry state");
     }
 
     [TestMethod]
@@ -29,6 +30,19 @@ public sealed class FileCrossVolumeMoveFidelityTests
         Assert.IsFalse(FileCrossVolumeMoveSecurityPolicy.PreservesSourceSecurityDescriptor);
         StringAssert.Contains(FileCrossVolumeMoveSecurityPolicy.Summary, "destination-default");
         StringAssert.Contains(FileCrossVolumeMoveSecurityPolicy.Summary, "rather than preserving");
+    }
+
+    [TestMethod]
+    public void PreservationPolicyIsExplicitAboutSelectedEntryAndConcurrentMetadataAtomicity()
+    {
+        Assert.IsTrue(FileCrossVolumeMovePreservationPolicy.MovesSelectedSourceDirectoryEntryOnly);
+        Assert.IsFalse(FileCrossVolumeMovePreservationPolicy.PreservesHardLinkTopology);
+        Assert.IsTrue(FileCrossVolumeMovePreservationPolicy.RequiresStableMainStreamThroughDelete);
+        Assert.IsTrue(FileCrossVolumeMovePreservationPolicy.RequiresNoSourceNamedDataStreamsAtProof);
+        Assert.IsTrue(FileCrossVolumeMovePreservationPolicy.RequiresNoSourceExtendedAttributesAtProof);
+        Assert.IsFalse(FileCrossVolumeMovePreservationPolicy.GuaranteesAtomicConcurrentMetadataMutationCapture);
+        StringAssert.Contains(FileCrossVolumeMovePreservationPolicy.Summary, "selected source directory entry");
+        StringAssert.Contains(FileCrossVolumeMovePreservationPolicy.Summary, "not claimed to be atomically captured");
     }
 
     [TestMethod]
@@ -44,7 +58,7 @@ public sealed class FileCrossVolumeMoveFidelityTests
     }
 
     [TestMethod]
-    public void MetadataOrUnsupportedAttributesBlockSourceDeletion()
+    public void MetadataOrUnsupportedAttributesBlockSourceDeletionWhenObservedAtCheckpoint()
     {
         var metadataChanged = FileCrossVolumeMoveFidelityClassifier.Classify(
             BaselineEvidence() with
@@ -70,26 +84,46 @@ public sealed class FileCrossVolumeMoveFidelityTests
     }
 
     [TestMethod]
-    public void StreamsHardLinksAndExtendedAttributesBlockDestructiveCompletion()
+    public void SourceNamedStreamsAndExtendedAttributesStillBlockDestructiveCompletion()
     {
         var evidence = BaselineEvidence() with
         {
             SourceNamedDataStreamCount = 1,
-            DestinationNamedDataStreamCount = 1,
-            SourceHardLinkCount = 2,
-            DestinationHardLinkCount = 2,
             SourceExtendedAttributeSize = 12,
-            DestinationExtendedAttributeSize = 16,
         };
 
         var classification = FileCrossVolumeMoveFidelityClassifier.Classify(evidence);
 
         AssertBlocker(classification, FileCrossVolumeMoveFidelityBlocker.SourceNamedDataStreams);
-        AssertBlocker(classification, FileCrossVolumeMoveFidelityBlocker.DestinationNamedDataStreams);
-        AssertBlocker(classification, FileCrossVolumeMoveFidelityBlocker.SourceHardLinks);
-        AssertBlocker(classification, FileCrossVolumeMoveFidelityBlocker.DestinationHardLinks);
         AssertBlocker(classification, FileCrossVolumeMoveFidelityBlocker.SourceExtendedAttributes);
-        AssertBlocker(classification, FileCrossVolumeMoveFidelityBlocker.DestinationExtendedAttributes);
+    }
+
+    [TestMethod]
+    public void HardLinkCountDoesNotBlockMovingTheSelectedDirectoryEntry()
+    {
+        var classification = FileCrossVolumeMoveFidelityClassifier.Classify(
+            BaselineEvidence() with
+            {
+                SourceHardLinkCount = 7,
+                DestinationHardLinkCount = 3,
+            });
+
+        Assert.IsTrue(classification.CanDeleteSourceAfterDurableBarrier);
+        Assert.AreEqual(0, classification.Blockers.Count);
+    }
+
+    [TestMethod]
+    public void DestinationOnlyStreamsOrEasDoNotRepresentLostSourceSemantics()
+    {
+        var classification = FileCrossVolumeMoveFidelityClassifier.Classify(
+            BaselineEvidence() with
+            {
+                DestinationNamedDataStreamCount = 2,
+                DestinationExtendedAttributeSize = 24,
+            });
+
+        Assert.IsTrue(classification.CanDeleteSourceAfterDurableBarrier);
+        Assert.AreEqual(0, classification.Blockers.Count);
     }
 
     [TestMethod]
