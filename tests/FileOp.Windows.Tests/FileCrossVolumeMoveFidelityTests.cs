@@ -17,6 +17,18 @@ public sealed class FileCrossVolumeMoveFidelityTests
 
         Assert.IsTrue(classification.CanDeleteSourceAfterDurableBarrier);
         Assert.AreEqual(0, classification.Blockers.Count);
+        StringAssert.Contains(classification.Summary, "destination-default");
+    }
+
+    [TestMethod]
+    public void SecurityPolicyMatchesWindowsCrossVolumeMoveContract()
+    {
+        Assert.AreEqual(
+            FileCrossVolumeMoveSecurityDisposition.DestinationDefaultInherited,
+            FileCrossVolumeMoveSecurityPolicy.CurrentDisposition);
+        Assert.IsFalse(FileCrossVolumeMoveSecurityPolicy.PreservesSourceSecurityDescriptor);
+        StringAssert.Contains(FileCrossVolumeMoveSecurityPolicy.Summary, "destination-default");
+        StringAssert.Contains(FileCrossVolumeMoveSecurityPolicy.Summary, "rather than preserving");
     }
 
     [TestMethod]
@@ -32,7 +44,7 @@ public sealed class FileCrossVolumeMoveFidelityTests
     }
 
     [TestMethod]
-    public void MetadataOrSecurityUncertaintyBlocksSourceDeletion()
+    public void MetadataOrUnsupportedAttributesBlockSourceDeletion()
     {
         var metadataChanged = FileCrossVolumeMoveFidelityClassifier.Classify(
             BaselineEvidence() with
@@ -52,20 +64,9 @@ public sealed class FileCrossVolumeMoveFidelityTests
                     LastWriteTimeFileTime: 3,
                     FileAttributes: 0x00000820u), // Archive + Compressed
             });
-        var securityUnavailable = FileCrossVolumeMoveFidelityClassifier.Classify(
-            BaselineEvidence() with
-            {
-                SecurityDescriptorEvidenceComplete = false,
-                SecurityDescriptorEquivalent = false,
-            });
-        var securityChanged = FileCrossVolumeMoveFidelityClassifier.Classify(
-            BaselineEvidence() with { SecurityDescriptorEquivalent = false });
 
         AssertBlocker(metadataChanged, FileCrossVolumeMoveFidelityBlocker.StableBasicMetadataMismatch);
         AssertBlocker(unsupportedAttribute, FileCrossVolumeMoveFidelityBlocker.SourceUnsupportedAttributes);
-        AssertBlocker(securityUnavailable, FileCrossVolumeMoveFidelityBlocker.SecurityDescriptorEvidenceIncomplete);
-        Assert.IsFalse(securityUnavailable.Blockers.Contains(FileCrossVolumeMoveFidelityBlocker.SecurityDescriptorMismatch));
-        AssertBlocker(securityChanged, FileCrossVolumeMoveFidelityBlocker.SecurityDescriptorMismatch);
     }
 
     [TestMethod]
@@ -116,9 +117,7 @@ public sealed class FileCrossVolumeMoveFidelityTests
             SourceHardLinkCount: 1,
             DestinationHardLinkCount: 1,
             SourceExtendedAttributeSize: 0,
-            DestinationExtendedAttributeSize: 0,
-            SecurityDescriptorEvidenceComplete: true,
-            SecurityDescriptorEquivalent: true);
+            DestinationExtendedAttributeSize: 0);
 
     private static FileContentFingerprint Fingerprint(char digit) =>
         new(FileContentFingerprintAlgorithm.Sha256, new string(digit, FileContentFingerprint.Sha256HexLength));
