@@ -18,11 +18,11 @@ namespace FileOp.Windows.Operations;
 public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator
 {
     private readonly IFileOperationExecutionValidator _inner;
-    private readonly WindowsFileOperationNamespaceCapabilityProbe _namespaceProbe;
+    private readonly IFileOperationNamespaceCapabilityProbe _namespaceProbe;
 
     public WindowsMoveOperationExecutionValidator(
         IFileOperationExecutionValidator? inner = null,
-        WindowsFileOperationNamespaceCapabilityProbe? namespaceProbe = null)
+        IFileOperationNamespaceCapabilityProbe? namespaceProbe = null)
     {
         _inner = inner ?? new WindowsFileOperationExecutionValidator();
         _namespaceProbe = namespaceProbe ?? new WindowsFileOperationNamespaceCapabilityProbe();
