@@ -23,33 +23,23 @@ def model_entry(
     trace = ["fresh-validate"]
     if cancel_at == "before-copy":
         return "Pending", trace + ["cancel-safe"]
-
     trace += ["copy-barrier", "copy"]
     if not copy_ok:
         return "RecoveryRequired", trace + ["recovery"]
-
     trace += ["destination-commit"]
     if cancel_at == "after-destination-commit":
         return "DestinationCommitted", trace + ["cancel-safe-source-retained"]
-
     trace += ["acquire-source-delete-lease"]
     if not delete_prepare_ok:
         return "DestinationCommitted", trace + ["safe-failure-source-retained"]
-
     trace += ["pre-barrier-fidelity-proof"]
     if not pre_fidelity_ok:
         return "DestinationCommitted", trace + ["safe-fidelity-refusal-source-retained"]
     if cancel_at == "before-delete-barrier":
         return "DestinationCommitted", trace + ["cancel-safe-source-retained"]
-
-    trace += [
-        "source-delete-barrier",
-        "mint-delete-authorization",
-        "post-barrier-fidelity-recheck",
-    ]
+    trace += ["source-delete-barrier", "mint-delete-authorization", "post-barrier-fidelity-recheck"]
     if not post_fidelity_ok:
         return "RecoveryRequired", trace + ["recovery-no-delete"]
-
     trace += ["same-handle-delete", "release-delete-lease"]
     if not delete_ok:
         return "RecoveryRequired", trace + ["recovery"]
@@ -58,58 +48,32 @@ def model_entry(
 
 def check_properties(cases: int) -> int:
     state, trace = model_entry(
-        cancel_at="after-destination-commit",
-        copy_ok=True,
-        delete_prepare_ok=True,
-        pre_fidelity_ok=True,
-        post_fidelity_ok=True,
-        delete_ok=True,
-    )
+        cancel_at="after-destination-commit", copy_ok=True, delete_prepare_ok=True,
+        pre_fidelity_ok=True, post_fidelity_ok=True, delete_ok=True)
     assert state == "DestinationCommitted"
     assert "source-delete-barrier" not in trace
     assert trace.index("copy-barrier") < trace.index("copy") < trace.index("destination-commit")
 
     state, trace = model_entry(
-        cancel_at=None,
-        copy_ok=True,
-        delete_prepare_ok=True,
-        pre_fidelity_ok=True,
-        post_fidelity_ok=True,
-        delete_ok=True,
-    )
+        cancel_at=None, copy_ok=True, delete_prepare_ok=True,
+        pre_fidelity_ok=True, post_fidelity_ok=True, delete_ok=True)
     assert state == "Moved"
     ordered = [
-        "destination-commit",
-        "acquire-source-delete-lease",
-        "pre-barrier-fidelity-proof",
-        "source-delete-barrier",
-        "mint-delete-authorization",
-        "post-barrier-fidelity-recheck",
-        "same-handle-delete",
-        "release-delete-lease",
-        "source-delete-commit",
+        "destination-commit", "acquire-source-delete-lease", "pre-barrier-fidelity-proof",
+        "source-delete-barrier", "mint-delete-authorization", "post-barrier-fidelity-recheck",
+        "same-handle-delete", "release-delete-lease", "source-delete-commit",
     ]
     assert [trace.index(item) for item in ordered] == sorted(trace.index(item) for item in ordered)
 
     state, trace = model_entry(
-        cancel_at=None,
-        copy_ok=True,
-        delete_prepare_ok=True,
-        pre_fidelity_ok=False,
-        post_fidelity_ok=True,
-        delete_ok=True,
-    )
+        cancel_at=None, copy_ok=True, delete_prepare_ok=True,
+        pre_fidelity_ok=False, post_fidelity_ok=True, delete_ok=True)
     assert state == "DestinationCommitted"
     assert "source-delete-barrier" not in trace and "same-handle-delete" not in trace
 
     state, trace = model_entry(
-        cancel_at=None,
-        copy_ok=True,
-        delete_prepare_ok=True,
-        pre_fidelity_ok=True,
-        post_fidelity_ok=False,
-        delete_ok=True,
-    )
+        cancel_at=None, copy_ok=True, delete_prepare_ok=True,
+        pre_fidelity_ok=True, post_fidelity_ok=False, delete_ok=True)
     assert state == "RecoveryRequired"
     assert "source-delete-barrier" in trace and "same-handle-delete" not in trace
 
@@ -128,8 +92,7 @@ def check_properties(cases: int) -> int:
         if "same-handle-delete" in trace:
             assert "source-delete-barrier" in trace
             assert trace.index("destination-commit") < trace.index("source-delete-barrier") < trace.index("same-handle-delete")
-            assert "pre-barrier-fidelity-proof" in trace
-            assert "post-barrier-fidelity-recheck" in trace
+            assert "pre-barrier-fidelity-proof" in trace and "post-barrier-fidelity-recheck" in trace
             checks += 5
         if "cancel-safe-source-retained" in trace:
             assert state == "DestinationCommitted" and "same-handle-delete" not in trace
@@ -173,6 +136,7 @@ def check_repository(root: Path) -> int:
         "executor": "src/FileOp.Core/Operations/FileCrossVolumeMoveOperationExecutor.cs",
         "fidelity": "src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs",
         "security": "src/FileOp.Core/Operations/FileCrossVolumeMoveSecurityPolicy.cs",
+        "preservation": "src/FileOp.Core/Operations/FileCrossVolumeMovePreservationPolicy.cs",
         "raw": "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs",
         "wrapper": "src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs",
         "native_fidelity": "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveFidelityVerifier.cs",
@@ -198,187 +162,125 @@ def check_repository(root: Path) -> int:
 
     checks = 0
     checks += must_contain(
-        source["history"],
-        "CopyMutationStarted",
-        "DestinationCommitted",
-        "SourceDeleteStarted",
-        "RecoveryRequired",
-        "A cross-volume Move failure after the source-delete barrier must be RecoveryRequired, not Failed.",
-    )
+        source["history"], "CopyMutationStarted", "DestinationCommitted",
+        "SourceDeleteStarted", "RecoveryRequired",
+        "A cross-volume Move failure after the source-delete barrier must be RecoveryRequired, not Failed.")
     checks += must_contain(
-        source["store"],
-        "file_cross_volume_move_schema",
-        "file_cross_volume_move_actions",
-        "file_cross_volume_move_entries",
-        "CHECK(source_root_volume_serial <> destination_root_volume_serial)",
-        "MarkCopyMutationStartedAsync(",
-        "CommitDestinationAsync(",
-        "MarkSourceDeleteStartedAsync(",
-        "CommitSourceDeletedAsync(",
-    )
+        source["store"], "file_cross_volume_move_schema", "file_cross_volume_move_actions",
+        "file_cross_volume_move_entries", "CHECK(source_root_volume_serial <> destination_root_volume_serial)",
+        "MarkCopyMutationStartedAsync(", "CommitDestinationAsync(",
+        "MarkSourceDeleteStartedAsync(", "CommitSourceDeletedAsync(")
     checks += must_not_contain(source["store"], "UPDATE file_operation_actions", "UPDATE file_operation_action_entries")
 
     executor = source["executor"]
     ordered_calls = [
-        ".MarkCopyMutationStartedAsync(",
-        ".CopyNewFileAsync(",
-        ".CommitDestinationAsync(",
-        ".AcquireAsync(sourceDeleteRequest",
-        ".MarkSourceDeleteStartedAsync(",
+        ".MarkCopyMutationStartedAsync(", ".CopyNewFileAsync(", ".CommitDestinationAsync(",
+        ".AcquireAsync(sourceDeleteRequest", ".MarkSourceDeleteStartedAsync(",
         "new FileCrossVolumeMoveSourceDeleteAuthorization(",
-        ".MarkDeletePendingAsync(authorization, CancellationToken.None)",
-        ".CommitSourceDeletedAsync(",
+        ".MarkDeletePendingAsync(authorization, CancellationToken.None)", ".CommitSourceDeletedAsync(",
     ]
     assert [executor.index(item) for item in ordered_calls] == sorted(executor.index(item) for item in ordered_calls)
     checks += len(ordered_calls)
     checks += must_contain(
-        executor,
-        "FileMoveExecutionStrategy.CrossVolumeCopyDeleteRequired",
+        executor, "FileMoveExecutionStrategy.CrossVolumeCopyDeleteRequired",
         "DestinationCommitted is deliberately a cancellation-safe checkpoint.",
-        "No cancellation is passed beyond SourceDeleteStarted",
-        "DeleteAccessCapabilityHeld",
-        "CancellationToken.None",
-        "MarkRecoveryRequiredAsync(",
-    )
+        "No cancellation is passed beyond SourceDeleteStarted", "DeleteAccessCapabilityHeld",
+        "CancellationToken.None", "MarkRecoveryRequiredAsync(")
     checks += must_not_contain(executor, "File.Delete(", "File.Move(", "overwrite: true")
 
     checks += must_contain(
-        source["contract"],
-        "SourceDeleteMutationAuthorized => false",
-        "SourceDeleteBarrierSatisfied => true",
-        "SourceDeleteMutationAuthorized => true",
-        "IFileCrossVolumeMoveSourceDeleteLease",
+        source["contract"], "SourceDeleteMutationAuthorized => false",
+        "SourceDeleteBarrierSatisfied => true", "SourceDeleteMutationAuthorized => true",
+        "IFileCrossVolumeMoveSourceDeleteLease")
+
+    checks += must_contain(
+        source["security"], "DestinationDefaultInherited", "PreservesSourceSecurityDescriptor = false",
+        "destination-default security semantics", "rather than preserving the source security descriptor")
+    checks += must_contain(
+        source["preservation"],
+        "MovesSelectedSourceDirectoryEntryOnly = true",
+        "PreservesHardLinkTopology = false",
+        "RequiresStableMainStreamThroughDelete = true",
+        "RequiresNoSourceNamedDataStreamsAtProof = true",
+        "RequiresNoSourceExtendedAttributesAtProof = true",
+        "GuaranteesAtomicConcurrentMetadataMutationCapture = false",
+        "hard-link topology is not recreated across volumes",
     )
 
-    # #186 policy: intentionally follow Windows cross-volume Move security semantics.
     checks += must_contain(
-        source["security"],
-        "DestinationDefaultInherited",
-        "PreservesSourceSecurityDescriptor = false",
-        "destination-default security semantics",
-        "rather than preserving the source security descriptor",
-    )
-    checks += must_contain(
-        source["fidelity"],
-        "SourceContentChanged",
-        "DestinationContentChanged",
-        "StableBasicMetadataMismatch",
-        "SourceNamedDataStreams",
-        "SourceHardLinks",
-        "SourceExtendedAttributes",
-        "CanDeleteSourceAfterDurableBarrier",
-        "FileCrossVolumeMoveSecurityPolicy",
-    )
+        source["fidelity"], "SourceContentChanged", "DestinationContentChanged",
+        "StableBasicMetadataMismatch", "SourceNamedDataStreams", "SourceExtendedAttributes",
+        "CanDeleteSourceAfterDurableBarrier", "FileCrossVolumeMovePreservationPolicy",
+        "hard-link topology is path-entry state")
     checks += must_not_contain(
-        source["fidelity"],
-        "SecurityDescriptorEvidenceIncomplete",
-        "SecurityDescriptorMismatch",
-        "SourceSecurityDescriptor",
-        "DestinationSecurityDescriptor",
-    )
+        source["fidelity"], "SecurityDescriptorEvidenceIncomplete", "SecurityDescriptorMismatch",
+        "SourceSecurityDescriptor", "DestinationSecurityDescriptor",
+        "SourceHardLinks =", "DestinationHardLinks =",
+        "blockers.Add(FileCrossVolumeMoveFidelityBlocker.DestinationNamedDataStreams)",
+        "blockers.Add(FileCrossVolumeMoveFidelityBlocker.DestinationExtendedAttributes)")
 
     checks += must_contain(
-        source["raw"],
-        "Delete | FileReadAttributes | Synchronize",
-        "FileShare.Read,",
-        "NtCreateFile(",
-        "NtSetInformationFile(",
-        "FileDispositionInformationEx",
-        "authorization.IsBoundTo(Evidence)",
-    )
+        source["raw"], "Delete | FileReadAttributes | Synchronize", "FileShare.Read,",
+        "NtCreateFile(", "NtSetInformationFile(", "FileDispositionInformationEx",
+        "authorization.IsBoundTo(Evidence)")
     checks += must_contain(
-        source["wrapper"],
-        "IFileCrossVolumeMoveFidelityVerifier",
+        source["wrapper"], "IFileCrossVolumeMoveFidelityVerifier",
         "new WindowsFileCrossVolumeMoveSourceDeletePrimitive()",
-        "new WindowsFileCrossVolumeMoveFidelityVerifier()",
-        ".VerifyAsync(request, cancellationToken)",
-        ".VerifyAsync(_request, CancellationToken.None)",
-        "before the source-delete barrier",
+        "new WindowsFileCrossVolumeMoveFidelityVerifier()", ".VerifyAsync(request, cancellationToken)",
+        ".VerifyAsync(_request, CancellationToken.None)", "before the source-delete barrier",
         "after the durable source-delete barrier",
-        "inner.MarkDeletePendingAsync(authorization, CancellationToken.None)",
-    )
+        "inner.MarkDeletePendingAsync(authorization, CancellationToken.None)")
 
-    # Ordinary-user fidelity must not reintroduce privileged complete-security reads.
     checks += must_contain(
-        source["native_fidelity"],
-        "FileShare.Read | FileShare.Delete",
-        "NtQueryInformationFile(",
-        "FileEaInformation",
-        "WindowsFileNamedDataStreamTopologyDigest.Read(",
-        "HashMainStream(",
-    )
+        source["native_fidelity"], "FileShare.Read | FileShare.Delete",
+        "NtQueryInformationFile(", "FileEaInformation",
+        "WindowsFileNamedDataStreamTopologyDigest.Read(", "HashMainStream(")
     checks += must_not_contain(
-        source["native_fidelity"],
-        "GetSecurityInfo(",
-        "BackupSecurityInformation",
-        "AccessSystemSecurity",
-        "GetSecurityDescriptorLength(",
-        "LocalFree(",
-        "GetKernelObjectSecurity(",
-    )
+        source["native_fidelity"], "GetSecurityInfo(", "BackupSecurityInformation",
+        "AccessSystemSecurity", "GetSecurityDescriptorLength(", "LocalFree(", "GetKernelObjectSecurity(")
 
     validator = source["production_validator"]
     checks += must_contain(
-        validator,
-        "CrossVolumeMoveDisabledSummary",
-        "MissingRootIdentitySummary",
-        "TryClassifyVolumeRelationship(",
-        "return Block(validation, MissingRootIdentitySummary);",
-        "if (isCrossVolume)",
-        "return Block(validation, CrossVolumeMoveDisabledSummary);",
-        "Choose a destination on the same volume",
-        "No durable history, destination Copy, or source-delete mutation",
-    )
+        validator, "CrossVolumeMoveDisabledSummary", "MissingRootIdentitySummary",
+        "TryClassifyVolumeRelationship(", "return Block(validation, MissingRootIdentitySummary);",
+        "if (isCrossVolume)", "return Block(validation, CrossVolumeMoveDisabledSummary);",
+        "final mutation-stability boundary is still under review", "Choose a destination on the same volume",
+        "No durable history, destination Copy, or source-delete mutation")
     assert validator.index("TryClassifyVolumeRelationship(validation") < validator.index("RequireSupportedMutationRoots(validation")
     assert "throw new InvalidOperationException" not in validator
     checks += 2
 
     checks += must_contain(
-        source["production_validator_tests"],
-        "MutationReadyMoveWithoutRootIdentityFailsClosedBeforeNamespaceProbe",
+        source["production_validator_tests"], "MutationReadyMoveWithoutRootIdentityFailsClosedBeforeNamespaceProbe",
         "CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory",
-        "Assert.AreEqual(0, probe.QueryCalls)",
-        "SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation",
-    )
+        "Assert.AreEqual(0, probe.QueryCalls)", "SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation")
     checks += must_contain(
-        source["fidelity_tests"],
-        "EquivalentOrdinaryPinnedFilesMayReachLaterDeleteBarrier",
+        source["fidelity_tests"], "EquivalentOrdinaryPinnedFilesMayReachLaterDeleteBarrier",
         "ContentDriftOnEitherPinnedObjectBlocksSourceDeletion",
-        "StreamsHardLinksAndExtendedAttributesBlockDestructiveCompletion",
-        "DestinationDefaultInherited",
-        "PreservesSourceSecurityDescriptor",
-    )
+        "SourceNamedStreamsAndExtendedAttributesStillBlockDestructiveCompletion",
+        "HardLinkCountDoesNotBlockMovingTheSelectedDirectoryEntry",
+        "DestinationOnlyStreamsOrEasDoNotRepresentLostSourceSemantics",
+        "PreservationPolicyIsExplicitAboutSelectedEntryAndConcurrentMetadataAtomicity",
+        "DestinationDefaultInherited", "PreservesSourceSecurityDescriptor")
     checks += must_contain(
-        source["lease_tests"],
-        "PreBarrierFidelityRefusalRetainsSourceWithoutDeleteBarrier",
+        source["lease_tests"], "PreBarrierFidelityRefusalRetainsSourceWithoutDeleteBarrier",
         "PostBarrierFidelityRefusalRequiresRecoveryWithoutInnerDeleteMutation",
-        "TwoPositiveFidelityProofsPermitExactlyOneInnerDeleteMutation",
-        "Assert.AreEqual(0, inner.MutationCount)",
-    )
+        "TwoPositiveFidelityProofsPermitExactlyOneInnerDeleteMutation", "Assert.AreEqual(0, inner.MutationCount)")
     checks += must_contain(
-        source["history_tests"],
-        "FailedStateCannotHideUnresolvedCopyMutationBarrier",
+        source["history_tests"], "FailedStateCannotHideUnresolvedCopyMutationBarrier",
         "SourceDeleteRecoveryRequiresEarlierCommittedDestinationChronology",
-        "SafeFailureAfterDestinationCommitRetainsSourceDuplicateWithoutRecovery",
-    )
+        "SafeFailureAfterDestinationCommitRetainsSourceDuplicateWithoutRecovery")
     checks += must_contain(
-        source["corruption_tests"],
-        "LoaderRejectsSafeFailureThatHidesUnresolvedCopyBarrier",
-        "UPDATE file_cross_volume_move_entries",
-        "ThrowsExactlyAsync<ArgumentException>",
-    )
+        source["corruption_tests"], "LoaderRejectsSafeFailureThatHidesUnresolvedCopyBarrier",
+        "UPDATE file_cross_volume_move_entries", "ThrowsExactlyAsync<ArgumentException>")
 
     checks += must_contain(
-        source["ui"],
-        "new WindowsMoveOperationExecutionValidator()",
-        "new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive()",
-    )
+        source["ui"], "new WindowsMoveOperationExecutionValidator()",
+        "new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive()")
     checks += must_not_contain(source["ui"], "new WindowsFileCrossVolumeMoveSourceDeletePrimitive()")
     checks += must_contain(
-        source["xaml"],
-        "same-volume regular-file Move can execute; cross-volume and directory Move remain disabled",
-        "cross-volume Move remains product-disabled pending fidelity hardening",
-    )
+        source["xaml"], "same-volume regular-file Move can execute; cross-volume and directory Move remain disabled",
+        "cross-volume Move remains product-disabled pending fidelity hardening")
 
     raw_ctor = "new WindowsFileCrossVolumeMoveSourceDeletePrimitive("
     wrapper_path = (root / files["wrapper"]).resolve()
@@ -389,27 +291,18 @@ def check_repository(root: Path) -> int:
         checks += 1
 
     checks += must_contain(
-        source["readme"],
-        "Different-volume Move is currently product-disabled",
-        "not currently reachable through production Move validation",
-    )
+        source["readme"], "Different-volume Move is currently product-disabled",
+        "not currently reachable through production Move validation")
     checks += must_contain(
-        source["files_doc"],
-        "Different-volume Move is currently product-disabled",
-        "dormant cross-volume transaction contract",
-        "Preflight deliberately does not carry stable filesystem root identities",
-    )
+        source["files_doc"], "Different-volume Move is currently product-disabled",
+        "dormant cross-volume transaction contract", "Preflight deliberately does not carry stable filesystem root identities")
     checks += must_contain(
-        source["cross_doc"],
-        "Production Files execution does not currently enter this transaction.",
+        source["cross_doc"], "Production Files execution does not currently enter this transaction.",
         "different root volume serials return `Blocked`",
-        "These are transaction-engine semantics, not current Files production outcomes.",
-    )
+        "These are transaction-engine semantics, not current Files production outcomes.")
     checks += must_contain(
-        source["gate"],
-        "verify_file_cross_volume_move.py --repo-root $repoRoot --cases 50000",
-        "verify_files_same_volume_move_ui.py --repo-root $repoRoot --cases 50000",
-    )
+        source["gate"], "verify_file_cross_volume_move.py --repo-root $repoRoot --cases 50000",
+        "verify_files_same_volume_move_ui.py --repo-root $repoRoot --cases 50000")
     return checks
 
 
