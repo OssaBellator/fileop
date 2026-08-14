@@ -50,12 +50,6 @@ public sealed partial class FilesView
     private void DeletePane_IntentStateChanged(object? sender, EventArgs e) =>
         UpdateDeleteAvailability();
 
-    private async void ReviewDeleteLeftButton_Click(object sender, RoutedEventArgs e) =>
-        await RunDeleteSessionAsync(LeftPane, RightPane);
-
-    private async void ReviewDeleteRightButton_Click(object sender, RoutedEventArgs e) =>
-        await RunDeleteSessionAsync(RightPane, LeftPane);
-
     private async void RetryDeleteCleanupButton_Click(object sender, RoutedEventArgs e)
     {
         if (_deleteSessionRunning ||
