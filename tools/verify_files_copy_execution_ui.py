@@ -32,9 +32,10 @@ def bound_to_current_state(plan: dict, panes: dict[str, dict]) -> bool:
     )
 
 
-def can_run(plan: dict, panes: dict[str, dict]) -> bool:
+def can_run(plan: dict, panes: dict[str, dict], *, preflight_running: bool = False) -> bool:
     return (
-        plan['kind'] == 'Copy'
+        not preflight_running
+        and plan['kind'] == 'Copy'
         and plan['entries'] > 0
         and not plan['has_directory']
         and plan['preflight'] == 'Ready'
@@ -83,6 +84,7 @@ def check_properties(cases: int) -> int:
     }
 
     assert can_run(base_plan, base_panes)
+    assert not can_run(base_plan, base_panes, preflight_running=True)
     assert not can_run({**base_plan, 'kind': 'Move'}, base_panes)
     assert not can_run({**base_plan, 'has_directory': True}, base_panes)
     assert not can_run({**base_plan, 'preflight': 'NeedsDecision'}, base_panes)
@@ -98,7 +100,7 @@ def check_properties(cases: int) -> int:
     assert classify_history('Succeeded', ['Committed', 'Skipped']) == 'Succeeded'
 
     rng = random.Random(20260814)
-    checks = 14
+    checks = 15
     for case in range(cases):
         source_path = rf'C:\Root\Source{case % 31}'
         destination_path = rf'C:\Root\Destination{case % 37}'
@@ -128,9 +130,11 @@ def check_properties(cases: int) -> int:
                 'path': destination_path if rng.random() < 0.8 else rf'C:\Changed\D{case}',
             },
         }
+        preflight_running = bool(rng.getrandbits(1))
 
         expected = (
-            plan['kind'] == 'Copy'
+            not preflight_running
+            and plan['kind'] == 'Copy'
             and plan['entries'] > 0
             and not plan['has_directory']
             and plan['preflight'] == 'Ready'
@@ -141,7 +145,7 @@ def check_properties(cases: int) -> int:
             and norm(panes['Left']['path']) == norm(source_path)
             and norm(panes['Right']['path']) == norm(destination_path)
         )
-        assert can_run(plan, panes) == expected
+        assert can_run(plan, panes, preflight_running=preflight_running) == expected
         checks += 1
 
         queue = [f'op-{case}-0', f'op-{case}-1', f'op-{case}-2']
@@ -207,6 +211,9 @@ def check_repository(root: Path) -> int:
         'Content="Cancel Copy"',
         'x:Name="CopyProgressBar"',
         'private async Task RunSelectedCopyAsync()',
+        '_preflightRunning ||',
+        'if (_preflightRunning)',
+        'Wait for the current read-only preflight to finish before running Copy.',
         'plan.Kind != FileOperationKind.Copy',
         'entry => entry.IsDirectory',
         'FileOperationPreflightStatus.Ready',
