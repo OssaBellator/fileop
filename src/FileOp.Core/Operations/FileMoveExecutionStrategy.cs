@@ -69,6 +69,13 @@ public static class FileMoveExecutionStrategyClassifier
                 "Move strategy classification requires stable canonical identities for both source and destination directories.");
         }
 
+        if (sourceDirectoryIdentity == destinationDirectoryIdentity)
+        {
+            return Blocked(
+                validation,
+                "Source and destination directories cannot resolve to the same stable identity.");
+        }
+
         var readyCount = 0;
         for (var ordinal = 0; ordinal < validation.Items.Count; ordinal++)
         {
@@ -98,25 +105,32 @@ public static class FileMoveExecutionStrategyClassifier
                     "A validated Move source file is not identity-bound to the canonical source volume.");
             }
 
-            if (item.Destination.Identity is FileIdentity destinationIdentity &&
-                destinationIdentity.VolumeSerialNumber != destinationDirectoryIdentity.VolumeSerialNumber)
+            if (item.Decision == FileOperationExecutionValidationDecision.Skip)
             {
-                return Blocked(
-                    validation,
-                    "A validated existing Move destination is not identity-bound to the canonical destination volume.");
-            }
-
-            if (item.Decision == FileOperationExecutionValidationDecision.Ready)
-            {
-                if (item.Destination.State != FileOperationCanonicalPathState.Missing)
+                if (plan.CollisionPolicy != FileOperationCollisionPolicy.Skip ||
+                    item.Destination.State is not FileOperationCanonicalPathState.File and
+                        not FileOperationCanonicalPathState.Directory ||
+                    item.Destination.Identity is not FileIdentity skippedDestinationIdentity ||
+                    skippedDestinationIdentity.VolumeSerialNumber !=
+                        destinationDirectoryIdentity.VolumeSerialNumber)
                 {
                     return Blocked(
                         validation,
-                        "A Ready file Move must target a missing canonical destination leaf.");
+                        "A Skip Move decision must remain bound to an existing destination identity on the canonical destination volume and an explicit Skip collision policy.");
                 }
 
-                readyCount++;
+                continue;
             }
+
+            if (item.Destination.State != FileOperationCanonicalPathState.Missing ||
+                item.Destination.Identity.HasValue)
+            {
+                return Blocked(
+                    validation,
+                    "A Ready file Move must target a missing canonical destination leaf with no existing destination identity.");
+            }
+
+            readyCount++;
         }
 
         if (readyCount == 0)
