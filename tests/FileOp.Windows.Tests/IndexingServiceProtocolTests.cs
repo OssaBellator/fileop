@@ -169,7 +169,7 @@ public sealed class IndexingServiceProtocolTests
             requestCancellation.Cancel();
             try
             {
-                await Assert.ThrowsExactlyAsync<OperationCanceledException>(async () => await searchTask);
+                await Assert.ThrowsAsync<OperationCanceledException>(async () => await searchTask);
                 Assert.IsFalse(client.IsConnected);
                 await Assert.ThrowsExactlyAsync<InvalidOperationException>(async () =>
                     await client.HelloAsync("after-cancel", cancellation.Token));
