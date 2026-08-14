@@ -8,7 +8,7 @@ Native mode browses the primary whole-volume NTFS index. Fallback mode browses t
 
 Files now has two distinct kinds of operation UI that must not be conflated:
 
-- a session-only **Copy/Move planning queue** whose reviewed regular-file Copy and regular-file Move plans can execute after successful read-only preflight and fresh execution validation; Move chooses either the same-volume identity-preserving rename boundary or the cross-volume Copy-plus-separately-authorized-source-delete boundary from fresh root identities; directory Move remains non-executable;
+- a session-only **Copy/Move planning queue** whose reviewed regular-file Copy and same-volume regular-file Move plans can execute after successful read-only preflight and fresh execution validation. Different-volume Move is currently product-disabled by the Windows Move validator before durable history, destination Copy or source-delete mutation begins; the separate composite cross-volume engine remains draft infrastructure;
 - a separately reviewed **file-only permanent-delete session**, which is a real destructive action with its own recovery, user authorization and mutation boundary.
 
 Browse selection, prepared intent, preflight evidence and Storage handoff are never themselves mutation authority.
@@ -75,73 +75,81 @@ The queue retains explicit collision intent such as Ask later, Skip existing and
 
 ### Preflight and execution-grade contracts
 
-The repository contains distinct reviewed operation layers for executable file Copy and both regular-file Move routes:
+The repository contains reviewed production layers for file Copy and same-volume regular-file Move, plus a separate draft composite cross-volume Move transaction:
 
 - read-only Windows preflight;
 - canonical execution-grade validation contracts;
 - durable Copy/same-volume Move action history plus a **separate composite cross-volume Move journal**;
 - a production **file Copy** executor and identity-bound exclusive-create Windows copy mutation primitive;
-- a same-volume **file Move** executor and identity-preserving Windows handle-relative rename primitive;
-- a cross-volume **file Move** executor that durably separates Copy commit from the later source-delete barrier;
+- a production same-volume **file Move** executor and identity-preserving Windows handle-relative rename primitive;
+- a draft cross-volume **file Move** executor that durably separates Copy commit from the later source-delete barrier;
 - a Move-specific cross-volume source-delete provider that holds source root/file and committed destination root/file handles together and accepts only a Core-minted post-barrier authorization before same-handle delete-on-close;
 - a fail-closed cross-volume fidelity wrapper/classifier that checks current source/destination content plus the supported metadata/security subset before the source-delete barrier and again immediately after that barrier before it delegates mutation authority;
-- a Windows Move namespace-capability validator that rejects case-sensitive or unavailable directory capability before durable mutation history.
+- a Windows Move validator that blocks different-volume production execution before durable history while #186/#187 remain unresolved, and for enabled same-volume Move rejects case-sensitive or unavailable directory capability before durable mutation history.
 
-A queued regular-file Copy or Move can run only when its exact point-in-time preflight is `Ready` and the active source/destination pane, tab and directory context still matches the immutable plan. A fresh preflight already in flight also keeps both Run paths disabled even if an older Ready snapshot exists.
+A queued regular-file Copy or Move can be considered for execution only when its exact point-in-time preflight is `Ready` and the active source/destination pane, tab and directory context still matches the immutable plan. A fresh preflight already in flight also keeps both Run paths disabled even if an older Ready snapshot exists.
 
-Each executor performs its own fresh canonical/identity validation before durable history begins and revalidates each mutation entry again at the relevant mutation boundary. Move additionally requires both canonical roots to use the ordinary case-insensitive namespace semantics represented by the current path model.
+Preflight deliberately does not carry stable filesystem root identities, so it cannot safely determine same-volume versus cross-volume execution from drive-letter text. Fresh execution-grade validation resolves canonical root identities. A different-volume result is then product-blocked before any executor or durable history begins; same-volume Move continues through the namespace-capability checks.
 
-The Files UI does not call `File.Copy`, `File.Move`, `File.Delete`, route mutation through the Indexer, or reconstruct a new path-only operation from the row. It passes the same immutable plan to the reviewed executor that owns durable barriers, commit/recovery transitions and the identity-bound Windows mutation primitives.
+Each enabled executor performs its own fresh canonical/identity validation before durable history begins and revalidates each mutation entry again at the relevant mutation boundary. Same-volume Move additionally requires both canonical roots to use the ordinary case-insensitive namespace semantics represented by the current path model.
 
-The current executable slices remain deliberately narrow:
+The Files UI does not call `File.Copy`, `File.Move`, `File.Delete`, route mutation through the Indexer, or reconstruct a new path-only operation from the row. It passes the same immutable plan through the reviewed execution-grade validator. Only an enabled strategy reaches its reviewed executor.
+
+The current **user-reachable executable slices** remain deliberately narrow:
 
 - regular-file Copy only; directory Copy is rejected;
 - regular-file same-volume Move uses an identity-preserving no-replace rename;
-- regular-file cross-volume Move uses exclusive-create Copy first, then a **separately durable and separately authorized** deletion of the exact original source object; Copy success never means source-delete authority;
-- cross-volume `DestinationCommitted` is a safe checkpoint: the destination identity/content is durable and the original source still exists. Cancellation or a safe preparation/fidelity refusal may stop there, leaving a deliberate duplicate that the UI reports explicitly;
-- before destructive cross-volume completion, current source and destination main-stream SHA-256 must still match the durable Copy fingerprint, stable Copy-preserved basic metadata must match, and the current supported fidelity subset must be proven. Named data streams, EAs, non-single-link topology, unsupported attribute semantics, or incomplete/mismatched complete-security evidence retain the source rather than silently discarding semantics;
-- the current complete-security proof is intentionally fail-closed and may be unavailable to an ordinary unelevated process. #186 tracks the preservation/proof or deliberately narrower product contract required before cross-volume Move is ordinary-user complete;
-- the repeated pre/post-barrier fidelity checks narrow races but do not claim a kernel-backed freeze of all metadata between final proof and delete-on-close. #187 tracks the required stability mechanism for security/link/set-information races;
-- once `SourceDeleteStarted` is durable, cancellation is not passed into final fidelity revalidation, source disposition, lease release or durable source-delete commit. Any ambiguity or post-barrier fidelity refusal is recovery-sensitive;
-- the raw cross-volume source-delete lease keeps the committed destination open without ordinary write/delete sharing while it holds the exact source DELETE-capable handle. Fidelity/security evidence reopens share DELETE only because the source DELETE handle is already live; they do not broaden the raw lease's external write/delete sharing;
+- different-volume Move is refused before durable history, destination Copy or source-delete mutation. The queued plan remains non-mutated rather than being partially executed;
 - directory Move remains rejected;
-- per-directory case-sensitive NTFS or unavailable namespace-capability evidence blocks Move before durable mutation history; exact-case mutation is not claimed;
+- per-directory case-sensitive NTFS or unavailable namespace-capability evidence blocks enabled Move before durable mutation history; exact-case mutation is not claimed;
 - `Ask later` collisions remain non-executable until an explicit decision is supplied; a `Skip existing` plan can durably skip existing destinations and `Stop on collision` fails closed at validation;
 - no overwrite/replacement path exists in the Copy or Move mutation boundary;
 - terminal or recovery-sensitive execution makes that operation ID single-use; the UI removes an invoked plan from the runnable queue rather than offering replay;
 - durable history is recovery evidence, not automatic restart-time mutation authority;
-- destination panes refresh after Copy; both matching source and destination panes refresh after an invoked Move settles.
+- destination panes refresh after Copy; both matching source and destination panes refresh after an invoked same-volume Move settles.
+
+The **dormant cross-volume transaction contract** is intentionally stricter than Copy and remains directly testable even though production validation currently blocks entry into it:
+
+- the engine uses exclusive-create Copy first, then a separately durable and separately authorized deletion of the exact original source object; Copy success never means source-delete authority;
+- `DestinationCommitted` is a safe engine checkpoint: the destination identity/content is durable and the original source still exists. Cancellation or a safe preparation/fidelity refusal can settle there as an explicit duplicate state;
+- before destructive completion, current source and destination main-stream SHA-256 must still match the durable Copy fingerprint, stable Copy-preserved basic metadata must match, and the current supported fidelity subset must be proven. Named data streams, EAs, non-single-link topology, unsupported attribute semantics, or incomplete/mismatched complete-security evidence retain the source rather than silently discarding semantics;
+- the current complete-security proof is intentionally fail-closed and may be unavailable to an ordinary unelevated process. #186 tracks the preservation/proof or deliberately narrower product contract required before cross-volume Move is ordinary-user viable;
+- the repeated pre/post-barrier fidelity checks narrow races but do not claim a kernel-backed freeze of all metadata between final proof and delete-on-close. #187 tracks the required stability mechanism for security/link/set-information races;
+- once `SourceDeleteStarted` is durable, cancellation is not passed into final fidelity revalidation, source disposition, lease release or durable source-delete commit. Any ambiguity or post-barrier fidelity refusal is recovery-sensitive;
+- the raw source-delete lease keeps the committed destination open without ordinary write/delete sharing while it holds the exact source DELETE-capable handle. Fidelity/security evidence reopens share DELETE only because the source DELETE handle is already live; they do not broaden the raw lease's external write/delete sharing.
 
 See `docs/file-copy-executor.md`, `docs/windows-file-copy-mutation.md`, `docs/file-move-execution-strategy.md`, `docs/file-cross-volume-move.md` and the `docs/file-operation-*.md` recovery/history series.
 
-A preflight result is still not mutation authorization. It can become stale, and each executor's action-time canonical identity checks remain mandatory even when the visible preflight row says Ready.
+A preflight result is still not mutation authorization. It can become stale, and action-time canonical identity checks remain mandatory even when the visible preflight row says Ready.
 
 ### Copy / Move progress, cancellation and durable outcome
 
-While Copy or Move is active, Files displays entry-level `completed / total` progress from the executor's `FileOperationExecutionSnapshot`. It does not invent byte-level progress or infer completion from directory state. Planning, queue mutation and the other filesystem executor remain disabled until the active execution settles.
+While an enabled Copy or same-volume Move is active, Files displays entry-level `completed / total` progress from the executor's `FileOperationExecutionSnapshot`. It does not invent byte-level progress or infer completion from directory state. Planning, queue mutation and the other filesystem executor remain disabled until the active execution settles.
 
-**Cancel Copy** and **Cancel Move** call the active executor's `RequestCancellationAsync(operationId)`.
+**Cancel Copy** and **Cancel Move** call the active enabled executor's `RequestCancellationAsync(operationId)`.
 
 For Copy and same-volume Move, cancellation can stop validation and settles running work only at the reviewed boundary between entries. Once that entry's durable mutation barrier has been crossed, cancellation is not passed into Copy/commit or rename/commit.
 
-Cross-volume Move has two mutation barriers and one additional safe checkpoint:
+The dormant cross-volume engine has two mutation barriers and one additional safe checkpoint:
 
 1. `CopyMutationStarted` becomes durable before the exclusive-create Copy; cancellation is not passed through Copy plus durable destination commit.
-2. `DestinationCommitted` proves the copied destination identity/content while the source is still retained. Cancellation may settle here safely; the UI reports the retained duplicate explicitly.
+2. `DestinationCommitted` proves the copied destination identity/content while the source is still retained. Cancellation may settle here safely as a known duplicate.
 3. the exact source-delete capability is acquired while the committed destination is held stable, and the first destructive-fidelity proof must succeed. Unsupported/incomplete fidelity retains the source without crossing the delete barrier;
 4. `SourceDeleteStarted` becomes durable immediately before Core mints the exact source-delete authorization;
 5. fidelity is rechecked with cancellation disabled before the wrapper delegates that exact authorization to same-handle source deletion. A refusal here performs no inner delete mutation but becomes recovery-sensitive because the durable destructive barrier already exists;
 6. cancellation is not passed beyond this point through source disposition, lease release or durable `Moved` commit.
 
-A cancellation request therefore means “stop at the next reviewed safe boundary”, not “tear down the current filesystem mutation immediately”.
+Those cross-volume states describe the draft engine and its tests; current Files production validation does not enter them.
 
-After execution settles, Files re-reads the appropriate persistent journal before presenting final status: the shared action-history journal for Copy/same-volume Move, or the composite cross-volume Move journal for cross-volume Move. The UI distinguishes durable success, cancellation, safe failure, recovery-required and unreadable/non-terminal history conservatively.
+A cancellation request for an enabled executor means “stop at the next reviewed safe boundary”, not “tear down the current filesystem mutation immediately”.
 
-For cross-volume Move, `Cancelled` or safe `Failed` may contain one or more `DestinationCommitted` entries. Those entries mean a destination copy is durable **and the original source was retained**. They are not recovery-required, but FileOp does not automatically delete either side or replay the operation.
+After enabled execution settles, Files re-reads the appropriate persistent journal before presenting final status. Copy/same-volume Move use the shared action-history journal. Cross-volume formatter/journal plumbing remains present with the dormant engine but is not reached by the current product validator. Recovery-sensitive or unreadable/non-terminal history is handled conservatively.
+
+For the dormant cross-volume engine, `Cancelled` or safe `Failed` may contain one or more `DestinationCommitted` entries. Those entries mean a destination copy is durable **and the original source was retained**. They are not recovery-required, but the engine does not automatically delete either side or replay the operation.
 
 Recovery-sensitive or ambiguous history never becomes consent, overwrite/delete authority or automatic replay. The original operation ID remains single-use, and any later attempt begins from a fresh plan and fresh validation.
 
-For same-volume Move specifically, a committed entry preserves the validated source file identity at its destination and uses no Copy-only destination-delete undo/fingerprint semantics. Cross-volume Move necessarily creates a new destination filesystem object, so its journal instead records the committed destination identity plus SHA-256 content fingerprint before any later source-delete authority can exist.
+For same-volume Move specifically, a committed entry preserves the validated source file identity at its destination and uses no Copy-only destination-delete undo/fingerprint semantics. The dormant cross-volume transaction necessarily creates a new destination filesystem object, so its journal instead records the committed destination identity plus SHA-256 content fingerprint before any later source-delete authority can exist.
 
 ## Permanent file deletion
 
@@ -181,7 +189,7 @@ Important ordering rules:
 - a recovery/history record is not reusable consent and never becomes automatic replay authority;
 - the final mutation capability is tied to the reviewed canonical/identity boundary rather than a path-only `File.Delete` fallback.
 
-Cross-volume Move does **not** reuse this permanent-delete user authorization receipt. It has its own operation-scoped source-delete capability and durable barrier because “complete this Move” is a different user intent from “permanently delete these selected files”.
+The dormant cross-volume Move design does **not** reuse this permanent-delete user authorization receipt. If that route is eventually enabled, it retains its own operation-scoped source-delete capability and durable barrier because “complete this Move” is a different user intent from “permanently delete these selected files”.
 
 ### Recovery and cleanup ownership
 
@@ -226,7 +234,7 @@ This equivalence is a **browse** statement only. The crawler snapshot does not p
 
 `tools/test-local.ps1` is the authoritative validation inventory. Hosted GitHub Actions are optional duplicate evidence, not a merge prerequisite.
 
-The Files boundary is covered by dedicated offline verifiers for browse/UI state, operation state/preflight/execution validation, Files Copy execution/cancellation/recovery, same-volume and cross-volume Move strategy/history/executor/UI/fidelity wiring, delete history/preparation/final capability/mutation/orchestration, recovery discovery and the user-facing Files delete session.
+The Files boundary is covered by dedicated offline verifiers for browse/UI state, operation state/preflight/execution validation, Files Copy execution/cancellation/recovery, same-volume Move production wiring, dormant cross-volume Move strategy/history/executor/fidelity wiring, delete history/preparation/final capability/mutation/orchestration, recovery discovery and the user-facing Files delete session.
 
 Run portable model/source validation through the aggregate gate:
 
@@ -246,7 +254,7 @@ See `docs/local-validation.md` for the validation workflow and `docs/windows-rel
 
 ## Remaining queue boundary
 
-Regular-file Copy and same-volume Move are wired to reviewed production mutation executors with progress, safe cancellation and recovery-sensitive terminal reporting. The cross-volume Move transaction machinery is also wired, but destructive source deletion remains deliberately fail-closed and **draft** while #186 (ordinary-user security fidelity) and #187 (kernel-backed final stability) remain unresolved. A copied destination with a retained source is an expected safe outcome when those proofs cannot be established.
+Regular-file Copy and same-volume Move are wired to reviewed production mutation executors with progress, safe cancellation and recovery-sensitive terminal reporting. Different-volume Move is currently refused by production execution validation before durable history or destination Copy begins. The composite cross-volume journal/executor/fidelity machinery remains implemented and directly testable, but it is dormant while #186 (ordinary-user security fidelity) and #187 (final proof-to-mutation stability) remain unresolved.
 
 Explicit overwrite/replacement remains separate because the current mutation primitives do not authorize replacement.
 
