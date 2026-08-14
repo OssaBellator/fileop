@@ -80,6 +80,12 @@ public sealed partial class MainWindow
             return;
         }
 
+        // Queued Files plans capture textual pane/tab/path state but are not a
+        // backing-source identity token. A real physical/fallback source transition
+        // must therefore discard non-running plans on the UI thread before those
+        // same textual paths can be presented from a different source.
+        QueueFilesOperationPlanningResetForSourceChange();
+
         // These assignments are deliberately UI-free. StateChanged can arrive on
         // a background thread; the existing feature handlers perform collection
         // resets on the DispatcherQueue after observing the forced key miss.
@@ -112,6 +118,31 @@ public sealed partial class MainWindow
         Interlocked.Increment(ref _storageHistoryGeneration);
         Interlocked.Exchange(ref _storageHistoryLoadingGeneration, 0);
         Interlocked.Increment(ref _storageOptimizationGeneration);
+    }
+
+    private void QueueFilesOperationPlanningResetForSourceChange()
+    {
+        if (!_filesInitialized)
+        {
+            return;
+        }
+
+        if (DispatcherQueue.HasThreadAccess)
+        {
+            if (!_closed)
+            {
+                _filesView.ResetOperationPlanningForSourceChange();
+            }
+            return;
+        }
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_closed && _filesInitialized)
+            {
+                _filesView.ResetOperationPlanningForSourceChange();
+            }
+        });
     }
 
     private async void EnableFastIndexWithStorageSourceIdentityButton_Click(
