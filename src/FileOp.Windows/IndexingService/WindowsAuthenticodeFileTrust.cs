@@ -14,8 +14,12 @@ internal sealed record WindowsAuthenticodeFileTrustResult(
     string SignerSubject);
 
 /// <summary>
-/// Verifies an embedded Authenticode signature and pins the signer certificate to
+/// Verifies one embedded Authenticode signature and pins its signer certificate to
 /// thumbprints compiled into FileOp.Windows through AssemblyMetadata.
+///
+/// Elevated helper trust deliberately rejects PE files with secondary embedded
+/// signatures. This keeps the certificate extracted for pinning unambiguous with
+/// the primary signature index explicitly verified by WinVerifyTrust.
 /// </summary>
 internal static class WindowsAuthenticodeFileTrust
 {
@@ -28,6 +32,8 @@ internal static class WindowsAuthenticodeFileTrust
     private const uint WtdChoiceFile = 1;
     private const uint WtdStateActionIgnore = 0;
     private const uint WtdProvFlagsRevocationCheckChainExcludeRoot = 0x00000080;
+    private const uint WssVerifySpecific = 0x00000001;
+    private const uint WssGetSecondarySigCount = 0x00000002;
 
     internal static WindowsAuthenticodeFileTrustResult VerifyPinnedEmbeddedSignature(string path)
     {
@@ -50,7 +56,7 @@ internal static class WindowsAuthenticodeFileTrust
                 "Production builds must set FileOpTrustedIndexerSignerThumbprints at build time.");
         }
 
-        VerifyAuthenticodePolicy(fullPath);
+        VerifySingleAuthenticodeSignature(fullPath);
 
 #pragma warning disable SYSLIB0057 // The framework has no replacement for extracting an Authenticode signer from a PE file.
         using var signer = new X509Certificate2(X509Certificate.CreateFromSignedFile(fullPath));
@@ -93,10 +99,11 @@ internal static class WindowsAuthenticodeFileTrust
             ? string.Empty
             : new string(value.Where(Uri.IsHexDigit).ToArray()).ToUpperInvariant();
 
-    private static void VerifyAuthenticodePolicy(string fullPath)
+    private static void VerifySingleAuthenticodeSignature(string fullPath)
     {
         var filePathPointer = Marshal.StringToCoTaskMemUni(fullPath);
         var fileInfoPointer = IntPtr.Zero;
+        var signatureSettingsPointer = IntPtr.Zero;
         var trustDataPointer = IntPtr.Zero;
         try
         {
@@ -108,6 +115,15 @@ internal static class WindowsAuthenticodeFileTrust
             fileInfoPointer = Marshal.AllocHGlobal(Marshal.SizeOf<WinTrustFileInfo>());
             Marshal.StructureToPtr(fileInfo, fileInfoPointer, fDeleteOld: false);
 
+            var signatureSettings = new WinTrustSignatureSettings
+            {
+                StructSize = checked((uint)Marshal.SizeOf<WinTrustSignatureSettings>()),
+                Index = 0,
+                Flags = WssVerifySpecific | WssGetSecondarySigCount,
+            };
+            signatureSettingsPointer = Marshal.AllocHGlobal(Marshal.SizeOf<WinTrustSignatureSettings>());
+            Marshal.StructureToPtr(signatureSettings, signatureSettingsPointer, fDeleteOld: false);
+
             var trustData = new WinTrustData
             {
                 StructSize = checked((uint)Marshal.SizeOf<WinTrustData>()),
@@ -117,6 +133,7 @@ internal static class WindowsAuthenticodeFileTrust
                 FileInfo = fileInfoPointer,
                 StateAction = WtdStateActionIgnore,
                 ProviderFlags = WtdProvFlagsRevocationCheckChainExcludeRoot,
+                SignatureSettings = signatureSettingsPointer,
             };
             trustDataPointer = Marshal.AllocHGlobal(Marshal.SizeOf<WinTrustData>());
             Marshal.StructureToPtr(trustData, trustDataPointer, fDeleteOld: false);
@@ -129,12 +146,29 @@ internal static class WindowsAuthenticodeFileTrust
                     $"Authenticode verification failed for '{fullPath}' with status 0x{unchecked((uint)status):X8}.",
                     new Win32Exception(status));
             }
+
+            signatureSettings = Marshal.PtrToStructure<WinTrustSignatureSettings>(signatureSettingsPointer);
+            if (signatureSettings.VerifiedSignatureIndex != 0)
+            {
+                throw new UnauthorizedAccessException(
+                    $"Elevated helper trust expected Authenticode signature index 0 but Windows verified index {signatureSettings.VerifiedSignatureIndex}.");
+            }
+
+            if (signatureSettings.SecondarySignatureCount != 0)
+            {
+                throw new UnauthorizedAccessException(
+                    $"Elevated helper trust rejects ambiguous multi-signature binaries; '{fullPath}' contains {signatureSettings.SecondarySignatureCount} secondary embedded Authenticode signature(s).");
+            }
         }
         finally
         {
             if (trustDataPointer != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(trustDataPointer);
+            }
+            if (signatureSettingsPointer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(signatureSettingsPointer);
             }
             if (fileInfoPointer != IntPtr.Zero)
             {
@@ -157,6 +191,17 @@ internal static class WindowsAuthenticodeFileTrust
         public IntPtr FilePath;
         public IntPtr FileHandle;
         public IntPtr KnownSubject;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WinTrustSignatureSettings
+    {
+        public uint StructSize;
+        public uint Index;
+        public uint Flags;
+        public uint SecondarySignatureCount;
+        public uint VerifiedSignatureIndex;
+        public IntPtr CryptoPolicy;
     }
 
     [StructLayout(LayoutKind.Sequential)]
