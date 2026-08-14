@@ -29,7 +29,6 @@ internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
     private const uint FileFlagOpenReparsePoint = 0x00200000u;
     private const uint FileFlagSequentialScan = 0x08000000u;
     private const uint BackupSecurityInformation = 0x00010000u;
-    private const int ErrorInsufficientBuffer = 122;
     private const uint MaximumSecurityDescriptorBytes = 1024u * 1024u;
     private const int BufferSize = 1024 * 1024;
 
@@ -202,48 +201,41 @@ internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
 
     private static string? ReadCompleteSecurityDigest(SafeFileHandle handle)
     {
-        var succeeded = GetKernelObjectSecurity(
+        // Filesystem objects are queried through GetSecurityInfo rather than the generic
+        // kernel-object helper. BACKUP_SECURITY_INFORMATION requests all descriptor parts.
+        // The returned descriptor uses LocalAlloc ownership and is self-relative, so its
+        // exact bytes can be digested after obtaining the structural length.
+        var error = GetSecurityInfo(
             handle,
+            SeObjectType.SeFileObject,
             BackupSecurityInformation,
             IntPtr.Zero,
-            0,
-            out var bytesNeeded);
-        if (succeeded || bytesNeeded == 0)
+            IntPtr.Zero,
+            IntPtr.Zero,
+            IntPtr.Zero,
+            out var securityDescriptor);
+        if (error != 0 || securityDescriptor == IntPtr.Zero)
         {
             return null;
         }
 
-        var sizeError = Marshal.GetLastWin32Error();
-        if (sizeError != ErrorInsufficientBuffer ||
-            bytesNeeded > MaximumSecurityDescriptorBytes ||
-            bytesNeeded > int.MaxValue)
-        {
-            return null;
-        }
-
-        var buffer = Marshal.AllocHGlobal(checked((int)bytesNeeded));
         try
         {
-            if (!GetKernelObjectSecurity(
-                    handle,
-                    BackupSecurityInformation,
-                    buffer,
-                    bytesNeeded,
-                    out var actualBytes) ||
-                actualBytes == 0 ||
-                actualBytes > bytesNeeded ||
-                actualBytes > int.MaxValue)
+            var bytes = GetSecurityDescriptorLength(securityDescriptor);
+            if (bytes == 0 ||
+                bytes > MaximumSecurityDescriptorBytes ||
+                bytes > int.MaxValue)
             {
                 return null;
             }
 
-            var descriptor = new byte[checked((int)actualBytes)];
-            Marshal.Copy(buffer, descriptor, 0, descriptor.Length);
+            var descriptor = new byte[checked((int)bytes)];
+            Marshal.Copy(securityDescriptor, descriptor, 0, descriptor.Length);
             return Convert.ToHexString(SHA256.HashData(descriptor)).ToLowerInvariant();
         }
         finally
         {
-            Marshal.FreeHGlobal(buffer);
+            _ = LocalFree(securityDescriptor);
         }
     }
 
@@ -427,6 +419,11 @@ internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
             $"{action} failed with Win32 error {error}: {new Win32Exception(error).Message}");
     }
 
+    private enum SeObjectType : int
+    {
+        SeFileObject = 1,
+    }
+
     private enum FileInformationClass : int
     {
         FileEaInformation = 7,
@@ -519,16 +516,29 @@ internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
 
     [DllImport(
         "advapi32.dll",
-        SetLastError = true,
         ExactSpelling = true,
         CallingConvention = CallingConvention.Winapi)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetKernelObjectSecurity(
-        SafeFileHandle Handle,
-        uint RequestedInformation,
-        IntPtr pSecurityDescriptor,
-        uint nLength,
-        out uint lpnLengthNeeded);
+    private static extern uint GetSecurityInfo(
+        SafeFileHandle handle,
+        SeObjectType ObjectType,
+        uint SecurityInfo,
+        IntPtr ppsidOwner,
+        IntPtr ppsidGroup,
+        IntPtr ppDacl,
+        IntPtr ppSacl,
+        out IntPtr ppSecurityDescriptor);
+
+    [DllImport(
+        "advapi32.dll",
+        ExactSpelling = true,
+        CallingConvention = CallingConvention.Winapi)]
+    private static extern uint GetSecurityDescriptorLength(IntPtr pSecurityDescriptor);
+
+    [DllImport(
+        "kernel32.dll",
+        ExactSpelling = true,
+        CallingConvention = CallingConvention.Winapi)]
+    private static extern IntPtr LocalFree(IntPtr hMem);
 
     [DllImport(
         "ntdll.dll",
