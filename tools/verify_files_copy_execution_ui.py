@@ -174,6 +174,20 @@ def check_repository(root: Path) -> int:
     for needle in required_view:
         assert needle in combined_view, needle
 
+    required_busy_ownership = [
+        'SetCopyExecutionUiBusy(true);',
+        'PrepareLeftToRightButton.IsEnabled = false;',
+        'PrepareRightToLeftButton.IsEnabled = false;',
+        'CollisionPolicyBox.IsEnabled = false;',
+        'QueueCopyButton.IsEnabled = false;',
+        'QueueMoveButton.IsEnabled = false;',
+        'OperationQueueList.IsEnabled = false;',
+        'if (_copyExecutionRunning)',
+        '// reviewed executor is active.',
+    ]
+    for needle in required_busy_ownership:
+        assert needle in source['viewc'], needle
+
     assert 'public void RequestRefresh() => RefreshRequested?.Invoke(this, EventArgs.Empty);' in source['pane_refresh']
 
     required_source_lifetime = [
@@ -207,7 +221,10 @@ def check_repository(root: Path) -> int:
     assert 'Move' in source['docs']
     assert 'verify_files_copy_execution_ui.py --repo-root $repoRoot --cases 50000' in source['gate']
 
-    return len(required_view) + len(required_source_lifetime) + 13
+    return (
+        len(required_view) + len(required_busy_ownership) +
+        len(required_source_lifetime) + 13
+    )
 
 
 def main() -> int:
