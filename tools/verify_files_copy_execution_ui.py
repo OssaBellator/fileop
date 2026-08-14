@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Zero-Actions model/source checks for the Files regular-file Copy execution UI."""
+from __future__ import annotations
+
+import argparse
+import ntpath
+import random
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+
+def norm(path: str) -> str:
+    value = ntpath.normpath(path.replace('/', '\\'))
+    if len(value) == 2 and value[1] == ':':
+        value += '\\'
+    return value.casefold()
+
+
+def bound_to_current_state(plan: dict, panes: dict[str, dict]) -> bool:
+    source = panes.get(plan['source_pane'])
+    destination = panes.get(plan['destination_pane'])
+    if source is None or destination is None or source is destination:
+        return False
+    return (
+        source['ready']
+        and destination['ready']
+        and source['tab'] == plan['source_tab']
+        and destination['tab'] == plan['destination_tab']
+        and norm(source['path']) == norm(plan['source_path'])
+        and norm(destination['path']) == norm(plan['destination_path'])
+    )
+
+
+def can_run(plan: dict, panes: dict[str, dict]) -> bool:
+    return (
+        plan['kind'] == 'Copy'
+        and plan['entries'] > 0
+        and not plan['has_directory']
+        and plan['preflight'] == 'Ready'
+        and bound_to_current_state(plan, panes)
+    )
+
+
+def reset_for_source_change(queue: list[str], active: str | None) -> list[str]:
+    if active is None:
+        return []
+    return [operation_id for operation_id in queue if operation_id == active]
+
+
+def check_properties(cases: int) -> int:
+    base_plan = {
+        'kind': 'Copy',
+        'entries': 2,
+        'has_directory': False,
+        'preflight': 'Ready',
+        'source_pane': 'Left',
+        'destination_pane': 'Right',
+        'source_tab': 'left-tab',
+        'destination_tab': 'right-tab',
+        'source_path': r'C:\Source',
+        'destination_path': r'C:\Destination',
+    }
+    base_panes = {
+        'Left': {'ready': True, 'tab': 'left-tab', 'path': r'c:\source'},
+        'Right': {'ready': True, 'tab': 'right-tab', 'path': r'C:\Destination'},
+    }
+
+    assert can_run(base_plan, base_panes)
+    assert not can_run({**base_plan, 'kind': 'Move'}, base_panes)
+    assert not can_run({**base_plan, 'has_directory': True}, base_panes)
+    assert not can_run({**base_plan, 'preflight': 'NeedsDecision'}, base_panes)
+    assert not can_run({**base_plan, 'preflight': 'Blocked'}, base_panes)
+    assert not can_run(base_plan, {**base_panes, 'Right': {**base_panes['Right'], 'tab': 'other'}})
+    assert reset_for_source_change(['a', 'b'], None) == []
+    assert reset_for_source_change(['a', 'b'], 'b') == ['b']
+
+    rng = random.Random(20260814)
+    checks = 8
+    for case in range(cases):
+        source_path = rf'C:\Root\Source{case % 31}'
+        destination_path = rf'C:\Root\Destination{case % 37}'
+        source_tab = f's-{case}'
+        destination_tab = f'd-{case}'
+        plan = {
+            'kind': rng.choice(['Copy', 'Move']),
+            'entries': rng.randint(0, 8),
+            'has_directory': bool(rng.getrandbits(1)),
+            'preflight': rng.choice(['Ready', 'NeedsDecision', 'Blocked', 'Missing']),
+            'source_pane': 'Left',
+            'destination_pane': 'Right',
+            'source_tab': source_tab,
+            'destination_tab': destination_tab,
+            'source_path': source_path,
+            'destination_path': destination_path,
+        }
+        panes = {
+            'Left': {
+                'ready': bool(rng.getrandbits(1)),
+                'tab': source_tab if rng.random() < 0.8 else f'other-s-{case}',
+                'path': source_path if rng.random() < 0.8 else rf'C:\Changed\S{case}',
+            },
+            'Right': {
+                'ready': bool(rng.getrandbits(1)),
+                'tab': destination_tab if rng.random() < 0.8 else f'other-d-{case}',
+                'path': destination_path if rng.random() < 0.8 else rf'C:\Changed\D{case}',
+            },
+        }
+
+        expected = (
+            plan['kind'] == 'Copy'
+            and plan['entries'] > 0
+            and not plan['has_directory']
+            and plan['preflight'] == 'Ready'
+            and panes['Left']['ready']
+            and panes['Right']['ready']
+            and panes['Left']['tab'] == source_tab
+            and panes['Right']['tab'] == destination_tab
+            and norm(panes['Left']['path']) == norm(source_path)
+            and norm(panes['Right']['path']) == norm(destination_path)
+        )
+        assert can_run(plan, panes) == expected
+        checks += 1
+
+        queue = [f'op-{case}-0', f'op-{case}-1', f'op-{case}-2']
+        active = rng.choice([None, *queue])
+        reset = reset_for_source_change(queue, active)
+        assert reset == ([] if active is None else [active])
+        assert active is not None or not reset
+        checks += 2
+
+    return checks
+
+
+def check_repository(root: Path) -> int:
+    paths = {
+        'viewx': root / 'src/FileOp.App/FilesView.xaml',
+        'viewc': root / 'src/FileOp.App/FilesView.Copy.cs',
+        'pane_refresh': root / 'src/FileOp.App/FilesPaneView.CopyRefresh.cs',
+        'source_identity': root / 'src/FileOp.App/MainWindow.StorageSourceIdentity.cs',
+        'executor': root / 'src/FileOp.Core/Operations/FileCopyOperationExecutor.cs',
+        'mutation': root / 'src/FileOp.Windows/Operations/WindowsFileCopyMutationPrimitive.cs',
+        'docs': root / 'docs/files-browser.md',
+        'gate': root / 'tools/test-local.ps1',
+    }
+    missing = [str(path) for path in paths.values() if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(', '.join(missing))
+
+    source = {name: path.read_text(encoding='utf-8') for name, path in paths.items()}
+    ET.fromstring(source['viewx'])
+
+    required_view = [
+        'x:Name="RunQueuedCopyButton"',
+        'Content="Run selected Copy"',
+        'Loaded="RunQueuedCopyButton_Loaded"',
+        'private async Task RunSelectedCopyAsync()',
+        'plan.Kind != FileOperationKind.Copy',
+        'entry => entry.IsDirectory',
+        'FileOperationPreflightStatus.Ready',
+        'IsPlanBoundToCurrentFilesState(plan)',
+        'new SqliteFileOperationActionHistoryStore(',
+        'new WindowsFileOperationExecutionValidator()',
+        'new WindowsFileCopyMutationPrimitive()',
+        'new FileCopyOperationExecutor(',
+        'finalSnapshot = await executor.ExecuteAsync(plan, progress);',
+        '_queuedOperations.RemoveAll(operation => operation.Id == plan.Id);',
+        '_preflightSnapshots.Remove(plan.Id);',
+        'RequestRefreshForCopyDestination(plan.Intent.DestinationDirectoryPath);',
+        'Durable history remains recovery evidence only',
+        'FileOperationHistoryDatabaseName = "file-operation-actions.sqlite"',
+    ]
+    combined_view = source['viewx'] + source['viewc']
+    for needle in required_view:
+        assert needle in combined_view, needle
+
+    assert 'public void RequestRefresh() => RefreshRequested?.Invoke(this, EventArgs.Empty);' in source['pane_refresh']
+
+    required_source_lifetime = [
+        'QueueFilesOperationPlanningResetForSourceChange();',
+        '_filesView.ResetOperationPlanningForSourceChange();',
+        'public void ResetOperationPlanningForSourceChange()',
+        '_queuedOperations.Clear();',
+        '_preflightSnapshots.Clear();',
+    ]
+    lifetime = source['source_identity'] + source['viewc']
+    for needle in required_source_lifetime:
+        assert needle in lifetime, needle
+
+    executor_order = source['executor']
+    begin = executor_order.index('await _historyStore.BeginAsync(validation, UtcNow())')
+    mutation_started = executor_order.index('.MarkMutationStartedAsync(plan.Id, ordinal, UtcNow())')
+    mutation = executor_order.index('.CopyNewFileAsync(new FileCopyMutationRequest(')
+    commit = executor_order.index('.CommitCopyAsync(')
+    assert begin < mutation_started < mutation < commit
+    assert 'Directory Copy is not supported by this executor boundary.' in executor_order
+    assert 'FileOperationActionTerminalState.RecoveryRequired' in executor_order
+
+    primitive = source['mutation']
+    assert 'FileCreate' in primitive
+    assert 'CopyNewFileAsync(' in primitive
+    for forbidden in ['File.Copy(', 'File.Move(', 'File.Delete(', 'Directory.Delete(']:
+        assert forbidden not in source['viewc'], forbidden
+
+    assert 'The Files **Copy/Move queue UI still does not instantiate or execute that pipeline**' not in source['docs']
+    assert 'regular-file Copy' in source['docs']
+    assert 'Move' in source['docs']
+    assert 'verify_files_copy_execution_ui.py --repo-root $repoRoot --cases 50000' in source['gate']
+
+    return len(required_view) + len(required_source_lifetime) + 13
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--repo-root', type=Path, default=Path.cwd())
+    parser.add_argument('--self-test-only', action='store_true')
+    parser.add_argument('--cases', type=int, default=50000)
+    args = parser.parse_args()
+    if args.cases <= 0:
+        parser.error('--cases must be greater than zero')
+
+    print(f'PASS Files Copy execution model: {check_properties(args.cases):,} checks')
+    if not args.self_test_only:
+        print(f'PASS Files Copy execution source wiring: {check_repository(args.repo_root.resolve())} checks')
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        raise SystemExit(main())
+    except (AssertionError, FileNotFoundError, ET.ParseError, ValueError) as exc:
+        print(f'FAIL: {exc}', file=sys.stderr)
+        raise SystemExit(1)
