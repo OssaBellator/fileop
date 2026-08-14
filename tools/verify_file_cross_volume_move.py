@@ -180,7 +180,8 @@ def check_repository(root: Path) -> int:
         'executor': root / 'src/FileOp.Core/Operations/FileCrossVolumeMoveOperationExecutor.cs',
         'fidelity': root / 'src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs',
         'delete_primitive': root / 'src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs',
-        'fidelity_primitive': root / 'src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs',
+        'fidelity_wrapper': root / 'src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs',
+        'fidelity_verifier': root / 'src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveFidelityVerifier.cs',
         'fidelity_tests': root / 'tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityTests.cs',
         'fidelity_lease_tests': root / 'tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityLeaseTests.cs',
         'move_ui': root / 'src/FileOp.App/FilesView.Move.cs',
@@ -285,7 +286,7 @@ def check_repository(root: Path) -> int:
     for needle in required_primitive:
         assert needle in source['delete_primitive'], needle
 
-    required_fidelity_primitive = [
+    required_fidelity_wrapper = [
         'IFileCrossVolumeMoveFidelityVerifier',
         'new WindowsFileCrossVolumeMoveSourceDeletePrimitive()',
         'new WindowsFileCrossVolumeMoveFidelityVerifier()',
@@ -293,17 +294,27 @@ def check_repository(root: Path) -> int:
         '.VerifyAsync(_request, CancellationToken.None)',
         'before the source-delete barrier',
         'after the durable source-delete barrier',
-        'CancellationToken.None',
+        'SourceDeleteMutationAuthorized',
+        'inner.MarkDeletePendingAsync(authorization, CancellationToken.None)',
+    ]
+    for needle in required_fidelity_wrapper:
+        assert needle in source['fidelity_wrapper'], needle
+
+    required_fidelity_verifier = [
+        'FileShare.Read | FileShare.Delete',
+        'existing delete access',
         'BackupSecurityInformation',
         'AccessSystemSecurity',
         'NtQueryInformationFile(',
         'FileEaInformation',
         'WindowsFileNamedDataStreamTopologyDigest.Read(',
-        'SourceDeleteMutationAuthorized',
-        'inner.MarkDeletePendingAsync(authorization, CancellationToken.None)',
+        'HashMainStream(',
+        'GetKernelObjectSecurity(',
     ]
-    for needle in required_fidelity_primitive:
-        assert needle in source['fidelity_primitive'], needle
+    for needle in required_fidelity_verifier:
+        assert needle in source['fidelity_verifier'], needle
+    assert source['fidelity_verifier'].count('FileShare.Read | FileShare.Delete') >= 2
+    assert 'FileShare.Read,\n            IntPtr.Zero' not in source['fidelity_verifier']
 
     required_tests = [
         'EquivalentOrdinaryPinnedFilesMayReachLaterDeleteBarrier',
@@ -334,7 +345,8 @@ def check_repository(root: Path) -> int:
     ]:
         assert forbidden not in source['executor'], forbidden
         assert forbidden not in source['delete_primitive'], forbidden
-        assert forbidden not in source['fidelity_primitive'], forbidden
+        assert forbidden not in source['fidelity_wrapper'], forbidden
+        assert forbidden not in source['fidelity_verifier'], forbidden
 
     # Files must compose the fidelity-verifying wrapper, not the raw destructive primitive.
     assert 'new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive()' in source['move_ui']
@@ -344,8 +356,9 @@ def check_repository(root: Path) -> int:
     return (
         22 + len(required_history) + len(required_store) + 2 + 8 +
         len(required_executor) + len(required_contract) + len(required_fidelity) +
-        len(required_primitive) + len(required_fidelity_primitive) + len(required_tests) +
-        len(required_lease_tests) + 18 + 3
+        len(required_primitive) + len(required_fidelity_wrapper) +
+        len(required_fidelity_verifier) + len(required_tests) +
+        len(required_lease_tests) + 20 + 3
     )
 
 
