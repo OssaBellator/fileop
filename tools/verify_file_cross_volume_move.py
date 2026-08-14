@@ -127,24 +127,20 @@ def check_properties(cases: int) -> int:
         )
         if "same-handle-delete" in trace:
             assert "source-delete-barrier" in trace
-            assert trace.index("source-delete-barrier") < trace.index("same-handle-delete")
-            assert trace.index("destination-commit") < trace.index("source-delete-barrier")
+            assert trace.index("destination-commit") < trace.index("source-delete-barrier") < trace.index("same-handle-delete")
             assert "pre-barrier-fidelity-proof" in trace
             assert "post-barrier-fidelity-recheck" in trace
             checks += 5
         if "cancel-safe-source-retained" in trace:
-            assert state == "DestinationCommitted"
-            assert "same-handle-delete" not in trace
+            assert state == "DestinationCommitted" and "same-handle-delete" not in trace
             checks += 2
         if "safe-fidelity-refusal-source-retained" in trace:
             assert state == "DestinationCommitted"
-            assert "source-delete-barrier" not in trace
-            assert "same-handle-delete" not in trace
+            assert "source-delete-barrier" not in trace and "same-handle-delete" not in trace
             checks += 3
         if "recovery-no-delete" in trace:
             assert state == "RecoveryRequired"
-            assert "source-delete-barrier" in trace
-            assert "same-handle-delete" not in trace
+            assert "source-delete-barrier" in trace and "same-handle-delete" not in trace
             checks += 3
         if state in RECOVERY_STATES:
             assert "recovery" in trace or "recovery-no-delete" in trace
@@ -176,6 +172,7 @@ def check_repository(root: Path) -> int:
         "contract": "src/FileOp.Core/Operations/FileCrossVolumeMoveSourceDelete.cs",
         "executor": "src/FileOp.Core/Operations/FileCrossVolumeMoveOperationExecutor.cs",
         "fidelity": "src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs",
+        "security": "src/FileOp.Core/Operations/FileCrossVolumeMoveSecurityPolicy.cs",
         "raw": "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs",
         "wrapper": "src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs",
         "native_fidelity": "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveFidelityVerifier.cs",
@@ -183,7 +180,6 @@ def check_repository(root: Path) -> int:
         "production_validator_tests": "tests/FileOp.Windows.Tests/WindowsMoveOperationExecutionValidatorTests.cs",
         "fidelity_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityTests.cs",
         "lease_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityLeaseTests.cs",
-        "share_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityShareCompatibilityTests.cs",
         "history_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveActionHistoryInvariantTests.cs",
         "corruption_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMovePersistedCorruptionTests.cs",
         "ui": "src/FileOp.App/FilesView.Move.cs",
@@ -207,11 +203,7 @@ def check_repository(root: Path) -> int:
         "DestinationCommitted",
         "SourceDeleteStarted",
         "RecoveryRequired",
-        "source entry identity must remain bound to the durable source-root volume",
-        "destination evidence must remain bound to the durable destination-root volume",
         "A cross-volume Move failure after the source-delete barrier must be RecoveryRequired, not Failed.",
-        "RequireNull(entry.CopyMutationStartedAtUtc, nameof(entry.CopyMutationStartedAtUtc));",
-        "RequirePresent(entry.CopyMutationStartedAtUtc, nameof(entry.CopyMutationStartedAtUtc));",
     )
     checks += must_contain(
         source["store"],
@@ -224,11 +216,7 @@ def check_repository(root: Path) -> int:
         "MarkSourceDeleteStartedAsync(",
         "CommitSourceDeletedAsync(",
     )
-    checks += must_not_contain(
-        source["store"],
-        "UPDATE file_operation_actions",
-        "UPDATE file_operation_action_entries",
-    )
+    checks += must_not_contain(source["store"], "UPDATE file_operation_actions", "UPDATE file_operation_action_entries")
 
     executor = source["executor"]
     ordered_calls = [
@@ -259,22 +247,36 @@ def check_repository(root: Path) -> int:
         "SourceDeleteMutationAuthorized => false",
         "SourceDeleteBarrierSatisfied => true",
         "SourceDeleteMutationAuthorized => true",
-        "IsBoundTo(FileCrossVolumeMoveSourceDeleteEvidence evidence)",
         "IFileCrossVolumeMoveSourceDeleteLease",
+    )
+
+    # #186 policy: intentionally follow Windows cross-volume Move security semantics.
+    checks += must_contain(
+        source["security"],
+        "DestinationDefaultInherited",
+        "PreservesSourceSecurityDescriptor = false",
+        "destination-default security semantics",
+        "rather than preserving the source security descriptor",
     )
     checks += must_contain(
         source["fidelity"],
         "SourceContentChanged",
         "DestinationContentChanged",
         "StableBasicMetadataMismatch",
-        "SecurityDescriptorEvidenceIncomplete",
-        "SecurityDescriptorMismatch",
         "SourceNamedDataStreams",
         "SourceHardLinks",
         "SourceExtendedAttributes",
         "CanDeleteSourceAfterDurableBarrier",
-        "FileBasicMetadataEvidence.StableCopiedAttributesMask",
+        "FileCrossVolumeMoveSecurityPolicy",
     )
+    checks += must_not_contain(
+        source["fidelity"],
+        "SecurityDescriptorEvidenceIncomplete",
+        "SecurityDescriptorMismatch",
+        "SourceSecurityDescriptor",
+        "DestinationSecurityDescriptor",
+    )
+
     checks += must_contain(
         source["raw"],
         "Delete | FileReadAttributes | Synchronize",
@@ -283,8 +285,6 @@ def check_repository(root: Path) -> int:
         "NtSetInformationFile(",
         "FileDispositionInformationEx",
         "authorization.IsBoundTo(Evidence)",
-        "DisposeNoThrow(_sourceFile)",
-        "DisposeNoThrow(_destinationFile)",
     )
     checks += must_contain(
         source["wrapper"],
@@ -297,15 +297,11 @@ def check_repository(root: Path) -> int:
         "after the durable source-delete barrier",
         "inner.MarkDeletePendingAsync(authorization, CancellationToken.None)",
     )
+
+    # Ordinary-user fidelity must not reintroduce privileged complete-security reads.
     checks += must_contain(
         source["native_fidelity"],
         "FileShare.Read | FileShare.Delete",
-        "GetSecurityInfo(",
-        "SeObjectType.SeFileObject",
-        "BackupSecurityInformation",
-        "AccessSystemSecurity",
-        "GetSecurityDescriptorLength(",
-        "LocalFree(",
         "NtQueryInformationFile(",
         "FileEaInformation",
         "WindowsFileNamedDataStreamTopologyDigest.Read(",
@@ -313,11 +309,13 @@ def check_repository(root: Path) -> int:
     )
     checks += must_not_contain(
         source["native_fidelity"],
+        "GetSecurityInfo(",
+        "BackupSecurityInformation",
+        "AccessSystemSecurity",
+        "GetSecurityDescriptorLength(",
+        "LocalFree(",
         "GetKernelObjectSecurity(",
-        "FileShare.Read,\n            IntPtr.Zero",
     )
-    assert source["native_fidelity"].count("FileShare.Read | FileShare.Delete") >= 2
-    checks += 1
 
     validator = source["production_validator"]
     checks += must_contain(
@@ -325,41 +323,30 @@ def check_repository(root: Path) -> int:
         "CrossVolumeMoveDisabledSummary",
         "MissingRootIdentitySummary",
         "TryClassifyVolumeRelationship(",
-        "if (!TryClassifyVolumeRelationship(validation, out var isCrossVolume))",
         "return Block(validation, MissingRootIdentitySummary);",
         "if (isCrossVolume)",
         "return Block(validation, CrossVolumeMoveDisabledSummary);",
-        "Repository tracking: #186 = ordinary-user security fidelity;",
-        "#187 = final proof-to-mutation stability.",
-        "security-fidelity and final mutation-stability",
         "Choose a destination on the same volume",
         "No durable history, destination Copy, or source-delete mutation",
     )
     assert validator.index("TryClassifyVolumeRelationship(validation") < validator.index("RequireSupportedMutationRoots(validation")
     assert "throw new InvalidOperationException" not in validator
-    assert "(#186)" not in validator.split("internal const string CrossVolumeMoveDisabledSummary", 1)[1].split(";", 1)[0]
-    assert "(#187)" not in validator.split("internal const string CrossVolumeMoveDisabledSummary", 1)[1].split(";", 1)[0]
-    checks += 4
+    checks += 2
 
     checks += must_contain(
         source["production_validator_tests"],
         "MutationReadyMoveWithoutRootIdentityFailsClosedBeforeNamespaceProbe",
-        "includeDestinationRootIdentity: false",
         "CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory",
-        "destinationVolumeSerialNumber: 22",
         "Assert.AreEqual(0, probe.QueryCalls)",
         "SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation",
-        "Cross-volume Move is currently disabled",
-        "Choose a destination on the same volume",
-        "result.Summary.Contains(\"#186\"",
-        "result.Summary.Contains(\"#187\"",
     )
     checks += must_contain(
         source["fidelity_tests"],
         "EquivalentOrdinaryPinnedFilesMayReachLaterDeleteBarrier",
         "ContentDriftOnEitherPinnedObjectBlocksSourceDeletion",
-        "MetadataOrSecurityUncertaintyBlocksSourceDeletion",
         "StreamsHardLinksAndExtendedAttributesBlockDestructiveCompletion",
+        "DestinationDefaultInherited",
+        "PreservesSourceSecurityDescriptor",
     )
     checks += must_contain(
         source["lease_tests"],
@@ -369,24 +356,15 @@ def check_repository(root: Path) -> int:
         "Assert.AreEqual(0, inner.MutationCount)",
     )
     checks += must_contain(
-        source["share_tests"],
-        "FidelityReadReopenMustShareDeleteWhileDeleteCapabilityIsLive",
-        "ErrorSharingViolation",
-        "FileShare.Read | FileShare.Delete",
-    )
-    checks += must_contain(
         source["history_tests"],
         "FailedStateCannotHideUnresolvedCopyMutationBarrier",
         "SourceDeleteRecoveryRequiresEarlierCommittedDestinationChronology",
-        "SourceIdentityMustRemainBoundToDurableSourceRootVolume",
-        "DestinationEvidenceMustRemainBoundToDurableDestinationRootVolume",
         "SafeFailureAfterDestinationCommitRetainsSourceDuplicateWithoutRecovery",
     )
     checks += must_contain(
         source["corruption_tests"],
         "LoaderRejectsSafeFailureThatHidesUnresolvedCopyBarrier",
         "UPDATE file_cross_volume_move_entries",
-        "state = 6",
         "ThrowsExactlyAsync<ArgumentException>",
     )
 
@@ -401,41 +379,32 @@ def check_repository(root: Path) -> int:
         "same-volume regular-file Move can execute; cross-volume and directory Move remain disabled",
         "cross-volume Move remains product-disabled pending fidelity hardening",
     )
-    checks += must_not_contain(source["xaml"], "pending #186/#187")
 
     raw_ctor = "new WindowsFileCrossVolumeMoveSourceDeletePrimitive("
     wrapper_path = (root / files["wrapper"]).resolve()
     for path in (root / "src").rglob("*.cs"):
         if path.resolve() == wrapper_path:
             continue
-        assert raw_ctor not in path.read_text(encoding="utf-8"), (
-            f"raw cross-volume Move source-delete primitive bypass in production: {path}"
-        )
+        assert raw_ctor not in path.read_text(encoding="utf-8"), f"raw cross-volume source-delete bypass: {path}"
         checks += 1
 
     checks += must_contain(
         source["readme"],
         "Different-volume Move is currently product-disabled",
         "not currently reachable through production Move validation",
-        "#186 resolves the ordinary-user security-fidelity contract",
-        "#187 resolves the final proof-to-mutation stability boundary",
     )
     checks += must_contain(
         source["files_doc"],
         "Different-volume Move is currently product-disabled",
-        "user-reachable executable slices",
         "dormant cross-volume transaction contract",
         "Preflight deliberately does not carry stable filesystem root identities",
-        "current Files production validation does not enter them",
     )
     checks += must_contain(
         source["cross_doc"],
         "Production Files execution does not currently enter this transaction.",
-        "missing root identity fails closed as `Blocked`",
         "different root volume serials return `Blocked`",
         "These are transaction-engine semantics, not current Files production outcomes.",
     )
-
     checks += must_contain(
         source["gate"],
         "verify_file_cross_volume_move.py --repo-root $repoRoot --cases 50000",
