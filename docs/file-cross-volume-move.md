@@ -1,0 +1,151 @@
+# Cross-volume regular-file Move
+
+Cross-volume Move is a destructive composite transaction. It is **not** implemented as an unchecked `Copy` followed by a path-based delete.
+
+This document describes the reviewed boundary implemented by draft PR #185. The implementation remains draft until the exact final head passes the complete Windows `tools/test-local.ps1` gate and the ordinary-user security-fidelity decision tracked by #186 is resolved or explicitly scoped.
+
+## Scope
+
+The current boundary applies only to regular-file Move entries whose freshly validated source and destination roots have different filesystem volume identities.
+
+It does not authorize:
+
+- directory Move;
+- overwrite or replacement;
+- path-only source deletion;
+- replay of a prior operation ID;
+- using Copy success as delete authority;
+- automatic cleanup of a copied/source-retained result;
+- automatic recovery mutation from durable evidence.
+
+Same-volume regular-file Move continues to use the separate identity-preserving rename executor.
+
+## Composite durable states
+
+Cross-volume Move owns independent `file_cross_volume_move_*` SQLite history. It does not reinterpret the Copy/same-volume Move journal.
+
+The important per-entry states are:
+
+1. `Pending` — no mutation barrier crossed.
+2. `CopyMutationStarted` — durable Copy mutation barrier crossed; Copy outcome must be settled or treated as recovery-sensitive.
+3. `DestinationCommitted` — the exclusive-create destination is durably bound by filesystem identity and SHA-256 main-stream content evidence. The original source is still retained.
+4. `SourceDeleteStarted` — a separate durable destructive barrier has been crossed while an exact Move-specific source-delete lease is live.
+5. `Moved` — source delete-on-close completed and the durable journal committed the original source identity.
+6. `Skipped` — explicit collision Skip; no copied-destination evidence is recorded.
+7. `Failed` — safe terminal failure with no unresolved mutation barrier.
+8. `RecoveryRequired` — durable evidence exists for an unresolved Copy or source-delete barrier. Evidence grants no replay, rollback or delete authority.
+
+`DestinationCommitted` is intentionally a **safe duplicate state**, not an ambiguity. Cancellation or a pre-delete fidelity/capability refusal may stop there: the copied destination remains and the original source remains. FileOp reports that condition explicitly and does not clean it up automatically.
+
+## Mutation ordering
+
+For one ready entry, the reviewed order is:
+
+1. fresh execution-grade validation;
+2. durable `CopyMutationStarted` barrier;
+3. exclusive-create Copy through the reviewed Copy mutation primitive;
+4. durable destination commit with destination identity and SHA-256 content fingerprint;
+5. cancellation-safe checkpoint;
+6. acquire a Move-specific source-delete lease that identity-binds source root/file and destination root/file;
+7. prove destructive fidelity while the inner identity/content lease is live;
+8. optional cancellation-safe checkpoint;
+9. durable `SourceDeleteStarted` barrier;
+10. Core mints an exact one-shot authorization bound to that live evidence lease and durable history row;
+11. re-prove destructive fidelity with cancellation disabled;
+12. perform same-handle delete-on-close through the reviewed Windows primitive;
+13. release the exact capability/evidence lease;
+14. durably commit `Moved`.
+
+No cancellation token is passed after `SourceDeleteStarted`. From that point the operation must either reach durable completion or become `RecoveryRequired`.
+
+## Destructive fidelity proof
+
+File identity alone is insufficient for source deletion. A source can keep the same file ID while its bytes or metadata change after Copy commit.
+
+The current fail-closed classifier permits source deletion only when all of the following are proven for the current pinned source and committed destination:
+
+- source main-stream SHA-256 equals the durable committed destination fingerprint;
+- destination main-stream SHA-256 still equals that durable fingerprint;
+- Copy-preserved stable basic metadata matches;
+- neither file has attribute bits outside the current ordinary-file Copy subset;
+- complete security-descriptor evidence is available for both objects and is byte-digest equivalent;
+- neither object has named data streams;
+- both objects have exactly one hard link;
+- both objects report zero extended-attribute bytes;
+- neither object is a directory or reparse point;
+- canonical path and filesystem identity remain exact.
+
+Unsupported or incomplete evidence is a refusal, not an assumption.
+
+### Why named streams, EAs and hard links block
+
+The current Copy primitive copies the unnamed/main data stream plus a narrow stable basic-metadata subset. It does not yet prove preservation of arbitrary named-stream contents, extended attributes or hard-link topology. Therefore destructive Move must retain the source when any of those semantics are present.
+
+### Why security is stricter than owner/group/DACL
+
+The repository has owner/group/DACL evidence for other recovery contracts, but that is not treated as the complete security descriptor for destructive cross-volume Move.
+
+The Windows verifier currently requests backup-security descriptor evidence and compares a SHA-256 digest of the returned self-relative descriptor. If complete evidence cannot be obtained for both source and destination, the classifier blocks source deletion.
+
+This is deliberately fail-closed, but it creates an ordinary-user limitation: a normal process may lack the Windows security privilege required to read the complete descriptor. Issue #186 tracks the product/architecture decision needed to make this boundary ordinary-user viable without silently discarding security semantics.
+
+## Two fidelity checkpoints
+
+The fidelity wrapper verifies once during source-delete lease acquisition, before `SourceDeleteStarted`.
+
+If that first proof fails, the executor can terminate safely with the committed destination retained and source retained. No source-delete barrier is crossed.
+
+The wrapper verifies again after `SourceDeleteStarted` and before it delegates the exact authorization to the inner delete primitive.
+
+If that second proof fails, **no inner delete mutation is called**, but the durable destructive barrier has already been crossed. The entry therefore becomes `RecoveryRequired` rather than pretending the failure is safely retryable.
+
+## Handle and authority separation
+
+The raw Windows source-delete primitive and the fidelity wrapper have different jobs:
+
+- the raw primitive owns exact root/file handles, canonical/identity revalidation, protected-location/namespace checks and same-handle delete-on-close;
+- the fidelity verifier gathers content/metadata/security/stream/link/EA evidence;
+- the Core classifier decides whether that evidence is within the supported destructive subset;
+- the Core executor records the durable delete barrier;
+- only Core can mint the post-barrier `FileCrossVolumeMoveSourceDeleteAuthorization`;
+- the fidelity wrapper cannot synthesize or substitute delete authority.
+
+The public Files composition root uses `WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive`, not the raw destructive primitive directly.
+
+## Known concurrency/security limitation
+
+The inner lease denies ordinary write/delete sharing while fidelity evidence is collected and the complete proof is repeated immediately before delete. That substantially narrows mutation races for file contents and namespace replacement.
+
+Security metadata has different Windows access semantics from ordinary file data. The current design does not claim that file-share modes alone mathematically freeze every possible security-descriptor change between the final security read and delete-on-close. #186 tracks whether the final production boundary needs a stronger kernel stability mechanism, a tightly scoped privileged broker that owns proof plus mutation, or a deliberately narrower reviewed product contract.
+
+Until that decision is resolved, a failure to obtain complete security evidence remains a safe source-retained refusal.
+
+## Cancellation and user-visible outcomes
+
+Before the Copy barrier, cancellation can stop with no mutation.
+
+After `DestinationCommitted` and before `SourceDeleteStarted`, cancellation is safe and leaves a known duplicate. Files reports that the destination copy exists and the original source was retained.
+
+After `SourceDeleteStarted`, cancellation does not interrupt the destructive critical section. Any failure to prove or complete the source-delete phase becomes recovery-sensitive.
+
+The original operation ID is single-use once execution can reach durable history. FileOp does not automatically replay the Copy, delete a retained source, or infer cleanup authority from the journal.
+
+## Validation without GitHub Actions
+
+GitHub-hosted Actions are not part of this feature's merge gate.
+
+Portable/model/source verification is wired into `tools/test-local.ps1 -OfflineOnly` through `tools/verify_file_cross_volume_move.py`. The model covers cancellation and both fidelity checkpoints, including:
+
+- pre-barrier fidelity refusal => destination committed/source retained;
+- post-barrier fidelity refusal => recovery required/no inner delete;
+- successful deletion only after both fidelity proofs and the durable source-delete barrier.
+
+Deterministic managed tests cover the SQLite state machine, executor ordering, and fidelity wrapper behavior with injected evidence results.
+
+The authoritative merge gate for executable changes remains the complete Windows invocation on the **exact final PR head**:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
+```
+
+Do not mark #185 ready or merge it based only on source review or randomized-model results.
