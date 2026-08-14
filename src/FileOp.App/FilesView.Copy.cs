@@ -233,21 +233,40 @@ public sealed partial class FilesView
 
     private void SetCopyExecutionUiBusy(bool busy)
     {
-        OperationQueueList.IsEnabled = !busy && !_preflightRunning;
-        PreflightQueuedOperationButton.IsEnabled = false;
-        RemoveQueuedOperationButton.IsEnabled = false;
-        ClearQueueButton.IsEnabled = !busy && !_preflightRunning && _queuedOperations.Count > 0;
-        RunQueuedCopyButton.IsEnabled = false;
+        if (busy)
+        {
+            PrepareLeftToRightButton.IsEnabled = false;
+            PrepareRightToLeftButton.IsEnabled = false;
+            CollisionPolicyBox.IsEnabled = false;
+            QueueCopyButton.IsEnabled = false;
+            QueueMoveButton.IsEnabled = false;
+            OperationQueueList.IsEnabled = false;
+            PreflightQueuedOperationButton.IsEnabled = false;
+            RemoveQueuedOperationButton.IsEnabled = false;
+            ClearQueueButton.IsEnabled = false;
+            RunQueuedCopyButton.IsEnabled = false;
+            return;
+        }
+
+        CollisionPolicyBox.IsEnabled = true;
+        UpdateIntentAvailability();
+        UpdateQueueActions();
     }
 
     private void UpdateCopyExecutionAvailability()
     {
-        if (!_copyExecutionUiInitialized || _copyExecutionRunning)
+        if (!_copyExecutionUiInitialized)
         {
-            if (_copyExecutionUiInitialized)
-            {
-                RunQueuedCopyButton.IsEnabled = false;
-            }
+            return;
+        }
+
+        if (_copyExecutionRunning)
+        {
+            // Base pane/queue handlers may recalculate their own controls when
+            // selection or source state changes. Reassert Copy's exclusive UI
+            // ownership last so no second plan/preflight can be started while the
+            // reviewed executor is active.
+            SetCopyExecutionUiBusy(true);
             return;
         }
 
