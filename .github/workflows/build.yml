@@ -3,8 +3,14 @@ name: build
 on:
   push:
     branches: [main, "agent/**"]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
 
 jobs:
   core:
@@ -28,12 +34,12 @@ jobs:
       - run: dotnet build src/FileOp.Indexer/FileOp.Indexer.csproj --configuration Release -p:Platform=x64
       - run: dotnet test tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj --configuration Release
         env:
-          FILEOP_INDEXER_PATH: ${{ github.workspace }}\src\FileOp.Indexer\bin\x64\Release\net10.0-windows10.0.17763.0\FileOp.Indexer.exe
+          FILEOP_INDEXER_PATH: ${{ github.workspace }}\\src\\FileOp.Indexer\\bin\\x64\\Release\\net10.0-windows10.0.17763.0\\FileOp.Indexer.exe
       - run: dotnet build src/FileOp.App/FileOp.App.csproj --configuration Release -p:Platform=x64
       - name: Verify bundled indexer host
         shell: pwsh
         run: |
-          $directory = "${{ github.workspace }}\src\FileOp.App\bin\x64\Release\net10.0-windows10.0.26100.0"
+          $directory = "${{ github.workspace }}\\src\\FileOp.App\\bin\\x64\\Release\\net10.0-windows10.0.26100.0"
           $required = @(
             "FileOp.Indexer.exe",
             "FileOp.Indexer.dll",
