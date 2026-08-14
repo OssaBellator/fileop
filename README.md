@@ -30,7 +30,7 @@ Files is an exact paged browser over direct-child metadata. It requests 256 entr
 
 Browsing itself remains read-only. Files also owns two reviewed mutation surfaces with deliberately different authority:
 
-- the ordinary queue can execute **regular-file Copy** and **same-volume local regular-file Move** after read-only preflight and fresh execution-grade validation;
+- the ordinary queue can execute **regular-file Copy** and **regular-file Move** after read-only preflight and fresh execution-grade validation. Move selects same-volume identity-preserving rename or cross-volume Copy plus a separate source-delete barrier from fresh root identities;
 - the separately reviewed **file-only permanent-delete session** has its own stricter recovery, confirmation, authorization and same-handle mutation boundary.
 
 The Copy/Move queue remains deliberately narrow:
@@ -39,11 +39,16 @@ The Copy/Move queue remains deliberately narrow:
 - Copy uses exclusive-create/no-overwrite semantics;
 - `Ask later` must be resolved into a fresh immutable **Skip existing** or **Stop on collision** plan before execution;
 - same-volume Move uses an identity-preserving handle-relative rename with replacement disabled;
-- cross-volume Move remains non-executable until the source-delete half has a separately reviewed durable authorization/recovery transaction;
+- cross-volume Move first commits an exclusive-create destination Copy, then separately reacquires and identity-binds the exact original source and committed destination before a durable source-delete barrier can mint source-delete authority;
+- Copy success by itself is never source-delete authority;
+- a cross-volume `DestinationCommitted` state is a safe cancellation checkpoint: the destination copy is durable and the original source is retained. FileOp reports that duplicate explicitly rather than automatically cleaning up either side;
+- after cross-volume `SourceDeleteStarted` is durable, cancellation is not passed through same-handle source disposition, lease release or durable `Moved` commit; ambiguity after that barrier is recovery-sensitive;
+- the cross-volume source-delete lease keeps the committed destination open without write/delete sharing while holding the exact source DELETE-capable handle, closing the destination-replacement window before deletion;
 - per-directory case-sensitive NTFS or unavailable namespace-capability evidence blocks Move before durable mutation history; exact-case mutation is not claimed;
 - Copy and Move share one serialized Files execution surface, expose entry-level progress and settle cancellation only at reviewed safe boundaries;
 - once an operation reaches durable history, its operation ID is single-use and recovery-sensitive history is never automatic replay authority;
-- the Indexer is not used as a file Copy/Move mutation service.
+- the Indexer is not used as a file Copy/Move mutation service;
+- no path-only `File.Copy`, `File.Move` or `File.Delete` fallback is used by the reviewed queue executors.
 
 For permanent deletion, destructive authority is not inferred from a selected row, Storage recommendation or cleanup-readiness result. A permanent-delete session requires the current exact Files selection to pass the reviewed sequence:
 
@@ -68,6 +73,8 @@ The current user-facing delete action is deliberately narrow:
 - recovery history is never reused as consent or automatic replay authority;
 - final-lease cleanup ownership is retained and retried without granting another mutation capability;
 - Storage/Optimize and the indexing helper remain non-authorizing.
+
+Cross-volume Move does **not** reuse the permanent-delete user authorization receipt: completing a queued Move is a separate operation-scoped intent and gets its own source-delete capability and durable barrier.
 
 See `docs/files-browser.md` for the full Copy/Move/browser lifecycle and the `docs/file-delete-*.md` series for the reviewed permanent-delete preflight, authorization, history, stability/final-capability, mutation-barrier and orchestration contracts.
 
@@ -174,7 +181,7 @@ The desktop build copies the reviewed indexer host artifacts beside the app. The
 
 ## Local verification without GitHub Actions
 
-`tools/test-local.ps1` is the **authoritative verification inventory**. Individual verifier names evolve as reviewed boundaries are added, so this README intentionally does not duplicate the complete list.
+`tools/test-local.ps1` is the **authoritative verification inventory**. Hosted GitHub Actions are optional duplicate evidence, not a development or merge dependency. Individual verifier names evolve as reviewed boundaries are added, so this README intentionally does not duplicate the complete list.
 
 Run all standard-library model/source verifiers without requiring the .NET SDK:
 
@@ -182,13 +189,13 @@ Run all standard-library model/source verifiers without requiring the .NET SDK:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1 -OfflineOnly
 ```
 
-Run the complete Windows no-Actions gate:
+Run the complete Windows no-Actions gate on the exact proposed mutation-branch head before merge:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
 ```
 
-The complete gate runs the offline verifiers, Core/Windows/Indexer/benchmark Release builds, the Windows regression/integration test suite, WinUI x64 Release build, bundled-helper artifact checks and a real bundled-helper process handshake. `docs/local-validation.md` documents the gate and narrower development switches. `docs/windows-release-validation.md` records the focused mutation/signing scenarios required for the current release-hardening stack.
+The complete gate runs the offline verifiers, Core/Windows/Indexer/benchmark Release builds, the Windows regression/integration test suite, WinUI x64 Release build, bundled-helper artifact checks and a real bundled-helper process handshake. `docs/local-validation.md` documents the gate and narrower development switches. `docs/windows-release-validation.md` records additional signing and hands-on release-qualification scenarios.
 
 Benchmarks remain manual:
 
