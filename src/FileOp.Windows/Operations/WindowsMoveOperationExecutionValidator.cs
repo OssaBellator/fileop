@@ -21,8 +21,10 @@ namespace FileOp.Windows.Operations;
 /// </summary>
 public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator
 {
+    // Repository tracking: #186 = ordinary-user security fidelity;
+    // #187 = final proof-to-mutation stability. Keep issue IDs out of runtime UI text.
     internal const string CrossVolumeMoveDisabledSummary =
-        "Cross-volume Move destructive execution is disabled pending the reviewed ordinary-user security-fidelity (#186) and final proof-to-mutation stability (#187) boundaries. No durable history, destination Copy, or source-delete mutation was created by this product-readiness refusal.";
+        "Cross-volume Move is currently disabled while its security-fidelity and final mutation-stability boundaries are still under review. Choose a destination on the same volume to use the supported Move path. No durable history, destination Copy, or source-delete mutation was created by this refusal.";
 
     private const string MissingRootIdentitySummary =
         "Move execution validation did not retain stable source and destination root filesystem identities required for mutation classification. No durable mutation history or filesystem mutation was created.";
