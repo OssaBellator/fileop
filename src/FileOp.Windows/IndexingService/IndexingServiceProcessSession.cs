@@ -43,6 +43,16 @@ public sealed class IndexingServiceProcessSession : IAsyncDisposable
             throw new FileNotFoundException("The FileOp indexing helper executable was not found.", executable);
         }
 
+        if (elevated)
+        {
+            // Location adjacency is not executable trust. Before asking UAC to run
+            // code with a high-integrity token, require a valid Authenticode signer
+            // pinned into this build and a launch path the current unelevated token
+            // cannot mutate/replace. Debug builds have a separate explicit opt-in
+            // bypass for local development; Release builds always fail closed.
+            IndexingServiceHelperTrustPolicy.RequireTrustedForElevation(executable);
+        }
+
         var pipeName = $"fileop-indexer-{Environment.ProcessId}-{Convert.ToHexString(RandomNumberGenerator.GetBytes(16))}";
         var startInfo = new ProcessStartInfo(executable)
         {
