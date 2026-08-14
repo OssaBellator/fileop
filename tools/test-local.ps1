@@ -255,6 +255,10 @@ Invoke-Step "Offline Files Copy execution verifier" {
     python tools/verify_files_copy_execution_ui.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline Files Copy collision-resolution verifier" {
+    python tools/verify_files_copy_collision_resolution.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline file operation state verifier" {
     python tools/verify_file_operation_state.py --repo-root $repoRoot --cases 20000
 }
