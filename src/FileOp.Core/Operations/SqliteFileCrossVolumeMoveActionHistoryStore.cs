@@ -11,8 +11,8 @@ namespace FileOp.Core.Operations;
 
 /// <summary>
 /// Independent composite journal for cross-volume Move. It deliberately uses separate
-/// tables from file_operation_actions: schema v1 of that journal represents only Copy and
-/// same-volume Move mutation state and must never be reinterpreted as Copy+delete authority.
+/// tables from file_operation_actions: that journal represents Copy and same-volume Move
+/// mutation state and must never be reinterpreted as Copy-plus-source-delete authority.
 /// </summary>
 public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
     IFileCrossVolumeMoveActionHistoryStore,
@@ -30,7 +30,7 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         var fullPath = Path.GetFullPath(databasePath);
         var directory = Path.GetDirectoryName(fullPath);
-        if (!string.IsNullOrEmpty(directory))
+        if (!string.IsNullOrWhiteSpace(directory))
         {
             Directory.CreateDirectory(directory);
         }
@@ -57,11 +57,9 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         ValidateBegin(validation);
 
         var plan = validation.Plan;
+        var operationKey = FormatOperationId(plan.Id);
         var sourceRoot = validation.SourceDirectory.Identity!.Value;
         var destinationRoot = validation.DestinationDirectory.Identity!.Value;
-        var operationKey = FormatOperationId(plan.Id);
-        var queuedAt = NormalizeUtc(plan.QueuedAtUtc);
-        var validatedAt = NormalizeUtc(validation.ValidatedAtUtc);
         var startedAt = NormalizeUtc(startedAtUtc);
 
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -108,8 +106,8 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
                         NULL);
                     """;
                 command.Parameters.AddWithValue("@operation_id", operationKey);
-                command.Parameters.AddWithValue("@queued", ToUtcTicks(queuedAt));
-                command.Parameters.AddWithValue("@validated", ToUtcTicks(validatedAt));
+                command.Parameters.AddWithValue("@queued", ToUtcTicks(plan.QueuedAtUtc));
+                command.Parameters.AddWithValue("@validated", ToUtcTicks(validation.ValidatedAtUtc));
                 command.Parameters.AddWithValue("@started", ToUtcTicks(startedAt));
                 command.Parameters.AddWithValue("@collision", (int)plan.CollisionPolicy);
                 command.Parameters.AddWithValue("@source_path", plan.Intent.SourceDirectoryPath);
@@ -129,6 +127,7 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
                 var item = validation.Items[ordinal];
                 var sourceIdentity = item.Source.Identity!.Value;
                 var skipped = item.Decision == FileOperationExecutionValidationDecision.Skip;
+
                 using var command = connection.CreateCommand();
                 command.Transaction = transaction;
                 command.CommandText = """
@@ -166,8 +165,8 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
                         @state,
                         @source_volume,
                         @source_reference,
-                        @destination_volume,
-                        @destination_reference,
+                        NULL,
+                        NULL,
                         NULL,
                         NULL,
                         NULL,
@@ -193,30 +192,21 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
                 command.Parameters.AddWithValue("@source_volume", ToSqliteInteger(sourceIdentity.VolumeSerialNumber));
                 command.Parameters.AddWithValue("@source_reference", ToSqliteInteger(sourceIdentity.FileReferenceNumber));
                 command.Parameters.AddWithValue(
-                    "@destination_volume",
-                    item.Destination.Identity is FileIdentity destinationIdentity
-                        ? ToSqliteInteger(destinationIdentity.VolumeSerialNumber)
-                        : DBNull.Value);
-                command.Parameters.AddWithValue(
-                    "@destination_reference",
-                    item.Destination.Identity is FileIdentity destinationIdentity2
-                        ? ToSqliteInteger(destinationIdentity2.FileReferenceNumber)
-                        : DBNull.Value);
-                command.Parameters.AddWithValue(
                     "@completed",
                     skipped ? ToUtcTicks(startedAt) : DBNull.Value);
                 command.ExecuteNonQuery();
             }
 
             var history = LoadHistory(connection, transaction, operationKey)
-                ?? throw new InvalidDataException("Cross-volume Move history disappeared during Begin.");
+                ?? throw new InvalidDataException(
+                    "Cross-volume Move history disappeared during Begin.");
             transaction.Commit();
             return history;
         }
         catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
         {
             throw new InvalidOperationException(
-                $"Cross-volume Move history for operation {plan.Id} already exists or violates the journal schema.",
+                $"Cross-volume Move history for operation {plan.Id} already exists or violates the composite journal schema.",
                 exception);
         }
         finally
@@ -230,7 +220,7 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         int ordinal,
         DateTimeOffset startedAtUtc,
         CancellationToken cancellationToken = default) =>
-        TransitionSimpleAsync(
+        TransitionTimestampAsync(
             operationId,
             ordinal,
             FileCrossVolumeMoveEntryState.Pending,
@@ -253,11 +243,20 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         var operationKey = FormatOperationId(operationId);
         var committedAt = NormalizeUtc(committedAtUtc);
 
-        return await ExecuteTransitionAsync(
+        return await MutateAsync(
             operationKey,
             cancellationToken,
-            (connection, transaction) =>
+            (connection, transaction, current) =>
             {
+                var entry = RequireEntry(current, ordinal);
+                RequireState(entry, FileCrossVolumeMoveEntryState.CopyMutationStarted);
+                if (destinationIdentity.VolumeSerialNumber !=
+                    current.DestinationDirectoryIdentity.VolumeSerialNumber)
+                {
+                    throw new InvalidOperationException(
+                        "Committed cross-volume Move destination identity is not bound to the durable destination root volume.");
+                }
+
                 using var command = connection.CreateCommand();
                 command.Transaction = transaction;
                 command.CommandText = """
@@ -270,13 +269,7 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
                         destination_committed_utc_ticks = @committed
                     WHERE operation_id = @operation_id
                       AND ordinal = @ordinal
-                      AND state = @expected_state
-                      AND EXISTS(
-                          SELECT 1
-                          FROM file_cross_volume_move_actions action
-                          WHERE action.operation_id = @operation_id
-                            AND action.terminal_state IS NULL
-                            AND action.source_root_volume_serial <> action.destination_root_volume_serial);
+                      AND state = @expected_state;
                     """;
                 command.Parameters.AddWithValue("@next_state", (int)FileCrossVolumeMoveEntryState.DestinationCommitted);
                 command.Parameters.AddWithValue("@destination_volume", ToSqliteInteger(destinationIdentity.VolumeSerialNumber));
@@ -300,16 +293,24 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
     {
         ArgumentNullException.ThrowIfNull(failure);
         ThrowIfDisposed();
-        ValidateOrdinal(ordinal);
         ValidateFailure(failure);
+        ValidateOrdinal(ordinal);
         var operationKey = FormatOperationId(operationId);
         var failedAt = NormalizeUtc(failedAtUtc);
 
-        return await ExecuteTransitionAsync(
+        return await MutateAsync(
             operationKey,
             cancellationToken,
-            (connection, transaction) =>
+            (connection, transaction, current) =>
             {
+                var entry = RequireEntry(current, ordinal);
+                if (entry.State is not FileCrossVolumeMoveEntryState.Pending and
+                    not FileCrossVolumeMoveEntryState.DestinationCommitted)
+                {
+                    throw new InvalidOperationException(
+                        "A safe cross-volume Move failure may be recorded only before Copy starts or after a durable destination commit while the source is retained.");
+                }
+
                 using var command = connection.CreateCommand();
                 command.Transaction = transaction;
                 command.CommandText = """
@@ -322,19 +323,14 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
                         failure_retryable = @failure_retryable
                     WHERE operation_id = @operation_id
                       AND ordinal = @ordinal
-                      AND state IN (@pending, @destination_committed)
-                      AND EXISTS(
-                          SELECT 1 FROM file_cross_volume_move_actions action
-                          WHERE action.operation_id = @operation_id
-                            AND action.terminal_state IS NULL);
+                      AND state = @expected_state;
                     """;
                 BindFailure(command, failure);
                 command.Parameters.AddWithValue("@failed", (int)FileCrossVolumeMoveEntryState.Failed);
                 command.Parameters.AddWithValue("@completed", ToUtcTicks(failedAt));
                 command.Parameters.AddWithValue("@operation_id", operationKey);
                 command.Parameters.AddWithValue("@ordinal", ordinal);
-                command.Parameters.AddWithValue("@pending", (int)FileCrossVolumeMoveEntryState.Pending);
-                command.Parameters.AddWithValue("@destination_committed", (int)FileCrossVolumeMoveEntryState.DestinationCommitted);
+                command.Parameters.AddWithValue("@expected_state", (int)entry.State);
                 RequireOne(command.ExecuteNonQuery(), operationId, ordinal, "record safe failure");
             }).ConfigureAwait(false);
     }
@@ -344,7 +340,7 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         int ordinal,
         DateTimeOffset startedAtUtc,
         CancellationToken cancellationToken = default) =>
-        TransitionSimpleAsync(
+        TransitionTimestampAsync(
             operationId,
             ordinal,
             FileCrossVolumeMoveEntryState.DestinationCommitted,
@@ -365,11 +361,19 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         var operationKey = FormatOperationId(operationId);
         var committedAt = NormalizeUtc(committedAtUtc);
 
-        return await ExecuteTransitionAsync(
+        return await MutateAsync(
             operationKey,
             cancellationToken,
-            (connection, transaction) =>
+            (connection, transaction, current) =>
             {
+                var entry = RequireEntry(current, ordinal);
+                RequireState(entry, FileCrossVolumeMoveEntryState.SourceDeleteStarted);
+                if (deletedSourceIdentity != entry.SourceIdentity)
+                {
+                    throw new InvalidOperationException(
+                        "Cross-volume Move source-delete commit identity does not match the original durable source identity.");
+                }
+
                 using var command = connection.CreateCommand();
                 command.Transaction = transaction;
                 command.CommandText = """
@@ -382,23 +386,19 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
                         failure_retryable = NULL
                     WHERE operation_id = @operation_id
                       AND ordinal = @ordinal
-                      AND state = @source_delete_started
+                      AND state = @expected_state
                       AND source_volume_serial = @source_volume
                       AND source_file_reference = @source_reference
                       AND destination_volume_serial IS NOT NULL
                       AND destination_file_reference IS NOT NULL
                       AND destination_fingerprint_algorithm IS NOT NULL
-                      AND destination_fingerprint_hex IS NOT NULL
-                      AND EXISTS(
-                          SELECT 1 FROM file_cross_volume_move_actions action
-                          WHERE action.operation_id = @operation_id
-                            AND action.terminal_state IS NULL);
+                      AND destination_fingerprint_hex IS NOT NULL;
                     """;
                 command.Parameters.AddWithValue("@moved", (int)FileCrossVolumeMoveEntryState.Moved);
                 command.Parameters.AddWithValue("@completed", ToUtcTicks(committedAt));
                 command.Parameters.AddWithValue("@operation_id", operationKey);
                 command.Parameters.AddWithValue("@ordinal", ordinal);
-                command.Parameters.AddWithValue("@source_delete_started", (int)FileCrossVolumeMoveEntryState.SourceDeleteStarted);
+                command.Parameters.AddWithValue("@expected_state", (int)FileCrossVolumeMoveEntryState.SourceDeleteStarted);
                 command.Parameters.AddWithValue("@source_volume", ToSqliteInteger(deletedSourceIdentity.VolumeSerialNumber));
                 command.Parameters.AddWithValue("@source_reference", ToSqliteInteger(deletedSourceIdentity.FileReferenceNumber));
                 RequireOne(command.ExecuteNonQuery(), operationId, ordinal, "commit source deletion");
@@ -416,8 +416,8 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
     {
         ArgumentNullException.ThrowIfNull(failure);
         ThrowIfDisposed();
-        ValidateOrdinal(ordinal);
         ValidateFailure(failure);
+        ValidateOrdinal(ordinal);
         if (destinationIdentity.HasValue != (destinationContentFingerprint is not null))
         {
             throw new ArgumentException(
@@ -426,63 +426,93 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
 
         var operationKey = FormatOperationId(operationId);
         var failedAt = NormalizeUtc(failedAtUtc);
-        return await ExecuteTransitionAsync(
+        return await MutateAsync(
             operationKey,
             cancellationToken,
-            (connection, transaction) =>
+            (connection, transaction, current) =>
             {
+                var entry = RequireEntry(current, ordinal);
+                if (entry.State is not FileCrossVolumeMoveEntryState.CopyMutationStarted and
+                    not FileCrossVolumeMoveEntryState.SourceDeleteStarted)
+                {
+                    throw new InvalidOperationException(
+                        "RecoveryRequired may be recorded only after a durable Copy or source-delete mutation barrier.");
+                }
+
+                FileIdentity? persistedDestinationIdentity = entry.DestinationIdentity;
+                FileContentFingerprint? persistedFingerprint = entry.DestinationContentFingerprint;
+                DateTimeOffset? destinationCommittedAt = entry.DestinationCommittedAtUtc;
+
+                if (entry.State == FileCrossVolumeMoveEntryState.CopyMutationStarted &&
+                    destinationIdentity.HasValue)
+                {
+                    if (destinationIdentity.Value.VolumeSerialNumber !=
+                        current.DestinationDirectoryIdentity.VolumeSerialNumber)
+                    {
+                        throw new InvalidOperationException(
+                            "Recovery destination identity is not bound to the durable destination root volume.");
+                    }
+                    persistedDestinationIdentity = destinationIdentity;
+                    persistedFingerprint = destinationContentFingerprint;
+                    destinationCommittedAt = failedAt;
+                }
+                else if (entry.State == FileCrossVolumeMoveEntryState.SourceDeleteStarted &&
+                    destinationIdentity.HasValue &&
+                    (destinationIdentity != entry.DestinationIdentity ||
+                     destinationContentFingerprint != entry.DestinationContentFingerprint))
+                {
+                    throw new InvalidOperationException(
+                        "Recovery evidence cannot replace the already committed cross-volume Move destination identity/content evidence.");
+                }
+
                 using var command = connection.CreateCommand();
                 command.Transaction = transaction;
                 command.CommandText = """
                     UPDATE file_cross_volume_move_entries
                     SET state = @recovery,
                         completed_utc_ticks = @completed,
-                        destination_volume_serial = COALESCE(destination_volume_serial, @destination_volume),
-                        destination_file_reference = COALESCE(destination_file_reference, @destination_reference),
-                        destination_fingerprint_algorithm = COALESCE(destination_fingerprint_algorithm, @fingerprint_algorithm),
-                        destination_fingerprint_hex = COALESCE(destination_fingerprint_hex, @fingerprint_hex),
-                        destination_committed_utc_ticks = CASE
-                            WHEN destination_committed_utc_ticks IS NULL AND @destination_volume IS NOT NULL
-                            THEN @completed
-                            ELSE destination_committed_utc_ticks
-                        END,
+                        destination_volume_serial = @destination_volume,
+                        destination_file_reference = @destination_reference,
+                        destination_fingerprint_algorithm = @fingerprint_algorithm,
+                        destination_fingerprint_hex = @fingerprint_hex,
+                        destination_committed_utc_ticks = @destination_committed,
                         failure_code = @failure_code,
                         failure_message = @failure_message,
                         failure_path = @failure_path,
                         failure_retryable = @failure_retryable
                     WHERE operation_id = @operation_id
                       AND ordinal = @ordinal
-                      AND state IN (@copy_started, @source_delete_started)
-                      AND EXISTS(
-                          SELECT 1 FROM file_cross_volume_move_actions action
-                          WHERE action.operation_id = @operation_id
-                            AND action.terminal_state IS NULL);
+                      AND state = @expected_state;
                     """;
                 BindFailure(command, failure);
                 command.Parameters.AddWithValue("@recovery", (int)FileCrossVolumeMoveEntryState.RecoveryRequired);
                 command.Parameters.AddWithValue("@completed", ToUtcTicks(failedAt));
                 command.Parameters.AddWithValue(
                     "@destination_volume",
-                    destinationIdentity is FileIdentity identity
+                    persistedDestinationIdentity is FileIdentity identity
                         ? ToSqliteInteger(identity.VolumeSerialNumber)
                         : DBNull.Value);
                 command.Parameters.AddWithValue(
                     "@destination_reference",
-                    destinationIdentity is FileIdentity identity2
+                    persistedDestinationIdentity is FileIdentity identity2
                         ? ToSqliteInteger(identity2.FileReferenceNumber)
                         : DBNull.Value);
                 command.Parameters.AddWithValue(
                     "@fingerprint_algorithm",
-                    destinationContentFingerprint is null
+                    persistedFingerprint is null
                         ? DBNull.Value
-                        : (int)destinationContentFingerprint.Algorithm);
+                        : (int)persistedFingerprint.Algorithm);
                 command.Parameters.AddWithValue(
                     "@fingerprint_hex",
-                    destinationContentFingerprint?.HexDigest ?? (object)DBNull.Value);
+                    persistedFingerprint?.HexDigest ?? (object)DBNull.Value);
+                command.Parameters.AddWithValue(
+                    "@destination_committed",
+                    destinationCommittedAt.HasValue
+                        ? ToUtcTicks(destinationCommittedAt.Value)
+                        : DBNull.Value);
                 command.Parameters.AddWithValue("@operation_id", operationKey);
                 command.Parameters.AddWithValue("@ordinal", ordinal);
-                command.Parameters.AddWithValue("@copy_started", (int)FileCrossVolumeMoveEntryState.CopyMutationStarted);
-                command.Parameters.AddWithValue("@source_delete_started", (int)FileCrossVolumeMoveEntryState.SourceDeleteStarted);
+                command.Parameters.AddWithValue("@expected_state", (int)entry.State);
                 RequireOne(command.ExecuteNonQuery(), operationId, ordinal, "mark recovery required");
             }).ConfigureAwait(false);
     }
@@ -501,59 +531,41 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
 
         var operationKey = FormatOperationId(operationId);
         var completedAt = NormalizeUtc(completedAtUtc);
-        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            using var connection = OpenConnection();
-            using var transaction = connection.BeginTransaction();
-            var current = LoadHistory(connection, transaction, operationKey)
-                ?? throw new KeyNotFoundException($"Cross-volume Move history {operationId} was not found.");
-            if (current.TerminalState is not null)
+        return await MutateAsync(
+            operationKey,
+            cancellationToken,
+            (connection, transaction, current) =>
             {
-                throw new InvalidOperationException(
-                    $"Cross-volume Move history {operationId} is already terminal.");
-            }
+                _ = new FileCrossVolumeMoveActionHistory(
+                    current.OperationId,
+                    current.QueuedAtUtc,
+                    current.ValidatedAtUtc,
+                    current.StartedAtUtc,
+                    completedAt,
+                    current.CollisionPolicy,
+                    current.SourceDirectoryPath,
+                    current.DestinationDirectoryPath,
+                    current.CanonicalSourceDirectoryPath,
+                    current.CanonicalDestinationDirectoryPath,
+                    current.SourceDirectoryIdentity,
+                    current.DestinationDirectoryIdentity,
+                    terminalState,
+                    current.Entries);
 
-            // Validate the proposed terminal shape before persisting it.
-            _ = new FileCrossVolumeMoveActionHistory(
-                current.OperationId,
-                current.QueuedAtUtc,
-                current.ValidatedAtUtc,
-                current.StartedAtUtc,
-                completedAt,
-                current.CollisionPolicy,
-                current.SourceDirectoryPath,
-                current.DestinationDirectoryPath,
-                current.CanonicalSourceDirectoryPath,
-                current.CanonicalDestinationDirectoryPath,
-                current.SourceDirectoryIdentity,
-                current.DestinationDirectoryIdentity,
-                terminalState,
-                current.Entries);
-
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = """
-                UPDATE file_cross_volume_move_actions
-                SET terminal_state = @terminal,
-                    completed_utc_ticks = @completed
-                WHERE operation_id = @operation_id
-                  AND terminal_state IS NULL;
-                """;
-            command.Parameters.AddWithValue("@terminal", (int)terminalState);
-            command.Parameters.AddWithValue("@completed", ToUtcTicks(completedAt));
-            command.Parameters.AddWithValue("@operation_id", operationKey);
-            RequireOne(command.ExecuteNonQuery(), operationId, ordinal: null, "complete operation");
-
-            var result = LoadHistory(connection, transaction, operationKey)
-                ?? throw new InvalidDataException("Cross-volume Move history disappeared during completion.");
-            transaction.Commit();
-            return result;
-        }
-        finally
-        {
-            _writeGate.Release();
-        }
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    UPDATE file_cross_volume_move_actions
+                    SET terminal_state = @terminal,
+                        completed_utc_ticks = @completed
+                    WHERE operation_id = @operation_id
+                      AND terminal_state IS NULL;
+                    """;
+                command.Parameters.AddWithValue("@terminal", (int)terminalState);
+                command.Parameters.AddWithValue("@completed", ToUtcTicks(completedAt));
+                command.Parameters.AddWithValue("@operation_id", operationKey);
+                RequireOne(command.ExecuteNonQuery(), operationId, ordinal: null, "complete operation");
+            }).ConfigureAwait(false);
     }
 
     public ValueTask<FileCrossVolumeMoveActionHistory?> GetAsync(
@@ -622,7 +634,7 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         _writeGate.Dispose();
     }
 
-    private async ValueTask<FileCrossVolumeMoveActionHistory> TransitionSimpleAsync(
+    private async ValueTask<FileCrossVolumeMoveActionHistory> TransitionTimestampAsync(
         Guid operationId,
         int ordinal,
         FileCrossVolumeMoveEntryState expected,
@@ -640,11 +652,14 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         }
 
         var operationKey = FormatOperationId(operationId);
-        return await ExecuteTransitionAsync(
+        return await MutateAsync(
             operationKey,
             cancellationToken,
-            (connection, transaction) =>
+            (connection, transaction, current) =>
             {
+                var entry = RequireEntry(current, ordinal);
+                RequireState(entry, expected);
+
                 using var command = connection.CreateCommand();
                 command.Transaction = transaction;
                 command.CommandText = $"""
@@ -653,11 +668,7 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
                         {timestampColumn} = @timestamp
                     WHERE operation_id = @operation_id
                       AND ordinal = @ordinal
-                      AND state = @expected_state
-                      AND EXISTS(
-                          SELECT 1 FROM file_cross_volume_move_actions action
-                          WHERE action.operation_id = @operation_id
-                            AND action.terminal_state IS NULL);
+                      AND state = @expected_state;
                     """;
                 command.Parameters.AddWithValue("@next_state", (int)next);
                 command.Parameters.AddWithValue("@timestamp", ToUtcTicks(timestamp));
@@ -668,19 +679,29 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
             }).ConfigureAwait(false);
     }
 
-    private async ValueTask<FileCrossVolumeMoveActionHistory> ExecuteTransitionAsync(
+    private async ValueTask<FileCrossVolumeMoveActionHistory> MutateAsync(
         string operationKey,
         CancellationToken cancellationToken,
-        Action<SqliteConnection, SqliteTransaction> mutation)
+        Action<SqliteConnection, SqliteTransaction, FileCrossVolumeMoveActionHistory> mutation)
     {
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             using var connection = OpenConnection();
             using var transaction = connection.BeginTransaction();
-            mutation(connection, transaction);
+            var current = LoadHistory(connection, transaction, operationKey)
+                ?? throw new KeyNotFoundException(
+                    $"Cross-volume Move history {operationKey} was not found.");
+            if (current.TerminalState is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Cross-volume Move history {current.OperationId} is already terminal.");
+            }
+
+            mutation(connection, transaction, current);
             var result = LoadHistory(connection, transaction, operationKey)
-                ?? throw new InvalidDataException("Cross-volume Move history disappeared during transition.");
+                ?? throw new InvalidDataException(
+                    "Cross-volume Move history disappeared during a durable transition.");
             transaction.Commit();
             return result;
         }
@@ -988,7 +1009,8 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         command.ExecuteNonQuery();
 
         using var versionCommand = connection.CreateCommand();
-        versionCommand.CommandText = "SELECT version FROM file_cross_volume_move_schema WHERE singleton = 1;";
+        versionCommand.CommandText =
+            "SELECT version FROM file_cross_volume_move_schema WHERE singleton = 1;";
         var value = versionCommand.ExecuteScalar();
         if (value is not long version || version != SchemaVersion)
         {
@@ -1005,6 +1027,28 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         command.CommandText = "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;";
         command.ExecuteNonQuery();
         return connection;
+    }
+
+    private static FileCrossVolumeMoveActionEntry RequireEntry(
+        FileCrossVolumeMoveActionHistory history,
+        int ordinal)
+    {
+        if (ordinal < 0 || ordinal >= history.Entries.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(ordinal));
+        }
+        return history.Entries[ordinal];
+    }
+
+    private static void RequireState(
+        FileCrossVolumeMoveActionEntry entry,
+        FileCrossVolumeMoveEntryState expected)
+    {
+        if (entry.State != expected)
+        {
+            throw new InvalidOperationException(
+                $"Cross-volume Move entry {entry.Ordinal} is {entry.State}; expected {expected}.");
+        }
     }
 
     private static void BindFailure(SqliteCommand command, FileOperationFailure failure)
@@ -1039,8 +1083,8 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         {
             throw new InvalidOperationException(
                 ordinal.HasValue
-                    ? $"Cross-volume Move history could not {action} for operation {operationId}, entry {ordinal.Value}; the durable state changed or is already terminal."
-                    : $"Cross-volume Move history could not {action} for operation {operationId}; the durable state changed or is already terminal.");
+                    ? $"Cross-volume Move history could not {action} for operation {operationId}, entry {ordinal.Value}; the durable state changed."
+                    : $"Cross-volume Move history could not {action} for operation {operationId}; the durable state changed.");
         }
     }
 
