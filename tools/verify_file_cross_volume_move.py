@@ -143,6 +143,7 @@ def check_repository(root: Path) -> int:
         "production_validator": "src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs",
         "production_validator_tests": "tests/FileOp.Windows.Tests/WindowsMoveOperationExecutionValidatorTests.cs",
         "fidelity_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityTests.cs",
+        "share_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityShareCompatibilityTests.cs",
         "lease_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityLeaseTests.cs",
         "history_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveActionHistoryInvariantTests.cs",
         "corruption_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMovePersistedCorruptionTests.cs",
@@ -263,6 +264,20 @@ def check_repository(root: Path) -> int:
         "PreservationPolicyIsExplicitAboutSelectedEntryAndConcurrentMetadataAtomicity",
         "DestinationDefaultInherited", "PreservesSourceSecurityDescriptor")
     checks += must_contain(
+        source["share_tests"],
+        "FidelityReadReopenMustShareDeleteWhileDeleteCapabilityIsLive",
+        "PreExistingMainStreamWriterPreventsDeleteCapabilityAcquisition",
+        "WritableMainStreamMappingPreventsDeleteCapabilityAcquisitionEvenAfterFileHandleCloses",
+        "DeleteCapabilityPreventsNewMainStreamWriterUntilReleased",
+        "DeleteCapabilityDoesNotPretendShareModeFreezesAttributesOrEas",
+        "DeletingOneHardLinkLeavesOtherSourceVolumeEntryValid",
+        "FileWriteAttributes",
+        "FileWriteEa",
+        "CreateFileMappingW(",
+        "CreateHardLinkW(",
+        "ErrorSharingViolation",
+    )
+    checks += must_contain(
         source["lease_tests"], "PreBarrierFidelityRefusalRetainsSourceWithoutDeleteBarrier",
         "PostBarrierFidelityRefusalRequiresRecoveryWithoutInnerDeleteMutation",
         "TwoPositiveFidelityProofsPermitExactlyOneInnerDeleteMutation", "Assert.AreEqual(0, inner.MutationCount)")
@@ -292,13 +307,16 @@ def check_repository(root: Path) -> int:
 
     checks += must_contain(
         source["readme"], "Different-volume Move is currently product-disabled",
-        "not currently reachable through production Move validation")
+        "not currently reachable through production Move validation",
+        "Main/unnamed-stream stability is the destructive invariant")
     checks += must_contain(
         source["files_doc"], "Different-volume Move is currently product-disabled",
         "dormant cross-volume transaction contract", "Preflight deliberately does not carry stable filesystem root identities")
     checks += must_contain(
         source["cross_doc"], "Production Files execution does not currently enter this transaction.",
         "different root volume serials return `Blocked`",
+        "MovesSelectedSourceDirectoryEntryOnly",
+        "A generic oplock is **not** a prerequisite",
         "These are transaction-engine semantics, not current Files production outcomes.")
     checks += must_contain(
         source["gate"], "verify_file_cross_volume_move.py --repo-root $repoRoot --cases 50000",
