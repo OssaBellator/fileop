@@ -105,7 +105,11 @@ def check_repository(root: Path) -> int:
         '$expectedThumbprint = ($TrustedSignerThumbprint',
         '$manifestThumbprint -ne $expectedThumbprint',
         'independently supplied trusted signer',
-        "Join-Path $env:ProgramFiles 'FileOp'",
+        "$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($env:ProgramFiles))",
+        "$install = [IO.Path]::GetFullPath((Join-Path $programFiles 'FileOp'))",
+        "$expectedInstall = $programFiles + [IO.Path]::DirectorySeparatorChar + 'FileOp'",
+        'caller-selectable elevated rename/delete target',
+        'canonical Program Files\\FileOp path',
         "Get-Process -Name 'FileOp.App', 'FileOp.Indexer'",
         'wait for its indexing helper to exit before installing or updating',
         '[System.Collections.Generic.HashSet[string]]',
@@ -114,6 +118,7 @@ def check_repository(root: Path) -> int:
         '$path.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar',
         '$manifestPaths.Add($relative)',
         '[IO.FileAttributes]::ReparsePoint',
+        'existing canonical FileOp install path is a reparse point',
         '$file.Length -ne [long]$entry.Length',
         'Get-FileHash -Algorithm SHA256',
         'unexpected file not listed by the manifest',
@@ -127,6 +132,7 @@ def check_repository(root: Path) -> int:
     ]
     for needle in required_install:
         assert needle in install, needle
+    assert '[string]$InstallDirectory' not in install
 
     package_hash_check = install.index('$actualPackageHash -ne $expectedPackageHash')
     extraction = install.index('Expand-Archive -LiteralPath $package')
@@ -135,13 +141,20 @@ def check_repository(root: Path) -> int:
     uninstall = source['uninstall']
     required_uninstall = [
         'PurgeUserData',
+        "$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($env:ProgramFiles))",
+        "$install = [IO.Path]::GetFullPath((Join-Path $programFiles 'FileOp'))",
+        "$expectedInstall = $programFiles + [IO.Path]::DirectorySeparatorChar + 'FileOp'",
+        'not a generic elevated recursive-delete wrapper',
+        'canonical FileOp install path is a reparse point',
         "Join-Path $env:LOCALAPPDATA 'FileOp'",
+        'per-user data path is a reparse point',
         'Per-user data remains',
         "Get-Process -Name 'FileOp.App', 'FileOp.Indexer'",
         'wait for its indexing helper to exit before uninstalling',
     ]
     for needle in required_uninstall:
         assert needle in uninstall, needle
+    assert '[string]$InstallDirectory' not in uninstall
 
     docs = source['docs'].casefold()
     assert 'does not accept an environment variable as a signer trust root' in docs
@@ -150,6 +163,8 @@ def check_repository(root: Path) -> int:
     assert 'must not learn its trusted package hash from the zip' in docs
     assert 'editing a zip, manifest, dependency or data file' in docs
     assert 'single embedded authenticode signature' in docs
+    assert 'canonical `%programfiles%\\fileop`' in docs
+    assert 'caller-selectable install root' in docs
     assert 'verify_release_trust.py --repo-root $repoRoot' in source['gate']
 
     assert 'GetEnvironmentVariable("FileOpTrustedIndexerSignerThumbprints"' not in source['trust']
@@ -160,9 +175,10 @@ def check_repository(root: Path) -> int:
         + len(required_policy)
         + len(required_package)
         + len(required_install)
-        + 1
+        + 2
         + len(required_uninstall)
-        + 7
+        + 1
+        + 9
         + 1
     )
 
