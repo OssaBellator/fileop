@@ -42,26 +42,34 @@ This release tooling owns exactly one binary installation target: the canonical 
 
 The privileged Program Files root is resolved through the OS/.NET known-folder API, not from the mutable `ProgramFiles` environment variable. That distinction is part of the trust boundary: changing a process environment string must not redirect an elevated release rename/delete target.
 
-The expected package hash and signer are deliberately not learned from the package. The installer verifies the entire ZIP SHA-256 before extraction. It then requires the package manifest's build signer to match the caller-supplied signer pin and requires every FileOp PE signature to match it as well. Editing a ZIP, manifest, dependency or data file therefore changes the required independent package hash; editing the manifest cannot choose a new trusted signer.
+The expected package hash and signer are deliberately not learned from the package. The installer first verifies the caller-supplied ZIP against the independently supplied SHA-256. Because that source ZIP may itself live in a user-writable directory, FileOp does **not** extract or verify payload files there. Instead, the installer creates a protected Program Files work directory, copies the ZIP into that protected directory, and **re-hashes that protected copy** against the same independently supplied SHA-256 before any extraction occurs.
+
+All extraction, manifest checking, file hashing and Authenticode verification then occurs beneath that protected Program Files work directory. The verified payload is renamed directly from that protected work tree into the live `%ProgramFiles%\FileOp` location. There is **no user-writable post-verification staging copy** and no `%TEMP%` extraction/copy window between verification and publication.
+
+This two-hash sequence closes two distinct same-user races:
+
+- if the original user-writable ZIP changes after the first hash but before/during the protected copy, the protected-copy hash no longer matches and installation stops before extraction;
+- after the protected copy is revalidated, an ordinary unelevated process cannot modify the protected extraction/payload tree under the Program Files parent before it is published.
 
 Before replacing an installation it:
 
 - requires a 64-bit OS and 64-bit PowerShell process before resolving privileged paths;
 - resolves and rechecks the canonical `%ProgramFiles%\FileOp` target from the Program Files known folder and refuses environment-variable or caller-selected fallback paths;
-- verifies the complete ZIP against the independently supplied SHA-256 before extraction;
-- expands the package into a temporary directory;
-- validates every manifest path remains inside that extraction root, rejects duplicate paths, verifies each length and SHA-256, and rejects payload reparse points;
+- verifies the source ZIP against the independently supplied SHA-256;
+- copies the package into a GUID-named protected work directory under the Program Files parent and verifies that protected copy against the same SHA-256;
+- extracts only the protected package copy into a protected payload directory;
+- validates every manifest path remains inside that protected extraction root, rejects duplicate paths, verifies each length and SHA-256, and rejects payload reparse points;
 - rejects unexpected extracted files that are not represented by the manifest (apart from the manifest itself);
 - verifies every FileOp PE signature and requires its signer to match the independently supplied thumbprint;
 - requires signed `FileOp.App.exe` and `FileOp.Indexer.exe`;
 - refuses to update while either `FileOp.App` or `FileOp.Indexer` is still running;
 - refuses to replace an existing `%ProgramFiles%\FileOp` root if that root is a reparse point;
-- stages the verified package under the Program Files parent;
-- renames the old installation to a backup and the staged installation into place;
+- renames the old installation to a backup and the already-verified protected payload into place;
 - restores the backup if the replacement rename fails;
-- removes the backup only after the new directory is in place.
+- removes the backup only after the new directory is in place;
+- removes the protected work directory during cleanup.
 
-Keeping staging and installed directories under the same protected parent makes the final directory replacement a same-filesystem namespace operation rather than a partially copied live install.
+Keeping extraction, verification, staging and installed directories under the same protected parent makes publication a same-filesystem namespace operation rather than a partially copied live install.
 
 ## Persistence compatibility
 
@@ -79,4 +87,4 @@ Per-user FileOp data is preserved by default so uninstall/reinstall does not sil
 
 ## Remaining release validation
 
-The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for package-hash mismatch, unsigned/wrong-signer binaries, a multi-signature helper, manifest-signer mismatch, unexpected payload files, running-app/helper replacement attempts, reparse-point install/user-data roots, environment-variable root spoofing, a 32-bit PowerShell host and attempts to use a user-writable/custom helper location.
+The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for package-hash mismatch, protected-copy hash mismatch/source-package races, unsigned/wrong-signer binaries, a multi-signature helper, manifest-signer mismatch, unexpected payload files, running-app/helper replacement attempts, reparse-point install/user-data roots, environment-variable root spoofing, a 32-bit PowerShell host, attempts to modify the protected work tree from an unelevated process, and attempts to use a user-writable/custom helper location.
