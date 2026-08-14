@@ -82,7 +82,7 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
     }
 
     [TestMethod]
-    public async Task SupportedNamespacesReturnOriginalReadyMoveValidation()
+    public async Task SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation()
     {
         var ready = CreateReadyValidation(FileOperationKind.Move);
         var probe = new StubNamespaceProbe(_ =>
@@ -98,6 +98,30 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
         Assert.AreEqual(ready.SourceDirectory.CanonicalPath, probe.QueriedPaths[0]);
         Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, probe.QueriedPaths[1]);
         Assert.IsTrue(result.CanBeginMutation);
+    }
+
+    [TestMethod]
+    public async Task CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory()
+    {
+        var ready = CreateReadyValidation(
+            FileOperationKind.Move,
+            destinationVolumeSerialNumber: 22);
+        var probe = new StubNamespaceProbe(_ =>
+            FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
+        var validator = new WindowsMoveOperationExecutionValidator(
+            new StaticExecutionValidator(ready),
+            probe);
+
+        var result = await validator.ValidateAsync(ready.Plan);
+
+        Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
+        Assert.IsFalse(result.CanBeginMutation);
+        Assert.AreEqual(0, probe.QueryCalls);
+        Assert.AreEqual(0, probe.QueriedPaths.Count);
+        StringAssert.Contains(result.Summary, "Cross-volume Move destructive execution is disabled");
+        StringAssert.Contains(result.Summary, "#186");
+        StringAssert.Contains(result.Summary, "#187");
+        StringAssert.Contains(result.Summary, "No durable history, destination Copy, or source-delete mutation");
     }
 
     [TestMethod]
@@ -117,12 +141,16 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
         Assert.AreEqual(0, probe.QueriedPaths.Count);
     }
 
-    private static FileOperationExecutionValidationResult CreateReadyValidation(FileOperationKind kind)
+    private static FileOperationExecutionValidationResult CreateReadyValidation(
+        FileOperationKind kind,
+        ulong destinationVolumeSerialNumber = 11)
     {
         var sourceDirectory = Path.GetFullPath(@"C:\Source");
-        var destinationDirectory = Path.GetFullPath(@"C:\Destination");
+        var destinationDirectory = Path.GetFullPath(
+            destinationVolumeSerialNumber == 11 ? @"C:\Destination" : @"D:\Destination");
         var canonicalSourceDirectory = Path.GetFullPath(@"C:\Real\Source");
-        var canonicalDestinationDirectory = Path.GetFullPath(@"C:\Real\Destination");
+        var canonicalDestinationDirectory = Path.GetFullPath(
+            destinationVolumeSerialNumber == 11 ? @"C:\Real\Destination" : @"D:\Real\Destination");
         var entry = new FileOperationEntry(
             Path.Combine(sourceDirectory, "a.txt"),
             "a.txt",
@@ -169,7 +197,7 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
                 canonicalDestinationDirectory,
                 FileOperationCanonicalPathState.Directory,
                 IsLeafReparsePoint: false,
-                Identity: new FileIdentity(11, 20)),
+                Identity: new FileIdentity(destinationVolumeSerialNumber, 20)),
             new[] { item },
             FileOperationExecutionValidationStatus.Ready,
             new DateTimeOffset(2026, 8, 14, 0, 1, 0, TimeSpan.Zero),
