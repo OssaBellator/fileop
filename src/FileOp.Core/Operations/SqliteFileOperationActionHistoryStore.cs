@@ -1598,8 +1598,8 @@ public sealed class SqliteFileOperationActionHistoryStore :
                     RequireNoUndo(entry);
                     if (history.Kind == FileOperationKind.Move &&
                         entry.DestinationIdentity is FileIdentity observedDestinationIdentity &&
-                        (entry.SourceIdentity is not FileIdentity sourceIdentity ||
-                         observedDestinationIdentity != sourceIdentity))
+                        (entry.SourceIdentity is not FileIdentity recoverySourceIdentity ||
+                         observedDestinationIdentity != recoverySourceIdentity))
                     {
                         throw new InvalidDataException(
                             "Recovery-sensitive same-volume Move destination identity must match the original source identity.");
