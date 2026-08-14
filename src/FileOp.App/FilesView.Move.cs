@@ -175,7 +175,7 @@ public sealed partial class FilesView
         QueueStatusText.Text = strategy.Strategy == FileMoveExecutionStrategy.SkipOnly
             ? $"Move {plan.Id} contains only explicit Skip entries. The {(crossVolume ? "cross-volume composite" : "same-volume")} journal will record durable no-mutation settlement."
             : crossVolume
-                ? $"Move {plan.Id} is entering the cross-volume Copy-plus-identity-bound-source-delete boundary. Copy commit is a safe cancellation checkpoint; source deletion requires a separate durable barrier and live capability authorization."
+                ? $"Move {plan.Id} is entering the cross-volume Copy-plus-identity-bound-source-delete boundary. Copy commit is a safe cancellation checkpoint; source deletion requires a separate durable barrier, complete pinned fidelity proof and live capability authorization."
                 : $"Move {plan.Id} is entering the same-volume identity-preserving rename boundary. Fresh validation still runs again before durable history and before every rename.";
 
         var executorInvoked = false;
@@ -195,7 +195,7 @@ public sealed partial class FilesView
                     new WindowsMoveOperationExecutionValidator(),
                     historyStore,
                     new WindowsFileCopyMutationPrimitive(),
-                    new WindowsFileCrossVolumeMoveSourceDeletePrimitive());
+                    new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive());
                 _activeMoveExecutor = executor;
                 UpdateMoveCancellationAvailability();
 
@@ -632,7 +632,7 @@ public sealed partial class FilesView
         if (history?.TerminalState == FileCrossVolumeMoveTerminalState.Succeeded)
         {
             return
-                $"Cross-volume Move completed through the reviewed Copy-plus-identity-bound-source-delete executor. {FormatCrossVolumeMoveHistoryCounts(history)} Matching source and destination panes are refreshing.";
+                $"Cross-volume Move completed through the reviewed Copy-plus-fidelity-verified-identity-bound-source-delete executor. {FormatCrossVolumeMoveHistoryCounts(history)} Matching source and destination panes are refreshing.";
         }
 
         if (history?.TerminalState == FileCrossVolumeMoveTerminalState.Cancelled)
