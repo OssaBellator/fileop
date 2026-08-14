@@ -126,10 +126,11 @@ public sealed partial class FilesView : UserControl
             intent);
         _queuedOperations.Add(queued);
 
-        QueueStatusText.Text =
-            $"Queued {kind.ToString().ToLowerInvariant()} plan for {intent.Entries.Count:N0} " +
-            $"entr{(intent.Entries.Count == 1 ? "y" : "ies")} with {FormatCollisionPolicy(collisionPolicy)}. " +
-            "Execution remains disabled.";
+        QueueStatusText.Text = kind == FileOperationKind.Copy
+            ? $"Queued copy plan for {intent.Entries.Count:N0} entr{(intent.Entries.Count == 1 ? "y" : "ies")} with {FormatCollisionPolicy(collisionPolicy)}. " +
+              "Run read-only preflight next; only a Ready regular-file Copy can reach the reviewed executor, which performs fresh action-time validation."
+            : $"Queued move plan for {intent.Entries.Count:N0} entr{(intent.Entries.Count == 1 ? "y" : "ies")} with {FormatCollisionPolicy(collisionPolicy)}. " +
+              "Move execution remains disabled.";
         ClearPreparedIntent();
         RefreshQueuePresentation();
         UpdateIntentAvailability();
@@ -178,7 +179,7 @@ public sealed partial class FilesView : UserControl
             _preflightSnapshots[plan.Id] = snapshot;
             QueueStatusText.Text =
                 $"{result.Summary} Checked {snapshot.CheckedAtUtc.ToLocalTime():g}. " +
-                "This is a point-in-time read-only snapshot and can become stale; execution remains disabled.";
+                "This is a point-in-time read-only snapshot and can become stale. A Ready regular-file Copy may be run only through fresh executor validation; Move execution remains disabled.";
         }
         catch (Exception exception)
         {
