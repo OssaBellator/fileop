@@ -98,6 +98,9 @@ def check_repository(root: Path) -> int:
     required_install = [
         '[string]$TrustedPackageSha256',
         '[string]$TrustedSignerThumbprint',
+        '[System.Environment]::Is64BitOperatingSystem',
+        '[System.Environment]::Is64BitProcess',
+        'requires a 64-bit Windows OS and a 64-bit PowerShell host',
         '[System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles)',
         'will not use an environment-variable or caller-selected fallback path',
         '$expectedPackageHash = $TrustedPackageSha256.ToLowerInvariant()',
@@ -144,6 +147,9 @@ def check_repository(root: Path) -> int:
     uninstall = source['uninstall']
     required_uninstall = [
         'PurgeUserData',
+        '[System.Environment]::Is64BitOperatingSystem',
+        '[System.Environment]::Is64BitProcess',
+        'requires a 64-bit Windows OS and a 64-bit PowerShell host',
         '[System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles)',
         '[System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::LocalApplicationData)',
         'will not use an environment-variable or caller-selected fallback path',
@@ -179,6 +185,7 @@ def check_repository(root: Path) -> int:
     assert 'caller-selectable install root' in docs
     assert 'known-folder' in docs
     assert 'environment variable' in docs
+    assert '64-bit powershell host' in docs
     assert 'verify_release_trust.py --repo-root $repoRoot' in source['gate']
 
     assert 'GetEnvironmentVariable("FileOpTrustedIndexerSignerThumbprints"' not in source['trust']
@@ -192,7 +199,7 @@ def check_repository(root: Path) -> int:
         + 3
         + len(required_uninstall)
         + 3
-        + 11
+        + 12
         + 1
     )
 
