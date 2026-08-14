@@ -30,7 +30,7 @@ Files is an exact paged browser over direct-child metadata. It requests 256 entr
 
 Browsing itself remains read-only. Files also owns two reviewed mutation surfaces with deliberately different authority:
 
-- the ordinary queue can execute **regular-file Copy** and **regular-file Move** after read-only preflight and fresh execution-grade validation. Move selects same-volume identity-preserving rename or cross-volume Copy plus a separate source-delete barrier from fresh root identities;
+- the ordinary queue can execute **regular-file Copy** and **regular-file Move** after read-only preflight and fresh execution-grade validation. Move selects same-volume identity-preserving rename or, across different volumes, a composite Copy/source-delete route that may delete the source only after its separate destructive-fidelity proof succeeds;
 - the separately reviewed **file-only permanent-delete session** has its own stricter recovery, confirmation, authorization and same-handle mutation boundary.
 
 The Copy/Move queue remains deliberately narrow:
@@ -41,9 +41,11 @@ The Copy/Move queue remains deliberately narrow:
 - same-volume Move uses an identity-preserving handle-relative rename with replacement disabled;
 - cross-volume Move first commits an exclusive-create destination Copy, then separately reacquires and identity-binds the exact original source and committed destination before a durable source-delete barrier can mint source-delete authority;
 - Copy success by itself is never source-delete authority;
-- a cross-volume `DestinationCommitted` state is a safe cancellation checkpoint: the destination copy is durable and the original source is retained. FileOp reports that duplicate explicitly rather than automatically cleaning up either side;
-- after cross-volume `SourceDeleteStarted` is durable, cancellation is not passed through same-handle source disposition, lease release or durable `Moved` commit; ambiguity after that barrier is recovery-sensitive;
-- the cross-volume source-delete lease keeps the committed destination open without write/delete sharing while holding the exact source DELETE-capable handle, closing the destination-replacement window before deletion;
+- a cross-volume `DestinationCommitted` state is a safe cancellation or pre-delete-refusal checkpoint: the destination copy is durable and the original source is retained. FileOp reports that duplicate explicitly rather than automatically cleaning up either side;
+- destructive cross-volume completion additionally requires the current source/destination main streams and supported metadata/security semantics to prove equivalent to the committed Copy while exact identities are pinned. Named data streams, extended attributes, non-single-link topology, unsupported file-attribute semantics or incomplete/mismatched complete-security evidence retain the source rather than silently losing fidelity;
+- the current complete-security proof is deliberately fail-closed and may be unavailable to an ordinary unelevated process; #186 tracks the architecture/product work needed to make this route ordinary-user viable without weakening security fidelity;
+- after cross-volume `SourceDeleteStarted` is durable, cancellation is not passed through final fidelity revalidation, same-handle source disposition, lease release or durable `Moved` commit; ambiguity after that barrier is recovery-sensitive;
+- the cross-volume source-delete lease keeps the committed destination open without ordinary write/delete sharing while holding the exact source DELETE-capable handle, narrowing the destination/source replacement window before deletion;
 - per-directory case-sensitive NTFS or unavailable namespace-capability evidence blocks Move before durable mutation history; exact-case mutation is not claimed;
 - Copy and Move share one serialized Files execution surface, expose entry-level progress and settle cancellation only at reviewed safe boundaries;
 - once an operation reaches durable history, its operation ID is single-use and recovery-sensitive history is never automatic replay authority;
@@ -76,7 +78,7 @@ The current user-facing delete action is deliberately narrow:
 
 Cross-volume Move does **not** reuse the permanent-delete user authorization receipt: completing a queued Move is a separate operation-scoped intent and gets its own source-delete capability and durable barrier.
 
-See `docs/files-browser.md` for the full Copy/Move/browser lifecycle and the `docs/file-delete-*.md` series for the reviewed permanent-delete preflight, authorization, history, stability/final-capability, mutation-barrier and orchestration contracts.
+See `docs/files-browser.md` for the full Copy/Move/browser lifecycle, `docs/file-cross-volume-move.md` for the composite Move/fidelity boundary and current ordinary-user limitation, and the `docs/file-delete-*.md` series for the reviewed permanent-delete preflight, authorization, history, stability/final-capability, mutation-barrier and orchestration contracts.
 
 ### Folders, Types and Categories
 
@@ -225,6 +227,7 @@ tools/
 docs/
   architecture.md                     Architectural boundaries and lifecycle
   files-browser.md                    Indexed Files browsing + Copy/Move execution boundary
+  file-cross-volume-move.md           Composite cross-volume Move/fidelity contract
   storage-optimization.md             Optimize policy/safety semantics
   same-size-content-verification.md   Explicit bounded SHA-256 verification
   physical-reclaim-evidence.md        Current physical reclaim upper-bound evidence
