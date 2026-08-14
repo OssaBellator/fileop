@@ -84,13 +84,18 @@ def check_repository(root: Path) -> int:
 
     install = source['install']
     for needle in [
+        '[Parameter(Mandatory = $true)][ValidatePattern',
+        '[string]$TrustedSignerThumbprint',
+        '$expectedThumbprint = ($TrustedSignerThumbprint',
+        '$manifestThumbprint -ne $expectedThumbprint',
+        'independently supplied trusted signer',
         "Join-Path $env:ProgramFiles 'FileOp'",
         "Get-Process -Name 'FileOp.App'",
         "$segments = @($relative -split '[\\\\/]')",
         '$path.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar',
         'Get-FileHash -Algorithm SHA256',
         'Get-AuthenticodeSignature',
-        'TrustedSignerThumbprint',
+        '$actual -ne $expectedThumbprint',
         'New-Item -ItemType Directory -Path $stage -Force',
         "Copy-Item -Path (Join-Path $temp '*') -Destination $stage -Recurse -Force",
         'Move-Item -LiteralPath $install -Destination $backup',
@@ -104,12 +109,14 @@ def check_repository(root: Path) -> int:
     assert "Join-Path $env:LOCALAPPDATA 'FileOp'" in uninstall
     assert 'Per-user data remains' in uninstall
 
-    assert 'does not accept an environment variable as a signer trust root'.casefold() in source['docs'].casefold()
+    docs = source['docs'].casefold()
+    assert 'does not accept an environment variable as a signer trust root' in docs
+    assert 'independently supplied' in docs
+    assert 'editing a zip and its manifest therefore cannot choose a new trusted signer' in docs
     assert 'verify_release_trust.py --repo-root $repoRoot' in source['gate']
 
-    # Release runtime trust cannot depend on a runtime pin environment variable.
     assert 'GetEnvironmentVariable("FileOpTrustedIndexerSignerThumbprints"' not in source['trust']
-    return len(required_project) + len(required_trust) + 4 + 5 + 9 + 12 + 3 + 2
+    return len(required_project) + len(required_trust) + 4 + 5 + 9 + 17 + 3 + 4
 
 
 def main() -> int:
