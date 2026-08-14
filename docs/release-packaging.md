@@ -5,7 +5,7 @@
 An adjacent `FileOp.Indexer.exe` is not trusted merely because it is next to the desktop app. Before an elevated helper launch, FileOp now requires:
 
 1. the requested executable to be the exact `FileOp.Indexer.exe` resolved beside the running FileOp application;
-2. an embedded Authenticode signature accepted by Windows Authenticode policy;
+2. one embedded Authenticode signature at primary signature index 0 accepted by Windows Authenticode policy; secondary embedded signatures are rejected so signer pinning is unambiguous;
 3. the signer certificate thumbprint to match the semicolon-separated thumbprints compiled into `FileOp.Windows` as `FileOpTrustedIndexerSignerThumbprints` assembly metadata;
 4. the current unelevated token to be unable to open the helper file, its containing directory, or that directory's parent with any tested write/delete/ACL-ownership mutation right.
 
@@ -27,6 +27,8 @@ The script:
 - writes `fileop-release-manifest.json` with relative path, length and signed-file SHA-256;
 - produces a versioned x64 ZIP;
 - computes the final ZIP SHA-256 and writes a companion `.sha256` file for publication through independently authenticated release metadata.
+
+The elevated-helper runtime accepts only a single embedded Authenticode signature. The release signing dry run must therefore confirm `FileOp.Indexer.exe` has no secondary embedded signatures after signing; dual-signing is intentionally unsupported by this trust boundary.
 
 The manifest hashes the already-signed staged artifacts and is an integrity inventory. It is not itself a package trust root. Whole-package authenticity is established at install time by comparing the ZIP against a SHA-256 obtained independently of the ZIP, while elevated helper runtime trust still comes from Windows Authenticode policy plus the build-owned signer pin.
 
@@ -68,4 +70,4 @@ Uninstall also refuses to remove the installation while either `FileOp.App` or `
 
 ## Remaining release validation
 
-The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for package-hash mismatch, unsigned/wrong-signer binaries, manifest-signer mismatch, unexpected payload files, running-app/helper replacement attempts and user-writable helper paths.
+The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for package-hash mismatch, unsigned/wrong-signer binaries, a multi-signature helper, manifest-signer mismatch, unexpected payload files, running-app/helper replacement attempts and user-writable helper paths.
