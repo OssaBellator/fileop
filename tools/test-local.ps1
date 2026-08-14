@@ -99,6 +99,10 @@ Invoke-Step "Offline known-location status semantics verifier" {
     python tools/verify_known_location_status_semantics.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline known-location candidate containment verifier" {
+    python tools/verify_known_location_candidate_containment.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline known-location Files handoff verifier" {
     python tools/verify_known_location_files_handoff.py --repo-root $repoRoot --cases 50000
 }
