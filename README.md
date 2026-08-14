@@ -39,13 +39,15 @@ The Copy/Move queue remains deliberately narrow:
 - Copy uses exclusive-create/no-overwrite semantics;
 - `Ask later` must be resolved into a fresh immutable **Skip existing** or **Stop on collision** plan before execution;
 - same-volume Move uses an identity-preserving handle-relative rename with replacement disabled;
-- cross-volume Move transaction infrastructure is implemented and testable but is **not currently reachable through production Move validation**. The product block remains until #186 resolves the ordinary-user security-fidelity contract and #187 resolves the final proof-to-mutation stability boundary;
+- cross-volume Move transaction infrastructure is implemented and testable but is **not currently reachable through production Move validation**. #186 has selected destination-default/inherited security semantics source-side; #187 now defines the scoped preservation contract and the remaining native main-stream stability tests. The production block stays in place until those exact-head Windows tests pass;
 - the dormant cross-volume engine first commits an exclusive-create destination Copy, then separately reacquires and identity-binds the exact original source and committed destination before a durable source-delete barrier can mint source-delete authority;
 - Copy success by itself is never source-delete authority;
 - in that composite journal, `DestinationCommitted` is a safe cancellation or pre-delete-refusal checkpoint: the destination copy is durable and the original source is retained. The engine records that duplicate explicitly rather than inferring cleanup authority;
-- destructive cross-volume completion additionally requires the current source/destination main streams and supported metadata/security semantics to prove equivalent to the committed Copy while exact identities are pinned. Named data streams, extended attributes, non-single-link topology, unsupported file-attribute semantics or incomplete/mismatched complete-security evidence retain the source rather than silently losing fidelity;
-- the current complete-security proof is deliberately fail-closed and may be unavailable to an ordinary unelevated process; #186 tracks the architecture/product work needed to make this route ordinary-user viable without weakening security fidelity;
-- after cross-volume `SourceDeleteStarted` is durable, cancellation is not passed through final fidelity revalidation, same-handle source disposition, lease release or durable `Moved` commit; ambiguity after that barrier is recovery-sensitive;
+- destructive cross-volume completion requires source/destination main-stream SHA-256 to match the durable Copy fingerprint and checks the supported basic-metadata/attribute subset at both checkpoints. Source named streams or EAs are unsupported by the current Copy primitive and retain the source when observed;
+- cross-volume security deliberately follows Windows destination-default/inherited semantics rather than source security-descriptor preservation. No privileged SACL/`ACCESS_SYSTEM_SECURITY` proof is used by this path;
+- cross-volume Move removes the **selected source directory entry**. Same-volume hard-link topology is not recreated across volumes, so additional source/destination hard links are not treated as lost-copy evidence;
+- stable basic metadata remains checkpoint evidence, but FileOp does not claim Windows atomically freezes unrelated `FILE_WRITE_ATTRIBUTES`, EA or independent-stream mutations between the final observation and unlink. Main/unnamed-stream stability is the destructive invariant that still requires exact native Windows proof;
+- after cross-volume `SourceDeleteStarted` is durable, cancellation is not passed through final preservation recheck, same-handle source disposition, lease release or durable `Moved` commit; ambiguity after that barrier is recovery-sensitive;
 - the cross-volume source-delete lease keeps the committed destination open without ordinary write/delete sharing while holding the exact source DELETE-capable handle, narrowing the destination/source replacement window before deletion;
 - per-directory case-sensitive NTFS or unavailable namespace-capability evidence blocks enabled Move mutation before durable history; exact-case mutation is not claimed;
 - Copy and enabled Move share one serialized Files execution surface, expose entry-level progress and settle cancellation only at reviewed safe boundaries;
@@ -79,7 +81,7 @@ The current user-facing delete action is deliberately narrow:
 
 The dormant cross-volume Move design does **not** reuse the permanent-delete user authorization receipt: if that route is eventually enabled, completing a queued Move remains a separate operation-scoped intent with its own source-delete capability and durable barrier.
 
-See `docs/files-browser.md` for the full Copy/Move/browser lifecycle, `docs/file-cross-volume-move.md` for the dormant composite Move/fidelity boundary and current enablement blockers, and the `docs/file-delete-*.md` series for the reviewed permanent-delete preflight, authorization, history, stability/final-capability, mutation-barrier and orchestration contracts.
+See `docs/files-browser.md` for the full Copy/Move/browser lifecycle, `docs/file-cross-volume-move.md` for the dormant composite Move/preservation boundary and current enablement tests, and the `docs/file-delete-*.md` series for the reviewed permanent-delete preflight, authorization, history, stability/final-capability, mutation-barrier and orchestration contracts.
 
 ### Folders, Types and Categories
 
