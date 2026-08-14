@@ -198,8 +198,10 @@ def check_repository(root: Path) -> int:
         'return Block(validation, MissingRootIdentitySummary);',
         'if (isCrossVolume)',
         'return Block(validation, CrossVolumeMoveDisabledSummary);',
-        'ordinary-user security-fidelity (#186)',
-        'final proof-to-mutation stability (#187)',
+        'Repository tracking: #186 = ordinary-user security fidelity;',
+        '#187 = final proof-to-mutation stability.',
+        'security-fidelity and final mutation-stability',
+        'Choose a destination on the same volume',
         'No durable history, destination Copy, or source-delete mutation',
         'validation.SourceDirectory.CanonicalPath',
         'validation.DestinationDirectory.CanonicalPath',
@@ -235,9 +237,11 @@ def check_repository(root: Path) -> int:
         'includeDestinationRootIdentity: false',
         'CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory',
         'Assert.AreEqual(0, probe.QueryCalls)',
+        'Cross-volume Move is currently disabled',
+        'Choose a destination on the same volume',
+        'result.Summary.Contains("#186"',
+        'result.Summary.Contains("#187"',
         'NonMoveValidationDoesNotInvokeMoveNamespaceCapability',
-        '#186',
-        '#187',
     ]
     for needle in required_namespace_tests:
         assert needle in source['namespace_tests'], needle
