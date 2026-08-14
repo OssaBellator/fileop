@@ -12,8 +12,6 @@ public enum FileCrossVolumeMoveFidelityBlocker
     StableBasicMetadataMismatch = 1 << 2,
     SourceUnsupportedAttributes = 1 << 3,
     DestinationUnsupportedAttributes = 1 << 4,
-    SecurityDescriptorEvidenceIncomplete = 1 << 5,
-    SecurityDescriptorMismatch = 1 << 6,
     SourceNamedDataStreams = 1 << 7,
     DestinationNamedDataStreams = 1 << 8,
     SourceHardLinks = 1 << 9,
@@ -27,6 +25,10 @@ public enum FileCrossVolumeMoveFidelityBlocker
 /// simultaneously pinned. A positive classification is evidence only; it does not
 /// grant source-delete authority. Core mints delete authority separately and only
 /// after the durable source-delete mutation barrier has been recorded.
+///
+/// Security-descriptor equivalence is intentionally absent. FileOp's selected
+/// cross-volume Move contract follows Windows destination-default/inherited security
+/// semantics rather than promising preservation of the source security descriptor.
 /// </summary>
 public sealed record FileCrossVolumeMoveFidelityEvidence(
     FileContentFingerprint CommittedDestinationContentFingerprint,
@@ -39,9 +41,7 @@ public sealed record FileCrossVolumeMoveFidelityEvidence(
     uint SourceHardLinkCount,
     uint DestinationHardLinkCount,
     uint SourceExtendedAttributeSize,
-    uint DestinationExtendedAttributeSize,
-    bool SecurityDescriptorEvidenceComplete,
-    bool SecurityDescriptorEquivalent);
+    uint DestinationExtendedAttributeSize);
 
 public sealed record FileCrossVolumeMoveFidelityClassification(
     bool CanDeleteSourceAfterDurableBarrier,
@@ -51,7 +51,9 @@ public sealed record FileCrossVolumeMoveFidelityClassification(
 /// <summary>
 /// Defines the deliberately narrow fidelity subset in which a destructive
 /// cross-volume Move may delete its source after Copy has durably committed.
-/// Anything FileOp's current Copy primitive does not prove equivalent is blocked.
+/// Anything FileOp's current Copy primitive does not preserve under the selected
+/// platform contract is blocked. Security is handled by the explicit
+/// <see cref="FileCrossVolumeMoveSecurityPolicy"/> instead of equivalence checking.
 /// </summary>
 public static class FileCrossVolumeMoveFidelityClassifier
 {
@@ -103,15 +105,6 @@ public static class FileCrossVolumeMoveFidelityClassifier
             blockers.Add(FileCrossVolumeMoveFidelityBlocker.DestinationUnsupportedAttributes);
         }
 
-        if (!evidence.SecurityDescriptorEvidenceComplete)
-        {
-            blockers.Add(FileCrossVolumeMoveFidelityBlocker.SecurityDescriptorEvidenceIncomplete);
-        }
-        else if (!evidence.SecurityDescriptorEquivalent)
-        {
-            blockers.Add(FileCrossVolumeMoveFidelityBlocker.SecurityDescriptorMismatch);
-        }
-
         if (evidence.SourceNamedDataStreamCount != 0)
         {
             blockers.Add(FileCrossVolumeMoveFidelityBlocker.SourceNamedDataStreams);
@@ -147,13 +140,13 @@ public static class FileCrossVolumeMoveFidelityClassifier
             return new FileCrossVolumeMoveFidelityClassification(
                 CanDeleteSourceAfterDurableBarrier: true,
                 Array.Empty<FileCrossVolumeMoveFidelityBlocker>(),
-                "Pinned source and destination evidence is equivalent within FileOp's current destructive cross-volume Move fidelity contract. This still grants no delete authority before the durable source-delete barrier.");
+                "Pinned source and destination evidence is equivalent within FileOp's current destructive cross-volume Move data/metadata fidelity contract. Security follows the explicit destination-default Windows cross-volume Move policy. This still grants no delete authority before the durable source-delete barrier.");
         }
 
         return new FileCrossVolumeMoveFidelityClassification(
             CanDeleteSourceAfterDurableBarrier: false,
             blockers.AsReadOnly(),
-            "Cross-volume Move must retain the source because the committed destination does not prove the complete supported fidelity subset for the currently pinned source object.");
+            "Cross-volume Move must retain the source because the committed destination does not prove the complete supported data/metadata fidelity subset for the currently pinned source object.");
     }
 
     private static bool FingerprintsEqual(
