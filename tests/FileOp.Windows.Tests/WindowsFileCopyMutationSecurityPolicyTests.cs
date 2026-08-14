@@ -73,10 +73,12 @@ public sealed class WindowsFileCopyMutationSecurityPolicyTests
                     validation.SourceDirectory,
                     validation.DestinationDirectory)))
             {
-                Assert.AreEqual(
-                    Path.GetFullPath(destinationPath),
-                    Path.GetFullPath(lease.Receipt.CanonicalDestinationPath),
-                    ignoreCase: true);
+                Assert.IsTrue(
+                    string.Equals(
+                        Path.GetFullPath(destinationPath),
+                        Path.GetFullPath(lease.Receipt.CanonicalDestinationPath),
+                        StringComparison.OrdinalIgnoreCase),
+                    "The Copy receipt must remain bound to the expected destination path.");
             }
 
             Assert.IsTrue(File.Exists(destinationPath));
