@@ -120,7 +120,7 @@ The desktop fallback pages the already-completed in-memory crawler snapshot rath
 
 ## Files operation boundary
 
-Files is no longer accurately described as a wholly read-only surface. **Browsing** is read-only, but already-merged file-operation work includes reviewed mutation boundaries. The most security-sensitive current user-facing mutation is permanent file deletion.
+Files is no longer accurately described as a wholly read-only surface. **Browsing** is read-only, but reviewed file-operation work includes mutation boundaries. The most security-sensitive current user-facing mutation is permanent file deletion.
 
 The delete design deliberately does **not** turn generic selection into authority and does not add a generic `FileOperationKind.Delete` to the ordinary planning queue.
 
@@ -241,9 +241,9 @@ The current-user Downloads and Temp review reuses native Optimize subtree eviden
 
 Age, location, extension and rule IDs remain review provenance. They never become `SafeToDelete` or consent.
 
-On current `main`, known-location review is limited to the active native indexed volume. A redirected location outside that source is disclosed rather than silently crawled.
+Known-location review can use the active native volume or a redirected Downloads/Temp path on another already-indexed, checkpointed native volume. Cross-volume review is bound to the exact indexed volume identity/root, requires current checkpoint/catalog provenance, and admits only candidate rows whose fully qualified indexed paths remain contained by the reviewed root and consistent with indexed name/extension metadata. It does not silently crawl, rebuild, or switch the primary source.
 
-`Check readiness` is a separate read-only current-path/canonical/identity/allocation/hard-link check. Even a `CurrentEvidenceConsistent` result has `CleanupMutationAuthorized == false` and does not prove continuity with the originally indexed physical object. Permanent deletion, if later chosen, must begin again from Files and independently pass the delete session.
+`Check readiness` is a separate read-only current-path/canonical/identity/allocation/hard-link check and can revalidate a cross-volume candidate against its owning indexed source. Even a `CurrentEvidenceConsistent` result has `CleanupMutationAuthorized == false` and does not prove continuity with the originally indexed physical object. **Review in Files remains primary-volume-only**: cross-volume review evidence is not handed to Files through a direct-filesystem fallback. Permanent deletion, if later chosen, must begin again from Files and independently pass the delete session.
 
 ## Performance and device evidence
 
@@ -300,7 +300,7 @@ Desktop foreground paths use a consistent search-operation then native-operation
 
 History query is independent of live-checkpoint validity because historical observations are validated on write/read. Current live evidence remains checkpoint-bound.
 
-The current rebuild path temporarily removes the affected volume from live reads. Shadow-database rebuild plus atomic swap remains a potential future improvement.
+The current rebuild path temporarily removes the affected volume from live reads. The #179 stack adds a shadow-publication policy/state contract that preserves the current live snapshot while a distinct shadow is prepared and forbids publication until the shadow has a valid checkpoint and an exclusive publication lease. **The live SQLite/filesystem replacement step is still unwired**; the policy does not claim that an atomic database swap is already shipping.
 
 ## Privilege policy
 
@@ -310,7 +310,9 @@ Helper-only UAC is permitted only for a limited split administrator token, prese
 
 The helper chooses its index root under the current account's LocalAppData and never accepts an arbitrary database path from the desktop.
 
-The app bundles `FileOp.Indexer` beside the desktop executable and resolves only that exact adjacent non-reparse helper. This is a deterministic location rule, not an Authenticode trust assertion; production packaging still needs publisher/signature verification before elevation is exposed as a production trust boundary.
+Elevated helper launch is fail-closed around the installed helper identity. FileOp resolves only the exact adjacent non-reparse `FileOp.Indexer.exe`, verifies the primary embedded Authenticode signature through Windows policy, rejects secondary embedded signatures so signer selection is unambiguous, requires that signer thumbprint to match build-owned `FileOp.Windows` assembly metadata, and rejects a helper/app installation path the unelevated token can mutate through the reviewed write/delete/ACL-ownership rights. Release builds do not accept a runtime environment variable as a signer trust root.
+
+Release packaging normalizes staged FileOp binaries to one embedded release signature, emits a per-file length/SHA-256 manifest and a whole-ZIP SHA-256 for independently authenticated release metadata, and installs only when the caller independently supplies both the package hash and trusted signer thumbprint. Install/update uses protected Program Files staging and revalidation before same-parent publication. These mechanisms are implemented in the #179 stack, but a real production signing-certificate package/install/update negative-case dry run remains mandatory before the release trust boundary is declared production-ready.
 
 Permanent file deletion runs through the reviewed desktop/Windows file-operation boundary; it is not delegated to the indexing helper.
 
