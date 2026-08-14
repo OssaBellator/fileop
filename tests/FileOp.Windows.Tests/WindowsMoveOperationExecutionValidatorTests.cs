@@ -13,32 +13,58 @@ namespace FileOp.Windows.Tests;
 public sealed class WindowsMoveOperationExecutionValidatorTests
 {
     [TestMethod]
-    public async Task UnsupportedNamespaceBlocksReadyMoveBeforeMutationHistory()
+    public async Task CaseSensitiveSourceBlocksReadyMoveBeforeMutationHistory()
     {
         var ready = CreateReadyValidation(FileOperationKind.Move);
-        var probe = new StubNamespaceProbe(reject: true, "case-sensitive namespace");
+        var probe = new StubNamespaceProbe(path =>
+            path.EndsWith(@"\Source", StringComparison.OrdinalIgnoreCase)
+                ? FileOperationNamespaceCapabilityState.UnsupportedCaseSensitiveDirectory
+                : FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
         var validator = new WindowsMoveOperationExecutionValidator(
             new StaticExecutionValidator(ready),
             probe);
 
         var result = await validator.ValidateAsync(ready.Plan);
 
-        Assert.AreEqual(1, probe.RequireCalls);
+        Assert.AreEqual(1, probe.QueryCalls);
         Assert.AreSame(ready.Plan, result.Plan);
         Assert.AreEqual(ready.Items.Count, result.Items.Count);
         Assert.AreSame(ready.Items[0], result.Items[0]);
         Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
         Assert.IsFalse(result.CanBeginMutation);
         StringAssert.Contains(result.Summary, "before durable mutation history");
-        StringAssert.Contains(result.Summary, "case-sensitive namespace");
+        StringAssert.Contains(result.Summary, "UnsupportedCaseSensitiveDirectory");
         StringAssert.Contains(result.Summary, "No MutationStarted record");
     }
 
     [TestMethod]
-    public async Task UnavailableNamespaceCapabilityAlsoBlocksReadyMove()
+    public async Task CaseSensitiveDestinationBlocksReadyMoveAfterCheckingBothRoots()
     {
         var ready = CreateReadyValidation(FileOperationKind.Move);
-        var probe = new StubNamespaceProbe(reject: true, "namespace capability unavailable");
+        var probe = new StubNamespaceProbe(path =>
+            path.EndsWith(@"\Destination", StringComparison.OrdinalIgnoreCase)
+                ? FileOperationNamespaceCapabilityState.UnsupportedCaseSensitiveDirectory
+                : FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
+        var validator = new WindowsMoveOperationExecutionValidator(
+            new StaticExecutionValidator(ready),
+            probe);
+
+        var result = await validator.ValidateAsync(ready.Plan);
+
+        Assert.AreEqual(2, probe.QueryCalls);
+        Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
+        StringAssert.Contains(result.Summary, "UnsupportedCaseSensitiveDirectory");
+        StringAssert.Contains(result.Summary, ready.DestinationDirectory.CanonicalPath);
+    }
+
+    [TestMethod]
+    public async Task UnavailableNamespaceCapabilityBlocksReadyMove()
+    {
+        var ready = CreateReadyValidation(FileOperationKind.Move);
+        var probe = new StubNamespaceProbe(path =>
+            path.EndsWith(@"\Destination", StringComparison.OrdinalIgnoreCase)
+                ? FileOperationNamespaceCapabilityState.Unavailable
+                : FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
         var validator = new WindowsMoveOperationExecutionValidator(
             new StaticExecutionValidator(ready),
             probe);
@@ -46,15 +72,16 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
         var result = await validator.ValidateAsync(ready.Plan);
 
         Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
-        Assert.AreEqual(1, probe.RequireCalls);
-        StringAssert.Contains(result.Summary, "namespace capability unavailable");
+        Assert.AreEqual(2, probe.QueryCalls);
+        StringAssert.Contains(result.Summary, "Unavailable");
     }
 
     [TestMethod]
-    public async Task SupportedNamespaceReturnsOriginalReadyMoveValidation()
+    public async Task SupportedNamespacesReturnOriginalReadyMoveValidation()
     {
         var ready = CreateReadyValidation(FileOperationKind.Move);
-        var probe = new StubNamespaceProbe(reject: false, string.Empty);
+        var probe = new StubNamespaceProbe(_ =>
+            FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
         var validator = new WindowsMoveOperationExecutionValidator(
             new StaticExecutionValidator(ready),
             probe);
@@ -62,7 +89,7 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
         var result = await validator.ValidateAsync(ready.Plan);
 
         Assert.AreSame(ready, result);
-        Assert.AreEqual(1, probe.RequireCalls);
+        Assert.AreEqual(2, probe.QueryCalls);
         Assert.IsTrue(result.CanBeginMutation);
     }
 
@@ -70,7 +97,8 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
     public async Task NonMoveValidationDoesNotInvokeMoveNamespaceCapability()
     {
         var ready = CreateReadyValidation(FileOperationKind.Copy);
-        var probe = new StubNamespaceProbe(reject: true, "must not be called");
+        var probe = new StubNamespaceProbe(_ =>
+            FileOperationNamespaceCapabilityState.UnsupportedCaseSensitiveDirectory);
         var validator = new WindowsMoveOperationExecutionValidator(
             new StaticExecutionValidator(ready),
             probe);
@@ -78,7 +106,7 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
         var result = await validator.ValidateAsync(ready.Plan);
 
         Assert.AreSame(ready, result);
-        Assert.AreEqual(0, probe.RequireCalls);
+        Assert.AreEqual(0, probe.QueryCalls);
     }
 
     private static FileOperationExecutionValidationResult CreateReadyValidation(FileOperationKind kind)
@@ -159,32 +187,21 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
 
     private sealed class StubNamespaceProbe : IFileOperationNamespaceCapabilityProbe
     {
-        private readonly bool _reject;
-        private readonly string _summary;
+        private readonly Func<string, FileOperationNamespaceCapabilityState> _stateForPath;
 
-        public StubNamespaceProbe(bool reject, string summary)
+        public StubNamespaceProbe(Func<string, FileOperationNamespaceCapabilityState> stateForPath) =>
+            _stateForPath = stateForPath;
+
+        public int QueryCalls { get; private set; }
+
+        public FileOperationNamespaceCapability QueryDirectory(string canonicalDirectoryPath)
         {
-            _reject = reject;
-            _summary = summary;
-        }
-
-        public int RequireCalls { get; private set; }
-
-        public FileOperationNamespaceCapability QueryDirectory(string canonicalDirectoryPath) =>
-            new(
+            QueryCalls++;
+            var state = _stateForPath(canonicalDirectoryPath);
+            return new FileOperationNamespaceCapability(
                 canonicalDirectoryPath,
-                _reject
-                    ? FileOperationNamespaceCapabilityState.UnsupportedCaseSensitiveDirectory
-                    : FileOperationNamespaceCapabilityState.SupportedCaseInsensitive,
-                _summary);
-
-        public void RequireSupportedMutationRoots(FileOperationExecutionValidationResult validation)
-        {
-            RequireCalls++;
-            if (_reject)
-            {
-                throw new NotSupportedException(_summary);
-            }
+                state,
+                $"stub capability: {state}");
         }
     }
 }
