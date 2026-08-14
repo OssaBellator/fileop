@@ -122,6 +122,22 @@
                     <ProgressBar x:Name="CopyProgressBar"
                                  Minimum="0" Maximum="1" Value="0"
                                  Height="4" Visibility="Collapsed" />
+                    <StackPanel x:Name="CopyCollisionDecisionPanel"
+                                Orientation="Horizontal" Spacing="6"
+                                Visibility="Collapsed">
+                        <TextBlock Text="Resolve Ask-later collisions:" VerticalAlignment="Center" Opacity="0.72" />
+                        <Button x:Name="ResolveCopyCollisionSkipButton"
+                                Content="Skip existing"
+                                Loaded="ResolveCopyCollisionSkipButton_Loaded"
+                                Click="ResolveCopyCollisionSkipButton_Click"
+                                IsEnabled="False"
+                                ToolTipService.ToolTip="Create a fresh immutable Copy plan that explicitly skips existing destination entries; fresh preflight is required" />
+                        <Button x:Name="ResolveCopyCollisionStopButton"
+                                Content="Stop on collision"
+                                Click="ResolveCopyCollisionStopButton_Click"
+                                IsEnabled="False"
+                                ToolTipService.ToolTip="Create a fresh immutable Copy plan that explicitly stops if a collision is still present; fresh preflight is required" />
+                    </StackPanel>
                 </StackPanel>
 
                 <ListView x:Name="OperationQueueList" Grid.Row="2" MaxHeight="128"
