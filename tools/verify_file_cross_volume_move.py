@@ -129,7 +129,7 @@ def check_repository(root: Path) -> int:
         'RecoveryRequired',
         'sourceDirectoryIdentity.VolumeSerialNumber == destinationDirectoryIdentity.VolumeSerialNumber',
         'source-delete barrier must be RecoveryRequired, not Failed',
-        'Cross-volume Move requires a separate composite transaction journal',
+        'Independent composite journal for cross-volume Move',
     ]
     for needle in required_history:
         assert needle in source['history'] or needle in source['store'], needle
@@ -163,13 +163,13 @@ def check_repository(root: Path) -> int:
     required_executor = [
         'FileMoveExecutionStrategy.CrossVolumeCopyDeleteRequired',
         'DestinationCommitted is deliberately a cancellation-safe checkpoint.',
-        'no cancellation is passed beyond SourceDeleteStarted',
+        'No cancellation is passed beyond SourceDeleteStarted',
         'CancellationToken.None',
         'The copied destination remains committed and the original source was retained',
         'MarkRecoveryRequiredAsync(',
     ]
     for needle in required_executor:
-        assert needle.lower() in executor.lower(), needle
+        assert needle in executor, needle
 
     required_contract = [
         'SourceDeleteMutationAuthorized => false',
@@ -184,7 +184,7 @@ def check_repository(root: Path) -> int:
     required_primitive = [
         'FileShare.Read,',
         'HashMainStream(destinationFile, cancellationToken)',
-        'destinationContentFingerprint',
+        'request.DestinationContentFingerprint',
         'Delete | FileReadAttributes | Synchronize',
         'NtCreateFile(',
         'NtSetInformationFile(',
