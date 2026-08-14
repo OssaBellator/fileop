@@ -75,7 +75,7 @@ The native **Optimize** view is a bounded evidence advisor over the durable inde
 - large files, ranked by physical allocation when known and logical size otherwise;
 - old large files using an explicit last-write age threshold;
 - same-size groups of distinct physical files as a cheap duplicate-candidate prefilter;
-- current-user known-location review evidence for Downloads and Temp when those paths are within the current supported indexed-source boundary;
+- current-user known-location review evidence for Downloads and Temp on the active indexed volume or another already indexed, checkpointed native volume;
 - measured Search/Storage/index/performance evidence.
 
 Same-size is **not** content equality. The full indexed group carries only a logical candidate upper bound.
@@ -106,7 +106,9 @@ See `docs/storage-threshold-overlay.md` and `docs/storage-threshold-preferences.
 
 Downloads is resolved through the Windows known-folder API; Temp uses the current-user environment path. Location, age, size, extension and rule ID remain review provenance only and never establish that a file is safe to delete.
 
-On current `main`, known-location review is bounded by the active native indexed volume. A redirected location outside that source is reported rather than silently scanned. Review evidence can be handed to Files only within the supported indexed browser source; cleanup readiness remains a separate read-only current-path check.
+Known-location review can use the active native volume or a redirected Downloads/Temp path on another already indexed, checkpointed native volume. Cross-volume review binds evidence to the exact indexed volume identity/root, requires current checkpoint/catalog provenance before publication, and never rebuilds or switches the primary source implicitly. Candidate rows are admitted only when the indexed path is fully qualified, contained by the reviewed root, and consistent with its indexed name/extension metadata; malformed or out-of-root rows are filtered.
+
+**Check readiness** remains read-only and can revalidate a reviewed cross-volume candidate against its owning indexed source. **Review in Files** remains primary-volume-only: cross-volume candidates are not handed to Files through a direct-filesystem fallback. Permanent deletion still starts independently from Files and must pass its fresh delete boundary.
 
 ## Performance and device evidence
 
