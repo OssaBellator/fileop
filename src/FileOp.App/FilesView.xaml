@@ -50,7 +50,7 @@
 
                 <TextBlock x:Name="IntentText"
                            Grid.Column="2"
-                           Text="Select one or more entries in a source pane, then prepare a direction. Queueing is planning only; no file operation is executed."
+                           Text="Select one or more entries in a source pane, then prepare a direction. Queueing only captures an immutable plan; regular-file Copy can run only after read-only preflight is Ready."
                            Opacity="0.68"
                            TextWrapping="Wrap"
                            VerticalAlignment="Center" />
@@ -69,10 +69,10 @@
                 <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom">
                     <Button x:Name="QueueCopyButton" Content="Queue Copy"
                             Click="QueueCopyButton_Click" IsEnabled="False"
-                            ToolTipService.ToolTip="Add an immutable copy plan to the in-memory queue; nothing is executed" />
+                            ToolTipService.ToolTip="Add an immutable Copy plan to the in-memory queue; queueing itself does not execute anything" />
                     <Button x:Name="QueueMoveButton" Content="Queue Move"
                             Click="QueueMoveButton_Click" IsEnabled="False"
-                            ToolTipService.ToolTip="Add an immutable move plan to the in-memory queue; nothing is executed" />
+                            ToolTipService.ToolTip="Add an immutable Move plan to the in-memory queue; Move execution remains disabled" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -95,20 +95,24 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Planned operation queue" FontWeight="SemiBold" />
                     <TextBlock x:Name="QueueCountText" Grid.Column="1" Opacity="0.65" VerticalAlignment="Center" />
                     <Button x:Name="PreflightQueuedOperationButton" Grid.Column="2" Content="Preflight selected"
                             Click="PreflightQueuedOperationButton_Click" IsEnabled="False"
                             ToolTipService.ToolTip="Read current path metadata for the selected plan; this does not execute or authorize file changes" />
-                    <Button x:Name="RemoveQueuedOperationButton" Grid.Column="3" Content="Remove selected"
+                    <Button x:Name="RunQueuedCopyButton" Grid.Column="3" Content="Run selected Copy"
+                            Loaded="RunQueuedCopyButton_Loaded" IsEnabled="False"
+                            ToolTipService.ToolTip="Execute a Ready regular-file Copy plan through the reviewed canonical-validation, durable-history and identity-bound mutation boundary" />
+                    <Button x:Name="RemoveQueuedOperationButton" Grid.Column="4" Content="Remove selected"
                             Click="RemoveQueuedOperationButton_Click" IsEnabled="False" />
-                    <Button x:Name="ClearQueueButton" Grid.Column="4" Content="Clear queue"
+                    <Button x:Name="ClearQueueButton" Grid.Column="5" Content="Clear queue"
                             Click="ClearQueueButton_Click" IsEnabled="False" />
                 </Grid>
 
                 <TextBlock x:Name="QueueStatusText" Grid.Row="1"
-                           Text="Plans are session-only. Preflight reads live metadata only; execution remains disabled."
+                           Text="Queueing and preflight are non-mutating. Ready regular-file Copy plans can use the reviewed executor; Move execution remains disabled."
                            Opacity="0.65" TextWrapping="Wrap" />
 
                 <ListView x:Name="OperationQueueList" Grid.Row="2" MaxHeight="128"
