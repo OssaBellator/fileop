@@ -36,7 +36,7 @@ The generated `.sha256` file is publication material, not self-authentication. A
 
 ## Install and update
 
-`tools/install-release.ps1` requires an elevated PowerShell process, an **independently supplied** `-TrustedPackageSha256` and an **independently supplied** `-TrustedSignerThumbprint`.
+`tools/install-release.ps1` requires an elevated **64-bit PowerShell host on 64-bit Windows**, an **independently supplied** `-TrustedPackageSha256` and an **independently supplied** `-TrustedSignerThumbprint`. The package is x64, and refusing a 32-bit host prevents process-bitness redirection of the Program Files known folder into the x86 installation tree.
 
 This release tooling owns exactly one binary installation target: the canonical `%ProgramFiles%\FileOp` directory. There is deliberately no caller-selectable install root. An elevated updater that accepted an arbitrary destination would become a generic privileged rename/delete primitive and would weaken the runtime helper-path trust boundary. A future custom installation location requires its own reviewed ACL/path-protection policy rather than a free-form path switch.
 
@@ -46,6 +46,7 @@ The expected package hash and signer are deliberately not learned from the packa
 
 Before replacing an installation it:
 
+- requires a 64-bit OS and 64-bit PowerShell process before resolving privileged paths;
 - resolves and rechecks the canonical `%ProgramFiles%\FileOp` target from the Program Files known folder and refuses environment-variable or caller-selected fallback paths;
 - verifies the complete ZIP against the independently supplied SHA-256 before extraction;
 - expands the package into a temporary directory;
@@ -70,7 +71,7 @@ Any future persistent schema migration must be backward/forward policy-aware bef
 
 ## Uninstall
 
-`tools/uninstall-fileop.ps1` removes only the canonical `%ProgramFiles%\FileOp` installation. It has no caller-selectable install root, so the elevated recursive delete cannot be redirected to an arbitrary filesystem path. It also refuses to delete the canonical install root if that root is a reparse point.
+`tools/uninstall-fileop.ps1` also requires a 64-bit PowerShell host on 64-bit Windows and removes only the canonical `%ProgramFiles%\FileOp` installation. It has no caller-selectable install root, so the elevated recursive delete cannot be redirected to an arbitrary filesystem path. It also refuses to delete the canonical install root if that root is a reparse point.
 
 Both the Program Files binary root and the current-user LocalApplicationData purge root are resolved through OS/.NET known-folder APIs rather than trusting mutable `ProgramFiles` or `LOCALAPPDATA` environment variables. `-PurgeUserData` then derives only the `FileOp` child beneath that known LocalApplicationData root and rechecks the resolved child before deletion.
 
@@ -78,4 +79,4 @@ Per-user FileOp data is preserved by default so uninstall/reinstall does not sil
 
 ## Remaining release validation
 
-The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for package-hash mismatch, unsigned/wrong-signer binaries, a multi-signature helper, manifest-signer mismatch, unexpected payload files, running-app/helper replacement attempts, reparse-point install/user-data roots, environment-variable root spoofing and attempts to use a user-writable/custom helper location.
+The package/install scripts themselves require the batched Windows gate plus a real signing certificate dry run before a production release. That validation must include a successful pinned elevated-helper launch from the installed Program Files location and negative tests for package-hash mismatch, unsigned/wrong-signer binaries, a multi-signature helper, manifest-signer mismatch, unexpected payload files, running-app/helper replacement attempts, reparse-point install/user-data roots, environment-variable root spoofing, a 32-bit PowerShell host and attempts to use a user-writable/custom helper location.
