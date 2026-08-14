@@ -140,10 +140,13 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
         Assert.IsFalse(result.CanBeginMutation);
         Assert.AreEqual(0, probe.QueryCalls);
         Assert.AreEqual(0, probe.QueriedPaths.Count);
-        StringAssert.Contains(result.Summary, "Cross-volume Move destructive execution is disabled");
-        StringAssert.Contains(result.Summary, "#186");
-        StringAssert.Contains(result.Summary, "#187");
+        StringAssert.Contains(result.Summary, "Cross-volume Move is currently disabled");
+        StringAssert.Contains(result.Summary, "security-fidelity");
+        StringAssert.Contains(result.Summary, "final mutation-stability");
+        StringAssert.Contains(result.Summary, "Choose a destination on the same volume");
         StringAssert.Contains(result.Summary, "No durable history, destination Copy, or source-delete mutation");
+        Assert.IsFalse(result.Summary.Contains("#186", StringComparison.Ordinal));
+        Assert.IsFalse(result.Summary.Contains("#187", StringComparison.Ordinal));
     }
 
     [TestMethod]
