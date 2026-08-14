@@ -94,6 +94,7 @@ def check_repository(root: Path) -> int:
     model = (root / "src/FileOp.Core/Storage/StorageKnownLocationReview.cs").read_text(encoding="utf-8")
     resolver = (root / "src/FileOp.Windows/Storage/WindowsKnownFolderPathResolver.cs").read_text(encoding="utf-8")
     engine = (root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReview.cs").read_text(encoding="utf-8")
+    cross_volume = (root / "src/FileOp.App/DesktopSearchEngine.KnownLocationReviewCrossVolume.cs").read_text(encoding="utf-8")
     xaml = (root / "src/FileOp.App/StorageKnownLocationReviewView.xaml").read_text(encoding="utf-8")
     view = (root / "src/FileOp.App/StorageKnownLocationReviewView.xaml.cs").read_text(encoding="utf-8")
     parent = (root / "src/FileOp.App/StorageOptimizationView.xaml.cs").read_text(encoding="utf-8")
@@ -181,14 +182,15 @@ def check_repository(root: Path) -> int:
         "Path.GetTempPath()",
         "capturedRoot",
         "StorageRootPath is not { } currentRoot",
-        "The native indexing source changed while known-location review evidence was being captured.",
+        "The native indexing source changed or fell behind while known-location review evidence was being captured.",
         "IsReviewPathWithinRoot",
-        "StorageReviewLocationStatus.OutsideActiveVolume",
         "AnalyzeStorageOptimizationAsync(fullPath)",
         "StorageKnownLocationReviewClassifier.Classify",
     ):
         assert needle in engine, needle
         checks += 1
+    assert "StorageReviewLocationStatus.OutsideActiveVolume" in cross_volume
+    checks += 1
     for forbidden in (
         "FileSystemCrawler",
         "Directory.Enumerate",
