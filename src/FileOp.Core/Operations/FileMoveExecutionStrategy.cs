@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using FileOp.Core.Models;
 
@@ -145,10 +146,18 @@ public static class FileMoveExecutionStrategyClassifier
         if (sourceDirectoryIdentity.VolumeSerialNumber ==
             destinationDirectoryIdentity.VolumeSerialNumber)
         {
+            if (!IsLocalDrivePath(validation.SourceDirectory.CanonicalPath) ||
+                !IsLocalDrivePath(validation.DestinationDirectory.CanonicalPath))
+            {
+                return Blocked(
+                    validation,
+                    "The first identity-bound same-volume rename primitive supports local drive-letter paths only; UNC/network Move remains unsupported.");
+            }
+
             return new FileMoveExecutionStrategyClassification(
                 validation,
                 FileMoveExecutionStrategy.SameVolumeRenameRequired,
-                "Validated file Move entries remain on one volume and require a separately reviewed identity-bound rename/move primitive plus durable Move history before execution can be enabled.");
+                "Validated regular-file Move entries remain on one local volume and can use the reviewed identity-bound rename primitive once durable Move history is available.");
         }
 
         return new FileMoveExecutionStrategyClassification(
@@ -170,6 +179,23 @@ public static class FileMoveExecutionStrategyClassifier
 
         identity = default;
         return false;
+    }
+
+    private static bool IsLocalDrivePath(string path)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(path));
+            return root is { Length: >= 3 } &&
+                root[1] == Path.VolumeSeparatorChar &&
+                (root[2] == Path.DirectorySeparatorChar ||
+                 root[2] == Path.AltDirectorySeparatorChar);
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 
     private static FileMoveExecutionStrategyClassification Blocked(
