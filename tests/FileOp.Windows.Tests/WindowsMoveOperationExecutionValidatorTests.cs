@@ -101,6 +101,28 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
     }
 
     [TestMethod]
+    public async Task MutationReadyMoveWithoutRootIdentityFailsClosedBeforeNamespaceProbe()
+    {
+        var ready = CreateReadyValidation(
+            FileOperationKind.Move,
+            includeDestinationRootIdentity: false);
+        var probe = new StubNamespaceProbe(_ =>
+            FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
+        var validator = new WindowsMoveOperationExecutionValidator(
+            new StaticExecutionValidator(ready),
+            probe);
+
+        var result = await validator.ValidateAsync(ready.Plan);
+
+        Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
+        Assert.IsFalse(result.CanBeginMutation);
+        Assert.AreEqual(0, probe.QueryCalls);
+        Assert.AreEqual(0, probe.QueriedPaths.Count);
+        StringAssert.Contains(result.Summary, "stable source and destination root filesystem identities");
+        StringAssert.Contains(result.Summary, "No durable mutation history or filesystem mutation");
+    }
+
+    [TestMethod]
     public async Task CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory()
     {
         var ready = CreateReadyValidation(
@@ -143,7 +165,8 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
 
     private static FileOperationExecutionValidationResult CreateReadyValidation(
         FileOperationKind kind,
-        ulong destinationVolumeSerialNumber = 11)
+        ulong destinationVolumeSerialNumber = 11,
+        bool includeDestinationRootIdentity = true)
     {
         var sourceDirectory = Path.GetFullPath(@"C:\Source");
         var destinationDirectory = Path.GetFullPath(
@@ -197,7 +220,9 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
                 canonicalDestinationDirectory,
                 FileOperationCanonicalPathState.Directory,
                 IsLeafReparsePoint: false,
-                Identity: new FileIdentity(destinationVolumeSerialNumber, 20)),
+                Identity: includeDestinationRootIdentity
+                    ? new FileIdentity(destinationVolumeSerialNumber, 20)
+                    : null),
             new[] { item },
             FileOperationExecutionValidationStatus.Ready,
             new DateTimeOffset(2026, 8, 14, 0, 1, 0, TimeSpan.Zero),
