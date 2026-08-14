@@ -99,7 +99,12 @@ public sealed record FileCrossVolumeMoveActionHistory
 
         for (var ordinal = 0; ordinal < snapshot.Length; ordinal++)
         {
-            ValidateEntry(snapshot[ordinal], ordinal, collisionPolicy);
+            ValidateEntry(
+                snapshot[ordinal],
+                ordinal,
+                collisionPolicy,
+                sourceDirectoryIdentity,
+                destinationDirectoryIdentity);
         }
 
         ValidateTerminalState(snapshot, terminalState, completedAtUtc);
@@ -165,7 +170,9 @@ public sealed record FileCrossVolumeMoveActionHistory
     private static void ValidateEntry(
         FileCrossVolumeMoveActionEntry entry,
         int expectedOrdinal,
-        FileOperationCollisionPolicy collisionPolicy)
+        FileOperationCollisionPolicy collisionPolicy,
+        FileIdentity sourceDirectoryIdentity,
+        FileIdentity destinationDirectoryIdentity)
     {
         ArgumentNullException.ThrowIfNull(entry);
         ArgumentNullException.ThrowIfNull(entry.Entry);
@@ -180,6 +187,17 @@ public sealed record FileCrossVolumeMoveActionHistory
         {
             throw new ArgumentException(
                 "Cross-volume Move history supports regular files only.");
+        }
+        if (entry.SourceIdentity.VolumeSerialNumber != sourceDirectoryIdentity.VolumeSerialNumber)
+        {
+            throw new ArgumentException(
+                "Cross-volume Move source entry identity must remain bound to the durable source-root volume.");
+        }
+        if (entry.DestinationIdentity is FileIdentity destinationIdentity &&
+            destinationIdentity.VolumeSerialNumber != destinationDirectoryIdentity.VolumeSerialNumber)
+        {
+            throw new ArgumentException(
+                "Cross-volume Move destination evidence must remain bound to the durable destination-root volume.");
         }
 
         var hasDestinationEvidence =
@@ -266,21 +284,29 @@ public sealed record FileCrossVolumeMoveActionHistory
                     throw new ArgumentException(
                         "A Failed cross-volume Move entry may retain destination evidence only when destination commit was durable.");
                 }
+                if (hasDestinationEvidence)
+                {
+                    RequirePresent(entry.CopyMutationStartedAtUtc, nameof(entry.CopyMutationStartedAtUtc));
+                }
+                else
+                {
+                    RequireNull(entry.CopyMutationStartedAtUtc, nameof(entry.CopyMutationStartedAtUtc));
+                }
                 break;
 
             case FileCrossVolumeMoveEntryState.RecoveryRequired:
                 RequirePresent(entry.Failure, nameof(entry.Failure));
                 RequirePresent(entry.CompletedAtUtc, nameof(entry.CompletedAtUtc));
+                RequirePresent(entry.CopyMutationStartedAtUtc, nameof(entry.CopyMutationStartedAtUtc));
                 if (entry.DestinationCommittedAtUtc.HasValue != hasDestinationEvidence)
                 {
                     throw new ArgumentException(
                         "Recovery-sensitive destination commit evidence must be complete when recorded.");
                 }
-                if (!entry.CopyMutationStartedAtUtc.HasValue &&
-                    !entry.SourceDeleteStartedAtUtc.HasValue)
+                if (entry.SourceDeleteStartedAtUtc.HasValue)
                 {
-                    throw new ArgumentException(
-                        "RecoveryRequired must follow a durable copy or source-delete mutation barrier.");
+                    RequireDestinationEvidence(entry, hasDestinationEvidence);
+                    RequirePresent(entry.DestinationCommittedAtUtc, nameof(entry.DestinationCommittedAtUtc));
                 }
                 break;
 
