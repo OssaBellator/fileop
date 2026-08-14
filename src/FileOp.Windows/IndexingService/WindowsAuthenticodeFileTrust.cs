@@ -180,8 +180,8 @@ internal static class WindowsAuthenticodeFileTrust
 
 /// <summary>
 /// Rejects elevation from a helper/app directory that the current unelevated token
-/// can mutate. The check intentionally asks the kernel for write-like access rather
-/// than attempting to manually approximate Windows ACL evaluation.
+/// can mutate. Each dangerous access right is probed independently so possessing
+/// any one mutation capability is enough to block elevation.
 /// </summary>
 internal static class WindowsElevatedHelperPathProtection
 {
@@ -191,12 +191,32 @@ internal static class WindowsElevatedHelperPathProtection
     private const uint DeleteAccess = 0x00010000;
     private const uint WriteDac = 0x00040000;
     private const uint WriteOwner = 0x00080000;
-    private const uint Synchronize = 0x00100000;
     private const uint FileAddFile = 0x0002;
     private const uint FileAddSubdirectory = 0x0004;
     private const uint FileDeleteChild = 0x0040;
     private const uint FileFlagBackupSemantics = 0x02000000;
     private const uint FileFlagOpenReparsePoint = 0x00200000;
+
+    private static readonly uint[] FileMutationRights =
+    [
+        FileWriteData,
+        FileAppendData,
+        FileWriteAttributes,
+        DeleteAccess,
+        WriteDac,
+        WriteOwner,
+    ];
+
+    private static readonly uint[] DirectoryMutationRights =
+    [
+        FileAddFile,
+        FileAddSubdirectory,
+        FileDeleteChild,
+        FileWriteAttributes,
+        DeleteAccess,
+        WriteDac,
+        WriteOwner,
+    ];
 
     internal static void RequireProtectedLaunchPath(string helperPath)
     {
@@ -206,39 +226,45 @@ internal static class WindowsElevatedHelperPathProtection
         var parentDirectory = Directory.GetParent(helperDirectory)?.FullName
             ?? throw new InvalidOperationException("The indexing helper directory has no parent directory.");
 
-        if (CanOpenForMutation(fullHelperPath, isDirectory: false))
+        if (CanOpenForAnyMutation(fullHelperPath, isDirectory: false))
         {
             throw new UnauthorizedAccessException(
                 "Elevated helper launch is blocked because the current unelevated token can mutate the helper executable.");
         }
 
-        if (CanOpenForMutation(helperDirectory, isDirectory: true))
+        if (CanOpenForAnyMutation(helperDirectory, isDirectory: true))
         {
             throw new UnauthorizedAccessException(
                 "Elevated helper launch is blocked because the current unelevated token can mutate the helper directory.");
         }
 
-        if (CanOpenForMutation(parentDirectory, isDirectory: true))
+        if (CanOpenForAnyMutation(parentDirectory, isDirectory: true))
         {
             throw new UnauthorizedAccessException(
                 "Elevated helper launch is blocked because the current unelevated token can replace the helper directory from its parent.");
         }
     }
 
-    private static bool CanOpenForMutation(string path, bool isDirectory)
+    private static bool CanOpenForAnyMutation(string path, bool isDirectory)
     {
-        var desiredAccess = isDirectory
-            ? FileAddFile | FileAddSubdirectory | FileDeleteChild | FileWriteAttributes | DeleteAccess | WriteDac | WriteOwner | Synchronize
-            : FileWriteData | FileAppendData | FileWriteAttributes | DeleteAccess | WriteDac | WriteOwner | Synchronize;
-        using var handle = CreateFileW(
-            path,
-            desiredAccess,
-            FileShare.ReadWrite | FileShare.Delete,
-            IntPtr.Zero,
-            FileMode.Open,
-            (isDirectory ? FileFlagBackupSemantics : 0) | FileFlagOpenReparsePoint,
-            IntPtr.Zero);
-        return !handle.IsInvalid;
+        var rights = isDirectory ? DirectoryMutationRights : FileMutationRights;
+        foreach (var desiredAccess in rights)
+        {
+            using var handle = CreateFileW(
+                path,
+                desiredAccess,
+                FileShare.ReadWrite | FileShare.Delete,
+                IntPtr.Zero,
+                FileMode.Open,
+                (isDirectory ? FileFlagBackupSemantics : 0) | FileFlagOpenReparsePoint,
+                IntPtr.Zero);
+            if (!handle.IsInvalid)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
