@@ -129,12 +129,10 @@
                         <Button x:Name="ResolveCopyCollisionSkipButton"
                                 Content="Skip existing"
                                 Loaded="ResolveCopyCollisionSkipButton_Loaded"
-                                Click="ResolveCopyCollisionSkipButton_Click"
                                 IsEnabled="False"
                                 ToolTipService.ToolTip="Create a fresh immutable Copy plan that explicitly skips existing destination entries; fresh preflight is required" />
                         <Button x:Name="ResolveCopyCollisionStopButton"
                                 Content="Stop on collision"
-                                Click="ResolveCopyCollisionStopButton_Click"
                                 IsEnabled="False"
                                 ToolTipService.ToolTip="Create a fresh immutable Copy plan that explicitly stops if a collision is still present; fresh preflight is required" />
                     </StackPanel>
