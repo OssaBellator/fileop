@@ -99,7 +99,10 @@ def check_repository(root: Path) -> int:
         '$manifestThumbprint -ne $expectedThumbprint',
         'independently supplied trusted signer',
         "Join-Path $env:ProgramFiles 'FileOp'",
-        "Get-Process -Name 'FileOp.App'",
+        "Get-Process -Name 'FileOp.App', 'FileOp.Indexer'",
+        'wait for its indexing helper to exit before installing or updating',
+        '[System.Collections.Generic.HashSet[string]]',
+        '[System.StringComparer]::OrdinalIgnoreCase',
         "$segments = @($relative -split '[\\\\/]')",
         '$path.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar',
         '$manifestPaths.Add($relative)',
@@ -123,9 +126,15 @@ def check_repository(root: Path) -> int:
     assert package_hash_check < extraction
 
     uninstall = source['uninstall']
-    assert 'PurgeUserData' in uninstall
-    assert "Join-Path $env:LOCALAPPDATA 'FileOp'" in uninstall
-    assert 'Per-user data remains' in uninstall
+    required_uninstall = [
+        'PurgeUserData',
+        "Join-Path $env:LOCALAPPDATA 'FileOp'",
+        'Per-user data remains',
+        "Get-Process -Name 'FileOp.App', 'FileOp.Indexer'",
+        'wait for its indexing helper to exit before uninstalling',
+    ]
+    for needle in required_uninstall:
+        assert needle in uninstall, needle
 
     docs = source['docs'].casefold()
     assert 'does not accept an environment variable as a signer trust root' in docs
@@ -144,7 +153,7 @@ def check_repository(root: Path) -> int:
         + len(required_package)
         + len(required_install)
         + 1
-        + 3
+        + len(required_uninstall)
         + 6
         + 1
     )
