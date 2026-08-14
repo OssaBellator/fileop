@@ -1,12 +1,15 @@
 param(
     [Parameter(Mandatory = $true)][ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })][string]$PackageZip,
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9A-Fa-f]{64}$')][string]$TrustedPackageSha256,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9A-Fa-f ]{40,}$')][string]$TrustedSignerThumbprint,
-    [string]$InstallDirectory = (Join-Path $env:ProgramFiles 'FileOp')
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9A-Fa-f ]{40,}$')][string]$TrustedSignerThumbprint
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if ([string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+    throw 'The canonical Program Files directory is unavailable. FileOp release install/update will not use a caller-selected fallback path.'
+}
 
 $expectedPackageHash = $TrustedPackageSha256.ToLowerInvariant()
 $expectedThumbprint = ($TrustedSignerThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
@@ -31,9 +34,25 @@ if ($actualPackageHash -ne $expectedPackageHash) {
     throw "Package SHA-256 does not match independently supplied release metadata. Expected $expectedPackageHash, got $actualPackageHash."
 }
 
-$install = [IO.Path]::GetFullPath($InstallDirectory)
+# Release tooling intentionally owns exactly one install root. A caller-selectable
+# elevated rename/delete target would turn this updater into a generic privileged
+# filesystem mutation primitive and would weaken the helper-path trust boundary.
+$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($env:ProgramFiles))
+$install = [IO.Path]::GetFullPath((Join-Path $programFiles 'FileOp'))
+$expectedInstall = $programFiles + [IO.Path]::DirectorySeparatorChar + 'FileOp'
+if (-not [string]::Equals(
+        [IO.Path]::TrimEndingDirectorySeparator($install),
+        $expectedInstall,
+        [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The FileOp release install root did not resolve to the canonical Program Files\FileOp path.'
+}
 $parent = Split-Path -Parent $install
-if ([string]::IsNullOrWhiteSpace($parent)) { throw 'InstallDirectory must have a parent directory.' }
+if (-not [string]::Equals(
+        [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($parent)),
+        $programFiles,
+        [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The FileOp release install parent did not resolve to the canonical Program Files directory.'
+}
 New-Item -ItemType Directory -Path $parent -Force | Out-Null
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("FileOp.Install." + [Guid]::NewGuid().ToString('N'))
@@ -116,6 +135,10 @@ try {
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     Copy-Item -Path (Join-Path $temp '*') -Destination $stage -Recurse -Force
     if (Test-Path -LiteralPath $install) {
+        $existingInstall = Get-Item -LiteralPath $install -Force
+        if ($existingInstall.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'The existing canonical FileOp install path is a reparse point; refusing privileged replacement.'
+        }
         Move-Item -LiteralPath $install -Destination $backup
         $backupCreated = $true
     }
