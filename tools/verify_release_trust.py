@@ -117,32 +117,48 @@ def check_repository(root: Path) -> int:
         'canonical Program Files\\FileOp path',
         "Get-Process -Name 'FileOp.App', 'FileOp.Indexer'",
         'wait for its indexing helper to exit before installing or updating',
+        '$work = Join-Path $parent (".FileOp.work." + [Guid]::NewGuid().ToString(\'N\'))',
+        "$stage = Join-Path $work 'payload'",
+        "$protectedPackage = Join-Path $work 'fileop-release.zip'",
+        'Copy-Item -LiteralPath $package -Destination $protectedPackage',
+        '$protectedPackageHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $protectedPackage).Hash.ToLowerInvariant()',
+        '$protectedPackageHash -ne $expectedPackageHash',
+        'protected package copy no longer matches the independently supplied SHA-256',
+        'Expand-Archive -LiteralPath $protectedPackage -DestinationPath $stage -Force',
+        '$stageRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($stage))',
         '[System.Collections.Generic.HashSet[string]]',
         '[System.StringComparer]::OrdinalIgnoreCase',
         "$segments = @($relative -split '[\\\\/]')",
-        '$path.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar',
+        '$path.StartsWith($stageRoot + [IO.Path]::DirectorySeparatorChar',
         '$manifestPaths.Add($relative)',
         '[IO.FileAttributes]::ReparsePoint',
         'existing canonical FileOp install path is a reparse point',
         '$file.Length -ne [long]$entry.Length',
-        'Get-FileHash -Algorithm SHA256',
+        'Get-ChildItem -LiteralPath $stage -Recurse -File -Force',
         'unexpected file not listed by the manifest',
         'Get-AuthenticodeSignature',
         '$actual -ne $expectedThumbprint',
-        'New-Item -ItemType Directory -Path $stage -Force',
-        "Copy-Item -Path (Join-Path $temp '*') -Destination $stage -Recurse -Force",
+        'No user-writable intermediate copy exists after verification.',
         'Move-Item -LiteralPath $install -Destination $backup',
         'Move-Item -LiteralPath $stage -Destination $install',
         'Move-Item -LiteralPath $backup -Destination $install',
+        'Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue',
     ]
     for needle in required_install:
         assert needle in install, needle
+
     assert '[string]$InstallDirectory' not in install
     assert '$env:ProgramFiles' not in install
+    assert '[IO.Path]::GetTempPath()' not in install
+    assert 'Expand-Archive -LiteralPath $package' not in install
+    assert "Copy-Item -Path (Join-Path $temp '*') -Destination $stage" not in install
 
-    package_hash_check = install.index('$actualPackageHash -ne $expectedPackageHash')
-    extraction = install.index('Expand-Archive -LiteralPath $package')
-    assert package_hash_check < extraction
+    initial_hash_check = install.index('$actualPackageHash -ne $expectedPackageHash')
+    protected_copy = install.index('Copy-Item -LiteralPath $package -Destination $protectedPackage')
+    protected_hash_check = install.index('$protectedPackageHash -ne $expectedPackageHash')
+    extraction = install.index('Expand-Archive -LiteralPath $protectedPackage -DestinationPath $stage -Force')
+    final_publish = install.index('Move-Item -LiteralPath $stage -Destination $install')
+    assert initial_hash_check < protected_copy < protected_hash_check < extraction < final_publish
 
     uninstall = source['uninstall']
     required_uninstall = [
@@ -186,6 +202,9 @@ def check_repository(root: Path) -> int:
     assert 'known-folder' in docs
     assert 'environment variable' in docs
     assert '64-bit powershell host' in docs
+    assert 'protected program files work directory' in docs
+    assert 're-hashes that protected copy' in docs
+    assert 'no user-writable post-verification staging copy' in docs
     assert 'verify_release_trust.py --repo-root $repoRoot' in source['gate']
 
     assert 'GetEnvironmentVariable("FileOpTrustedIndexerSignerThumbprints"' not in source['trust']
@@ -196,10 +215,10 @@ def check_repository(root: Path) -> int:
         + len(required_policy)
         + len(required_package)
         + len(required_install)
-        + 3
+        + 10
         + len(required_uninstall)
         + 3
-        + 12
+        + 15
         + 1
     )
 
