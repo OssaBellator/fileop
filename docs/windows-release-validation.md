@@ -75,7 +75,65 @@ Verify:
 - the deterministic `WindowsMoveOperationExecutionValidatorTests` all pass, including the unavailable-capability test double;
 - blocked capability cases create no `MutationStarted` entry and perform no rename.
 
-## 4. Permanent-delete regression
+## 4. Dormant cross-volume Move native contract
+
+Cross-volume production execution must remain blocked while this section is being qualified. These tests exercise the reviewed transaction/preservation infrastructure directly and the Windows primitives it relies on; they do not authorize removal of the product kill-switch by themselves.
+
+Use disposable local NTFS volumes where a true cross-volume scenario is required.
+
+### Production refusal boundary
+
+Verify:
+
+- a freshly validated different-volume Move returns `Blocked` before namespace probing, durable cross-volume history, destination Copy or source-delete capability acquisition;
+- the queued Files plan remains non-mutated and no copied destination appears;
+- the runtime refusal text contains no internal issue numbers;
+- a malformed mutation-ready validation that has lost either root filesystem identity fails closed rather than throwing or guessing from drive letters.
+
+### #186 destination-default security policy
+
+Run the focused `WindowsFileCopyMutationSecurityPolicyTests` under an ordinary unelevated token.
+
+The regression must prove that:
+
+- the test can assign/read an ordinary DACL without enabling SACL/`SE_SECURITY_NAME` privilege;
+- the source is deliberately given a protected NULL DACL so source-security cloning is unambiguous;
+- the destination parent has an ordinary non-NULL DACL;
+- the **actual** `WindowsFileOperationExecutionValidator` and `WindowsFileCopyMutationPrimitive` create the destination;
+- the new destination has a non-NULL destination-context/default DACL rather than cloning the source NULL DACL;
+- the cross-volume fidelity path does not request `ACCESS_SYSTEM_SECURITY`, `BACKUP_SECURITY_INFORMATION` or SACL evidence.
+
+Also perform one real two-volume ordinary-token Copy/Move-engine dry run and record the source, destination-parent and destination DACL/inheritance outcome. This is a fidelity-policy validation, not a request to make ACLs identical across volumes.
+
+### #187 main-stream stability and scoped metadata/link semantics
+
+Run `FileCrossVolumeMoveFidelityShareCompatibilityTests` and record each focused result. They must demonstrate:
+
+- a pre-existing writable main-stream handle prevents acquisition of the `DELETE`-capable `FileShare.Read` source lease;
+- a writable main-stream mapping still prevents lease acquisition after the mapping's original file handle is closed;
+- after the destructive source lease is acquired, a new main-stream write-capable open receives a sharing violation until that lease is released;
+- the fidelity read reopen must share DELETE in order to coexist with the already-live source DELETE capability;
+- `FILE_WRITE_ATTRIBUTES` and `FILE_WRITE_EA` are **not** falsely represented as frozen by the share-mode lease;
+- deleting one selected hard-link entry leaves another source-volume hard link valid.
+
+Then exercise the direct composite engine on two local NTFS volumes and verify:
+
+- normal regular-file success reaches `DestinationCommitted` before `SourceDeleteStarted`, then `Moved`;
+- the final destination main-stream SHA-256 equals the durable committed Copy fingerprint;
+- cancellation at the safe post-Copy checkpoint leaves `DestinationCommitted` with both destination and original source present;
+- source ADS present at the pre-barrier checkpoint retains the source and never crosses `SourceDeleteStarted`;
+- source EA state present at the pre-barrier checkpoint retains the source and never crosses `SourceDeleteStarted`;
+- injected source ADS/EA or content drift detected after `SourceDeleteStarted` performs no inner delete mutation and settles `RecoveryRequired`;
+- a stable multi-link source may move the selected source directory entry while other source-volume links remain valid;
+- destination-only extra streams/EAs/hard links do not create source-delete authority or masquerade as copied source metadata;
+- no path-only source deletion or Copy-success-as-delete-authority occurs;
+- the source-delete disposition uses the same exact identity-bound source capability held through the final main-stream proof.
+
+Do not add or approve a generic oplock solely to make the design appear more atomic. If native tests expose a remaining main-stream race, document that exact race and review the narrow kernel primitive needed to close it. The current contract deliberately does not claim that unrelated basic-metadata, EA or independent-stream writers are globally frozen across a cross-volume copy/delete sequence.
+
+Only after this section and the complete exact-head gate are green should removal of the production cross-volume block be considered as a separate reviewed change.
+
+## 5. Permanent-delete regression
 
 The new Copy/Move stack must not weaken the existing destructive boundary.
 
@@ -91,7 +149,7 @@ Verify the existing permanent-delete Windows tests and one disposable UI session
 
 No Recycle Bin/restore operation is authorized by the permanent-delete receipt.
 
-## 5. Release signing and package trust
+## 6. Release signing and package trust
 
 Use a real test/release code-signing certificate appropriate for the release channel.
 
@@ -129,30 +187,36 @@ Then prove the following negative cases fail closed:
 - a test/refactor variant that tries to redirect install/update or uninstall away from `%ProgramFiles%\FileOp`;
 - an existing `%ProgramFiles%\FileOp` root replaced with a reparse point before install/update;
 - an existing `%ProgramFiles%\FileOp` root replaced with a reparse point before uninstall;
-- `%LOCALAPPDATA%\FileOp` replaced with a reparse point before `-PurgeUserData` uninstall;
 - install/update while `FileOp.App` is running;
 - install/update while `FileOp.Indexer` is running;
 - uninstall while either process is running.
 
 From the protected installed location, verify one real elevated helper launch and successful desktop/helper handshake. The same binary from a user-writable location must be rejected before `runas` is started.
 
-## 6. Update rollback and user-data preservation
+## 7. Update rollback, binary uninstall and per-user purge
 
 With a valid existing installation:
 
 - perform a successful update and confirm the new binary set is complete;
 - induce a replacement failure after the old installation is renamed to backup but before the protected verified payload becomes live, and confirm the old installation is restored;
 - induce a failure before live replacement and confirm the protected `.FileOp.work.*` directory is cleaned without changing the current live installation;
-- uninstall without `-PurgeUserData` and confirm `%LOCALAPPDATA%\FileOp` remains;
+- if stale backup/work cleanup fails **after** successful publication, confirm the installer reports cleanup debt without pretending the live update rolled back;
+- run `tools/uninstall-fileop.ps1` elevated and confirm it owns/removes only the canonical `%ProgramFiles%\FileOp` binary tree;
+- confirm elevated uninstall does **not** resolve or recursively delete current-user LocalApplicationData;
 - reinstall and confirm existing compatible per-user state is not silently deleted;
-- only an explicit `-PurgeUserData` uninstall may remove the per-user FileOp directory, and that purge must refuse a reparse-point user-data root.
+- run `tools/purge-user-data.ps1 -ConfirmPurge` under the ordinary current-user token and confirm it removes only the exact current-user FileOp LocalApplicationData tree;
+- confirm `purge-user-data.ps1` refuses an elevated/Administrator token;
+- confirm purge refuses a reparse-point user-data root and any nested reparse point before recursive deletion;
+- spoof `LOCALAPPDATA` and confirm purge still resolves the OS current-user LocalApplicationData known folder rather than trusting the environment variable.
 
-## 7. Capability/refusal regression
+The binary uninstall and per-user purge are intentionally separate trust boundaries. Do not reintroduce a `-PurgeUserData` switch on the elevated uninstaller.
+
+## 8. Capability/refusal regression
 
 Confirm the release UI/source behavior still refuses unfinished capabilities rather than silently falling back:
 
 - overwrite/replacement;
-- cross-volume Move mutation;
+- production cross-volume Move mutation until section 4 is green and a separate enablement review removes the block;
 - directory Copy/Move mutation;
 - Recycle Bin/restore execution;
 - different-account elevation/service behavior;
@@ -161,7 +225,7 @@ Confirm the release UI/source behavior still refuses unfinished capabilities rat
 
 The directory fidelity classifier may report a plain tree as eligible for a future executor, but that classification alone must never grant mutation authority.
 
-## 8. Validation record for the PR
+## 9. Validation record for the PR
 
 Post the final results to the consolidation PR with:
 
@@ -170,9 +234,11 @@ Post the final results to the consolidation PR with:
 - 64-bit PowerShell host/version;
 - `dotnet --info` summary;
 - aggregate `tools/test-local.ps1` result;
-- focused Copy/Move/delete results;
+- focused Copy/same-volume Move/cross-volume dormant-engine/delete results;
+- #186 ordinary-token destination-security result;
+- #187 writer/mapping/ADS/EA/hard-link results;
 - case-sensitive namespace results;
-- package/sign/protected-stage/install/update/uninstall results;
+- package/sign/protected-stage/install/update/binary-uninstall/user-purge results;
 - exact signing certificate thumbprint used for the test (certificate private material must never be attached);
 - any skipped scenario and the reason.
 
