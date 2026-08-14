@@ -98,6 +98,8 @@ def check_repository(root: Path) -> int:
     required_install = [
         '[string]$TrustedPackageSha256',
         '[string]$TrustedSignerThumbprint',
+        '[System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles)',
+        'will not use an environment-variable or caller-selected fallback path',
         '$expectedPackageHash = $TrustedPackageSha256.ToLowerInvariant()',
         '$actualPackageHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $package).Hash.ToLowerInvariant()',
         '$actualPackageHash -ne $expectedPackageHash',
@@ -105,7 +107,7 @@ def check_repository(root: Path) -> int:
         '$expectedThumbprint = ($TrustedSignerThumbprint',
         '$manifestThumbprint -ne $expectedThumbprint',
         'independently supplied trusted signer',
-        "$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($env:ProgramFiles))",
+        '$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($knownProgramFiles))',
         "$install = [IO.Path]::GetFullPath((Join-Path $programFiles 'FileOp'))",
         "$expectedInstall = $programFiles + [IO.Path]::DirectorySeparatorChar + 'FileOp'",
         'caller-selectable elevated rename/delete target',
@@ -133,6 +135,7 @@ def check_repository(root: Path) -> int:
     for needle in required_install:
         assert needle in install, needle
     assert '[string]$InstallDirectory' not in install
+    assert '$env:ProgramFiles' not in install
 
     package_hash_check = install.index('$actualPackageHash -ne $expectedPackageHash')
     extraction = install.index('Expand-Archive -LiteralPath $package')
@@ -141,12 +144,19 @@ def check_repository(root: Path) -> int:
     uninstall = source['uninstall']
     required_uninstall = [
         'PurgeUserData',
-        "$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($env:ProgramFiles))",
+        '[System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles)',
+        '[System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::LocalApplicationData)',
+        'will not use an environment-variable or caller-selected fallback path',
+        'will not use an environment-variable fallback for purge state',
+        '$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($knownProgramFiles))',
         "$install = [IO.Path]::GetFullPath((Join-Path $programFiles 'FileOp'))",
         "$expectedInstall = $programFiles + [IO.Path]::DirectorySeparatorChar + 'FileOp'",
         'not a generic elevated recursive-delete wrapper',
         'canonical FileOp install path is a reparse point',
-        "Join-Path $env:LOCALAPPDATA 'FileOp'",
+        '$localAppData = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($knownLocalAppData))',
+        "$userData = [IO.Path]::GetFullPath((Join-Path $localAppData 'FileOp'))",
+        "$expectedUserData = $localAppData + [IO.Path]::DirectorySeparatorChar + 'FileOp'",
+        'per-user data root did not resolve beneath the current-user LocalApplicationData known folder',
         'per-user data path is a reparse point',
         'Per-user data remains',
         "Get-Process -Name 'FileOp.App', 'FileOp.Indexer'",
@@ -155,6 +165,8 @@ def check_repository(root: Path) -> int:
     for needle in required_uninstall:
         assert needle in uninstall, needle
     assert '[string]$InstallDirectory' not in uninstall
+    assert '$env:ProgramFiles' not in uninstall
+    assert '$env:LOCALAPPDATA' not in uninstall
 
     docs = source['docs'].casefold()
     assert 'does not accept an environment variable as a signer trust root' in docs
@@ -165,6 +177,8 @@ def check_repository(root: Path) -> int:
     assert 'single embedded authenticode signature' in docs
     assert 'canonical `%programfiles%\\fileop`' in docs
     assert 'caller-selectable install root' in docs
+    assert 'known-folder' in docs
+    assert 'environment variable' in docs
     assert 'verify_release_trust.py --repo-root $repoRoot' in source['gate']
 
     assert 'GetEnvironmentVariable("FileOpTrustedIndexerSignerThumbprints"' not in source['trust']
@@ -175,10 +189,10 @@ def check_repository(root: Path) -> int:
         + len(required_policy)
         + len(required_package)
         + len(required_install)
-        + 2
+        + 3
         + len(required_uninstall)
-        + 1
-        + 9
+        + 3
+        + 11
         + 1
     )
 
