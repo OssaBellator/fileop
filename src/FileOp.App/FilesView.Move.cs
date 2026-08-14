@@ -82,6 +82,7 @@ public sealed partial class FilesView
     private async Task RunSelectedMoveAsync()
     {
         if (IsFileOperationExecutionBusy ||
+            _preflightRunning ||
             OperationQueueList.SelectedItem is not FileBrowserQueuedOperationRow row)
         {
             return;
@@ -107,7 +108,7 @@ public sealed partial class FilesView
         FileOperationExecutionValidationResult executionValidation;
         try
         {
-            executionValidation = await new WindowsFileOperationExecutionValidator()
+            executionValidation = await new WindowsMoveOperationExecutionValidator()
                 .ValidateAsync(plan);
         }
         catch (Exception exception)
@@ -172,7 +173,7 @@ public sealed partial class FilesView
             using var historyStore = new SqliteFileOperationActionHistoryStore(
                 GetFileOperationHistoryDatabasePath());
             var executor = new FileSameVolumeMoveOperationExecutor(
-                new WindowsFileOperationExecutionValidator(),
+                new WindowsMoveOperationExecutionValidator(),
                 historyStore,
                 new WindowsFileSameVolumeMoveMutationPrimitive());
             _activeMoveExecutor = executor;
@@ -252,6 +253,12 @@ public sealed partial class FilesView
 
     private bool CanAttemptMovePlan(FileOperationPlan plan, out string refusal)
     {
+        if (_preflightRunning)
+        {
+            refusal = "Wait for the current read-only preflight to finish before running Move.";
+            return false;
+        }
+
         if (plan.Kind != FileOperationKind.Move)
         {
             refusal = "Select a queued Move plan to use the Move executor.";
