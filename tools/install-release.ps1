@@ -1,10 +1,16 @@
 param(
     [Parameter(Mandatory = $true)][ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })][string]$PackageZip,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9A-Fa-f ]{40,}$')][string]$TrustedSignerThumbprint,
     [string]$InstallDirectory = (Join-Path $env:ProgramFiles 'FileOp')
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+$expectedThumbprint = ($TrustedSignerThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+if ($expectedThumbprint.Length -ne 40) {
+    throw 'TrustedSignerThumbprint must normalize to exactly 40 hexadecimal characters.'
+}
 
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -36,8 +42,11 @@ try {
     if ($manifest.Product -ne 'FileOp' -or $manifest.Architecture -ne 'x64') {
         throw 'The package manifest does not describe the supported FileOp x64 package.'
     }
-    $thumbprint = ([string]$manifest.TrustedSignerThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
-    if ($thumbprint.Length -ne 40) { throw 'The package manifest has an invalid trusted signer thumbprint.' }
+    $manifestThumbprint = ([string]$manifest.TrustedSignerThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+    if ($manifestThumbprint.Length -ne 40) { throw 'The package manifest has an invalid trusted signer thumbprint.' }
+    if ($manifestThumbprint -ne $expectedThumbprint) {
+        throw "The package signer pin does not match the independently supplied trusted signer. Expected $expectedThumbprint, manifest contains $manifestThumbprint."
+    }
 
     $tempRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($temp))
     foreach ($entry in $manifest.Files) {
@@ -67,8 +76,8 @@ try {
             throw "Invalid Authenticode signature in package: $($file.Name) ($($signature.Status))"
         }
         $actual = ($signature.SignerCertificate.Thumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
-        if ($actual -ne $thumbprint) {
-            throw "Signer mismatch in package for $($file.Name)."
+        if ($actual -ne $expectedThumbprint) {
+            throw "Signer mismatch in package for $($file.Name). Expected $expectedThumbprint, got $actual."
         }
     }
     if (-not ($signedFiles | Where-Object Name -eq 'FileOp.App.exe')) { throw 'Package has no signed FileOp.App.exe.' }
@@ -95,7 +104,7 @@ try {
         Remove-Item -LiteralPath $backup -Recurse -Force
         $backupCreated = $false
     }
-    Write-Host "PASS: FileOp $($manifest.Version) installed at $install" -ForegroundColor Green
+    Write-Host "PASS: FileOp $($manifest.Version) installed at $install with independently pinned signer $expectedThumbprint" -ForegroundColor Green
 }
 finally {
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
