@@ -27,6 +27,7 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
         var result = await validator.ValidateAsync(ready.Plan);
 
         Assert.AreEqual(1, probe.QueryCalls);
+        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, probe.QueriedPaths[0]);
         Assert.AreSame(ready.Plan, result.Plan);
         Assert.AreEqual(ready.Items.Count, result.Items.Count);
         Assert.AreSame(ready.Items[0], result.Items[0]);
@@ -52,6 +53,8 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
         var result = await validator.ValidateAsync(ready.Plan);
 
         Assert.AreEqual(2, probe.QueryCalls);
+        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, probe.QueriedPaths[0]);
+        Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, probe.QueriedPaths[1]);
         Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
         StringAssert.Contains(result.Summary, "UnsupportedCaseSensitiveDirectory");
         StringAssert.Contains(result.Summary, ready.DestinationDirectory.CanonicalPath);
@@ -73,6 +76,8 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
 
         Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
         Assert.AreEqual(2, probe.QueryCalls);
+        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, probe.QueriedPaths[0]);
+        Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, probe.QueriedPaths[1]);
         StringAssert.Contains(result.Summary, "Unavailable");
     }
 
@@ -90,6 +95,8 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
 
         Assert.AreSame(ready, result);
         Assert.AreEqual(2, probe.QueryCalls);
+        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, probe.QueriedPaths[0]);
+        Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, probe.QueriedPaths[1]);
         Assert.IsTrue(result.CanBeginMutation);
     }
 
@@ -107,6 +114,7 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
 
         Assert.AreSame(ready, result);
         Assert.AreEqual(0, probe.QueryCalls);
+        Assert.AreEqual(0, probe.QueriedPaths.Count);
     }
 
     private static FileOperationExecutionValidationResult CreateReadyValidation(FileOperationKind kind)
@@ -194,9 +202,12 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
 
         public int QueryCalls { get; private set; }
 
+        public System.Collections.Generic.List<string> QueriedPaths { get; } = new();
+
         public FileOperationNamespaceCapability QueryDirectory(string canonicalDirectoryPath)
         {
             QueryCalls++;
+            QueriedPaths.Add(canonicalDirectoryPath);
             var state = _stateForPath(canonicalDirectoryPath);
             return new FileOperationNamespaceCapability(
                 canonicalDirectoryPath,
