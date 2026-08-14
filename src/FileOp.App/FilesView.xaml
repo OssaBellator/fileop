@@ -72,7 +72,7 @@
                             ToolTipService.ToolTip="Add an immutable Copy plan to the in-memory queue; queueing itself does not execute anything" />
                     <Button x:Name="QueueMoveButton" Content="Queue Move"
                             Click="QueueMoveButton_Click" IsEnabled="False"
-                            ToolTipService.ToolTip="Add an immutable Move plan; production execution currently supports same-volume regular-file rename. Cross-volume composite infrastructure remains disabled pending #186/#187" />
+                            ToolTipService.ToolTip="Add an immutable Move plan; production execution currently supports same-volume regular-file rename. Cross-volume composite infrastructure remains disabled pending fidelity hardening" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -113,7 +113,7 @@
                             ToolTipService.ToolTip="Request cancellation through the active reviewed Copy executor; mutation is interrupted only at safe boundaries" />
                     <Button x:Name="RunQueuedMoveButton" Grid.Column="5" Content="Run Move"
                             Loaded="RunQueuedMoveButton_Loaded" IsEnabled="False"
-                            ToolTipService.ToolTip="Execute a Ready same-volume regular-file Move through identity-preserving rename; cross-volume Move remains product-disabled pending #186/#187" />
+                            ToolTipService.ToolTip="Execute a Ready same-volume regular-file Move through identity-preserving rename; cross-volume Move remains product-disabled pending fidelity hardening" />
                     <Button x:Name="CancelQueuedMoveButton" Grid.Column="6" Content="Cancel Move"
                             IsEnabled="False" Visibility="Collapsed"
                             ToolTipService.ToolTip="Request cancellation through the active reviewed same-volume Move executor; mutation settles only at reviewed safe boundaries" />
