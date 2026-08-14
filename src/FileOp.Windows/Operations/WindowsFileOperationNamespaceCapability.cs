@@ -22,12 +22,19 @@ public sealed record FileOperationNamespaceCapability(
         State == FileOperationNamespaceCapabilityState.SupportedCaseInsensitive;
 }
 
+public interface IFileOperationNamespaceCapabilityProbe
+{
+    FileOperationNamespaceCapability QueryDirectory(string canonicalDirectoryPath);
+
+    void RequireSupportedMutationRoots(FileOperationExecutionValidationResult validation);
+}
+
 /// <summary>
 /// Queries the per-directory NTFS case-sensitive flag through NtQueryInformationFile.
 /// The current FileOp operation/index path model is intentionally case-insensitive,
 /// so a flagged directory fails closed for mutation rather than aliasing exact-case names.
 /// </summary>
-public sealed class WindowsFileOperationNamespaceCapabilityProbe
+public sealed class WindowsFileOperationNamespaceCapabilityProbe : IFileOperationNamespaceCapabilityProbe
 {
     private const uint FileReadAttributes = 0x0080;
     private const uint FileFlagBackupSemantics = 0x02000000;
