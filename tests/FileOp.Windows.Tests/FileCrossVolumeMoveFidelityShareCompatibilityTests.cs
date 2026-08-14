@@ -36,9 +36,10 @@ public sealed class FileCrossVolumeMoveFidelityShareCompatibilityTests
                 FileMode.Open,
                 0,
                 IntPtr.Zero);
+            var deleteCapabilityError = Marshal.GetLastWin32Error();
             Assert.IsFalse(
                 deleteCapability.IsInvalid,
-                $"Expected a live DELETE-capable source handle; Win32 error {Marshal.GetLastWin32Error()}.");
+                $"Expected a live DELETE-capable source handle; Win32 error {deleteCapabilityError}.");
 
             using var incompatibleRead = CreateFileW(
                 path,
@@ -48,10 +49,11 @@ public sealed class FileCrossVolumeMoveFidelityShareCompatibilityTests
                 FileMode.Open,
                 0,
                 IntPtr.Zero);
+            var incompatibleReadError = Marshal.GetLastWin32Error();
             Assert.IsTrue(
                 incompatibleRead.IsInvalid,
                 "A fidelity read that omits FILE_SHARE_DELETE must not coexist with the already-live DELETE-capable source handle.");
-            Assert.AreEqual(ErrorSharingViolation, Marshal.GetLastWin32Error());
+            Assert.AreEqual(ErrorSharingViolation, incompatibleReadError);
 
             using var compatibleRead = CreateFileW(
                 path,
@@ -61,9 +63,10 @@ public sealed class FileCrossVolumeMoveFidelityShareCompatibilityTests
                 FileMode.Open,
                 0,
                 IntPtr.Zero);
+            var compatibleReadError = Marshal.GetLastWin32Error();
             Assert.IsFalse(
                 compatibleRead.IsInvalid,
-                $"A fidelity read sharing READ+DELETE should coexist with the live source-delete capability; Win32 error {Marshal.GetLastWin32Error()}.");
+                $"A fidelity read sharing READ+DELETE should coexist with the live source-delete capability; Win32 error {compatibleReadError}.");
         }
         finally
         {
