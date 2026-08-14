@@ -277,8 +277,8 @@ def check_repository(root: Path) -> int:
     assert '## Copy / Move planning boundary' in source['docs']
     assert 'Preparing or queueing a plan performs no filesystem write.' in source['docs']
     assert 'read-only Windows preflight' in source['docs']
-    assert 'Files **Copy/Move queue UI still does not instantiate or execute that pipeline**' in source['docs']
-    assert 'UI execution wiring, overwrite/replace and Move remain separate product decisions.' in source['docs']
+    assert 'It passes the same immutable plan to `FileCopyOperationExecutor`' in source['docs']
+    assert '- Move execution remains disabled;' in source['docs']
     assert 'verify_file_operation_state.py' in source['local']
 
     return len(required_plan) + len(required_execution) + 8 + 5 + 12
