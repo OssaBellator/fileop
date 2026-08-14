@@ -13,11 +13,7 @@ public enum FileCrossVolumeMoveFidelityBlocker
     SourceUnsupportedAttributes = 1 << 3,
     DestinationUnsupportedAttributes = 1 << 4,
     SourceNamedDataStreams = 1 << 7,
-    DestinationNamedDataStreams = 1 << 8,
-    SourceHardLinks = 1 << 9,
-    DestinationHardLinks = 1 << 10,
     SourceExtendedAttributes = 1 << 11,
-    DestinationExtendedAttributes = 1 << 12,
 }
 
 /// <summary>
@@ -29,6 +25,9 @@ public enum FileCrossVolumeMoveFidelityBlocker
 /// Security-descriptor equivalence is intentionally absent. FileOp's selected
 /// cross-volume Move contract follows Windows destination-default/inherited security
 /// semantics rather than promising preservation of the source security descriptor.
+/// Hard-link count remains observable evidence but is not an equivalence requirement:
+/// a cross-volume Move removes the selected source directory entry and cannot recreate
+/// same-volume hard-link topology on another volume.
 /// </summary>
 public sealed record FileCrossVolumeMoveFidelityEvidence(
     FileContentFingerprint CommittedDestinationContentFingerprint,
@@ -49,11 +48,12 @@ public sealed record FileCrossVolumeMoveFidelityClassification(
     string Summary);
 
 /// <summary>
-/// Defines the deliberately narrow fidelity subset in which a destructive
-/// cross-volume Move may delete its source after Copy has durably committed.
-/// Anything FileOp's current Copy primitive does not preserve under the selected
-/// platform contract is blocked. Security is handled by the explicit
-/// <see cref="FileCrossVolumeMoveSecurityPolicy"/> instead of equivalence checking.
+/// Defines the deliberately narrow checkpoint evidence in which destructive
+/// cross-volume Move may proceed to its separately durable source-delete boundary.
+/// Main-stream content is the destructive invariant. Unsupported source semantics that
+/// the current Copy path does not carry are refused when observed. Metadata comparison
+/// remains useful checkpoint evidence, but the product contract does not pretend unrelated
+/// metadata writers are atomically frozen across a cross-volume copy/delete transaction.
 /// </summary>
 public static class FileCrossVolumeMoveFidelityClassifier
 {
@@ -105,34 +105,16 @@ public static class FileCrossVolumeMoveFidelityClassifier
             blockers.Add(FileCrossVolumeMoveFidelityBlocker.DestinationUnsupportedAttributes);
         }
 
-        if (evidence.SourceNamedDataStreamCount != 0)
+        if (FileCrossVolumeMovePreservationPolicy.RequiresNoSourceNamedDataStreamsAtProof &&
+            evidence.SourceNamedDataStreamCount != 0)
         {
             blockers.Add(FileCrossVolumeMoveFidelityBlocker.SourceNamedDataStreams);
         }
 
-        if (evidence.DestinationNamedDataStreamCount != 0)
-        {
-            blockers.Add(FileCrossVolumeMoveFidelityBlocker.DestinationNamedDataStreams);
-        }
-
-        if (evidence.SourceHardLinkCount != 1)
-        {
-            blockers.Add(FileCrossVolumeMoveFidelityBlocker.SourceHardLinks);
-        }
-
-        if (evidence.DestinationHardLinkCount != 1)
-        {
-            blockers.Add(FileCrossVolumeMoveFidelityBlocker.DestinationHardLinks);
-        }
-
-        if (evidence.SourceExtendedAttributeSize != 0)
+        if (FileCrossVolumeMovePreservationPolicy.RequiresNoSourceExtendedAttributesAtProof &&
+            evidence.SourceExtendedAttributeSize != 0)
         {
             blockers.Add(FileCrossVolumeMoveFidelityBlocker.SourceExtendedAttributes);
-        }
-
-        if (evidence.DestinationExtendedAttributeSize != 0)
-        {
-            blockers.Add(FileCrossVolumeMoveFidelityBlocker.DestinationExtendedAttributes);
         }
 
         if (blockers.Count == 0)
@@ -140,13 +122,13 @@ public static class FileCrossVolumeMoveFidelityClassifier
             return new FileCrossVolumeMoveFidelityClassification(
                 CanDeleteSourceAfterDurableBarrier: true,
                 Array.Empty<FileCrossVolumeMoveFidelityBlocker>(),
-                "Pinned source and destination evidence is equivalent within FileOp's current destructive cross-volume Move data/metadata fidelity contract. Security follows the explicit destination-default Windows cross-volume Move policy. This still grants no delete authority before the durable source-delete barrier.");
+                "Pinned source and destination satisfy FileOp's current cross-volume Move checkpoint contract. Main-stream content matches the durable Copy fingerprint; unsupported source stream/EA semantics are absent; security follows destination-default Windows semantics; hard-link topology is path-entry state rather than cross-volume preservation state. This grants no delete authority before the durable source-delete barrier.");
         }
 
         return new FileCrossVolumeMoveFidelityClassification(
             CanDeleteSourceAfterDurableBarrier: false,
             blockers.AsReadOnly(),
-            "Cross-volume Move must retain the source because the committed destination does not prove the complete supported data/metadata fidelity subset for the currently pinned source object.");
+            "Cross-volume Move must retain the source because the current checkpoint evidence does not satisfy FileOp's supported cross-volume Move preservation contract.");
     }
 
     private static bool FingerprintsEqual(
