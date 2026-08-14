@@ -14,22 +14,23 @@ using Microsoft.Win32.SafeHandles;
 namespace FileOp.Windows.Operations;
 
 /// <summary>
-/// Reads fail-closed cross-volume Move fidelity evidence while the raw source-delete
-/// lease keeps the exact source/destination namespace objects pinned. This component
-/// never grants or performs source deletion.
+/// Reads fail-closed cross-volume Move data/metadata fidelity evidence while the raw
+/// source-delete lease keeps the exact source/destination namespace objects pinned.
+/// This component never grants or performs source deletion.
+///
+/// Security-descriptor equivalence is intentionally not queried here. FileOp follows
+/// Windows cross-volume Move semantics: the new destination receives destination-side
+/// default/inherited security rather than preserving the source descriptor. Requiring
+/// privileged SACL reads would contradict that deliberate product contract.
 /// </summary>
 internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
     IFileCrossVolumeMoveFidelityVerifier
 {
     private const uint FileReadData = 0x00000001u;
-    private const uint ReadControl = 0x00020000u;
-    private const uint AccessSystemSecurity = 0x01000000u;
     private const uint FileReadAttributes = 0x00000080u;
     private const uint Synchronize = 0x00100000u;
     private const uint FileFlagOpenReparsePoint = 0x00200000u;
     private const uint FileFlagSequentialScan = 0x08000000u;
-    private const uint BackupSecurityInformation = 0x00010000u;
-    private const uint MaximumSecurityDescriptorBytes = 1024u * 1024u;
     private const int BufferSize = 1024 * 1024;
 
     public ValueTask<FileCrossVolumeMoveFidelityClassification> VerifyAsync(
@@ -95,20 +96,6 @@ internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
         EnsureStableDuringRead(sourceBefore, sourceAfter, "source");
         EnsureStableDuringRead(destinationBefore, destinationAfter, "destination");
 
-        var sourceSecurity = TryReadCompleteSecurityDigest(
-            request.CanonicalSourcePath,
-            request.SourceIdentity,
-            "cross-volume Move source security");
-        var destinationSecurity = TryReadCompleteSecurityDigest(
-            request.CanonicalDestinationPath,
-            request.DestinationIdentity,
-            "cross-volume Move destination security");
-        var securityComplete = sourceSecurity is not null && destinationSecurity is not null;
-        var securityEquivalent = securityComplete && string.Equals(
-            sourceSecurity,
-            destinationSecurity,
-            StringComparison.Ordinal);
-
         var evidence = new FileCrossVolumeMoveFidelityEvidence(
             request.DestinationContentFingerprint,
             sourceFingerprint,
@@ -120,9 +107,7 @@ internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
             sourceAfter.NumberOfLinks,
             destinationAfter.NumberOfLinks,
             sourceEaSize,
-            destinationEaSize,
-            securityComplete,
-            securityEquivalent);
+            destinationEaSize);
         return FileCrossVolumeMoveFidelityClassifier.Classify(evidence);
     }
 
@@ -138,7 +123,7 @@ internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
         // to obtain delete access while that lease remains alive.
         var handle = CreateFileW(
             canonicalPath,
-            FileReadData | FileReadAttributes | ReadControl | Synchronize,
+            FileReadData | FileReadAttributes | Synchronize,
             FileShare.Read | FileShare.Delete,
             IntPtr.Zero,
             FileMode.Open,
@@ -160,82 +145,6 @@ internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
         {
             handle.Dispose();
             throw;
-        }
-    }
-
-    private static string? TryReadCompleteSecurityDigest(
-        string canonicalPath,
-        FileIdentity expectedIdentity,
-        string description)
-    {
-        // Same sharing rule as OpenEvidenceFile: the raw source lease already has DELETE
-        // access. ACCESS_SYSTEM_SECURITY is deliberately requested because a partial
-        // owner/group/DACL descriptor is not treated as complete destructive fidelity.
-        using var handle = CreateFileW(
-            canonicalPath,
-            FileReadAttributes | ReadControl | AccessSystemSecurity | Synchronize,
-            FileShare.Read | FileShare.Delete,
-            IntPtr.Zero,
-            FileMode.Open,
-            FileFlagOpenReparsePoint,
-            IntPtr.Zero);
-        if (handle.IsInvalid)
-        {
-            return null;
-        }
-
-        try
-        {
-            GetVerifiedInformation(handle, canonicalPath, expectedIdentity, description);
-            return ReadCompleteSecurityDigest(handle);
-        }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
-    private static string? ReadCompleteSecurityDigest(SafeFileHandle handle)
-    {
-        // Filesystem objects are queried through GetSecurityInfo rather than the generic
-        // kernel-object helper. BACKUP_SECURITY_INFORMATION requests all descriptor parts.
-        // The returned descriptor uses LocalAlloc ownership and is self-relative, so its
-        // exact bytes can be digested after obtaining the structural length.
-        var error = GetSecurityInfo(
-            handle,
-            SeObjectType.SeFileObject,
-            BackupSecurityInformation,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            out var securityDescriptor);
-        if (error != 0 || securityDescriptor == IntPtr.Zero)
-        {
-            return null;
-        }
-
-        try
-        {
-            var bytes = GetSecurityDescriptorLength(securityDescriptor);
-            if (bytes == 0 ||
-                bytes > MaximumSecurityDescriptorBytes ||
-                bytes > int.MaxValue)
-            {
-                return null;
-            }
-
-            var descriptor = new byte[checked((int)bytes)];
-            Marshal.Copy(securityDescriptor, descriptor, 0, descriptor.Length);
-            return Convert.ToHexString(SHA256.HashData(descriptor)).ToLowerInvariant();
-        }
-        finally
-        {
-            _ = LocalFree(securityDescriptor);
         }
     }
 
@@ -419,11 +328,6 @@ internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
             $"{action} failed with Win32 error {error}: {new Win32Exception(error).Message}");
     }
 
-    private enum SeObjectType : int
-    {
-        SeFileObject = 1,
-    }
-
     private enum FileInformationClass : int
     {
         FileEaInformation = 7,
@@ -513,32 +417,6 @@ internal sealed class WindowsFileCrossVolumeMoveFidelityVerifier :
         uint nNumberOfBytesToRead,
         out uint lpNumberOfBytesRead,
         IntPtr lpOverlapped);
-
-    [DllImport(
-        "advapi32.dll",
-        ExactSpelling = true,
-        CallingConvention = CallingConvention.Winapi)]
-    private static extern uint GetSecurityInfo(
-        SafeFileHandle handle,
-        SeObjectType ObjectType,
-        uint SecurityInfo,
-        IntPtr ppsidOwner,
-        IntPtr ppsidGroup,
-        IntPtr ppDacl,
-        IntPtr ppSacl,
-        out IntPtr ppSecurityDescriptor);
-
-    [DllImport(
-        "advapi32.dll",
-        ExactSpelling = true,
-        CallingConvention = CallingConvention.Winapi)]
-    private static extern uint GetSecurityDescriptorLength(IntPtr pSecurityDescriptor);
-
-    [DllImport(
-        "kernel32.dll",
-        ExactSpelling = true,
-        CallingConvention = CallingConvention.Winapi)]
-    private static extern IntPtr LocalFree(IntPtr hMem);
 
     [DllImport(
         "ntdll.dll",
