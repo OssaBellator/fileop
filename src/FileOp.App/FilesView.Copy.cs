@@ -80,6 +80,7 @@ public sealed partial class FilesView
     private async Task RunSelectedCopyAsync()
     {
         if (IsFileOperationExecutionBusy ||
+            _preflightRunning ||
             OperationQueueList.SelectedItem is not FileBrowserQueuedOperationRow row)
         {
             return;
@@ -201,6 +202,12 @@ public sealed partial class FilesView
 
     private bool CanRunCopyPlan(FileOperationPlan plan, out string refusal)
     {
+        if (_preflightRunning)
+        {
+            refusal = "Wait for the current read-only preflight to finish before running Copy.";
+            return false;
+        }
+
         if (plan.Kind != FileOperationKind.Copy)
         {
             refusal = "Select a queued regular-file Copy plan to use the Copy executor.";
