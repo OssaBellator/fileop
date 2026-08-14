@@ -33,14 +33,19 @@ def can_attempt(
 
 
 def classify_for_ui(strategy: str, cross_volume: bool) -> str:
+    # Production Windows validation currently blocks every different-volume Move
+    # before mutation readiness while #186/#187 remain open. The composite engine
+    # is testable infrastructure, not a reachable Files mutation path.
+    if cross_volume:
+        return 'KeepQueuedProductDisabled'
     if strategy == 'Blocked':
         return 'KeepQueuedBlocked'
     if strategy == 'SkipOnly':
-        return 'ExecuteCrossVolumeNoMutation' if cross_volume else 'ExecuteSameVolumeNoMutation'
-    if strategy == 'CrossVolumeCopyDeleteRequired':
-        return 'ExecuteCrossVolume' if cross_volume else 'KeepQueuedVolumeMismatch'
+        return 'ExecuteSameVolumeNoMutation'
     if strategy == 'SameVolumeRenameRequired':
-        return 'ExecuteSameVolume' if not cross_volume else 'KeepQueuedVolumeMismatch'
+        return 'ExecuteSameVolume'
+    if strategy == 'CrossVolumeCopyDeleteRequired':
+        return 'KeepQueuedVolumeMismatch'
     return 'KeepQueuedUnsupported'
 
 
@@ -59,13 +64,13 @@ def check_properties(cases: int) -> int:
     assert not can_attempt(**{**base, 'preflight_running': True})
     assert not can_attempt(**{**base, 'kind': 'Copy'})
     assert classify_for_ui('SameVolumeRenameRequired', False) == 'ExecuteSameVolume'
-    assert classify_for_ui('CrossVolumeCopyDeleteRequired', True) == 'ExecuteCrossVolume'
     assert classify_for_ui('SkipOnly', False) == 'ExecuteSameVolumeNoMutation'
-    assert classify_for_ui('SkipOnly', True) == 'ExecuteCrossVolumeNoMutation'
-    assert 'KeepQueued' in classify_for_ui('SameVolumeRenameRequired', True)
-    assert 'KeepQueued' in classify_for_ui('CrossVolumeCopyDeleteRequired', False)
+    assert classify_for_ui('CrossVolumeCopyDeleteRequired', False) == 'KeepQueuedVolumeMismatch'
+    assert classify_for_ui('CrossVolumeCopyDeleteRequired', True) == 'KeepQueuedProductDisabled'
+    assert classify_for_ui('SkipOnly', True) == 'KeepQueuedProductDisabled'
+    assert classify_for_ui('SameVolumeRenameRequired', True) == 'KeepQueuedProductDisabled'
 
-    rng = random.Random(20260814)
+    rng = random.Random(20260815)
     checks = 9
     for _ in range(cases):
         values = dict(
@@ -97,12 +102,10 @@ def check_properties(cases: int) -> int:
         ])
         cross_volume = bool(rng.getrandbits(1))
         disposition = classify_for_ui(strategy, cross_volume)
-        if strategy == 'SkipOnly':
+        if cross_volume:
+            assert disposition == 'KeepQueuedProductDisabled'
+        elif strategy in {'SameVolumeRenameRequired', 'SkipOnly'}:
             assert disposition.startswith('Execute')
-        elif strategy == 'SameVolumeRenameRequired':
-            assert disposition.startswith('Execute') == (not cross_volume)
-        elif strategy == 'CrossVolumeCopyDeleteRequired':
-            assert disposition.startswith('Execute') == cross_volume
         else:
             assert disposition.startswith('KeepQueued')
         checks += 1
@@ -120,7 +123,7 @@ def check_repository(root: Path) -> int:
         'cross_history': root / 'src/FileOp.Core/Operations/FileCrossVolumeMoveActionHistory.cs',
         'cross_store': root / 'src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs',
         'same_primitive': root / 'src/FileOp.Windows/Operations/WindowsFileSameVolumeMoveMutationPrimitive.cs',
-        'cross_delete': root / 'src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs',
+        'cross_wrapper': root / 'src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs',
         'move_validator': root / 'src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs',
         'namespace': root / 'src/FileOp.Windows/Operations/WindowsFileOperationNamespaceCapability.cs',
         'namespace_tests': root / 'tests/FileOp.Windows.Tests/WindowsMoveOperationExecutionValidatorTests.cs',
@@ -140,12 +143,17 @@ def check_repository(root: Path) -> int:
         'x:Name="CancelQueuedMoveButton"',
         'Content="Cancel Move"',
         'x:Name="MoveProgressBar"',
-        'same-volume identity-preserving rename or a cross-volume Copy plus separate durable source-delete boundary',
-        'Ready regular-file Copy and reviewed regular-file Move can execute; directory Move remains disabled.',
+        'same-volume regular-file Move can execute; cross-volume and directory Move remain disabled',
+        'cross-volume Move remains product-disabled pending #186/#187',
     ]
     for needle in required_xaml:
         assert needle in source['xaml'], needle
-    assert 'cross-volume and directory Move remain disabled' not in source['xaml']
+    for stale in [
+        'reviewed regular-file Move supports same-volume rename and cross-volume Copy plus separately authorized source deletion',
+        'same-volume identity-preserving rename or a cross-volume Copy plus separate durable source-delete boundary',
+        'Ready regular-file Copy and reviewed regular-file Move can execute; directory Move remains disabled.',
+    ]:
+        assert stale not in source['xaml'], stale
 
     required_move = [
         'public bool IsFileOperationExecutionBusy => _copyExecutionRunning || _moveExecutionRunning;',
@@ -162,7 +170,7 @@ def check_repository(root: Path) -> int:
         'new SqliteFileCrossVolumeMoveActionHistoryStore(',
         'new FileCrossVolumeMoveOperationExecutor(',
         'new WindowsFileCopyMutationPrimitive()',
-        'new WindowsFileCrossVolumeMoveSourceDeletePrimitive()',
+        'new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive()',
         'finalCrossVolumeHistory = await historyStore.GetAsync(plan.Id);',
         'FormatCrossVolumeMoveExecutionOutcome(',
         'destination copies were durably committed',
@@ -177,12 +185,18 @@ def check_repository(root: Path) -> int:
     for needle in required_move:
         assert needle in source['move'], needle
     assert source['move'].count('new WindowsMoveOperationExecutionValidator()') >= 3
-    assert 'Cross-volume Move remains disabled' not in source['move']
+    assert 'new WindowsFileCrossVolumeMoveSourceDeletePrimitive()' not in source['move']
 
     required_validator = [
         'public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator',
         'IFileOperationNamespaceCapabilityProbe? namespaceProbe = null',
         '_inner = inner ?? new WindowsFileOperationExecutionValidator();',
+        'CrossVolumeMoveDisabledSummary',
+        'if (IsCrossVolume(validation))',
+        'return Block(validation, CrossVolumeMoveDisabledSummary);',
+        'ordinary-user security-fidelity (#186)',
+        'final proof-to-mutation stability (#187)',
+        'No durable history, destination Copy, or source-delete mutation',
         'validation.SourceDirectory.CanonicalPath',
         'validation.DestinationDirectory.CanonicalPath',
         '_namespaceProbe.QueryDirectory(path)',
@@ -190,10 +204,10 @@ def check_repository(root: Path) -> int:
         'plan.Kind != FileOperationKind.Move || !validation.CanBeginMutation',
         'FileOperationExecutionValidationStatus.Blocked',
         'before durable mutation history',
-        'No MutationStarted record or filesystem mutation was created',
     ]
     for needle in required_validator:
         assert needle in source['move_validator'], needle
+    assert source['move_validator'].index('if (IsCrossVolume(validation))') < source['move_validator'].index('RequireSupportedMutationRoots(validation')
 
     required_namespace = [
         'public interface IFileOperationNamespaceCapabilityProbe',
@@ -211,9 +225,12 @@ def check_repository(root: Path) -> int:
         'CaseSensitiveSourceBlocksReadyMoveBeforeMutationHistory',
         'CaseSensitiveDestinationBlocksReadyMoveAfterCheckingBothRoots',
         'UnavailableNamespaceCapabilityBlocksReadyMove',
-        'SupportedNamespacesReturnOriginalReadyMoveValidation',
+        'SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation',
+        'CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory',
+        'Assert.AreEqual(0, probe.QueryCalls)',
         'NonMoveValidationDoesNotInvokeMoveNamespaceCapability',
-        'No MutationStarted record',
+        '#186',
+        '#187',
     ]
     for needle in required_namespace_tests:
         assert needle in source['namespace_tests'], needle
@@ -234,7 +251,7 @@ def check_repository(root: Path) -> int:
     assert 'FileSameVolumeMoveOperationExecutor : IFileOperationExecutor' in source['same_executor']
     assert 'FileCrossVolumeMoveOperationExecutor : IFileOperationExecutor' in source['cross_executor']
     assert 'SetFileInformationByHandle(' in source['same_primitive']
-    assert 'NtSetInformationFile(' in source['cross_delete']
+    assert 'WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive' in source['cross_wrapper']
     assert 'file_cross_volume_move_actions' in source['cross_store']
     assert 'SourceDeleteStarted' in source['cross_history']
     for forbidden in ['File.Move(', 'File.Copy(', 'File.Delete(']:
@@ -245,7 +262,7 @@ def check_repository(root: Path) -> int:
     return (
         len(required_xaml) + len(required_move) + len(required_validator) +
         len(required_namespace) + len(required_namespace_tests) +
-        len(required_cross_tests) + 13
+        len(required_cross_tests) + 16
     )
 
 
