@@ -126,16 +126,17 @@ def check_repository(root: Path) -> int:
         'Text="Resolve Ask-later collisions:"',
         'x:Name="ResolveCopyCollisionSkipButton"',
         'Content="Skip existing"',
-        'Click="ResolveCopyCollisionSkipButton_Click"',
+        'Loaded="ResolveCopyCollisionSkipButton_Loaded"',
         'x:Name="ResolveCopyCollisionStopButton"',
         'Content="Stop on collision"',
-        'Click="ResolveCopyCollisionStopButton_Click"',
         'fresh preflight is required',
     ]
     for needle in required_xaml:
         assert needle in source['xaml'], needle
 
     required_collision = [
+        'ResolveCopyCollisionSkipButton.Click += ResolveCopyCollisionSkipButton_Click;',
+        'ResolveCopyCollisionStopButton.Click += ResolveCopyCollisionStopButton_Click;',
         'ResolveSelectedCopyCollision(FileOperationCollisionPolicy.Skip);',
         'ResolveSelectedCopyCollision(FileOperationCollisionPolicy.Stop);',
         'resolvedPolicy is not FileOperationCollisionPolicy.Skip and',
@@ -158,6 +159,8 @@ def check_repository(root: Path) -> int:
     for needle in required_collision:
         assert needle in source['collision'], needle
 
+    assert 'Click="ResolveCopyCollisionSkipButton_Click"' not in source['xaml']
+    assert 'Click="ResolveCopyCollisionStopButton_Click"' not in source['xaml']
     assert 'FileOperationCollisionPolicy.Replace' not in source['collision']
     assert 'Replace existing' not in source['xaml']
     assert 'Overwrite' not in source['xaml']
@@ -167,7 +170,7 @@ def check_repository(root: Path) -> int:
     assert 'File.Move(' not in source['collision']
     assert 'verify_files_copy_collision_resolution.py --repo-root $repoRoot --cases 50000' in source['gate']
 
-    return len(required_xaml) + len(required_collision) + 8
+    return len(required_xaml) + len(required_collision) + 10
 
 
 def main() -> int:
