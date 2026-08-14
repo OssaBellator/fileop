@@ -275,6 +275,26 @@ Invoke-Step "Offline file Move strategy verifier" {
     python tools/verify_file_move_strategy.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline file Move action-history verifier" {
+    python tools/verify_file_move_action_history.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline same-volume file Move executor verifier" {
+    python tools/verify_file_same_volume_move_executor.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline Files same-volume Move UI verifier" {
+    python tools/verify_files_same_volume_move_ui.py --repo-root $repoRoot --cases 50000
+}
+
+Invoke-Step "Offline release helper/package trust verifier" {
+    python tools/verify_release_trust.py --repo-root $repoRoot
+}
+
+Invoke-Step "Offline release completion boundary verifier" {
+    python tools/verify_release_completion_boundaries.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline file delete history-binding verifier" {
     python tools/verify_file_delete_history_binding.py --repo-root $repoRoot --cases 50000
 }
