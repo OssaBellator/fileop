@@ -15,6 +15,8 @@ public sealed partial class FilesView
         }
 
         _copyCollisionResolutionUiInitialized = true;
+        ResolveCopyCollisionSkipButton.Click += ResolveCopyCollisionSkipButton_Click;
+        ResolveCopyCollisionStopButton.Click += ResolveCopyCollisionStopButton_Click;
         OperationQueueList.SelectionChanged += CopyCollisionOperationQueueList_SelectionChanged;
         LeftPane.IntentStateChanged += CopyCollisionPane_IntentStateChanged;
         RightPane.IntentStateChanged += CopyCollisionPane_IntentStateChanged;
