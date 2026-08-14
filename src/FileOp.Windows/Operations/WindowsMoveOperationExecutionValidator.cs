@@ -24,6 +24,9 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
     internal const string CrossVolumeMoveDisabledSummary =
         "Cross-volume Move destructive execution is disabled pending the reviewed ordinary-user security-fidelity (#186) and final proof-to-mutation stability (#187) boundaries. No durable history, destination Copy, or source-delete mutation was created by this product-readiness refusal.";
 
+    private const string MissingRootIdentitySummary =
+        "Move execution validation did not retain stable source and destination root filesystem identities required for mutation classification. No durable mutation history or filesystem mutation was created.";
+
     private readonly IFileOperationExecutionValidator _inner;
     private readonly IFileOperationNamespaceCapabilityProbe _namespaceProbe;
 
@@ -46,7 +49,12 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
             return validation;
         }
 
-        if (IsCrossVolume(validation))
+        if (!TryClassifyVolumeRelationship(validation, out var isCrossVolume))
+        {
+            return Block(validation, MissingRootIdentitySummary);
+        }
+
+        if (isCrossVolume)
         {
             return Block(validation, CrossVolumeMoveDisabledSummary);
         }
@@ -67,19 +75,19 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
         }
     }
 
-    private static bool IsCrossVolume(FileOperationExecutionValidationResult validation)
+    private static bool TryClassifyVolumeRelationship(
+        FileOperationExecutionValidationResult validation,
+        out bool isCrossVolume)
     {
         if (validation.SourceDirectory.Identity is not FileIdentity sourceIdentity ||
             validation.DestinationDirectory.Identity is not FileIdentity destinationIdentity)
         {
-            // The ordinary execution validator is responsible for requiring stable root
-            // identities before CanBeginMutation becomes true. If that contract ever
-            // changes, do not guess at volume relationship here: fail closed instead.
-            throw new InvalidOperationException(
-                "A mutation-ready Move validation must retain stable source and destination root identities before product-readiness classification.");
+            isCrossVolume = false;
+            return false;
         }
 
-        return sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber;
+        isCrossVolume = sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber;
+        return true;
     }
 
     private static FileOperationExecutionValidationResult Block(
