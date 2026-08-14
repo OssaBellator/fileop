@@ -42,8 +42,7 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            _namespaceProbe.RequireSupportedMutationRoots(validation);
-            cancellationToken.ThrowIfCancellationRequested();
+            RequireSupportedMutationRoots(validation, cancellationToken);
             return validation;
         }
         catch (NotSupportedException exception)
@@ -59,5 +58,27 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
                 exception.Message +
                 " No MutationStarted record or filesystem mutation was created by this capability refusal.");
         }
+    }
+
+    private void RequireSupportedMutationRoots(
+        FileOperationExecutionValidationResult validation,
+        CancellationToken cancellationToken)
+    {
+        foreach (var path in new[]
+        {
+            validation.SourceDirectory.CanonicalPath,
+            validation.DestinationDirectory.CanonicalPath,
+        })
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var capability = _namespaceProbe.QueryDirectory(path);
+            if (!capability.CanUseCurrentMutationModel)
+            {
+                throw new NotSupportedException(
+                    $"Namespace capability for '{capability.CanonicalDirectoryPath}' is {capability.State}: {capability.Summary}");
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
     }
 }
