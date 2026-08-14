@@ -50,11 +50,11 @@ public sealed record FileCrossVolumeMoveActionEntry(
     public bool DestinationIsDurablyCommitted =>
         State is FileCrossVolumeMoveEntryState.DestinationCommitted or
             FileCrossVolumeMoveEntryState.SourceDeleteStarted or
-            FileCrossVolumeMoveEntryState.Moved or
-            FileCrossVolumeMoveEntryState.Failed or
+            FileCrossVolumeMoveEntryState.Moved ||
+        (State is FileCrossVolumeMoveEntryState.Failed or
             FileCrossVolumeMoveEntryState.RecoveryRequired &&
-                DestinationIdentity.HasValue &&
-                DestinationContentFingerprint is not null;
+            DestinationIdentity.HasValue &&
+            DestinationContentFingerprint is not null);
 
     public bool SourceDeleteBarrierMayBeUnresolved =>
         State == FileCrossVolumeMoveEntryState.SourceDeleteStarted;
@@ -157,10 +157,10 @@ public sealed record FileCrossVolumeMoveActionHistory
 
     public bool HasRetainedSourceDuplicates =>
         Entries.Any(static entry =>
-            entry.State is FileCrossVolumeMoveEntryState.DestinationCommitted or
-                FileCrossVolumeMoveEntryState.Failed &&
-                    entry.DestinationIdentity.HasValue &&
-                    entry.DestinationContentFingerprint is not null);
+            (entry.State is FileCrossVolumeMoveEntryState.DestinationCommitted or
+                FileCrossVolumeMoveEntryState.Failed) &&
+            entry.DestinationIdentity.HasValue &&
+            entry.DestinationContentFingerprint is not null);
 
     private static void ValidateEntry(
         FileCrossVolumeMoveActionEntry entry,
@@ -245,6 +245,7 @@ public sealed record FileCrossVolumeMoveActionHistory
                     throw new ArgumentException(
                         "A cross-volume Move entry may be Skipped only under explicit Skip collision policy.");
                 }
+                RequireNoDestinationEvidence(entry, hasDestinationEvidence);
                 RequireNull(entry.CopyMutationStartedAtUtc, nameof(entry.CopyMutationStartedAtUtc));
                 RequireNull(entry.DestinationCommittedAtUtc, nameof(entry.DestinationCommittedAtUtc));
                 RequireNull(entry.SourceDeleteStartedAtUtc, nameof(entry.SourceDeleteStartedAtUtc));
