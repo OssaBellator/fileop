@@ -97,13 +97,24 @@ Use a real test/release code-signing certificate appropriate for the release cha
 
 Create the package with `tools/package-release.ps1`. Publish the resulting ZIP SHA-256 through a channel independent of the ZIP itself.
 
-Verify a positive install/update cycle with `tools/install-release.ps1` using both the independently supplied package SHA-256 and signer thumbprint. The release installer has no custom install-root parameter and must resolve its binary target to the canonical `%ProgramFiles%\FileOp` path.
+Run install/update only from **64-bit PowerShell on 64-bit Windows**. Verify a positive install/update cycle with `tools/install-release.ps1` using both the independently supplied package SHA-256 and signer thumbprint. The release installer has no custom install-root parameter and must resolve its binary target to the canonical `%ProgramFiles%\FileOp` known-folder path.
+
+The positive run must also confirm the protected staging sequence:
+
+1. caller ZIP hash matches the independently supplied SHA-256;
+2. ZIP is copied into a GUID-named work directory beneath the protected Program Files parent;
+3. the protected ZIP copy is re-hashed against the same expected SHA-256;
+4. extraction and all manifest/file/signature verification occur beneath that protected work directory;
+5. the verified payload is renamed directly into `%ProgramFiles%\FileOp` without a `%TEMP%` or other user-writable post-verification staging copy.
 
 Then prove the following negative cases fail closed:
 
 - wrong package SHA-256;
 - correct package with wrong independently supplied signer thumbprint;
 - modified ZIP or payload;
+- modify/replace the original ZIP after the first source hash but before/during protected copy: protected-copy rehash must fail before extraction/publication;
+- confirm there is no user-writable `%TEMP%` extraction/stage to tamper with after verification;
+- attempt from an unelevated process of the same account to modify files inside the protected `.FileOp.work.*` tree while install is paused there: access must be denied or the install must otherwise fail closed before publication;
 - modified manifest;
 - manifest path traversal or duplicate path;
 - unexpected payload file;
@@ -113,6 +124,8 @@ Then prove the following negative cases fail closed:
 - `FileOp.Indexer.exe` carrying any secondary embedded Authenticode signature;
 - helper copied to or launched from a user-writable directory;
 - helper path other than the exact adjacent installed `FileOp.Indexer.exe`;
+- run the installer or uninstaller from 32-bit PowerShell on 64-bit Windows: it must refuse before privileged path mutation;
+- set/spoof `ProgramFiles` or `LOCALAPPDATA` environment variables before launch: known-folder resolution must keep install/uninstall/purge on the canonical roots;
 - a test/refactor variant that tries to redirect install/update or uninstall away from `%ProgramFiles%\FileOp`;
 - an existing `%ProgramFiles%\FileOp` root replaced with a reparse point before install/update;
 - an existing `%ProgramFiles%\FileOp` root replaced with a reparse point before uninstall;
@@ -128,7 +141,8 @@ From the protected installed location, verify one real elevated helper launch an
 With a valid existing installation:
 
 - perform a successful update and confirm the new binary set is complete;
-- induce a staging/replacement failure before the new directory becomes live and confirm the old installation is restored;
+- induce a replacement failure after the old installation is renamed to backup but before the protected verified payload becomes live, and confirm the old installation is restored;
+- induce a failure before live replacement and confirm the protected `.FileOp.work.*` directory is cleaned without changing the current live installation;
 - uninstall without `-PurgeUserData` and confirm `%LOCALAPPDATA%\FileOp` remains;
 - reinstall and confirm existing compatible per-user state is not silently deleted;
 - only an explicit `-PurgeUserData` uninstall may remove the per-user FileOp directory, and that purge must refuse a reparse-point user-data root.
@@ -153,11 +167,12 @@ Post the final results to the consolidation PR with:
 
 - exact head SHA;
 - Windows edition/build and architecture;
+- 64-bit PowerShell host/version;
 - `dotnet --info` summary;
 - aggregate `tools/test-local.ps1` result;
 - focused Copy/Move/delete results;
 - case-sensitive namespace results;
-- package/sign/install/update/uninstall results;
+- package/sign/protected-stage/install/update/uninstall results;
 - exact signing certificate thumbprint used for the test (certificate private material must never be attached);
 - any skipped scenario and the reason.
 
