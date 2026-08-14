@@ -119,7 +119,7 @@ def run_model(cases: int, seed: int) -> int:
     ]
     assert exact_review_match_count(
         overlap,
-        (r"d:\review\same.zip", r"d:\review\", "temp", "user-temp.old-large-file.v1"),
+        (r"d:\review\same.zip", "d:\\review\\", "temp", "user-temp.old-large-file.v1"),
     ) == 1
     assert exact_review_match_count(
         overlap,
@@ -129,9 +129,9 @@ def run_model(cases: int, seed: int) -> int:
         overlap + [overlap[0]],
         overlap[0],
     ) == 2
-    assert source_binding_current(10, 10, 10, r"C:\", r"c:\", r"C:\")
-    assert not source_binding_current(10, 10, 11, r"C:\", r"C:\", r"C:\")
-    assert not source_binding_current(None, 10, 10, r"C:\", r"C:\", r"C:\")
+    assert source_binding_current(10, 10, 10, "C:\\", "c:\\", "C:\\")
+    assert not source_binding_current(10, 10, 11, "C:\\", "C:\\", "C:\\")
+    assert not source_binding_current(None, 10, 10, "C:\\", "C:\\", "C:\\")
     checks += 11
 
     rng = random.Random(seed)
@@ -231,9 +231,9 @@ def run_model(cases: int, seed: int) -> int:
         review_identity = rng.randrange(1, 1_000_000)
         start_identity = review_identity if rng.random() < 0.98 else review_identity + 1
         end_identity = start_identity if rng.random() < 0.97 else start_identity + 1
-        review_root = r"C:\"
-        start_root = r"c:\" if rng.random() < 0.99 else r"D:\"
-        end_root = r"C:\" if rng.random() < 0.99 else r"D:\"
+        review_root = "C:\\"
+        start_root = "c:\\" if rng.random() < 0.99 else "D:\\"
+        end_root = "C:\\" if rng.random() < 0.99 else "D:\\"
         expected_source_current = (
             start_identity == review_identity
             and end_identity == review_identity

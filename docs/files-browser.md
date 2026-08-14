@@ -8,7 +8,7 @@ Native mode browses the primary whole-volume NTFS index. Fallback mode browses t
 
 Files now has two distinct kinds of operation UI that must not be conflated:
 
-- a session-only **Copy/Move planning queue**, which still does not instantiate/run the production copy executor from the Files UI;
+- a session-only **Copy/Move planning queue** whose reviewed regular-file Copy plans can execute after a successful read-only preflight; Move remains planning-only;
 - a separately reviewed **file-only permanent-delete session**, which is a real destructive action with its own recovery, authorization and mutation boundary.
 
 Browse selection, prepared intent, preflight evidence and Storage handoff are never themselves mutation authority.
@@ -45,7 +45,7 @@ Both panes share one `DesktopSearchEngine` and authenticated helper session. Bro
 
 A page result is accepted only when the pane generation and active tab still match the request. Stale queued work is discarded before transmission when possible; an already-transmitted helper request is allowed to complete and its stale result is ignored.
 
-Source transitions invalidate cached rows and selection conservatively so a selection cannot silently migrate into a different namespace/source context.
+Source transitions invalidate cached rows and selection conservatively so a selection cannot silently migrate into a different namespace/source context. A real backing-source identity transition also clears prepared and non-running queued operation plans. If a reviewed Copy has already started, that active operation remains governed by its direct filesystem identity/history boundary and is not converted into source-token authority or automatic replay.
 
 ## Ordering and continuation
 
@@ -75,18 +75,30 @@ The queue retains explicit collision intent such as Ask later, Skip existing and
 
 ### Preflight and execution-grade contracts
 
-The repository now contains more than the original planning/preflight model:
+The repository contains the reviewed operation layers used by executable file Copy:
 
 - read-only Windows preflight;
 - canonical execution-grade validation contracts;
 - durable action-history/recovery models;
 - a production **file Copy** executor and identity-bound Windows copy mutation primitive.
 
-However, the Files **Copy/Move queue UI still does not instantiate or execute that pipeline**. The production copy executor is a reviewed lower-level boundary for file Copy; UI execution wiring, overwrite/replace and Move remain separate product decisions.
+A queued regular-file Copy can run only when its exact point-in-time preflight is `Ready` and the active source/destination pane, tab and directory context still matches the immutable plan. The executor then performs its own fresh canonical/identity validation before durable history begins and revalidates each file again before crossing `MutationStarted`.
+
+The Files UI does not call `File.Copy`, route mutation through the Indexer, or reconstruct a new path-only operation from the row. It passes the same immutable plan to `FileCopyOperationExecutor`, which owns durable `BeginAsync`, per-entry mutation barriers, commit/recovery transitions and the identity-bound `WindowsFileCopyMutationPrimitive`.
+
+The current executable slice remains deliberately narrow:
+
+- regular-file Copy only; directory Copy is rejected;
+- Move execution remains disabled;
+- `Ask later` collisions remain non-executable until an explicit decision is supplied; a `Skip existing` plan can durably skip existing destinations and `Stop on collision` fails closed at validation;
+- no overwrite/replacement path exists in the mutation primitive;
+- terminal or recovery-sensitive execution makes that operation ID single-use; the UI removes it from the runnable queue rather than offering replay;
+- durable history is recovery evidence, not automatic restart-time mutation authority;
+- destination panes currently displaying the affected directory refresh through the ordinary indexed browse coordination after execution settles.
 
 See `docs/file-copy-executor.md`, `docs/windows-file-copy-mutation.md` and the `docs/file-operation-*.md` recovery/history series.
 
-A queued/preflight-ready Copy or Move row must therefore not be described as executed or authorized merely because the lower-level copy machinery exists.
+A preflight result is still not mutation authorization. It can become stale, and the executor's action-time canonical identity checks remain mandatory even when the visible preflight row says Ready.
 
 ## Permanent file deletion
 
@@ -167,7 +179,7 @@ This equivalence is a **browse** statement only. The crawler snapshot does not p
 
 ## Validation without hosted Actions
 
-`tools/test-local.ps1` is the authoritative validation inventory. The Files boundary is covered by dedicated offline verifiers for browse/UI state, operation state/preflight/execution validation, delete history/preparation/final capability/mutation/orchestration, recovery discovery and the user-facing Files delete session.
+`tools/test-local.ps1` is the authoritative validation inventory. The Files boundary is covered by dedicated offline verifiers for browse/UI state, operation state/preflight/execution validation, the Files Copy execution wiring, delete history/preparation/final capability/mutation/orchestration, recovery discovery and the user-facing Files delete session.
 
 Run portable model/source validation through the aggregate gate:
 
@@ -175,7 +187,7 @@ Run portable model/source validation through the aggregate gate:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1 -OfflineOnly
 ```
 
-The complete Windows gate adds Core/Windows/Indexer builds, the regression/integration test suite, WinUI x64 build, bundled-helper artifact checks and a real helper-process handshake:
+The complete Windows gate adds Core/Windows/Indexer builds, the regression/integration test suite, WinUI x64 build, bundled-helper artifact checks and a real helper-process handshake. During the current roadmap batch that complete Windows gate is intentionally deferred until the related Files operation slices are ready to validate together; no source-only verifier is a substitute for it.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
@@ -185,6 +197,6 @@ See `docs/local-validation.md` for the validation workflow.
 
 ## Remaining queue boundary
 
-The existence of the lower-level production file Copy executor does not imply that the session-only Copy/Move queue is executable from the Files UI. UI execution wiring, overwrite/replace semantics, directory Copy and Move remain separately reviewed work.
+Regular-file Copy is now the first queue operation wired to a production executor. The next queue work is explicit collision/progress/recovery UX, then separately reviewed Move semantics. Overwrite/replacement, directory Copy and directory Move remain disabled until their mutation and recovery policies are explicit.
 
 Permanent file deletion should stay outside that generic queue unless a future design can preserve the stricter delete recovery/authorization semantics rather than weakening them into a generic operation kind.
