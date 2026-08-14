@@ -105,7 +105,7 @@ def check_repository(root: Path) -> int:
         'plan.Kind != FileOperationKind.Move',
         'FileMoveExecutionStrategy.SameVolumeRenameRequired',
         'FileMoveExecutionStrategy.SkipOnly',
-        'FileMoveExecutionStrategy.CrossVolumeCopyDeleteRequired',
+        'problem = strategy.Summary;',
         'Directory Move is not supported',
         'MarkSameVolumeMoveRecoveryRequiredAsync(',
         'receipt.DestinationIdentity != expected',

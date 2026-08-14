@@ -91,8 +91,12 @@ def check_properties(cases: int) -> int:
             'CrossVolumeCopyDeleteRequired', 'Blocked'
         ])
         disposition = classify_for_ui(strategy)
-        assert (disposition.startswith('Execute')) == strategy in {'SameVolumeRenameRequired', 'SkipOnly'}
-        assert ('KeepQueued' in disposition) == strategy in {'CrossVolumeCopyDeleteRequired', 'Blocked'}
+        assert (disposition.startswith('Execute')) == (
+            strategy in {'SameVolumeRenameRequired', 'SkipOnly'}
+        )
+        assert ('KeepQueued' in disposition) == (
+            strategy in {'CrossVolumeCopyDeleteRequired', 'Blocked'}
+        )
         checks += 2
     return checks
 

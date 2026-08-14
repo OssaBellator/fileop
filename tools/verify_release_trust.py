@@ -113,7 +113,8 @@ def check_repository(root: Path) -> int:
         '$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($knownProgramFiles))',
         "$install = [IO.Path]::GetFullPath((Join-Path $programFiles 'FileOp'))",
         "$expectedInstall = $programFiles + [IO.Path]::DirectorySeparatorChar + 'FileOp'",
-        'caller-selectable elevated rename/delete target',
+        'caller-selectable',
+        'generic privileged',
         'canonical Program Files\\FileOp path',
         "Get-Process -Name 'FileOp.App', 'FileOp.Indexer'",
         'wait for its indexing helper to exit before installing or updating',
@@ -173,7 +174,8 @@ def check_repository(root: Path) -> int:
         '$programFiles = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($knownProgramFiles))',
         "$install = [IO.Path]::GetFullPath((Join-Path $programFiles 'FileOp'))",
         "$expectedInstall = $programFiles + [IO.Path]::DirectorySeparatorChar + 'FileOp'",
-        'not a generic elevated recursive-delete wrapper',
+        'intentionally not a',
+        'generic elevated recursive-delete wrapper',
         'canonical FileOp install path is a reparse point',
         '$localAppData = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($knownLocalAppData))',
         "$userData = [IO.Path]::GetFullPath((Join-Path $localAppData 'FileOp'))",
@@ -191,11 +193,12 @@ def check_repository(root: Path) -> int:
     assert '$env:LOCALAPPDATA' not in uninstall
 
     docs = source['docs'].casefold()
-    assert 'does not accept an environment variable as a signer trust root' in docs
+    assert 'do not accept an environment variable as a signer trust root' in docs
     assert 'independently supplied' in docs
     assert 'whole-package authenticity' in docs
     assert 'must not learn its trusted package hash from the zip' in docs
-    assert 'editing a zip, manifest, dependency or data file' in docs
+    assert 'if the original user-writable zip changes after the first hash' in docs
+    assert 'installation stops before extraction' in docs
     assert 'single embedded authenticode signature' in docs
     assert 'canonical `%programfiles%\\fileop`' in docs
     assert 'caller-selectable install root' in docs

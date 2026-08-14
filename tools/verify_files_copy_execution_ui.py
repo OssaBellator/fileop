@@ -205,7 +205,7 @@ def check_repository(root: Path) -> int:
 
     required_view = [
         'x:Name="RunQueuedCopyButton"',
-        'Content="Run selected Copy"',
+        'Content="Run Copy"',
         'Loaded="RunQueuedCopyButton_Loaded"',
         'x:Name="CancelQueuedCopyButton"',
         'Content="Cancel Copy"',
@@ -249,7 +249,7 @@ def check_repository(root: Path) -> int:
         'OperationQueueList.IsEnabled = false;',
         'CancelQueuedCopyButton.Visibility = Visibility.Visible;',
         'if (_copyExecutionRunning)',
-        '// reviewed executor is active.',
+        '_queuedOperations.RemoveAll(operation => operation.Id != runningId);',
     ]
     for needle in required_busy_ownership:
         assert needle in source['viewc'], needle

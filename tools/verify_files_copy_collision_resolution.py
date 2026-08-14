@@ -123,7 +123,7 @@ def check_repository(root: Path) -> int:
 
     required_xaml = [
         'x:Name="CopyCollisionDecisionPanel"',
-        'Text="Resolve Ask-later collisions:"',
+        'Text="Resolve Ask-later Copy collisions:"',
         'x:Name="ResolveCopyCollisionSkipButton"',
         'Content="Skip existing"',
         'Loaded="ResolveCopyCollisionSkipButton_Loaded"',
