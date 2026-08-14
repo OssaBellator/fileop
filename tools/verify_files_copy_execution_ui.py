@@ -48,6 +48,22 @@ def reset_for_source_change(queue: list[str], active: str | None) -> list[str]:
     return [operation_id for operation_id in queue if operation_id == active]
 
 
+def cancellation_terminal(completed: int, total: int) -> str:
+    if completed < 0 or total < 0 or completed > total:
+        raise ValueError('invalid progress')
+    return 'Succeeded' if completed == total else 'Cancelled'
+
+
+def classify_history(terminal: str | None, entry_states: list[str]) -> str:
+    if terminal == 'RecoveryRequired' or any(
+        state in {'MutationStarted', 'RecoveryRequired'} for state in entry_states
+    ):
+        return 'RecoveryRequired'
+    if terminal is None:
+        return 'NonTerminal'
+    return terminal
+
+
 def check_properties(cases: int) -> int:
     base_plan = {
         'kind': 'Copy',
@@ -74,9 +90,15 @@ def check_properties(cases: int) -> int:
     assert not can_run(base_plan, {**base_panes, 'Right': {**base_panes['Right'], 'tab': 'other'}})
     assert reset_for_source_change(['a', 'b'], None) == []
     assert reset_for_source_change(['a', 'b'], 'b') == ['b']
+    assert cancellation_terminal(0, 2) == 'Cancelled'
+    assert cancellation_terminal(2, 2) == 'Succeeded'
+    assert classify_history('Failed', ['Committed', 'Failed']) == 'Failed'
+    assert classify_history('Failed', ['Committed', 'RecoveryRequired']) == 'RecoveryRequired'
+    assert classify_history(None, ['Committed', 'Pending']) == 'NonTerminal'
+    assert classify_history('Succeeded', ['Committed', 'Skipped']) == 'Succeeded'
 
     rng = random.Random(20260814)
-    checks = 8
+    checks = 14
     for case in range(cases):
         source_path = rf'C:\Root\Source{case % 31}'
         destination_path = rf'C:\Root\Destination{case % 37}'
@@ -129,6 +151,32 @@ def check_properties(cases: int) -> int:
         assert active is not None or not reset
         checks += 2
 
+        total = rng.randint(0, 12)
+        completed = rng.randint(0, total)
+        terminal = cancellation_terminal(completed, total)
+        assert terminal == ('Succeeded' if completed == total else 'Cancelled')
+        assert terminal != 'Cancelled' or completed < total
+        checks += 2
+
+        entry_states = [
+            rng.choice([
+                'Pending', 'MutationStarted', 'Committed', 'Skipped',
+                'Failed', 'RecoveryRequired',
+            ])
+            for _ in range(rng.randint(0, 8))
+        ]
+        durable_terminal = rng.choice([
+            None, 'Succeeded', 'Failed', 'Cancelled', 'RecoveryRequired',
+        ])
+        classification = classify_history(durable_terminal, entry_states)
+        recovery_expected = (
+            durable_terminal == 'RecoveryRequired'
+            or any(state in {'MutationStarted', 'RecoveryRequired'} for state in entry_states)
+        )
+        assert (classification == 'RecoveryRequired') == recovery_expected
+        assert recovery_expected or classification == (durable_terminal or 'NonTerminal')
+        checks += 2
+
     return checks
 
 
@@ -138,6 +186,7 @@ def check_repository(root: Path) -> int:
         'viewc': root / 'src/FileOp.App/FilesView.Copy.cs',
         'pane_refresh': root / 'src/FileOp.App/FilesPaneView.CopyRefresh.cs',
         'source_identity': root / 'src/FileOp.App/MainWindow.StorageSourceIdentity.cs',
+        'history': root / 'src/FileOp.Core/Operations/FileOperationActionHistory.cs',
         'executor': root / 'src/FileOp.Core/Operations/FileCopyOperationExecutor.cs',
         'mutation': root / 'src/FileOp.Windows/Operations/WindowsFileCopyMutationPrimitive.cs',
         'docs': root / 'docs/files-browser.md',
@@ -154,6 +203,9 @@ def check_repository(root: Path) -> int:
         'x:Name="RunQueuedCopyButton"',
         'Content="Run selected Copy"',
         'Loaded="RunQueuedCopyButton_Loaded"',
+        'x:Name="CancelQueuedCopyButton"',
+        'Content="Cancel Copy"',
+        'x:Name="CopyProgressBar"',
         'private async Task RunSelectedCopyAsync()',
         'plan.Kind != FileOperationKind.Copy',
         'entry => entry.IsDirectory',
@@ -164,10 +216,16 @@ def check_repository(root: Path) -> int:
         'new WindowsFileCopyMutationPrimitive()',
         'new FileCopyOperationExecutor(',
         'finalSnapshot = await executor.ExecuteAsync(plan, progress);',
+        'await executor.RequestCancellationAsync(operationId)',
+        'finalHistory = await historyStore.GetAsync(plan.Id);',
+        'history?.RequiresRecovery == true',
+        'FileOperationActionTerminalState.Succeeded',
+        'FileOperationActionTerminalState.Cancelled',
+        'FileOperationActionTerminalState.Failed',
         '_queuedOperations.RemoveAll(operation => operation.Id == plan.Id);',
         '_preflightSnapshots.Remove(plan.Id);',
         'RequestRefreshForCopyDestination(plan.Intent.DestinationDirectoryPath);',
-        'Durable history remains recovery evidence only',
+        'original operation ID will not be replayed automatically',
         'FileOperationHistoryDatabaseName = "file-operation-actions.sqlite"',
     ]
     combined_view = source['viewx'] + source['viewc']
@@ -182,10 +240,21 @@ def check_repository(root: Path) -> int:
         'QueueCopyButton.IsEnabled = false;',
         'QueueMoveButton.IsEnabled = false;',
         'OperationQueueList.IsEnabled = false;',
+        'CancelQueuedCopyButton.Visibility = Visibility.Visible;',
         'if (_copyExecutionRunning)',
         '// reviewed executor is active.',
     ]
     for needle in required_busy_ownership:
+        assert needle in source['viewc'], needle
+
+    required_progress = [
+        'BeginCopyProgressPresentation(plan.Intent.Entries.Count);',
+        'UpdateCopyProgressPresentation(snapshot);',
+        'CopyProgressBar.Maximum = Math.Max(1, snapshot.TotalEntryCount);',
+        'snapshot.CompletedEntryCount',
+        'CopyProgressBar.IsIndeterminate',
+    ]
+    for needle in required_progress:
         assert needle in source['viewc'], needle
 
     assert 'public void RequestRefresh() => RefreshRequested?.Invoke(this, EventArgs.Empty);' in source['pane_refresh']
@@ -201,6 +270,11 @@ def check_repository(root: Path) -> int:
     for needle in required_source_lifetime:
         assert needle in lifetime, needle
 
+    history = source['history']
+    assert 'public bool RequiresRecovery =>' in history
+    assert 'FileOperationActionTerminalState.RecoveryRequired' in history
+    assert 'ValueTask<FileOperationActionHistory?> GetAsync(' in history
+
     executor_order = source['executor']
     begin = executor_order.index('await _historyStore.BeginAsync(validation, UtcNow())')
     mutation_started = executor_order.index('.MarkMutationStartedAsync(plan.Id, ordinal, UtcNow())')
@@ -209,6 +283,10 @@ def check_repository(root: Path) -> int:
     assert begin < mutation_started < mutation < commit
     assert 'Directory Copy is not supported by this executor boundary.' in executor_order
     assert 'FileOperationActionTerminalState.RecoveryRequired' in executor_order
+    assert 'RequestCancellationAsync(' in executor_order
+    assert 'SettleRunningCancellationAsync(' in executor_order
+    assert 'Once MutationStarted is durable, cancellation is intentionally not' in executor_order
+    assert 'CopyNewFileAsync(new FileCopyMutationRequest(' in executor_order
 
     primitive = source['mutation']
     assert 'FileCreate' in primitive
@@ -222,8 +300,8 @@ def check_repository(root: Path) -> int:
     assert 'verify_files_copy_execution_ui.py --repo-root $repoRoot --cases 50000' in source['gate']
 
     return (
-        len(required_view) + len(required_busy_ownership) +
-        len(required_source_lifetime) + 13
+        len(required_view) + len(required_busy_ownership) + len(required_progress) +
+        len(required_source_lifetime) + 23
     )
 
 

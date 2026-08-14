@@ -13,7 +13,9 @@ public sealed partial class FilesView
 
     private bool _copyExecutionUiInitialized;
     private bool _copyExecutionRunning;
+    private bool _copyCancellationRequested;
     private Guid? _activeCopyOperationId;
+    private IFileOperationExecutor? _activeCopyExecutor;
 
     private void RunQueuedCopyButton_Loaded(object sender, RoutedEventArgs e)
     {
@@ -24,6 +26,7 @@ public sealed partial class FilesView
 
         _copyExecutionUiInitialized = true;
         RunQueuedCopyButton.Click += RunQueuedCopyButton_Click;
+        CancelQueuedCopyButton.Click += CancelQueuedCopyButton_Click;
         OperationQueueList.SelectionChanged += CopyOperationQueueList_SelectionChanged;
         LeftPane.IntentStateChanged += CopyPane_IntentStateChanged;
         RightPane.IntentStateChanged += CopyPane_IntentStateChanged;
@@ -38,6 +41,41 @@ public sealed partial class FilesView
 
     private async void RunQueuedCopyButton_Click(object sender, RoutedEventArgs e) =>
         await RunSelectedCopyAsync();
+
+    private async void CancelQueuedCopyButton_Click(object sender, RoutedEventArgs e)
+    {
+        var executor = _activeCopyExecutor;
+        if (!_copyExecutionRunning ||
+            _copyCancellationRequested ||
+            _activeCopyOperationId is not Guid operationId ||
+            executor is null)
+        {
+            return;
+        }
+
+        _copyCancellationRequested = true;
+        UpdateCopyCancellationAvailability();
+        QueueStatusText.Text =
+            "Cancellation requested. Validation may stop immediately; a running Copy will settle only at the reviewed safe boundary between entries and will not interrupt an active post-MutationStarted mutation/commit section.";
+
+        try
+        {
+            var accepted = await executor.RequestCancellationAsync(operationId);
+            if (!accepted && _copyExecutionRunning && _activeCopyOperationId == operationId)
+            {
+                QueueStatusText.Text =
+                    "The Copy executor is already settling and did not accept a new cancellation request. No additional mutation authority was created.";
+            }
+        }
+        catch (Exception exception)
+        {
+            if (_copyExecutionRunning && _activeCopyOperationId == operationId)
+            {
+                QueueStatusText.Text =
+                    $"The cancellation request could not be registered: {exception.Message} The active Copy remains governed by its existing executor/history boundary.";
+            }
+        }
+    }
 
     private async Task RunSelectedCopyAsync()
     {
@@ -63,7 +101,10 @@ public sealed partial class FilesView
         }
 
         _copyExecutionRunning = true;
+        _copyCancellationRequested = false;
         _activeCopyOperationId = plan.Id;
+        _activeCopyExecutor = null;
+        BeginCopyProgressPresentation(plan.Intent.Entries.Count);
         SetCopyExecutionUiBusy(true);
         QueueStatusText.Text =
             $"Copy {plan.Id} is revalidating the exact current source/destination objects before durable history or mutation. " +
@@ -71,6 +112,10 @@ public sealed partial class FilesView
 
         var executorInvoked = false;
         FileOperationExecutionSnapshot? finalSnapshot = null;
+        FileOperationActionHistory? finalHistory = null;
+        Exception? executionException = null;
+        Exception? historyReadException = null;
+
         try
         {
             using var historyStore = new SqliteFileOperationActionHistoryStore(
@@ -79,26 +124,51 @@ public sealed partial class FilesView
                 new WindowsFileOperationExecutionValidator(),
                 historyStore,
                 new WindowsFileCopyMutationPrimitive());
+            _activeCopyExecutor = executor;
+            UpdateCopyCancellationAvailability();
+
             var progress = new Progress<FileOperationExecutionSnapshot>(snapshot =>
             {
                 if (_copyExecutionRunning && _activeCopyOperationId == plan.Id)
                 {
+                    UpdateCopyProgressPresentation(snapshot);
                     QueueStatusText.Text = FormatCopyExecutionProgress(snapshot);
                 }
             });
 
             executorInvoked = true;
-            finalSnapshot = await executor.ExecuteAsync(plan, progress);
+            try
+            {
+                finalSnapshot = await executor.ExecuteAsync(plan, progress);
+            }
+            catch (Exception exception)
+            {
+                executionException = exception;
+            }
+            finally
+            {
+                _activeCopyExecutor = null;
+                UpdateCopyCancellationAvailability();
+            }
+
+            try
+            {
+                finalHistory = await historyStore.GetAsync(plan.Id);
+            }
+            catch (Exception exception)
+            {
+                historyReadException = exception;
+            }
         }
         catch (Exception exception)
         {
-            QueueStatusText.Text = executorInvoked
-                ? $"Copy execution ended unexpectedly: {exception.Message} The exact queued operation will not be reused; inspect durable action history before creating a fresh plan."
-                : $"Copy could not start: {exception.Message} No Copy executor was invoked and no filesystem mutation was requested.";
+            executionException = exception;
         }
         finally
         {
+            _activeCopyExecutor = null;
             _activeCopyOperationId = null;
+            _copyCancellationRequested = false;
             _copyExecutionRunning = false;
         }
 
@@ -111,13 +181,19 @@ public sealed partial class FilesView
             _preflightSnapshots.Remove(plan.Id);
         }
 
-        if (finalSnapshot is not null)
-        {
-            QueueStatusText.Text = FormatCopyExecutionTerminal(finalSnapshot);
-        }
+        CompleteCopyProgressPresentation(finalSnapshot, finalHistory);
+        QueueStatusText.Text = FormatCopyExecutionOutcome(
+            finalSnapshot,
+            finalHistory,
+            executionException,
+            historyReadException,
+            executorInvoked);
 
         RefreshQueuePresentation();
-        RequestRefreshForCopyDestination(plan.Intent.DestinationDirectoryPath);
+        if (executorInvoked)
+        {
+            RequestRefreshForCopyDestination(plan.Intent.DestinationDirectoryPath);
+        }
         SetCopyExecutionUiBusy(false);
         UpdateCopyExecutionAvailability();
     }
@@ -231,6 +307,58 @@ public sealed partial class FilesView
         }
     }
 
+    private void BeginCopyProgressPresentation(int totalEntryCount)
+    {
+        CopyProgressBar.Visibility = Visibility.Visible;
+        CopyProgressBar.IsIndeterminate = true;
+        CopyProgressBar.Maximum = Math.Max(1, totalEntryCount);
+        CopyProgressBar.Value = 0;
+    }
+
+    private void UpdateCopyProgressPresentation(FileOperationExecutionSnapshot snapshot)
+    {
+        CopyProgressBar.Visibility = Visibility.Visible;
+        CopyProgressBar.Maximum = Math.Max(1, snapshot.TotalEntryCount);
+        CopyProgressBar.IsIndeterminate =
+            snapshot.State is FileOperationExecutionState.Planned or
+                FileOperationExecutionState.Validating;
+        if (!CopyProgressBar.IsIndeterminate)
+        {
+            CopyProgressBar.Value = Math.Clamp(
+                snapshot.CompletedEntryCount,
+                0,
+                snapshot.TotalEntryCount);
+        }
+    }
+
+    private void CompleteCopyProgressPresentation(
+        FileOperationExecutionSnapshot? snapshot,
+        FileOperationActionHistory? history)
+    {
+        if (snapshot is not null)
+        {
+            UpdateCopyProgressPresentation(snapshot);
+            CopyProgressBar.IsIndeterminate = false;
+            return;
+        }
+
+        if (history is not null)
+        {
+            CopyProgressBar.Visibility = Visibility.Visible;
+            CopyProgressBar.IsIndeterminate = false;
+            CopyProgressBar.Maximum = Math.Max(1, history.Entries.Count);
+            CopyProgressBar.Value = history.Entries.Count(static entry =>
+                entry.State is FileOperationActionEntryState.Committed or
+                    FileOperationActionEntryState.Skipped or
+                    FileOperationActionEntryState.Failed or
+                    FileOperationActionEntryState.RecoveryRequired);
+            return;
+        }
+
+        CopyProgressBar.IsIndeterminate = false;
+        CopyProgressBar.Visibility = Visibility.Collapsed;
+    }
+
     private void SetCopyExecutionUiBusy(bool busy)
     {
         if (busy)
@@ -245,12 +373,25 @@ public sealed partial class FilesView
             RemoveQueuedOperationButton.IsEnabled = false;
             ClearQueueButton.IsEnabled = false;
             RunQueuedCopyButton.IsEnabled = false;
+            CancelQueuedCopyButton.Visibility = Visibility.Visible;
+            UpdateCopyCancellationAvailability();
             return;
         }
 
+        CancelQueuedCopyButton.IsEnabled = false;
+        CancelQueuedCopyButton.Visibility = Visibility.Collapsed;
         CollisionPolicyBox.IsEnabled = true;
         UpdateIntentAvailability();
         UpdateQueueActions();
+    }
+
+    private void UpdateCopyCancellationAvailability()
+    {
+        CancelQueuedCopyButton.IsEnabled =
+            _copyExecutionRunning &&
+            !_copyCancellationRequested &&
+            _activeCopyOperationId.HasValue &&
+            _activeCopyExecutor is not null;
     }
 
     private void UpdateCopyExecutionAvailability()
@@ -335,11 +476,89 @@ public sealed partial class FilesView
             _ => snapshot.State.ToString(),
         };
 
+    private static string FormatCopyExecutionOutcome(
+        FileOperationExecutionSnapshot? snapshot,
+        FileOperationActionHistory? history,
+        Exception? executionException,
+        Exception? historyReadException,
+        bool executorInvoked)
+    {
+        if (history?.RequiresRecovery == true)
+        {
+            return
+                $"Copy requires recovery inspection. {FormatCopyHistoryCounts(history)} " +
+                "Durable MutationStarted/RecoveryRequired history is evidence only: the original operation ID will not be replayed automatically and grants no overwrite, delete or retry authority.";
+        }
+
+        if (history?.TerminalState is FileOperationActionTerminalState.Succeeded)
+        {
+            return
+                $"Copy completed through the reviewed durable executor. {FormatCopyHistoryCounts(history)} " +
+                "Matching destination panes are refreshing.";
+        }
+
+        if (history?.TerminalState is FileOperationActionTerminalState.Cancelled)
+        {
+            return
+                $"Copy cancelled at a reviewed safe boundary. {FormatCopyHistoryCounts(history)} " +
+                "Already committed/skipped entries remain settled and the original operation ID will not be reused.";
+        }
+
+        if (history?.TerminalState is FileOperationActionTerminalState.Failed)
+        {
+            return
+                $"Copy failed with durable non-recovery terminal history. {FormatCopyHistoryCounts(history)} " +
+                "The original operation ID remains single-use; create and validate a fresh plan for any later attempt.";
+        }
+
+        if (history is not null && history.TerminalState is null)
+        {
+            return
+                $"Copy ended with non-terminal durable history. {FormatCopyHistoryCounts(history)} " +
+                "Do not retry or reuse this operation automatically; inspect the durable history before creating any fresh plan.";
+        }
+
+        if (historyReadException is not null && executorInvoked)
+        {
+            var snapshotText = snapshot is null ? string.Empty : $" Last executor state: {snapshot.State}.";
+            return
+                $"Copy execution settled, but durable history could not be re-read: {historyReadException.Message}.{snapshotText} " +
+                "The original operation ID will not be reused; inspect persistent action history before any fresh attempt.";
+        }
+
+        if (executionException is not null)
+        {
+            return executorInvoked
+                ? $"Copy execution ended unexpectedly: {executionException.Message} The exact operation ID will not be reused; inspect durable action history before creating a fresh plan."
+                : $"Copy could not start: {executionException.Message} No Copy executor was invoked and no filesystem mutation was requested.";
+        }
+
+        if (snapshot is not null)
+        {
+            return FormatCopyExecutionTerminal(snapshot);
+        }
+
+        return executorInvoked
+            ? "Copy execution ended without a readable terminal snapshot or durable-history result. The operation ID will not be reused automatically."
+            : "Copy did not start. No Copy executor was invoked and no filesystem mutation was requested.";
+    }
+
+    private static string FormatCopyHistoryCounts(FileOperationActionHistory history)
+    {
+        var committed = history.Entries.Count(static entry => entry.State == FileOperationActionEntryState.Committed);
+        var skipped = history.Entries.Count(static entry => entry.State == FileOperationActionEntryState.Skipped);
+        var failed = history.Entries.Count(static entry => entry.State == FileOperationActionEntryState.Failed);
+        var recovery = history.Entries.Count(static entry =>
+            entry.State is FileOperationActionEntryState.MutationStarted or
+                FileOperationActionEntryState.RecoveryRequired);
+        return $"Committed {committed:N0}, skipped {skipped:N0}, failed {failed:N0}, recovery-sensitive {recovery:N0} of {history.Entries.Count:N0}.";
+    }
+
     private static string FormatCopyExecutionTerminal(FileOperationExecutionSnapshot snapshot) =>
         snapshot.State switch
         {
             FileOperationExecutionState.Succeeded =>
-                $"Copy completed through the reviewed durable executor: {snapshot.CompletedEntryCount:N0}/{snapshot.TotalEntryCount:N0} entries settled. Matching destination panes are refreshing.",
+                $"Copy completed through the reviewed executor: {snapshot.CompletedEntryCount:N0}/{snapshot.TotalEntryCount:N0} entries settled. Matching destination panes are refreshing.",
             FileOperationExecutionState.Cancelled =>
                 $"Copy cancelled at a safe boundary after {snapshot.CompletedEntryCount:N0}/{snapshot.TotalEntryCount:N0} entries. The same operation ID will not be reused.",
             FileOperationExecutionState.Failed =>

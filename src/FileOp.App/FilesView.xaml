@@ -96,6 +96,7 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Planned operation queue" FontWeight="SemiBold" />
                     <TextBlock x:Name="QueueCountText" Grid.Column="1" Opacity="0.65" VerticalAlignment="Center" />
@@ -105,15 +106,23 @@
                     <Button x:Name="RunQueuedCopyButton" Grid.Column="3" Content="Run selected Copy"
                             Loaded="RunQueuedCopyButton_Loaded" IsEnabled="False"
                             ToolTipService.ToolTip="Execute a Ready regular-file Copy plan through the reviewed canonical-validation, durable-history and identity-bound mutation boundary" />
-                    <Button x:Name="RemoveQueuedOperationButton" Grid.Column="4" Content="Remove selected"
+                    <Button x:Name="CancelQueuedCopyButton" Grid.Column="4" Content="Cancel Copy"
+                            IsEnabled="False" Visibility="Collapsed"
+                            ToolTipService.ToolTip="Request cancellation through the active reviewed Copy executor; mutation is interrupted only at its defined safe boundaries" />
+                    <Button x:Name="RemoveQueuedOperationButton" Grid.Column="5" Content="Remove selected"
                             Click="RemoveQueuedOperationButton_Click" IsEnabled="False" />
-                    <Button x:Name="ClearQueueButton" Grid.Column="5" Content="Clear queue"
+                    <Button x:Name="ClearQueueButton" Grid.Column="6" Content="Clear queue"
                             Click="ClearQueueButton_Click" IsEnabled="False" />
                 </Grid>
 
-                <TextBlock x:Name="QueueStatusText" Grid.Row="1"
-                           Text="Queueing and preflight are non-mutating. Ready regular-file Copy plans can use the reviewed executor; Move execution remains disabled."
-                           Opacity="0.65" TextWrapping="Wrap" />
+                <StackPanel Grid.Row="1" Spacing="5">
+                    <TextBlock x:Name="QueueStatusText"
+                               Text="Queueing and preflight are non-mutating. Ready regular-file Copy plans can use the reviewed executor; Move execution remains disabled."
+                               Opacity="0.65" TextWrapping="Wrap" />
+                    <ProgressBar x:Name="CopyProgressBar"
+                                 Minimum="0" Maximum="1" Value="0"
+                                 Height="4" Visibility="Collapsed" />
+                </StackPanel>
 
                 <ListView x:Name="OperationQueueList" Grid.Row="2" MaxHeight="128"
                           SelectionMode="Single"

@@ -100,6 +100,22 @@ See `docs/file-copy-executor.md`, `docs/windows-file-copy-mutation.md` and the `
 
 A preflight result is still not mutation authorization. It can become stale, and the executor's action-time canonical identity checks remain mandatory even when the visible preflight row says Ready.
 
+### Copy progress, cancellation and durable outcome
+
+While a Copy is active, Files displays entry-level `completed / total` progress from the executor's `FileOperationExecutionSnapshot`. It does not invent byte-level progress or infer completion from the destination directory. Planning, queue mutation and a second Copy remain disabled until the active execution settles.
+
+**Cancel Copy** calls the active executor's `RequestCancellationAsync(operationId)`. Cancellation can stop validation and can settle running work at the executor's reviewed boundary between entries. Once `MutationStarted` is durable for one entry, cancellation is intentionally not passed into that entry's identity-bound mutation / durable commit critical section. A cancellation request therefore means “stop at the next safe boundary”, not “tear down the current filesystem write immediately”.
+
+After execution settles, Files re-reads the same persistent action-history operation before presenting the final status. The UI distinguishes:
+
+- durable `Succeeded`;
+- durable `Cancelled`, including already committed/skipped entries;
+- durable non-recovery `Failed`;
+- `RecoveryRequired` or any unresolved `MutationStarted` / recovery-required entry;
+- non-terminal or unreadable durable history, which is treated conservatively rather than as success.
+
+Recovery-sensitive or ambiguous history never becomes consent, overwrite/delete authority or automatic replay. The original operation ID remains single-use, and any later attempt begins from a fresh plan and fresh validation.
+
 ## Permanent file deletion
 
 Permanent delete is intentionally **not** another Copy/Move queue kind. There is no generic `FileOperationKind.Delete` added to the planning queue.
@@ -179,7 +195,7 @@ This equivalence is a **browse** statement only. The crawler snapshot does not p
 
 ## Validation without hosted Actions
 
-`tools/test-local.ps1` is the authoritative validation inventory. The Files boundary is covered by dedicated offline verifiers for browse/UI state, operation state/preflight/execution validation, the Files Copy execution wiring, delete history/preparation/final capability/mutation/orchestration, recovery discovery and the user-facing Files delete session.
+`tools/test-local.ps1` is the authoritative validation inventory. The Files boundary is covered by dedicated offline verifiers for browse/UI state, operation state/preflight/execution validation, the Files Copy execution/cancellation/recovery wiring, delete history/preparation/final capability/mutation/orchestration, recovery discovery and the user-facing Files delete session.
 
 Run portable model/source validation through the aggregate gate:
 
@@ -197,6 +213,6 @@ See `docs/local-validation.md` for the validation workflow.
 
 ## Remaining queue boundary
 
-Regular-file Copy is now the first queue operation wired to a production executor. The next queue work is explicit collision/progress/recovery UX, then separately reviewed Move semantics. Overwrite/replacement, directory Copy and directory Move remain disabled until their mutation and recovery policies are explicit.
+Regular-file Copy is now the first queue operation wired to a production executor, with progress, safe cancellation and recovery-sensitive terminal reporting. Explicit overwrite/replacement decision semantics remain separate because the current mutation primitive is exclusive-create only. The next major operation boundary is separately reviewed Move semantics; directory Copy and directory Move remain disabled until their mutation and recovery policies are explicit.
 
 Permanent file deletion should stay outside that generic queue unless a future design can preserve the stricter delete recovery/authorization semantics rather than weakening them into a generic operation kind.
