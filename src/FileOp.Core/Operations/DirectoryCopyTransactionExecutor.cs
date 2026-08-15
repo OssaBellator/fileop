@@ -173,6 +173,7 @@ public sealed class DirectoryCopyTransactionExecutor
             }
 
             IDirectoryCopyMutationLease? lease = null;
+            DirectoryCopyMutationReceipt? receipt = null;
             try
             {
                 // No cancellation token crosses the durable MutationStarted boundary.
@@ -186,20 +187,21 @@ public sealed class DirectoryCopyTransactionExecutor
                 {
                     throw new InvalidOperationException("Directory Copy mutation provider returned no lease.");
                 }
-                ValidateReceipt(action, parentIdentity, lease.Receipt);
+                receipt = lease.Receipt;
+                ValidateReceipt(action, parentIdentity, receipt);
                 history = await _historyStore
                     .CommitAsync(
                         plan.OperationId,
                         ordinal,
-                        lease.Receipt.DestinationIdentity,
-                        lease.Receipt.DestinationContentFingerprint,
+                        receipt.DestinationIdentity,
+                        receipt.DestinationContentFingerprint,
                         UtcNow())
                     .ConfigureAwait(false);
             }
             catch (Exception exception)
             {
-                FileIdentity? observedIdentity = lease?.Receipt.DestinationIdentity;
-                FileContentFingerprint? observedFingerprint = lease?.Receipt.DestinationContentFingerprint;
+                FileIdentity? observedIdentity = receipt?.DestinationIdentity;
+                FileContentFingerprint? observedFingerprint = receipt?.DestinationContentFingerprint;
                 var failure = FailureFromException(
                     "DirectoryCopyMutationAmbiguous",
                     "A recursive directory Copy action crossed MutationStarted but did not reach durable commit. Recovery inspection is required.",
