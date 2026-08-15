@@ -30,6 +30,7 @@ def check(root: Path) -> int:
     core = read(root, "src/FileOp.Core/Operations/FileCrossVolumeMoveSourcePreflight.cs")
     policy_tests = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightPolicyTests.cs")
     attribute_tests = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightAttributeTests.cs")
+    volume_guard_tests = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSchemaV1VolumeGuardTests.cs")
     native = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightNativeTests.cs")
     fallback_native = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeTwoVolumeTests.cs")
     raw_delete = read(root, "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs")
@@ -52,12 +53,22 @@ def check(root: Path) -> int:
 
     checks += require(
         policy_tests,
-        "SameVolumeMoveBypassesCrossVolumeSourcePreflight",
+        "EqualVolumeSerialBypassesSchemaV1CrossVolumeSourcePreflight",
         "Assert.AreEqual(0, probe.CallCount)",
         "ProtectedSourceFileBlocksBeforeInnerEvidenceProbe",
         "SourceProtectedLocation",
         "Assert.AreEqual(0, inner.CallCount)",
         "AllowedProtectedLocationPolicyContinuesToInnerEvidenceProbe",
+    )
+
+    checks += require(
+        volume_guard_tests,
+        "EqualVolumeSerialEvidenceIsRejectedBeforeCompositeHistoryOrCopy",
+        'Assert.AreEqual("CrossVolumeMoveValidationBlocked", result.Failure?.Code)',
+        "distinct source/destination volumes",
+        "Assert.AreEqual(0, copy.CallCount)",
+        "Assert.AreEqual(0, sourceDelete.CallCount)",
+        "Assert.IsNull(await history.GetAsync(plan.Id))",
     )
 
     checks += require(
