@@ -21,6 +21,10 @@ namespace FileOp.Windows.Operations;
 /// metadata transaction. Destructive production execution remains disabled until that exact
 /// contract passes its native Windows validation matrix. This block happens before durable
 /// history and before destination Copy begins.
+///
+/// A 32-bit filesystem volume serial is not treated as collision-free. Different serials
+/// prove different volumes directly; equal serials require a stronger handle-bound Windows
+/// volume-GUID relationship before same-volume rename can remain mutation-ready.
 /// </summary>
 public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator
 {
@@ -35,13 +39,27 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
 
     private readonly IFileOperationExecutionValidator _inner;
     private readonly IFileOperationNamespaceCapabilityProbe _namespaceProbe;
+    private readonly IFileOperationVolumeRelationshipProbe _volumeRelationshipProbe;
 
     public WindowsMoveOperationExecutionValidator(
         IFileOperationExecutionValidator? inner = null,
         IFileOperationNamespaceCapabilityProbe? namespaceProbe = null)
+        : this(
+            inner ?? new WindowsFileOperationExecutionValidator(),
+            namespaceProbe ?? new WindowsFileOperationNamespaceCapabilityProbe(),
+            new WindowsFileOperationVolumeRelationshipProbe())
     {
-        _inner = inner ?? new WindowsFileOperationExecutionValidator();
-        _namespaceProbe = namespaceProbe ?? new WindowsFileOperationNamespaceCapabilityProbe();
+    }
+
+    internal WindowsMoveOperationExecutionValidator(
+        IFileOperationExecutionValidator inner,
+        IFileOperationNamespaceCapabilityProbe namespaceProbe,
+        IFileOperationVolumeRelationshipProbe volumeRelationshipProbe)
+    {
+        _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        _namespaceProbe = namespaceProbe ?? throw new ArgumentNullException(nameof(namespaceProbe));
+        _volumeRelationshipProbe = volumeRelationshipProbe ??
+            throw new ArgumentNullException(nameof(volumeRelationshipProbe));
     }
 
     public async ValueTask<FileOperationExecutionValidationResult> ValidateAsync(
@@ -55,9 +73,15 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
             return validation;
         }
 
-        if (!TryClassifyVolumeRelationship(validation, out var isCrossVolume))
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!TryClassifyVolumeRelationship(
+                validation,
+                out var isCrossVolume,
+                out var relationshipFailureSummary))
         {
-            return Block(validation, MissingRootIdentitySummary);
+            return Block(
+                validation,
+                relationshipFailureSummary ?? MissingRootIdentitySummary);
         }
 
         if (isCrossVolume)
@@ -81,19 +105,49 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
         }
     }
 
-    private static bool TryClassifyVolumeRelationship(
+    private bool TryClassifyVolumeRelationship(
         FileOperationExecutionValidationResult validation,
-        out bool isCrossVolume)
+        out bool isCrossVolume,
+        out string? failureSummary)
     {
         if (validation.SourceDirectory.Identity is not FileIdentity sourceIdentity ||
             validation.DestinationDirectory.Identity is not FileIdentity destinationIdentity)
         {
             isCrossVolume = false;
+            failureSummary = MissingRootIdentitySummary;
             return false;
         }
 
-        isCrossVolume = sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber;
-        return true;
+        if (sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber)
+        {
+            isCrossVolume = true;
+            failureSummary = null;
+            return true;
+        }
+
+        var relationship = _volumeRelationshipProbe.Query(
+            validation.SourceDirectory.CanonicalPath,
+            validation.DestinationDirectory.CanonicalPath);
+        switch (relationship.State)
+        {
+            case FileOperationVolumeRelationshipState.SameVolume:
+                isCrossVolume = false;
+                failureSummary = null;
+                return true;
+
+            case FileOperationVolumeRelationshipState.DifferentVolume:
+                isCrossVolume = true;
+                failureSummary = null;
+                return true;
+
+            default:
+                isCrossVolume = false;
+                failureSummary =
+                    "Move execution validation could not prove that roots with equal volume-serial evidence belong to the same filesystem volume. " +
+                    relationship.Summary +
+                    " No durable mutation history or filesystem mutation was created.";
+                return false;
+        }
     }
 
     private static FileOperationExecutionValidationResult Block(
