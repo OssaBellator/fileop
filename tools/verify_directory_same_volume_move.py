@@ -240,7 +240,10 @@ def check_repository(root: Path) -> int:
         "public sealed class WindowsDirectorySameVolumeMoveMutationPrimitive",
         "FileDirectoryFile = 0x00000001",
         "FileOpenReparsePoint",
-        "SetFileInformationByHandle(",
+        "FileRenameInformation = 10",
+        "NtSetInformationFile(",
+        "Marshal.SizeOf<FileRenameInfoLayout>() + fileNameLength",
+        "for (var offset = 0; offset < bufferSize; offset++)",
         "0); // ReplaceIfExists == FALSE.",
         "OpenRelativeSourceDirectory(sourceParent, sourceLeafName)",
         "FileSynchronousIoNonAlert | FileDirectoryFile | FileOpenReparsePoint",
@@ -270,8 +273,11 @@ def check_repository(root: Path) -> int:
 
     checks += require(
         move_validator,
-        "CrossVolumeMoveDisabledSummary",
-        "relationship.State != FileOperationVolumeRelationshipState.SameVolume",
+        "EqualSerialDifferentVolumeSummary",
+        "sourceIdentity.VolumeSerialNumber == destinationIdentity.VolumeSerialNumber",
+        "case FileOperationVolumeRelationshipState.SameVolume:",
+        "case FileOperationVolumeRelationshipState.DifferentVolume:",
+        "return Block(validation, EqualSerialDifferentVolumeSummary);",
     )
     checks += require(
         app_move,

@@ -32,7 +32,7 @@ public sealed class WindowsDirectorySameVolumeMoveMutationPrimitive :
     private const uint FileOpenReparsePoint = 0x00200000;
     private const uint FileOpen = 1;
     private const uint ObjCaseInsensitive = 0x00000040;
-    private const int FileRenameInfo = 3;
+    private const int FileRenameInformation = 10;
 
     public ValueTask<IDirectorySameVolumeMoveMutationLease> RenameDirectoryAsync(
         DirectorySameVolumeMoveMutationRequest request)
@@ -375,12 +375,12 @@ public sealed class WindowsDirectorySameVolumeMoveMutationPrimitive :
     {
         var fileNameLength = checked(destinationLeafName.Length * sizeof(char));
         var fileNameOffset = checked((int)Marshal.OffsetOf<FileRenameInfoLayout>(nameof(FileRenameInfoLayout.FileName)));
-        var bufferSize = checked(fileNameOffset + fileNameLength);
+        var bufferSize = checked(Marshal.SizeOf<FileRenameInfoLayout>() + fileNameLength);
         var buffer = Marshal.AllocHGlobal(bufferSize);
         var destinationAddedRef = false;
         try
         {
-            for (var offset = 0; offset < fileNameOffset; offset++)
+            for (var offset = 0; offset < bufferSize; offset++)
             {
                 Marshal.WriteByte(buffer, offset, 0);
             }
@@ -404,14 +404,16 @@ public sealed class WindowsDirectorySameVolumeMoveMutationPrimitive :
                 IntPtr.Add(buffer, fileNameOffset),
                 destinationLeafName.Length);
 
-            if (!SetFileInformationByHandle(
-                    sourceDirectory,
-                    FileRenameInfo,
-                    buffer,
-                    checked((uint)bufferSize)))
+            var status = NtSetInformationFile(
+                sourceDirectory,
+                out _,
+                buffer,
+                checked((uint)bufferSize),
+                FileRenameInformation);
+            if (status < 0)
             {
-                throw Win32IOException(
-                    $"Renaming directory to destination leaf '{destinationLeafName}' without replacement");
+                throw new IOException(
+                    $"Renaming directory to destination leaf '{destinationLeafName}' without replacement failed with NTSTATUS 0x{unchecked((uint)status):X8}.");
             }
         }
         finally
@@ -577,13 +579,13 @@ public sealed class WindowsDirectorySameVolumeMoveMutationPrimitive :
         IntPtr eaBuffer,
         uint eaLength);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetFileInformationByHandle(
-        SafeFileHandle hFile,
-        int fileInformationClass,
-        IntPtr lpFileInformation,
-        uint dwBufferSize);
+    [DllImport("ntdll.dll")]
+    private static extern int NtSetInformationFile(
+        SafeFileHandle fileHandle,
+        out IoStatusBlock ioStatusBlock,
+        IntPtr fileInformation,
+        uint length,
+        int fileInformationClass);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetFinalPathNameByHandleW(
