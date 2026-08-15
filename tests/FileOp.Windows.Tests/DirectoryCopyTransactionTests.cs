@@ -40,6 +40,7 @@ public sealed class DirectoryCopyTransactionTests
                     plan.OperationId,
                     0,
                     new FileIdentity(DestinationVolume, 100),
+                    destinationContentFingerprint: null,
                     DateTimeOffset.UtcNow);
             }
 
@@ -48,6 +49,7 @@ public sealed class DirectoryCopyTransactionTests
             Assert.IsNotNull(persisted);
             Assert.AreEqual(DirectoryCopyActionEntryState.Committed, persisted.Entries[0].State);
             Assert.AreEqual(new FileIdentity(DestinationVolume, 100), persisted.Entries[0].DestinationIdentity);
+            Assert.IsNull(persisted.Entries[0].DestinationContentFingerprint);
             Assert.IsFalse(persisted.GrantsAutomaticReplayAuthority);
             Assert.IsFalse(persisted.GrantsRollbackAuthority);
             Assert.IsFalse(persisted.GrantsDeleteAuthority);
@@ -103,6 +105,9 @@ public sealed class DirectoryCopyTransactionTests
 
             Assert.AreEqual(DirectoryCopyActionTerminalState.Succeeded, result.TerminalState);
             Assert.IsTrue(result.Entries.All(static entry => entry.State == DirectoryCopyActionEntryState.Committed));
+            Assert.IsTrue(result.Entries
+                .Where(static entry => entry.Kind == DirectoryCopyActionKind.CopyFile)
+                .All(static entry => entry.DestinationContentFingerprint is not null));
             Assert.AreEqual(4, primitive.CallCount);
             Assert.AreEqual(1, acquirer.CallCount);
             Assert.AreEqual(0, expectedParents.Count);
@@ -249,6 +254,27 @@ public sealed class DirectoryCopyTransactionTests
         }
     }
 
+    [TestMethod]
+    public void TransactionPlanRejectsDestinationInsideReviewedSourceTree()
+    {
+        var manifest = CreateManifest(1, 2, 3, 4);
+        var inside = Path.Combine(manifest.CanonicalRootPath, "nested-destination");
+        var destinationParent = new FileOperationCanonicalPath(
+            inside,
+            inside,
+            FileOperationCanonicalPathState.Directory,
+            false,
+            new FileIdentity(SourceVolume, 99));
+
+        Assert.ThrowsException<ArgumentException>(() =>
+            new DirectoryCopyTransactionPlan(
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow,
+                manifest,
+                destinationParent,
+                Path.Combine(inside, "copy")));
+    }
+
     private static DirectoryCopyTransactionPlan CreatePlan(bool singleRootFile = false)
     {
         var manifest = singleRootFile
@@ -276,10 +302,7 @@ public sealed class DirectoryCopyTransactionTests
         return DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
             RootEvidence(root, new FileIdentity(SourceVolume, 1)),
-            new[]
-            {
-                Entry(root, "file.txt", 2, DirectoryOperationTreeEntryKind.File),
-            });
+            new[] { Entry(root, "file.txt", 2, DirectoryOperationTreeEntryKind.File) });
     }
 
     private static DirectoryOperationTreeManifest CreateManifest(
