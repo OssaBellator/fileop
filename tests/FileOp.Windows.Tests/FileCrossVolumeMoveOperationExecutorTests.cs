@@ -161,6 +161,43 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
     }
 
     [TestMethod]
+    public async Task SourceDeleteSuccessWithoutMutationProofRequiresRecovery()
+    {
+        using var fixture = new HistoryFixture();
+        var events = new List<string>();
+        var plan = CreatePlan();
+        var validator = new FakeValidator((candidate, _) => CreateValidation(candidate));
+        using var history = new SqliteFileCrossVolumeMoveActionHistoryStore(fixture.DatabasePath);
+        var copy = new FakeCopyMutation(events);
+        var sourceDelete = new FakeSourceDeletePrimitive(events)
+        {
+            ReportMutationPerformed = false,
+        };
+        var executor = new FileCrossVolumeMoveOperationExecutor(
+            validator,
+            history,
+            copy,
+            sourceDelete);
+
+        var result = await executor.ExecuteAsync(plan);
+
+        Assert.AreEqual(FileOperationExecutionState.Failed, result.State);
+        Assert.AreEqual("CrossVolumeMoveSourceDeleteFailed", result.Failure?.Code);
+        Assert.IsTrue(sourceDelete.LastLease?.AuthorizationObserved == true);
+        Assert.IsFalse(sourceDelete.LastLease?.MutationPerformed == true);
+
+        var persisted = await history.GetAsync(plan.Id);
+        Assert.IsNotNull(persisted);
+        Assert.AreEqual(
+            FileCrossVolumeMoveTerminalState.RecoveryRequired,
+            persisted.TerminalState);
+        Assert.AreEqual(
+            FileCrossVolumeMoveEntryState.RecoveryRequired,
+            persisted.Entries[0].State);
+        Assert.IsTrue(persisted.RequiresRecovery);
+    }
+
+    [TestMethod]
     public async Task InvalidCopyReceiptNeverAcquiresSourceDeleteCapability()
     {
         using var fixture = new HistoryFixture();
@@ -396,6 +433,8 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
 
         public bool ThrowOnMutation { get; set; }
 
+        public bool ReportMutationPerformed { get; set; } = true;
+
         public FakeSourceDeleteLease? LastLease { get; private set; }
 
         public ValueTask<IFileCrossVolumeMoveSourceDeleteLease> AcquireAsync(
@@ -413,7 +452,8 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
             LastLease = new FakeSourceDeleteLease(
                 new FileCrossVolumeMoveSourceDeleteEvidence(request),
                 _events,
-                ThrowOnMutation);
+                ThrowOnMutation,
+                ReportMutationPerformed);
             return ValueTask.FromResult<IFileCrossVolumeMoveSourceDeleteLease>(LastLease);
         }
     }
@@ -422,15 +462,18 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
     {
         private readonly List<string> _events;
         private readonly bool _throwOnMutation;
+        private readonly bool _reportMutationPerformed;
 
         public FakeSourceDeleteLease(
             FileCrossVolumeMoveSourceDeleteEvidence evidence,
             List<string> events,
-            bool throwOnMutation)
+            bool throwOnMutation,
+            bool reportMutationPerformed)
         {
             Evidence = evidence;
             _events = events;
             _throwOnMutation = throwOnMutation;
+            _reportMutationPerformed = reportMutationPerformed;
         }
 
         public FileCrossVolumeMoveSourceDeleteEvidence Evidence { get; }
@@ -460,7 +503,10 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
             {
                 throw new IOException("delete failed after barrier");
             }
-            MutationPerformed = true;
+            if (_reportMutationPerformed)
+            {
+                MutationPerformed = true;
+            }
             return ValueTask.CompletedTask;
         }
 
