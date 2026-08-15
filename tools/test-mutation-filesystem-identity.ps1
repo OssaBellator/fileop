@@ -35,6 +35,9 @@ if (-not (Test-Path -LiteralPath $testProject -PathType Leaf)) {
     throw "FileOp.Windows.Tests project was not found at '$testProject'."
 }
 
+# The shared prefix deliberately selects both:
+# - WindowsMutationFilesystemCapabilityBoundaryTests
+# - WindowsMutationFilesystemCapabilityBindingTests
 & dotnet test $testProject `
     -c $Configuration `
     --filter "FullyQualifiedName~WindowsMutationFilesystemCapability" `
