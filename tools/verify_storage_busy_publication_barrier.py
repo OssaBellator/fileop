@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""Verify engine busy entry suppresses old-source UI publication before recovery."""
+"""Verify engine busy entry and native index publication barriers before recovery."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 import random
+
+from verify_index_publication_quiescence_lease import (
+    check_repository as check_quiescence_repository,
+    run_model as run_quiescence_model,
+)
+from verify_index_rebuild_publication_transaction import (
+    check_repository as check_publication_repository,
+    run_model as run_publication_model,
+)
 
 
 MODES = ("Initializing", "Native", "Fallback", "Unavailable")
@@ -190,11 +199,30 @@ def main() -> int:
         raise ValueError("--cases must be non-negative")
 
     model_checks = run_model(args.cases)
-    repo_checks = check_repository(args.repo_root.resolve()) if args.repo_root else 0
+    publication_model_checks = run_publication_model(args.cases)
+    quiescence_model_checks = run_quiescence_model(args.cases)
+
+    repo_checks = 0
+    publication_repo_checks = 0
+    quiescence_repo_checks = 0
+    if args.repo_root:
+        root = args.repo_root.resolve()
+        repo_checks = check_repository(root)
+        publication_repo_checks = check_publication_repository(root)
+        quiescence_repo_checks = check_quiescence_repository(root)
+
     suffix = f" and {repo_checks:,} source checks" if args.repo_root else ""
     print(
         "PASS: engine busy publication barrier verified with "
         f"{model_checks:,} model checks across {args.cases:,} randomized states{suffix}."
+    )
+    print(
+        "PASS: index rebuild publication transaction verified with "
+        f"{publication_model_checks:,} model checks and {publication_repo_checks:,} source checks."
+    )
+    print(
+        "PASS: held index publication quiescence lease verified with "
+        f"{quiescence_model_checks:,} model checks and {quiescence_repo_checks:,} source checks."
     )
     return 0
 

@@ -8,6 +8,11 @@ import sys
 from enum import Enum, auto
 from pathlib import Path
 
+from verify_index_publication_quiescence_lease import (
+    check_repository as check_quiescence_repository,
+    run_model as run_quiescence_model,
+)
+
 
 class State(Enum):
     PREPARED = auto()
@@ -280,12 +285,19 @@ def main() -> int:
         parser.error("--cases must be positive")
 
     model_checks = run_model(args.cases)
+    quiescence_model_checks = run_quiescence_model(args.cases)
     print(
         f"PASS index rebuild publication transaction model: {model_checks} checks across {args.cases} randomized cases"
     )
+    print(
+        f"PASS index publication quiescence lease model: {quiescence_model_checks} checks across {args.cases} randomized cases"
+    )
     if not args.model_only:
-        source_checks = check_repository(args.repo_root.resolve())
+        root = args.repo_root.resolve()
+        source_checks = check_repository(root)
+        quiescence_source_checks = check_quiescence_repository(root)
         print(f"PASS index rebuild publication transaction source contract: {source_checks} checks")
+        print(f"PASS index publication quiescence lease source contract: {quiescence_source_checks} checks")
     return 0
 
 
