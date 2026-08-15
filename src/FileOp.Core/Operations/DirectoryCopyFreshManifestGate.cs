@@ -138,7 +138,7 @@ public sealed class DirectoryCopyFreshManifestGate
                 DirectoryCopyFreshManifestGateStatus.AcquisitionUnsupported,
                 reviewedManifest,
                 acquisition,
-                Revalidation: null,
+                revalidation: null,
                 "Directory Copy cannot begin durable history because the fresh tree has unsupported fidelity: " +
                 acquisition.Summary);
         }
@@ -150,7 +150,7 @@ public sealed class DirectoryCopyFreshManifestGate
                 DirectoryCopyFreshManifestGateStatus.AcquisitionUnavailable,
                 reviewedManifest,
                 acquisition,
-                Revalidation: null,
+                revalidation: null,
                 "Directory Copy cannot begin durable history because fresh tree evidence is unavailable: " +
                 acquisition.Summary);
         }
