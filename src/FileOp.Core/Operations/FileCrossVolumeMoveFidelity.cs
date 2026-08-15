@@ -54,12 +54,18 @@ public sealed record FileCrossVolumeMoveFidelityClassification(
 /// the current Copy path does not carry are refused when observed. Metadata comparison
 /// remains useful checkpoint evidence, but the product contract does not pretend unrelated
 /// metadata writers are atomically frozen across a cross-volume copy/delete transaction.
+///
+/// Read-only files are deliberately refused before the source-delete barrier for this
+/// draft. The current raw Windows disposition does not request
+/// FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE, so treating ReadOnly as supported here
+/// would turn a predictable delete refusal into recovery after SourceDeleteStarted.
 /// </summary>
 public static class FileCrossVolumeMoveFidelityClassifier
 {
+    private const uint FileAttributeReadOnly = 0x00000001u;
     private const uint FileAttributeNormal = 0x00000080u;
     private const uint AllowedOrdinaryFileAttributes =
-        FileBasicMetadataEvidence.StableCopiedAttributesMask |
+        (FileBasicMetadataEvidence.StableCopiedAttributesMask & ~FileAttributeReadOnly) |
         FileAttributeNormal;
 
     public static FileCrossVolumeMoveFidelityClassification Classify(
@@ -122,7 +128,7 @@ public static class FileCrossVolumeMoveFidelityClassifier
             return new FileCrossVolumeMoveFidelityClassification(
                 CanDeleteSourceAfterDurableBarrier: true,
                 Array.Empty<FileCrossVolumeMoveFidelityBlocker>(),
-                "Pinned source and destination satisfy FileOp's current cross-volume Move checkpoint contract. Main-stream content matches the durable Copy fingerprint; unsupported source stream/EA semantics are absent; security follows destination-default Windows semantics; hard-link topology is path-entry state rather than cross-volume preservation state. This grants no delete authority before the durable source-delete barrier.");
+                "Pinned source and destination satisfy FileOp's current cross-volume Move checkpoint contract. Main-stream content matches the durable Copy fingerprint; unsupported source stream/EA and file-attribute semantics are absent; security follows destination-default Windows semantics; hard-link topology is path-entry state rather than cross-volume preservation state. This grants no delete authority before the durable source-delete barrier.");
         }
 
         return new FileCrossVolumeMoveFidelityClassification(
