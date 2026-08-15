@@ -30,7 +30,7 @@ Files is an exact paged browser over direct-child metadata. It requests 256 entr
 
 Browsing itself remains read-only. Files also owns two reviewed mutation surfaces with deliberately different authority:
 
-- the ordinary queue can execute **regular-file Copy** and **same-volume local regular-file Move** after read-only preflight and fresh execution-grade validation;
+- the ordinary queue can execute **regular-file Copy** and **same-volume regular-file Move** after read-only preflight and fresh execution-grade validation. Different-volume Move is currently product-disabled by the Windows Move validator before durable history, destination Copy or source-delete mutation begins;
 - the separately reviewed **file-only permanent-delete session** has its own stricter recovery, confirmation, authorization and same-handle mutation boundary.
 
 The Copy/Move queue remains deliberately narrow:
@@ -39,11 +39,21 @@ The Copy/Move queue remains deliberately narrow:
 - Copy uses exclusive-create/no-overwrite semantics;
 - `Ask later` must be resolved into a fresh immutable **Skip existing** or **Stop on collision** plan before execution;
 - same-volume Move uses an identity-preserving handle-relative rename with replacement disabled;
-- cross-volume Move remains non-executable until the source-delete half has a separately reviewed durable authorization/recovery transaction;
-- per-directory case-sensitive NTFS or unavailable namespace-capability evidence blocks Move before durable mutation history; exact-case mutation is not claimed;
-- Copy and Move share one serialized Files execution surface, expose entry-level progress and settle cancellation only at reviewed safe boundaries;
+- cross-volume Move transaction infrastructure is implemented and testable but is **not currently reachable through production Move validation**. #186 has selected destination-default/inherited security semantics source-side; #187 now defines the scoped preservation contract and the remaining native main-stream stability tests. The production block stays in place until those exact-head Windows tests pass;
+- the dormant cross-volume engine first commits an exclusive-create destination Copy, then separately reacquires and identity-binds the exact original source and committed destination before a durable source-delete barrier can mint source-delete authority;
+- Copy success by itself is never source-delete authority;
+- in that composite journal, `DestinationCommitted` is a safe cancellation or pre-delete-refusal checkpoint: the destination copy is durable and the original source is retained. The engine records that duplicate explicitly rather than inferring cleanup authority;
+- destructive cross-volume completion requires source/destination main-stream SHA-256 to match the durable Copy fingerprint and checks the supported basic-metadata/attribute subset at both checkpoints. Source named streams or EAs are unsupported by the current Copy primitive and retain the source when observed;
+- cross-volume security deliberately follows Windows destination-default/inherited semantics rather than source security-descriptor preservation. No privileged SACL/`ACCESS_SYSTEM_SECURITY` proof is used by this path;
+- cross-volume Move removes the **selected source directory entry**. Same-volume hard-link topology is not recreated across volumes, so additional source/destination hard links are not treated as lost-copy evidence;
+- stable basic metadata remains checkpoint evidence, but FileOp does not claim Windows atomically freezes unrelated `FILE_WRITE_ATTRIBUTES`, EA or independent-stream mutations between the final observation and unlink. Main/unnamed-stream stability is the destructive invariant that still requires exact native Windows proof;
+- after cross-volume `SourceDeleteStarted` is durable, cancellation is not passed through final preservation recheck, same-handle source disposition, lease release or durable `Moved` commit; ambiguity after that barrier is recovery-sensitive;
+- the cross-volume source-delete lease keeps the committed destination open without ordinary write/delete sharing while holding the exact source DELETE-capable handle, narrowing the destination/source replacement window before deletion;
+- per-directory case-sensitive NTFS or unavailable namespace-capability evidence blocks enabled Move mutation before durable history; exact-case mutation is not claimed;
+- Copy and enabled Move share one serialized Files execution surface, expose entry-level progress and settle cancellation only at reviewed safe boundaries;
 - once an operation reaches durable history, its operation ID is single-use and recovery-sensitive history is never automatic replay authority;
-- the Indexer is not used as a file Copy/Move mutation service.
+- the Indexer is not used as a file Copy/Move mutation service;
+- no path-only `File.Copy`, `File.Move` or `File.Delete` fallback is used by the reviewed queue executors.
 
 For permanent deletion, destructive authority is not inferred from a selected row, Storage recommendation or cleanup-readiness result. A permanent-delete session requires the current exact Files selection to pass the reviewed sequence:
 
@@ -69,7 +79,9 @@ The current user-facing delete action is deliberately narrow:
 - final-lease cleanup ownership is retained and retried without granting another mutation capability;
 - Storage/Optimize and the indexing helper remain non-authorizing.
 
-See `docs/files-browser.md` for the full Copy/Move/browser lifecycle and the `docs/file-delete-*.md` series for the reviewed permanent-delete preflight, authorization, history, stability/final-capability, mutation-barrier and orchestration contracts.
+The dormant cross-volume Move design does **not** reuse the permanent-delete user authorization receipt: if that route is eventually enabled, completing a queued Move remains a separate operation-scoped intent with its own source-delete capability and durable barrier.
+
+See `docs/files-browser.md` for the full Copy/Move/browser lifecycle, `docs/file-cross-volume-move.md` for the dormant composite Move/preservation boundary and current enablement tests, and the `docs/file-delete-*.md` series for the reviewed permanent-delete preflight, authorization, history, stability/final-capability, mutation-barrier and orchestration contracts.
 
 ### Folders, Types and Categories
 
@@ -174,7 +186,7 @@ The desktop build copies the reviewed indexer host artifacts beside the app. The
 
 ## Local verification without GitHub Actions
 
-`tools/test-local.ps1` is the **authoritative verification inventory**. Individual verifier names evolve as reviewed boundaries are added, so this README intentionally does not duplicate the complete list.
+`tools/test-local.ps1` is the **authoritative verification inventory**. Hosted GitHub Actions are optional duplicate evidence, not a development or merge dependency. Individual verifier names evolve as reviewed boundaries are added, so this README intentionally does not duplicate the complete list.
 
 Run all standard-library model/source verifiers without requiring the .NET SDK:
 
@@ -182,13 +194,13 @@ Run all standard-library model/source verifiers without requiring the .NET SDK:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1 -OfflineOnly
 ```
 
-Run the complete Windows no-Actions gate:
+Run the complete Windows no-Actions gate on the exact proposed mutation-branch head before merge:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
 ```
 
-The complete gate runs the offline verifiers, Core/Windows/Indexer/benchmark Release builds, the Windows regression/integration test suite, WinUI x64 Release build, bundled-helper artifact checks and a real bundled-helper process handshake. `docs/local-validation.md` documents the gate and narrower development switches. `docs/windows-release-validation.md` records the focused mutation/signing scenarios required for the current release-hardening stack.
+The complete gate runs the offline verifiers, Core/Windows/Indexer/benchmark Release builds, the Windows regression/integration test suite, WinUI x64 Release build, bundled-helper artifact checks and a real bundled-helper process handshake. `docs/local-validation.md` documents the gate and narrower development switches. `docs/windows-release-validation.md` records additional signing and hands-on release-qualification scenarios.
 
 Benchmarks remain manual:
 
@@ -218,6 +230,7 @@ tools/
 docs/
   architecture.md                     Architectural boundaries and lifecycle
   files-browser.md                    Indexed Files browsing + Copy/Move execution boundary
+  file-cross-volume-move.md           Composite cross-volume Move/fidelity contract
   storage-optimization.md             Optimize policy/safety semantics
   same-size-content-verification.md   Explicit bounded SHA-256 verification
   physical-reclaim-evidence.md        Current physical reclaim upper-bound evidence
