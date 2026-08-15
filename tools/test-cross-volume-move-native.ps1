@@ -38,6 +38,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "Cross-volume Move native matrix inventory verification failed with exit code $LASTEXITCODE."
 }
 
+& python (Join-Path $repoRoot "tools\verify_cross_volume_move_source_preflight_native_inventory.py") --repo-root $repoRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Cross-volume Move source-preflight native inventory verification failed with exit code $LASTEXITCODE."
+}
+
 & python (Join-Path $repoRoot "tools\verify_move_volume_identity.py") --repo-root $repoRoot
 if ($LASTEXITCODE -ne 0) {
     throw "Move volume identity source verification failed with exit code $LASTEXITCODE."
