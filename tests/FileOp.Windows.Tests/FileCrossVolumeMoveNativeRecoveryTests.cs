@@ -43,7 +43,7 @@ public sealed class FileCrossVolumeMoveNativeRecoveryTests
             Blocked(FileCrossVolumeMoveFidelityBlocker.SourceExtendedAttributes));
         var result = await ExecuteWithVerifierAsync(plan, history, verifier);
 
-        AssertRecoveryWithBothFiles(
+        await AssertRecoveryWithBothFilesAsync(
             result,
             history,
             plan,
@@ -67,7 +67,7 @@ public sealed class FileCrossVolumeMoveNativeRecoveryTests
             File.WriteAllText(path + ":fileop-post-barrier", "post-barrier stream"));
         var result = await ExecuteWithVerifierAsync(plan, history, verifier);
 
-        AssertRecoveryWithBothFiles(
+        await AssertRecoveryWithBothFilesAsync(
             result,
             history,
             plan,
@@ -92,7 +92,7 @@ public sealed class FileCrossVolumeMoveNativeRecoveryTests
             SetExtendedAttribute(path, "FileOpPostBarrier", "post-barrier ea"));
         var result = await ExecuteWithVerifierAsync(plan, history, verifier);
 
-        AssertRecoveryWithBothFiles(
+        await AssertRecoveryWithBothFilesAsync(
             result,
             history,
             plan,
@@ -118,7 +118,7 @@ public sealed class FileCrossVolumeMoveNativeRecoveryTests
         return await executor.ExecuteAsync(plan);
     }
 
-    private static void AssertRecoveryWithBothFiles(
+    private static async Task AssertRecoveryWithBothFilesAsync(
         FileOperationExecutionSnapshot result,
         SqliteFileCrossVolumeMoveActionHistoryStore history,
         FileOperationPlan plan,
@@ -142,7 +142,7 @@ public sealed class FileCrossVolumeMoveNativeRecoveryTests
             "The already committed destination Copy remains present when post-barrier proof refuses deletion.");
         Assert.AreEqual(File.ReadAllText(sourcePath), File.ReadAllText(destinationPath));
 
-        var persisted = history.GetAsync(plan.Id).AsTask().GetAwaiter().GetResult();
+        var persisted = await history.GetAsync(plan.Id);
         Assert.IsNotNull(persisted);
         Assert.AreEqual(FileCrossVolumeMoveTerminalState.RecoveryRequired, persisted.TerminalState);
         Assert.AreEqual(FileCrossVolumeMoveEntryState.RecoveryRequired, persisted.Entries[0].State);
