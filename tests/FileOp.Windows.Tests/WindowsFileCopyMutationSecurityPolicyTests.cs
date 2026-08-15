@@ -18,6 +18,7 @@ public sealed class WindowsFileCopyMutationSecurityPolicyTests
     private const int SeFileObject = 1;
 
     [TestMethod]
+    [TestCategory("CrossVolumeMoveSecurityNative")]
     public async Task ReviewedCopyCreatesDestinationWithDefaultSecurityInsteadOfCloningSourceNullDacl()
     {
         var root = Path.Combine(
