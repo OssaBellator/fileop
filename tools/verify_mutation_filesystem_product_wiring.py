@@ -47,6 +47,7 @@ def check(root: Path) -> int:
     app_project = read(root, "src/FileOp.App/FileOp.App.csproj")
     copy = read(root, "src/FileOp.App/FilesView.Copy.cs")
     move = read(root, "src/FileOp.App/FilesView.Move.cs")
+    directory_move = read(root, "src/FileOp.App/FilesView.DirectoryMove.cs")
     delete = read(root, "src/FileOp.App/FilesView.Delete.cs")
     gate = read(root, "tools/test-mutation-filesystem-identity.ps1")
     authoritative = read(root, "tools/verify_file_operation_execution_validation.py")
@@ -64,12 +65,12 @@ def check(root: Path) -> int:
         "FileOp.Windows.Operations.WindowsNtfsFileCopyMutationPrimitive",
         "global using WindowsFileSameVolumeMoveMutationPrimitive =",
         "FileOp.Windows.Operations.WindowsNtfsFileSameVolumeMoveMutationPrimitive",
+        "global using WindowsDirectorySameVolumeMoveMutationPrimitive =",
+        "FileOp.Windows.Operations.WindowsNtfsDirectorySameVolumeMoveMutationPrimitive",
         "global using WindowsFileDeleteOperationFinalMutationLeaseProvider =",
         "FileOp.Windows.Operations.WindowsNtfsFileDeleteOperationFinalMutationLeaseProvider",
     )
 
-    # The alias source relies on SDK default compile items. Pin the project contract so the
-    # policy cannot disappear from production merely through an MSBuild item change.
     checks += require(
         app_project,
         '<Project Sdk="Microsoft.NET.Sdk">',
@@ -89,8 +90,15 @@ def check(root: Path) -> int:
         "new WindowsFileCopyMutationPrimitive()",
     )
     assert move.count("new WindowsMoveOperationExecutionValidator()") >= 2
-    checks += 1
+    assert directory_move.count("new WindowsMoveOperationExecutionValidator()") >= 2
+    checks += 2
     checks += require(move, "new WindowsFileSameVolumeMoveMutationPrimitive()")
+    checks += require(
+        directory_move,
+        "new WindowsDirectorySameVolumeMoveMutationPrimitive()",
+        "new DirectorySameVolumeMoveOperationExecutor(",
+        "new SqliteDirectorySameVolumeMoveActionHistoryStore(",
+    )
     checks += require(
         delete,
         "private readonly IFileDeleteOperationExecutionValidator _deleteExecutionValidator =",
@@ -104,9 +112,10 @@ def check(root: Path) -> int:
         "WindowsFileDeleteOperationExecutionValidator",
         "WindowsFileCopyMutationPrimitive",
         "WindowsFileSameVolumeMoveMutationPrimitive",
+        "WindowsDirectorySameVolumeMoveMutationPrimitive",
         "WindowsFileDeleteOperationFinalMutationLeaseProvider",
     )
-    combined = copy + move + delete
+    combined = copy + move + directory_move + delete
     forbidden = []
     for name in guarded_names:
         forbidden.extend(
@@ -118,19 +127,19 @@ def check(root: Path) -> int:
         )
     checks += reject(combined, *forbidden)
 
-    # A project-wide alias is intentionally used because these are product mutation-policy
-    # names. Pin its blast radius recursively across App source while ignoring build output.
-    # The reviewed Copy primitive is intentionally allowed in FilesView.Move.cs because draft
-    # #185 composes the dormant cross-volume engine from the same guarded provider.
     allowed_app_usage = {
         "WindowsFileOperationExecutionValidator": {Path("FilesView.Copy.cs")},
-        "WindowsMoveOperationExecutionValidator": {Path("FilesView.Move.cs")},
+        "WindowsMoveOperationExecutionValidator": {
+            Path("FilesView.Move.cs"),
+            Path("FilesView.DirectoryMove.cs"),
+        },
         "WindowsFileDeleteOperationExecutionValidator": {Path("FilesView.Delete.cs")},
         "WindowsFileCopyMutationPrimitive": {
             Path("FilesView.Copy.cs"),
             Path("FilesView.Move.cs"),
         },
         "WindowsFileSameVolumeMoveMutationPrimitive": {Path("FilesView.Move.cs")},
+        "WindowsDirectorySameVolumeMoveMutationPrimitive": {Path("FilesView.DirectoryMove.cs")},
         "WindowsFileDeleteOperationFinalMutationLeaseProvider": {Path("FilesView.Delete.cs")},
     }
     observed_counts = {name: 0 for name in allowed_app_usage}
@@ -155,17 +164,14 @@ def check(root: Path) -> int:
             checks += count
 
     assert observed_counts["WindowsFileOperationExecutionValidator"] == 1
-    assert observed_counts["WindowsMoveOperationExecutionValidator"] >= 2
+    assert observed_counts["WindowsMoveOperationExecutionValidator"] >= 4
     assert observed_counts["WindowsFileDeleteOperationExecutionValidator"] == 1
     assert observed_counts["WindowsFileCopyMutationPrimitive"] >= 1
     assert observed_counts["WindowsFileSameVolumeMoveMutationPrimitive"] == 1
+    assert observed_counts["WindowsDirectorySameVolumeMoveMutationPrimitive"] == 1
     assert observed_counts["WindowsFileDeleteOperationFinalMutationLeaseProvider"] == 1
-    checks += 6
+    checks += 7
 
-    # App aliases protect App compilation only. Prevent another production project under src/
-    # from silently constructing a lower-level raw validator/provider directly. Construction
-    # is permitted only inside reviewed Windows composition wrappers or at exact App sites
-    # covered by the global aliases. Tests live outside src/ and may exercise raw components.
     allowed_raw_construction = {
         "WindowsFileOperationExecutionValidator": {
             Path("FileOp.App/FilesView.Copy.cs"),
@@ -174,6 +180,7 @@ def check(root: Path) -> int:
         },
         "WindowsMoveOperationExecutionValidator": {
             Path("FileOp.App/FilesView.Move.cs"),
+            Path("FileOp.App/FilesView.DirectoryMove.cs"),
             Path("FileOp.Windows/Operations/WindowsNtfsMoveOperationExecutionValidator.cs"),
         },
         "WindowsFileDeleteOperationExecutionValidator": {
@@ -188,6 +195,10 @@ def check(root: Path) -> int:
         "WindowsFileSameVolumeMoveMutationPrimitive": {
             Path("FileOp.App/FilesView.Move.cs"),
             Path("FileOp.Windows/Operations/WindowsNtfsMutationPrimitives.cs"),
+        },
+        "WindowsDirectorySameVolumeMoveMutationPrimitive": {
+            Path("FileOp.App/FilesView.DirectoryMove.cs"),
+            Path("FileOp.Windows/Operations/WindowsNtfsDirectorySameVolumeMoveMutationPrimitive.cs"),
         },
         "WindowsFileDeleteOperationFinalMutationLeaseProvider": {
             Path("FileOp.App/FilesView.Delete.cs"),
@@ -234,8 +245,6 @@ def check(root: Path) -> int:
         "App product-wiring build failed",
     )
 
-    # The narrower #193 gate must not be the only place this policy is checked. test-local
-    # already invokes this canonical execution-validation verifier; pin both #193 imports/runs.
     checks += require(
         authoritative,
         "from verify_mutation_filesystem_identity_boundary import (",
