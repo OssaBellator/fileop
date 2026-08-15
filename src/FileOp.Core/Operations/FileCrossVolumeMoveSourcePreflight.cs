@@ -14,6 +14,7 @@ public enum FileCrossVolumeMoveSourcePreflightBlocker
     SourceUnsupportedAttributes = 1 << 0,
     SourceNamedDataStreams = 1 << 1,
     SourceExtendedAttributes = 1 << 2,
+    SourceProtectedLocation = 1 << 3,
 }
 
 /// <summary>
@@ -152,6 +153,62 @@ public interface IFileCrossVolumeMoveSourcePreflightProbe
 }
 
 /// <summary>
+/// Adds the same protected-location eligibility used by the final source-delete capability
+/// boundary to the early source preflight. This is still non-authorizing and deliberately
+/// does not replace the final policy re-evaluation when the destructive lease is acquired.
+/// </summary>
+public sealed class FileCrossVolumeMoveProtectedLocationPreflightProbe :
+    IFileCrossVolumeMoveSourcePreflightProbe
+{
+    private readonly IFileCrossVolumeMoveSourcePreflightProbe _inner;
+    private readonly IFileDeleteProtectedLocationPolicy _protectedLocationPolicy;
+
+    public FileCrossVolumeMoveProtectedLocationPreflightProbe(
+        IFileCrossVolumeMoveSourcePreflightProbe inner,
+        IFileDeleteProtectedLocationPolicy protectedLocationPolicy)
+    {
+        _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        _protectedLocationPolicy = protectedLocationPolicy ??
+            throw new ArgumentNullException(nameof(protectedLocationPolicy));
+    }
+
+    public ValueTask<FileCrossVolumeMoveSourcePreflightClassification> ProbeAsync(
+        FileCrossVolumeMoveSourcePreflightRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var rootDecision = _protectedLocationPolicy.Evaluate(
+            request.CanonicalSourceDirectoryPath);
+        if (rootDecision.IsBlocked)
+        {
+            return ValueTask.FromResult(BlockProtectedLocation(
+                "source directory",
+                rootDecision));
+        }
+
+        var sourceDecision = _protectedLocationPolicy.Evaluate(request.CanonicalSourcePath);
+        if (sourceDecision.IsBlocked)
+        {
+            return ValueTask.FromResult(BlockProtectedLocation(
+                "source file",
+                sourceDecision));
+        }
+
+        return _inner.ProbeAsync(request, cancellationToken);
+    }
+
+    private static FileCrossVolumeMoveSourcePreflightClassification BlockProtectedLocation(
+        string description,
+        FileDeleteProtectedLocationResult decision) =>
+        new(
+            CanStartCopy: false,
+            new[] { FileCrossVolumeMoveSourcePreflightBlocker.SourceProtectedLocation },
+            $"Cross-volume Move can be refused before durable history and destination Copy because the exact {description} is protected from later source deletion: {decision.Reason} The protected-location policy will still be re-evaluated at the final source-delete capability boundary.");
+}
+
+/// <summary>
 /// Decorates execution-grade validation with a source-only, non-authorizing cross-volume
 /// capability probe. Deterministic unsupported source state is converted to Blocked before
 /// the composite executor can begin durable history or Copy. This does not remove any later
@@ -179,7 +236,10 @@ public sealed class FileCrossVolumeMovePreflightExecutionValidator :
         var validation = await _inner.ValidateAsync(plan, cancellationToken).ConfigureAwait(false);
         if (plan.Kind != FileOperationKind.Move ||
             validation.Status != FileOperationExecutionValidationStatus.Ready ||
-            validation.SourceDirectory.Identity is not FileIdentity sourceDirectoryIdentity)
+            validation.SourceDirectory.Identity is not FileIdentity sourceDirectoryIdentity ||
+            validation.DestinationDirectory.Identity is not FileIdentity destinationDirectoryIdentity ||
+            sourceDirectoryIdentity.VolumeSerialNumber ==
+                destinationDirectoryIdentity.VolumeSerialNumber)
         {
             return validation;
         }
