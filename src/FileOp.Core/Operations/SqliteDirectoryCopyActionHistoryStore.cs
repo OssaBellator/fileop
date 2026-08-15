@@ -177,6 +177,10 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        if (!Enum.IsDefined(terminalState))
+        {
+            throw new ArgumentOutOfRangeException(nameof(terminalState));
+        }
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -230,6 +234,12 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
         CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
+        if (ordinal < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(ordinal));
+        }
+        var requireFrontier = expectedState == DirectoryCopyActionEntryState.Pending &&
+            nextState is DirectoryCopyActionEntryState.MutationStarted or DirectoryCopyActionEntryState.Failed;
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -257,7 +267,24 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
                     failure_message = @failure_message,
                     failure_path = @failure_path,
                     failure_retryable = @failure_retryable
-                WHERE operation_id = @operation_id AND ordinal = @ordinal AND state = @expected_state;
+                WHERE operation_id = @operation_id
+                  AND ordinal = @ordinal
+                  AND state = @expected_state
+                  AND EXISTS (
+                      SELECT 1 FROM directory_copy_operations operation
+                      WHERE operation.operation_id = @operation_id
+                        AND operation.terminal_state IS NULL)
+                  AND (@require_frontier = 0 OR (
+                      NOT EXISTS (
+                          SELECT 1 FROM directory_copy_entries prior
+                          WHERE prior.operation_id = @operation_id
+                            AND prior.ordinal < @ordinal
+                            AND prior.state <> @committed)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM directory_copy_entries later
+                          WHERE later.operation_id = @operation_id
+                            AND later.ordinal > @ordinal
+                            AND later.state <> @pending)));
                 """;
             command.Parameters.AddWithValue("@next_state", (int)nextState);
             command.Parameters.AddWithValue("@mutation_started", mutationStartedAtUtc is { } started ? ToUtcTicks(started) : DBNull.Value);
@@ -273,10 +300,13 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
             command.Parameters.AddWithValue("@operation_id", operationId.ToString("D", CultureInfo.InvariantCulture));
             command.Parameters.AddWithValue("@ordinal", ordinal);
             command.Parameters.AddWithValue("@expected_state", (int)expectedState);
+            command.Parameters.AddWithValue("@require_frontier", requireFrontier ? 1 : 0);
+            command.Parameters.AddWithValue("@committed", (int)DirectoryCopyActionEntryState.Committed);
+            command.Parameters.AddWithValue("@pending", (int)DirectoryCopyActionEntryState.Pending);
             if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
             {
                 throw new InvalidOperationException(
-                    $"Directory Copy action {ordinal} is missing or is not in required state {expectedState}.");
+                    $"Directory Copy action {ordinal} is missing, terminal, out of sequence, or is not in required state {expectedState}.");
             }
             transaction.Commit();
         }
@@ -309,6 +339,10 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
             throw new InvalidOperationException($"Directory Copy action {ordinal} was not found.");
         }
         var kind = (DirectoryCopyActionKind)Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        if (!Enum.IsDefined(kind))
+        {
+            throw new InvalidOperationException($"Directory Copy action {ordinal} has an undefined kind value.");
+        }
         if (kind == DirectoryCopyActionKind.CreateDirectory && fingerprint is not null)
         {
             throw new InvalidOperationException("Directory creation history cannot persist file-content fingerprint evidence.");
@@ -393,27 +427,49 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            counts[(DirectoryCopyActionEntryState)reader.GetInt32(0)] = reader.GetInt64(1);
+            var state = (DirectoryCopyActionEntryState)reader.GetInt32(0);
+            if (!Enum.IsDefined(state))
+            {
+                throw new InvalidOperationException("Directory Copy history contains an undefined action state.");
+            }
+            counts[state] = reader.GetInt64(1);
         }
         if (counts.Count == 0)
         {
             throw new InvalidOperationException("Directory Copy history has no actions.");
         }
+        var pending = Count(counts, DirectoryCopyActionEntryState.Pending);
+        var failed = Count(counts, DirectoryCopyActionEntryState.Failed);
         var sensitive = Count(counts, DirectoryCopyActionEntryState.MutationStarted) +
             Count(counts, DirectoryCopyActionEntryState.RecoveryRequired);
-        if (terminalState == DirectoryCopyActionTerminalState.Succeeded &&
-            (counts.Count != 1 || !counts.ContainsKey(DirectoryCopyActionEntryState.Committed)))
+        switch (terminalState)
         {
-            throw new InvalidOperationException("Directory Copy cannot succeed until every recursive action is committed.");
-        }
-        if (terminalState is DirectoryCopyActionTerminalState.Failed or DirectoryCopyActionTerminalState.Cancelled && sensitive != 0)
-        {
-            throw new InvalidOperationException(
-                "A mutation-sensitive directory Copy cannot settle as Failed/Cancelled; recovery is required.");
-        }
-        if (terminalState == DirectoryCopyActionTerminalState.RecoveryRequired && sensitive == 0)
-        {
-            throw new InvalidOperationException("Directory Copy cannot require recovery without a mutation-sensitive action.");
+            case DirectoryCopyActionTerminalState.Succeeded:
+                if (counts.Count != 1 || !counts.ContainsKey(DirectoryCopyActionEntryState.Committed))
+                {
+                    throw new InvalidOperationException("Directory Copy cannot succeed until every recursive action is committed.");
+                }
+                break;
+            case DirectoryCopyActionTerminalState.Failed:
+                if (failed != 1 || sensitive != 0)
+                {
+                    throw new InvalidOperationException("Failed directory Copy requires exactly one definite pre-mutation failure frontier and no recovery-sensitive action.");
+                }
+                break;
+            case DirectoryCopyActionTerminalState.Cancelled:
+                if (pending == 0 || failed != 0 || sensitive != 0)
+                {
+                    throw new InvalidOperationException("Cancelled directory Copy requires a committed prefix followed by at least one pending action.");
+                }
+                break;
+            case DirectoryCopyActionTerminalState.RecoveryRequired:
+                if (sensitive != 1 || failed != 0)
+                {
+                    throw new InvalidOperationException("RecoveryRequired directory Copy requires exactly one recovery-sensitive frontier and no definite-failure frontier.");
+                }
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(terminalState));
         }
     }
 
@@ -530,6 +586,10 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
+            PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=FULL;
+            PRAGMA foreign_keys=ON;
+
             CREATE TABLE IF NOT EXISTS directory_copy_operations(
                 operation_id TEXT PRIMARY KEY,
                 queued_utc_ticks INTEGER NOT NULL,
