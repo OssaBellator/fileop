@@ -202,15 +202,18 @@ def check_repository(root: Path) -> int:
         "--cases 50000",
         "WindowsMutationFilesystemCapabilityBoundaryTests",
         "WindowsMutationFilesystemCapabilityBindingTests",
+        "WindowsMutationFilesystemCapabilityPolicyTests",
         'FullyQualifiedName~WindowsMutationFilesystemCapability',
         "dotnet test",
         "OfflineOnly",
     )
     checks += require(
         source["product_wiring"],
-        'app_root.glob("*.cs")',
+        'app_root.rglob("*.cs")',
         "Unexpected App use of {type_name}",
         "verify_mutation_filesystem_product_wiring.py",
+        "EnableDefaultCompileItems",
+        "check_mutation_product_wiring",
     )
     checks += require(
         source["docs"],
