@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -33,6 +34,12 @@ public sealed record DirectoryOperationTreeManifestAcquisitionResult
             {
                 throw new ArgumentException(
                     "Ready directory manifest acquisition requires complete plain-tree fidelity evidence.",
+                    nameof(fidelityEvidence));
+            }
+            if (!PathEquals(fidelityEvidence.CanonicalRootPath, manifest.CanonicalRootPath))
+            {
+                throw new ArgumentException(
+                    "Ready directory manifest acquisition fidelity evidence must bind the same canonical root as the acquired manifest.",
                     nameof(fidelityEvidence));
             }
         }
@@ -95,6 +102,17 @@ public sealed record DirectoryOperationTreeManifestAcquisitionResult
             manifest: null,
             fidelityEvidence,
             summary);
+
+    private static bool PathEquals(string left, string right)
+    {
+        var leftFull = Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var rightFull = Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var leftRoot = Path.GetPathRoot(leftFull) ?? string.Empty;
+        var rightRoot = Path.GetPathRoot(rightFull) ?? string.Empty;
+        if (leftFull.Length < leftRoot.Length) leftFull = leftRoot;
+        if (rightFull.Length < rightRoot.Length) rightFull = rightRoot;
+        return string.Equals(leftFull, rightFull, StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 /// <summary>
