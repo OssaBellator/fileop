@@ -278,7 +278,7 @@ def check_repository(root: Path) -> int:
     assert 'Preparing or queueing a plan performs no filesystem write.' in source['docs']
     assert 'read-only Windows preflight' in source['docs']
     assert 'It passes the same immutable plan to the reviewed executor' in source['docs']
-    assert '- regular-file Move executes only as a same-volume local rename; directory Move and cross-volume Move mutation are rejected;' in source['docs']
+    assert '- Move uses separate transactions: regular-file Move executes only as a same-volume local file rename, while a homogeneous directory-only Move can execute as a same-volume local directory rename; mixed file/directory batches and cross-volume Move mutation are rejected;' in source['docs']
     assert 'verify_file_operation_state.py' in source['local']
 
     return len(required_plan) + len(required_execution) + 8 + 5 + 12

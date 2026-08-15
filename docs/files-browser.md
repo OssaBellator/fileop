@@ -8,7 +8,7 @@ Native mode browses the primary whole-volume NTFS index. Fallback mode browses t
 
 Files now has two distinct kinds of operation UI that must not be conflated:
 
-- a session-only **Copy/Move planning queue** whose reviewed regular-file Copy plans and reviewed **same-volume local regular-file Move** plans can execute after successful read-only preflight and fresh execution validation; cross-volume and directory Move remain non-executable;
+- a session-only **Copy/Move planning queue** whose reviewed regular-file Copy plans plus reviewed **same-volume local regular-file or homogeneous directory Move** plans can execute after successful read-only preflight and fresh execution validation; cross-volume Move and mixed file/directory Move remain non-executable;
 - a separately reviewed **file-only permanent-delete session**, which is a real destructive action with its own recovery, authorization and mutation boundary.
 
 Browse selection, prepared intent, preflight evidence and Storage handoff are never themselves mutation authority.
@@ -75,16 +75,17 @@ The queue retains explicit collision intent such as Ask later, Skip existing and
 
 ### Preflight and execution-grade contracts
 
-The repository contains distinct reviewed operation layers for executable file Copy and same-volume file Move:
+The repository contains distinct reviewed operation layers for executable file Copy, same-volume file Move and same-volume directory Move:
 
 - read-only Windows preflight;
 - canonical execution-grade validation contracts;
 - durable action-history/recovery models;
 - a production **file Copy** executor and identity-bound Windows copy mutation primitive;
 - a same-volume **file Move** executor and identity-preserving Windows handle-relative rename primitive;
+- a separate same-volume **directory Move** executor, directory-specific durable history and identity-preserving no-replace Windows directory rename primitive;
 - a Windows Move namespace-capability validator that rejects case-sensitive or unavailable directory capability before durable mutation history.
 
-A queued regular-file Copy or same-volume Move can run only when its exact point-in-time preflight is `Ready` and the active source/destination pane, tab and directory context still matches the immutable plan. A fresh preflight already in flight also keeps both Run paths disabled even if an older Ready snapshot exists.
+A queued regular-file Copy or homogeneous same-volume local file/directory Move can run only when its exact point-in-time preflight is `Ready` and the active source/destination pane, tab and directory context still matches the immutable plan. A fresh preflight already in flight also keeps all Run paths disabled even if an older Ready snapshot exists.
 
 Each executor performs its own fresh canonical/identity validation before durable history begins and revalidates each mutation entry again before crossing `MutationStarted`. Move additionally requires both canonical roots to use the ordinary case-insensitive namespace semantics represented by the current path model.
 
@@ -93,7 +94,7 @@ The Files UI does not call `File.Copy`, `File.Move`, route mutation through the 
 The current executable slices remain deliberately narrow:
 
 - regular-file Copy only; directory Copy is rejected;
-- regular-file Move executes only as a same-volume local rename; directory Move and cross-volume Move mutation are rejected;
+- Move uses separate transactions: regular-file Move executes only as a same-volume local file rename, while a homogeneous directory-only Move can execute as a same-volume local directory rename; mixed file/directory batches and cross-volume Move mutation are rejected;
 - a cross-volume Move is classified as requiring a separately reviewed Copy-plus-source-delete transaction and is left queued/non-executable because existing Copy authority is not source-delete authority;
 - per-directory case-sensitive NTFS or unavailable namespace-capability evidence blocks Move before durable mutation history; exact-case mutation is not claimed;
 - `Ask later` collisions remain non-executable until an explicit decision is supplied; a `Skip existing` plan can durably skip existing destinations and `Stop on collision` fails closed at validation;
@@ -102,7 +103,7 @@ The current executable slices remain deliberately narrow:
 - durable history is recovery evidence, not automatic restart-time mutation authority;
 - destination panes refresh after Copy; both matching source and destination panes refresh after an invoked Move settles.
 
-See `docs/file-copy-executor.md`, `docs/windows-file-copy-mutation.md`, `docs/file-move-execution-strategy.md` and the `docs/file-operation-*.md` recovery/history series.
+See `docs/file-copy-executor.md`, `docs/windows-file-copy-mutation.md`, `docs/file-move-execution-strategy.md`, `docs/directory-operations.md` and the `docs/file-operation-*.md` recovery/history series.
 
 A preflight result is still not mutation authorization. It can become stale, and each executor's action-time canonical identity checks remain mandatory even when the visible preflight row says Ready.
 
@@ -223,8 +224,8 @@ See `docs/local-validation.md` for the validation workflow.
 
 ## Remaining queue boundary
 
-Regular-file Copy and same-volume local regular-file Move are now the queue operations wired to reviewed production mutation executors, with progress, safe cancellation and recovery-sensitive terminal reporting. Explicit overwrite/replacement remains separate because the current mutation primitives do not authorize replacement.
+Regular-file Copy plus same-volume local regular-file and homogeneous directory Move are now queue operations wired to reviewed production mutation executors, with progress, safe cancellation and recovery-sensitive terminal reporting. File Move and directory Move use separate durable schemas/executors. Explicit overwrite/replacement remains separate because the current mutation primitives do not authorize replacement.
 
-Cross-volume Move still requires a separately reviewed composite Copy-plus-source-delete transaction with its own durable source-delete authorization/recovery boundary. Directory Copy and directory Move remain disabled until recursive fidelity, mutation and recovery policies are implemented rather than inferred.
+Cross-volume Move still requires a separately reviewed composite Copy-plus-source-delete transaction with its own durable source-delete authorization/recovery boundary. Directory Copy remains disabled until recursive copy fidelity, mutation and recovery policies are implemented rather than inferred; the reviewed directory Move slice is intentionally limited to homogeneous same-volume local rename.
 
 Permanent file deletion stays outside that generic queue unless a future design can preserve the stricter delete recovery/authorization semantics rather than weakening them into a generic operation kind.

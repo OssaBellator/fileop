@@ -282,7 +282,7 @@ def check_repository(root: Path) -> int:
     checks += require(
         app_move,
         "plan.Intent.Entries.Any(static entry => entry.IsDirectory)",
-        "Directory Move remains disabled.",
+        "Use the separate Directory Move executor for a homogeneous directory-only plan.",
     )
     checks += forbid(app_move, "DirectorySameVolumeMoveOperationExecutor", "WindowsDirectorySameVolumeMoveMutationPrimitive")
 

@@ -140,7 +140,7 @@ public sealed partial class FilesView : UserControl
             ? $"Queued copy plan for {intent.Entries.Count:N0} entr{(intent.Entries.Count == 1 ? "y" : "ies")} with {FormatCollisionPolicy(collisionPolicy)}. " +
               "Run read-only preflight next; only a Ready regular-file Copy can reach the reviewed executor, which performs fresh action-time validation."
             : $"Queued move plan for {intent.Entries.Count:N0} entr{(intent.Entries.Count == 1 ? "y" : "ies")} with {FormatCollisionPolicy(collisionPolicy)}. " +
-              "Run read-only preflight next; only a Ready regular-file same-volume local Move can reach the reviewed rename executor. Cross-volume and directory Move remain non-executable.";
+              "Run read-only preflight next; a Ready homogeneous same-volume local file or directory Move can reach its reviewed executor. Cross-volume and mixed file/directory Move remain non-executable.";
         ClearPreparedIntent();
         RefreshQueuePresentation();
         UpdateIntentAvailability();
@@ -176,6 +176,7 @@ public sealed partial class FilesView : UserControl
         UpdateQueueActions();
         UpdateCopyExecutionAvailability();
         UpdateMoveExecutionAvailability();
+        UpdateDirectoryMoveExecutionAvailability();
         QueueStatusText.Text =
             $"Read-only preflight is checking current source/destination metadata for {plan.Kind.ToString().ToLowerInvariant()} plan {plan.Id}. " +
             "No filesystem changes can be made by this check.";
@@ -193,7 +194,7 @@ public sealed partial class FilesView : UserControl
             _preflightSnapshots[plan.Id] = snapshot;
             QueueStatusText.Text =
                 $"{result.Summary} Checked {snapshot.CheckedAtUtc.ToLocalTime():g}. " +
-                "This is a point-in-time read-only snapshot and can become stale. A Ready regular-file Copy or same-volume local Move still requires fresh execution-grade validation before mutation.";
+                "This is a point-in-time read-only snapshot and can become stale. A Ready regular-file Copy or homogeneous same-volume local file/directory Move still requires fresh execution-grade validation before mutation.";
         }
         catch (Exception exception)
         {
@@ -206,6 +207,7 @@ public sealed partial class FilesView : UserControl
             RefreshQueuePresentation();
             UpdateCopyExecutionAvailability();
             UpdateMoveExecutionAvailability();
+            UpdateDirectoryMoveExecutionAvailability();
         }
     }
 
@@ -270,7 +272,7 @@ public sealed partial class FilesView : UserControl
     {
         _preparedIntent = null;
         IntentText.Text =
-            "Select entries in one pane and prepare a direction. Queueing is non-mutating; executable regular-file Copy and same-volume local Move still require preflight plus fresh action-time validation.";
+            "Select entries in one pane and prepare a direction. Queueing is non-mutating; executable regular-file Copy and homogeneous same-volume local file/directory Move still require preflight plus fresh action-time validation.";
     }
 
     private void UpdateIntentAvailability()
