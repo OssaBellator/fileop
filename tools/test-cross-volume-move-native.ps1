@@ -38,6 +38,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "Cross-volume Move native matrix inventory verification failed with exit code $LASTEXITCODE."
 }
 
+& python (Join-Path $repoRoot "tools\verify_move_volume_identity.py") --repo-root $repoRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Move volume identity source verification failed with exit code $LASTEXITCODE."
+}
+
 $sourceItem = Get-Item -LiteralPath $SourceRoot -ErrorAction Stop
 $destinationItem = Get-Item -LiteralPath $DestinationRoot -ErrorAction Stop
 if (-not $sourceItem.PSIsContainer -or -not $destinationItem.PSIsContainer) {
