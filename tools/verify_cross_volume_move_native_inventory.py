@@ -29,6 +29,8 @@ def read(root: Path, relative: str) -> str:
 def check(root: Path) -> int:
     history = read(root, "src/FileOp.Core/Operations/FileCrossVolumeMoveActionHistory.cs")
     history_invariants = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveActionHistoryInvariantTests.cs")
+    history_store_roundtrip = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveRecoveryEvidenceStoreTests.cs")
+    history_corruption = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMovePersistedRecoveryCorruptionTests.cs")
     two_volume = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeTwoVolumeTests.cs")
     recovery = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeRecoveryTests.cs")
     share = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityShareCompatibilityTests.cs")
@@ -57,6 +59,22 @@ def check(root: Path) -> int:
         "Assert.IsTrue(history.Entries[0].HasDestinationRecoveryEvidence)",
         "Assert.IsFalse(history.Entries[0].DestinationIsDurablyCommitted)",
         "Assert.IsTrue(history.Entries[0].DestinationIsDurablyCommitted)",
+    )
+    checks += require(
+        history_store_roundtrip,
+        "CopyBarrierRecoveryDestinationObservationDoesNotBecomeSafeCommit",
+        "SourceDeleteRecoveryStillProvesEarlierSafeDestinationCommit",
+        "using var reopened = new SqliteFileCrossVolumeMoveActionHistoryStore",
+        "Assert.IsFalse(persisted.Entries[0].DestinationIsDurablyCommitted)",
+        "Assert.IsTrue(persisted.Entries[0].DestinationIsDurablyCommitted)",
+    )
+    checks += require(
+        history_corruption,
+        "LoaderRejectsSourceDeleteRecoveryWithoutCommittedDestinationEvidence",
+        "LoaderRejectsRecoveryDestinationEvidenceOnWrongRootVolume",
+        "SET state = 7",
+        "SET destination_volume_serial = 999",
+        "ThrowsExactlyAsync<ArgumentException>",
     )
 
     checks += require(
