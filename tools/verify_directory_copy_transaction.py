@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -128,7 +129,6 @@ def check_repository(root: Path) -> int:
     checks += require(
         executor,
         "public sealed class DirectoryCopyTransactionExecutor",
-        "_freshGate.PrepareAsync(plan.ReviewedManifest",
         "if (!fresh.CanBeginDurableHistory)",
         ".BeginAsync(plan, fresh, UtcNow()",
         ".MarkMutationStartedAsync(plan.OperationId, ordinal, UtcNow())",
@@ -144,9 +144,14 @@ def check_repository(root: Path) -> int:
         "DirectoryCopyActionTerminalState.RecoveryRequired",
         "DirectoryCopyActionTerminalState.Succeeded",
     )
-    assert executor.index("_freshGate.PrepareAsync(plan.ReviewedManifest") < executor.index(".BeginAsync(plan, fresh, UtcNow()")
+    fresh_gate_call = re.search(
+        r"_freshGate\s*\.PrepareAsync\(plan\.ReviewedManifest",
+        executor,
+    )
+    assert fresh_gate_call, "Directory Copy executor must invoke the fresh-manifest gate before durable history"
+    assert fresh_gate_call.start() < executor.index(".BeginAsync(plan, fresh, UtcNow()")
     assert executor.index(".MarkMutationStartedAsync(plan.OperationId, ordinal, UtcNow())") < executor.index(".ExecuteNoReplaceAsync(new DirectoryCopyMutationRequest(")
-    checks += 2
+    checks += 3
     checks += require(
         tests,
         "SqliteHistoryPersistsParentLinkedRecursiveActions",
@@ -157,6 +162,13 @@ def check_repository(root: Path) -> int:
         "FileReceiptWithoutFingerprintCannotCommitAndRequiresRecovery",
         "TransactionPlanRejectsDestinationInsideReviewedSourceTree",
         "DestinationContentFingerprint is not null",
+        "Assert.ThrowsAsync<InvalidOperationException>",
+        "Assert.Throws<ArgumentException>",
+    )
+    checks += forbid(
+        tests,
+        "Assert.ThrowsException",
+        "Assert.ThrowsExceptionAsync",
     )
     combined = store + executor
     checks += forbid(
