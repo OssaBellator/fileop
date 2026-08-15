@@ -89,6 +89,41 @@ public sealed class FileCrossVolumeMoveFidelityShareCompatibilityTests
     }
 
     [TestMethod]
+    public void PreExistingDeleteCapableHandlePreventsDestructiveLeaseAcquisition()
+    {
+        WithTemporaryFile(path =>
+        {
+            using var preExistingDelete = CreateFileW(
+                path,
+                Delete | FileReadAttributes | Synchronize,
+                FileShare.Read | FileShare.Write | FileShare.Delete,
+                IntPtr.Zero,
+                FileMode.Open,
+                0,
+                IntPtr.Zero);
+            var existingError = Marshal.GetLastWin32Error();
+            Assert.IsFalse(
+                preExistingDelete.IsInvalid,
+                $"Expected a pre-existing DELETE-capable handle; Win32 error {existingError}.");
+
+            using var destructiveLease = CreateFileW(
+                path,
+                Delete | FileReadAttributes | Synchronize,
+                FileShare.Read,
+                IntPtr.Zero,
+                FileMode.Open,
+                0,
+                IntPtr.Zero);
+            var error = Marshal.GetLastWin32Error();
+
+            Assert.IsTrue(
+                destructiveLease.IsInvalid,
+                "The FILE_SHARE_READ-only source lease must not coexist with a pre-existing DELETE-capable handle that could rename or delete the selected link.");
+            Assert.AreEqual(ErrorSharingViolation, error);
+        });
+    }
+
+    [TestMethod]
     public void WritableMainStreamMappingPreventsDeleteCapabilityAcquisitionEvenAfterFileHandleCloses()
     {
         WithTemporaryFile(path =>
@@ -156,6 +191,30 @@ public sealed class FileCrossVolumeMoveFidelityShareCompatibilityTests
             Assert.IsTrue(
                 writer.IsInvalid,
                 "The live source-delete capability must exclude new main-stream write access through its FILE_SHARE_READ-only lease.");
+            Assert.AreEqual(ErrorSharingViolation, error);
+        });
+    }
+
+    [TestMethod]
+    public void DeleteCapabilityPreventsNewDeleteCapableHandleUntilReleased()
+    {
+        WithTemporaryFile(path =>
+        {
+            using var deleteCapability = OpenDeleteCapability(path);
+
+            using var competingDelete = CreateFileW(
+                path,
+                Delete | FileReadAttributes | Synchronize,
+                FileShare.Read | FileShare.Delete,
+                IntPtr.Zero,
+                FileMode.Open,
+                0,
+                IntPtr.Zero);
+            var error = Marshal.GetLastWin32Error();
+
+            Assert.IsTrue(
+                competingDelete.IsInvalid,
+                "The live FILE_SHARE_READ-only source lease must exclude new DELETE-capable handles that could rename or delete the selected link before same-handle disposition.");
             Assert.AreEqual(ErrorSharingViolation, error);
         });
     }
