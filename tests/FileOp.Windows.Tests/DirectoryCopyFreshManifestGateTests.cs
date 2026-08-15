@@ -122,6 +122,22 @@ public sealed class DirectoryCopyFreshManifestGateTests
     }
 
     [TestMethod]
+    public void ReadyAcquisitionRejectsFidelityEvidenceForDifferentRoot()
+    {
+        var manifest = CreateManifest(rootReference: 1, fileReference: 2);
+        var unrelatedRoot = Path.GetFullPath(Path.Combine(
+            Path.GetTempPath(),
+            "FileOp.DirectoryCopyFreshManifestGate.Tests",
+            "other-root"));
+
+        Assert.Throws<ArgumentException>(() =>
+            DirectoryOperationTreeManifestAcquisitionResult.Ready(
+                manifest,
+                PlainFidelity(unrelatedRoot),
+                "mismatched root"));
+    }
+
+    [TestMethod]
     public void UnsupportedAcquisitionCannotPublishManifest()
     {
         var manifest = CreateManifest(rootReference: 1, fileReference: 2);
