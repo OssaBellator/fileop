@@ -37,7 +37,7 @@ if (-not (Test-Path -LiteralPath $testProject -PathType Leaf)) {
 
 & dotnet test $testProject `
     -c $Configuration `
-    --filter "FullyQualifiedName~WindowsMutationFilesystemCapabilityBoundaryTests" `
+    --filter "FullyQualifiedName~WindowsMutationFilesystemCapability" `
     --nologo
 if ($LASTEXITCODE -ne 0) {
     throw "Mutation filesystem identity Windows tests failed with exit code $LASTEXITCODE."
