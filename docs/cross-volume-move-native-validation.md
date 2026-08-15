@@ -11,7 +11,7 @@ Use a normal unelevated FileOp development shell on Windows with:
 - the exact PR head checked out and no uncommitted source changes;
 - .NET 10 SDK matching the repository requirements;
 - two existing writable ordinary directories on **different local filesystem volumes**;
-- a source volume that supports NTFS hard links and named data streams for the current regression matrix;
+- a source volume that supports NTFS hard links, named data streams and extended attributes for the current regression matrix;
 - source/destination roots that are not reparse points and do not use per-directory case-sensitive namespace semantics;
 - enough free space for the small temporary test payloads.
 
@@ -49,8 +49,9 @@ The `CrossVolumeMoveNative` category currently requires all of these real-engine
 
 1. **Successful composite Move** — the ordinary execution validator, real exclusive-create Copy primitive, composite SQLite journal, fidelity wrapper and identity-bound same-handle source-delete primitive complete one Move; the selected source entry disappears and destination bytes match.
 2. **Source named stream refusal** — a source ADS exists before execution. Copy may commit the main stream, but destructive completion must fail before `SourceDeleteStarted`; the original source including its ADS and the committed destination Copy both remain, with safe retained-duplicate history rather than recovery ambiguity.
-3. **Cancellation after real Copy** — a wrapper around the real Copy primitive requests cancellation while the Copy lease is still live. The executor must finish the durable destination commit and settle at `DestinationCommitted`, retaining both files and creating no source-delete authority.
-4. **Selected-entry hard-link semantics** — the selected source path has another hard link on the source volume. Cross-volume Move removes only the selected directory entry, creates the destination copy, and leaves the other source-volume hard link valid with the original content.
+3. **Source extended-attribute refusal** — a real `FILE_FULL_EA_INFORMATION` entry is written to the source before execution. The committed destination main-stream Copy may remain, but source deletion must be refused before the destructive barrier and history must settle as a safe retained duplicate. The matrix fails if the supplied source filesystem cannot create/query EAs; unsupported EA coverage is not silently skipped.
+4. **Cancellation after real Copy** — a wrapper around the real Copy primitive requests cancellation while the Copy lease is still live. The executor must finish the durable destination commit and settle at `DestinationCommitted`, retaining both files and creating no source-delete authority.
+5. **Selected-entry hard-link semantics** — the selected source path has another hard link on the source volume. Cross-volume Move removes only the selected directory entry, creates the destination copy, and leaves the other source-volume hard link valid with the original content.
 
 Separate always-on Windows tests in `FileCrossVolumeMoveFidelityShareCompatibilityTests` pin the lower-level main-stream lease assumptions: pre-existing writers and writable mappings block destructive-lease acquisition, the live lease blocks new main-stream writers, attribute/EA access is not misrepresented as share-frozen, hard-link selected-entry semantics remain visible, and fidelity reopens remain compatible with the live DELETE-capable handle.
 
