@@ -111,15 +111,24 @@ def check(root: Path) -> int:
     # names. Pin its blast radius recursively across source directories while ignoring build
     # output generated under bin/obj. Exact relative paths are required so a nested file that
     # merely reuses an allowed basename cannot bypass the review boundary.
-    expected_usage = {
-        "WindowsFileOperationExecutionValidator": Path("FilesView.Copy.cs"),
-        "WindowsMoveOperationExecutionValidator": Path("FilesView.Move.cs"),
-        "WindowsFileDeleteOperationExecutionValidator": Path("FilesView.Delete.cs"),
-        "WindowsFileCopyMutationPrimitive": Path("FilesView.Copy.cs"),
-        "WindowsFileSameVolumeMoveMutationPrimitive": Path("FilesView.Move.cs"),
-        "WindowsFileDeleteOperationFinalMutationLeaseProvider": Path("FilesView.Delete.cs"),
+    #
+    # The reviewed Copy primitive is also intentionally allowed in FilesView.Move.cs. Draft
+    # #185 composes the dormant cross-volume engine from that same primitive; after #194 is
+    # merged the App alias makes that composition resolve to WindowsNtfsFileCopyMutationPrimitive.
+    # Keeping this path allowed avoids making #193's offline policy verifier reject the safe,
+    # product-blocked #185 integration merely because it reuses the guarded Copy provider.
+    allowed_usage = {
+        "WindowsFileOperationExecutionValidator": {Path("FilesView.Copy.cs")},
+        "WindowsMoveOperationExecutionValidator": {Path("FilesView.Move.cs")},
+        "WindowsFileDeleteOperationExecutionValidator": {Path("FilesView.Delete.cs")},
+        "WindowsFileCopyMutationPrimitive": {
+            Path("FilesView.Copy.cs"),
+            Path("FilesView.Move.cs"),
+        },
+        "WindowsFileSameVolumeMoveMutationPrimitive": {Path("FilesView.Move.cs")},
+        "WindowsFileDeleteOperationFinalMutationLeaseProvider": {Path("FilesView.Delete.cs")},
     }
-    observed_counts = {name: 0 for name in expected_usage}
+    observed_counts = {name: 0 for name in allowed_usage}
     app_sources = sorted(
         path
         for path in app_root.rglob("*.cs")
@@ -132,13 +141,14 @@ def check(root: Path) -> int:
             continue
         relative_path = path.relative_to(app_root)
         text = path.read_text(encoding="utf-8")
-        for type_name, expected_path in expected_usage.items():
+        for type_name, allowed_paths in allowed_usage.items():
             count = text.count(type_name)
             if count == 0:
                 continue
-            assert relative_path == expected_path, (
+            assert relative_path in allowed_paths, (
                 f"Unexpected App use of {type_name} in {relative_path}; "
-                f"the #193 alias boundary currently permits only {expected_path}"
+                f"the #193 alias boundary currently permits only "
+                f"{', '.join(str(candidate) for candidate in sorted(allowed_paths))}"
             )
             observed_counts[type_name] += count
             checks += count
@@ -146,7 +156,7 @@ def check(root: Path) -> int:
     assert observed_counts["WindowsFileOperationExecutionValidator"] == 1
     assert observed_counts["WindowsMoveOperationExecutionValidator"] >= 2
     assert observed_counts["WindowsFileDeleteOperationExecutionValidator"] == 1
-    assert observed_counts["WindowsFileCopyMutationPrimitive"] == 1
+    assert observed_counts["WindowsFileCopyMutationPrimitive"] >= 1
     assert observed_counts["WindowsFileSameVolumeMoveMutationPrimitive"] == 1
     assert observed_counts["WindowsFileDeleteOperationFinalMutationLeaseProvider"] == 1
     checks += 6
