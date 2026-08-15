@@ -90,29 +90,34 @@ def check(root: Path) -> int:
     )
 
     # A project-wide alias is intentionally used because these are product mutation-policy
-    # names. Pin its blast radius recursively: no App source in any current or future
-    # subdirectory may start using one of the aliased lower-level validator names without
-    # updating this reviewed boundary explicitly.
+    # names. Pin its blast radius recursively across source directories while ignoring build
+    # output generated under bin/obj. Exact relative paths are required so a nested file that
+    # merely reuses an allowed basename cannot bypass the review boundary.
     expected_usage = {
-        "WindowsFileOperationExecutionValidator": "FilesView.Copy.cs",
-        "WindowsMoveOperationExecutionValidator": "FilesView.Move.cs",
-        "WindowsFileDeleteOperationExecutionValidator": "FilesView.Delete.cs",
+        "WindowsFileOperationExecutionValidator": Path("FilesView.Copy.cs"),
+        "WindowsMoveOperationExecutionValidator": Path("FilesView.Move.cs"),
+        "WindowsFileDeleteOperationExecutionValidator": Path("FilesView.Delete.cs"),
     }
     observed_counts = {name: 0 for name in expected_usage}
-    app_sources = sorted(app_root.rglob("*.cs"))
+    app_sources = sorted(
+        path
+        for path in app_root.rglob("*.cs")
+        if not ({"bin", "obj"} & set(path.relative_to(app_root).parts))
+    )
     if not app_sources:
         raise FileNotFoundError("No FileOp.App C# sources found")
     for path in app_sources:
         if path == aliases_path:
             continue
+        relative_path = path.relative_to(app_root)
         text = path.read_text(encoding="utf-8")
-        for type_name, expected_file in expected_usage.items():
+        for type_name, expected_path in expected_usage.items():
             count = text.count(type_name)
             if count == 0:
                 continue
-            assert path.name == expected_file, (
-                f"Unexpected App use of {type_name} in {path.relative_to(app_root)}; "
-                f"the #193 alias boundary currently permits only {expected_file}"
+            assert relative_path == expected_path, (
+                f"Unexpected App use of {type_name} in {relative_path}; "
+                f"the #193 alias boundary currently permits only {expected_path}"
             )
             observed_counts[type_name] += count
             checks += count
