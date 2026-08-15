@@ -15,18 +15,20 @@ using Microsoft.Win32.SafeHandles;
 namespace FileOp.Windows.Tests;
 
 /// <summary>
-/// Opt-in native recovery regressions for the dormant cross-volume Move engine.
+/// Opt-in native recovery/stability regressions for the dormant cross-volume Move engine.
 /// These tests use real Copy/history/raw source-delete leases. Evidence-only verifier
-/// injection is used either to force a deterministic refusal or to introduce a real
-/// source metadata change immediately before the real second fidelity proof.
+/// injection is used either to force a deterministic refusal, introduce a real source
+/// metadata change before the real second proof, or challenge the live main-stream lease.
 /// </summary>
 [TestClass]
 public sealed class FileCrossVolumeMoveNativeRecoveryTests
 {
     private const string SourceRootVariable = "FILEOP_CROSS_VOLUME_MOVE_SOURCE_ROOT";
     private const string DestinationRootVariable = "FILEOP_CROSS_VOLUME_MOVE_DESTINATION_ROOT";
+    private const uint FileWriteData = 0x00000002u;
     private const uint FileWriteEa = 0x00000010u;
     private const uint Synchronize = 0x00100000u;
+    private const int ErrorSharingViolation = 32;
 
     [TestMethod]
     [TestCategory("CrossVolumeMoveNative")]
@@ -100,6 +102,38 @@ public sealed class FileCrossVolumeMoveNativeRecoveryTests
             fixture.DestinationDirectory,
             FileCrossVolumeMoveFidelityBlocker.SourceExtendedAttributes.ToString());
         Assert.AreEqual(2, verifier.CallCount);
+    }
+
+    [TestMethod]
+    [TestCategory("CrossVolumeMoveNative")]
+    public async Task PostBarrierMainStreamWriterIsRejectedByLiveLeaseAndMoveCanComplete()
+    {
+        using var fixture = CreateFixture();
+        var sourcePath = CreateSourceFile(fixture, "post-barrier-writer.txt", "post-barrier writer payload");
+        var plan = CreatePlan(fixture.SourceDirectory, fixture.DestinationDirectory, sourcePath);
+        await AssertReadyOnDifferentVolumesAsync(plan);
+
+        using var history = new SqliteFileCrossVolumeMoveActionHistoryStore(fixture.HistoryDatabasePath);
+        var verifier = new ChallengeMainStreamWriterOnSecondProofVerifier();
+        var result = await ExecuteWithVerifierAsync(plan, history, verifier);
+
+        Assert.AreEqual(FileOperationExecutionState.Succeeded, result.State, result.Failure?.Message);
+        Assert.AreEqual(2, verifier.CallCount);
+        Assert.IsTrue(verifier.WriterWasRejected);
+        Assert.AreEqual(ErrorSharingViolation, verifier.WriterError);
+
+        var destinationPath = Path.Combine(
+            fixture.DestinationDirectory,
+            Path.GetFileName(sourcePath));
+        Assert.IsFalse(File.Exists(sourcePath));
+        Assert.IsTrue(File.Exists(destinationPath));
+        Assert.AreEqual("post-barrier writer payload", File.ReadAllText(destinationPath));
+
+        var persisted = await history.GetAsync(plan.Id);
+        Assert.IsNotNull(persisted);
+        Assert.AreEqual(FileCrossVolumeMoveTerminalState.Succeeded, persisted.TerminalState);
+        Assert.AreEqual(FileCrossVolumeMoveEntryState.Moved, persisted.Entries[0].State);
+        Assert.IsFalse(persisted.RequiresRecovery);
     }
 
     private static async Task<FileOperationExecutionSnapshot> ExecuteWithVerifierAsync(
@@ -329,6 +363,50 @@ public sealed class FileCrossVolumeMoveNativeRecoveryTests
             else if (CallCount > 2)
             {
                 throw new InvalidOperationException("Unexpected extra native recovery fidelity proof.");
+            }
+
+            return await _inner.VerifyAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class ChallengeMainStreamWriterOnSecondProofVerifier : IFileCrossVolumeMoveFidelityVerifier
+    {
+        private readonly WindowsFileCrossVolumeMoveFidelityVerifier _inner = new();
+
+        public int CallCount { get; private set; }
+
+        public bool WriterWasRejected { get; private set; }
+
+        public int WriterError { get; private set; }
+
+        public async ValueTask<FileCrossVolumeMoveFidelityClassification> VerifyAsync(
+            FileCrossVolumeMoveSourceDeleteRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
+            CallCount++;
+            if (CallCount == 2)
+            {
+                using var writer = CreateFileW(
+                    request.CanonicalSourcePath,
+                    FileWriteData | Synchronize,
+                    FileShare.Read | FileShare.Delete,
+                    IntPtr.Zero,
+                    FileMode.Open,
+                    0,
+                    IntPtr.Zero);
+                WriterError = Marshal.GetLastWin32Error();
+                WriterWasRejected = writer.IsInvalid && WriterError == ErrorSharingViolation;
+                if (!WriterWasRejected)
+                {
+                    throw new IOException(
+                        $"The live post-barrier source lease did not reject a main-stream writer as required; invalid={writer.IsInvalid}, Win32 error {WriterError}.");
+                }
+            }
+            else if (CallCount > 2)
+            {
+                throw new InvalidOperationException("Unexpected extra native stability fidelity proof.");
             }
 
             return await _inner.VerifyAsync(request, cancellationToken).ConfigureAwait(false);
