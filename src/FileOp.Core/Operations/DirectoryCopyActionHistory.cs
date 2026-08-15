@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -70,6 +71,13 @@ public sealed record DirectoryCopyTransactionPlan
                 "Directory Copy destination root must be an immediate child of the validated destination parent.",
                 nameof(canonicalDestinationRootPath));
         }
+        if (IsSameOrDescendant(parent, reviewedManifest.CanonicalRootPath) ||
+            IsSameOrDescendant(destinationRoot, reviewedManifest.CanonicalRootPath))
+        {
+            throw new ArgumentException(
+                "Directory Copy destination cannot be the reviewed source root or lie inside its subtree.",
+                nameof(canonicalDestinationRootPath));
+        }
 
         OperationId = operationId;
         QueuedAtUtc = queuedAtUtc;
@@ -79,16 +87,26 @@ public sealed record DirectoryCopyTransactionPlan
     }
 
     public Guid OperationId { get; }
-
     public DateTimeOffset QueuedAtUtc { get; }
-
     public DirectoryOperationTreeManifest ReviewedManifest { get; }
-
     public FileOperationCanonicalPath DestinationParent { get; }
-
     public string CanonicalDestinationRootPath { get; }
-
     public bool GrantsMutationAuthority => false;
+
+    private static bool IsSameOrDescendant(string candidate, string root)
+    {
+        var normalizedCandidate = NormalizePath(candidate);
+        var normalizedRoot = NormalizePath(root);
+        if (string.Equals(normalizedCandidate, normalizedRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        var prefix = normalizedRoot.EndsWith(Path.DirectorySeparatorChar) ||
+            normalizedRoot.EndsWith(Path.AltDirectorySeparatorChar)
+            ? normalizedRoot
+            : normalizedRoot + Path.DirectorySeparatorChar;
+        return normalizedCandidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string NormalizePath(string path)
     {
@@ -108,13 +126,13 @@ public sealed record DirectoryCopyActionEntry(
     string CanonicalDestinationPath,
     int? DestinationParentOrdinal,
     FileIdentity? DestinationIdentity,
+    FileContentFingerprint? DestinationContentFingerprint,
     DirectoryCopyActionEntryState State,
     DateTimeOffset? MutationStartedAtUtc,
     DateTimeOffset? CompletedAtUtc,
     FileOperationFailure? Failure)
 {
     public bool GrantsReplayAuthority => false;
-
     public bool GrantsRollbackAuthority => false;
 }
 
@@ -142,17 +160,28 @@ public sealed record DirectoryCopyActionHistory
         }
         for (var index = 0; index < snapshot.Length; index++)
         {
-            if (snapshot[index].Ordinal != index)
+            var entry = snapshot[index];
+            if (entry.Ordinal != index)
             {
                 throw new ArgumentException("Directory Copy history action ordinals must be contiguous and zero-based.", nameof(entries));
             }
-            if (snapshot[index].DestinationParentOrdinal is int parentOrdinal &&
+            if (entry.DestinationParentOrdinal is int parentOrdinal &&
                 (parentOrdinal < 0 || parentOrdinal >= index ||
                  snapshot[parentOrdinal].Kind != DirectoryCopyActionKind.CreateDirectory))
             {
                 throw new ArgumentException(
                     "Directory Copy child actions must reference an earlier destination-directory creation action.",
                     nameof(entries));
+            }
+            if (entry.Kind == DirectoryCopyActionKind.CreateDirectory && entry.DestinationContentFingerprint is not null)
+            {
+                throw new ArgumentException("Directory creation history cannot contain file-content fingerprint evidence.", nameof(entries));
+            }
+            if (entry.Kind == DirectoryCopyActionKind.CopyFile &&
+                entry.State == DirectoryCopyActionEntryState.Committed &&
+                entry.DestinationContentFingerprint is null)
+            {
+                throw new ArgumentException("Committed directory Copy file history requires destination SHA-256 evidence.", nameof(entries));
             }
         }
 
@@ -212,6 +241,7 @@ public interface IDirectoryCopyActionHistoryStore
         Guid operationId,
         int ordinal,
         FileIdentity destinationIdentity,
+        FileContentFingerprint? destinationContentFingerprint,
         DateTimeOffset committedAtUtc,
         CancellationToken cancellationToken = default);
 
@@ -228,6 +258,7 @@ public interface IDirectoryCopyActionHistoryStore
         FileOperationFailure failure,
         DateTimeOffset failedAtUtc,
         FileIdentity? observedDestinationIdentity = null,
+        FileContentFingerprint? observedDestinationContentFingerprint = null,
         CancellationToken cancellationToken = default);
 
     ValueTask<DirectoryCopyActionHistory> CompleteAsync(
