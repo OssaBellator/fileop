@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin FileOp.App mutation call sites to the #193 NTFS-guarded aliases."""
+"""Pin production mutation call sites to the #193 NTFS-guarded aliases/wrappers."""
 from __future__ import annotations
 
 import argparse
@@ -26,8 +26,17 @@ def reject(text: str, *needles: str) -> int:
     return len(needles)
 
 
+def source_files(source_root: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in source_root.rglob("*.cs")
+        if not ({"bin", "obj"} & set(path.relative_to(source_root).parts))
+    )
+
+
 def check(root: Path) -> int:
-    app_root = root / "src/FileOp.App"
+    source_root = root / "src"
+    app_root = source_root / "FileOp.App"
     aliases_path = app_root / "MutationExecutionValidatorAliases.cs"
     if not aliases_path.is_file():
         raise FileNotFoundError(aliases_path)
@@ -108,16 +117,12 @@ def check(root: Path) -> int:
     checks += reject(combined, *forbidden)
 
     # A project-wide alias is intentionally used because these are product mutation-policy
-    # names. Pin its blast radius recursively across source directories while ignoring build
-    # output generated under bin/obj. Exact relative paths are required so a nested file that
-    # merely reuses an allowed basename cannot bypass the review boundary.
+    # names. Pin its blast radius recursively across App source while ignoring build output.
     #
     # The reviewed Copy primitive is also intentionally allowed in FilesView.Move.cs. Draft
     # #185 composes the dormant cross-volume engine from that same primitive; after #194 is
     # merged the App alias makes that composition resolve to WindowsNtfsFileCopyMutationPrimitive.
-    # Keeping this path allowed avoids making #193's offline policy verifier reject the safe,
-    # product-blocked #185 integration merely because it reuses the guarded Copy provider.
-    allowed_usage = {
+    allowed_app_usage = {
         "WindowsFileOperationExecutionValidator": {Path("FilesView.Copy.cs")},
         "WindowsMoveOperationExecutionValidator": {Path("FilesView.Move.cs")},
         "WindowsFileDeleteOperationExecutionValidator": {Path("FilesView.Delete.cs")},
@@ -128,12 +133,8 @@ def check(root: Path) -> int:
         "WindowsFileSameVolumeMoveMutationPrimitive": {Path("FilesView.Move.cs")},
         "WindowsFileDeleteOperationFinalMutationLeaseProvider": {Path("FilesView.Delete.cs")},
     }
-    observed_counts = {name: 0 for name in allowed_usage}
-    app_sources = sorted(
-        path
-        for path in app_root.rglob("*.cs")
-        if not ({"bin", "obj"} & set(path.relative_to(app_root).parts))
-    )
+    observed_counts = {name: 0 for name in allowed_app_usage}
+    app_sources = source_files(app_root)
     if not app_sources:
         raise FileNotFoundError("No FileOp.App C# sources found")
     for path in app_sources:
@@ -141,7 +142,7 @@ def check(root: Path) -> int:
             continue
         relative_path = path.relative_to(app_root)
         text = path.read_text(encoding="utf-8")
-        for type_name, allowed_paths in allowed_usage.items():
+        for type_name, allowed_paths in allowed_app_usage.items():
             count = text.count(type_name)
             if count == 0:
                 continue
@@ -160,6 +161,60 @@ def check(root: Path) -> int:
     assert observed_counts["WindowsFileSameVolumeMoveMutationPrimitive"] == 1
     assert observed_counts["WindowsFileDeleteOperationFinalMutationLeaseProvider"] == 1
     checks += 6
+
+    # App aliases protect App compilation only. Prevent another production project under src/
+    # from silently constructing the lower-level raw validator/provider directly. Raw
+    # construction is permitted only inside the reviewed Windows wrappers themselves or at
+    # the exact App sites covered by the global aliases. Tests live outside src/ and remain
+    # free to exercise the lower-level implementations directly.
+    allowed_raw_construction = {
+        "WindowsFileOperationExecutionValidator": {
+            Path("FileOp.App/FilesView.Copy.cs"),
+            Path("FileOp.Windows/Operations/WindowsMutationFilesystemCapability.cs"),
+        },
+        "WindowsMoveOperationExecutionValidator": {
+            Path("FileOp.App/FilesView.Move.cs"),
+            Path("FileOp.Windows/Operations/WindowsNtfsMoveOperationExecutionValidator.cs"),
+        },
+        "WindowsFileDeleteOperationExecutionValidator": {
+            Path("FileOp.App/FilesView.Delete.cs"),
+            Path("FileOp.Windows/Operations/WindowsMutationFilesystemCapability.cs"),
+        },
+        "WindowsFileCopyMutationPrimitive": {
+            Path("FileOp.App/FilesView.Copy.cs"),
+            Path("FileOp.App/FilesView.Move.cs"),
+            Path("FileOp.Windows/Operations/WindowsNtfsMutationPrimitives.cs"),
+        },
+        "WindowsFileSameVolumeMoveMutationPrimitive": {
+            Path("FileOp.App/FilesView.Move.cs"),
+            Path("FileOp.Windows/Operations/WindowsNtfsMutationPrimitives.cs"),
+        },
+        "WindowsFileDeleteOperationFinalMutationLeaseProvider": {
+            Path("FileOp.App/FilesView.Delete.cs"),
+            Path("FileOp.Windows/Operations/WindowsNtfsMutationPrimitives.cs"),
+        },
+    }
+    production_sources = source_files(source_root)
+    if not production_sources:
+        raise FileNotFoundError("No production C# sources found")
+    for path in production_sources:
+        relative_path = path.relative_to(source_root)
+        text = path.read_text(encoding="utf-8")
+        for type_name, allowed_paths in allowed_raw_construction.items():
+            patterns = (
+                f"new {type_name}(",
+                f"new FileOp.Windows.Operations.{type_name}(",
+                f"new global::FileOp.Windows.Operations.{type_name}(",
+            )
+            count = sum(text.count(pattern) for pattern in patterns)
+            if count == 0:
+                continue
+            assert relative_path in allowed_paths, (
+                f"Raw construction of {type_name} is not guarded in production source "
+                f"{relative_path}; permitted paths are "
+                f"{', '.join(str(candidate) for candidate in sorted(allowed_paths))}"
+            )
+            checks += count
 
     checks += require(
         gate,
