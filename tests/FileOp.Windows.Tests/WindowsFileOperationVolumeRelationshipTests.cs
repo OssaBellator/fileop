@@ -31,10 +31,12 @@ public sealed class WindowsFileOperationVolumeRelationshipTests
                 result.Summary);
             Assert.IsFalse(string.IsNullOrWhiteSpace(result.SourceVolumeGuidName));
             Assert.IsFalse(string.IsNullOrWhiteSpace(result.DestinationVolumeGuidName));
-            Assert.AreEqual(
-                result.SourceVolumeGuidName,
-                result.DestinationVolumeGuidName,
-                ignoreCase: true);
+            Assert.IsTrue(
+                string.Equals(
+                    result.SourceVolumeGuidName,
+                    result.DestinationVolumeGuidName,
+                    StringComparison.OrdinalIgnoreCase),
+                "Two directories on the same temp filesystem must resolve to the same handle-bound Windows volume GUID.");
             StringAssert.StartsWith(result.SourceVolumeGuidName!, @"\\?\Volume{");
             StringAssert.EndsWith(result.SourceVolumeGuidName!, @"}\");
         }
