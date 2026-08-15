@@ -346,7 +346,8 @@ public sealed class WindowsMutationFilesystemCapabilityProbe :
 /// <summary>
 /// Adds the beta NTFS-only mutation identity boundary to ordinary Copy/Move execution
 /// validation. It is intentionally a decorator so browsing and non-mutating path resolution
-/// remain filesystem-agnostic.
+/// remain filesystem-agnostic. A Ready validation containing only Skip entries is returned
+/// unchanged because no filesystem mutation can be attempted by that plan.
 /// </summary>
 public sealed class WindowsNtfsMutationExecutionValidator : IFileOperationExecutionValidator
 {
@@ -368,7 +369,9 @@ public sealed class WindowsNtfsMutationExecutionValidator : IFileOperationExecut
         ArgumentNullException.ThrowIfNull(plan);
         var validation = await _inner.ValidateAsync(plan, cancellationToken).ConfigureAwait(false);
         if (plan.Kind is not (FileOperationKind.Copy or FileOperationKind.Move) ||
-            !validation.CanBeginMutation)
+            !validation.CanBeginMutation ||
+            !validation.Items.Any(static item =>
+                item.Decision == FileOperationExecutionValidationDecision.Ready))
         {
             return validation;
         }
@@ -393,7 +396,7 @@ public sealed class WindowsNtfsMutationExecutionValidator : IFileOperationExecut
             return Block(
                 validation,
                 "Source mutation root filesystem capability was not exact NTFS evidence bound to the freshly validated root: " +
-                sourceCapability.Summary);
+                (sourceCapability?.Summary ?? "The filesystem capability provider returned no evidence."));
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -408,7 +411,7 @@ public sealed class WindowsNtfsMutationExecutionValidator : IFileOperationExecut
             return Block(
                 validation,
                 "Destination mutation root filesystem capability was not exact NTFS evidence bound to the freshly validated root: " +
-                destinationCapability.Summary);
+                (destinationCapability?.Summary ?? "The filesystem capability provider returned no evidence."));
         }
 
         cancellationToken.ThrowIfCancellationRequested();
