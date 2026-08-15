@@ -31,6 +31,7 @@ def check(root: Path) -> int:
     copy = read(root, "src/FileOp.App/FilesView.Copy.cs")
     move = read(root, "src/FileOp.App/FilesView.Move.cs")
     delete = read(root, "src/FileOp.App/FilesView.Delete.cs")
+    gate = read(root, "tools/test-mutation-filesystem-identity.ps1")
 
     checks = 0
     checks += require(
@@ -64,6 +65,16 @@ def check(root: Path) -> int:
         "using WindowsFileOperationExecutionValidator =",
         "using WindowsMoveOperationExecutionValidator =",
         "using WindowsFileDeleteOperationExecutionValidator =",
+    )
+
+    checks += require(
+        gate,
+        "verify_mutation_filesystem_identity_boundary.py",
+        "verify_mutation_filesystem_product_wiring.py",
+        "--cases 50000",
+        "WindowsMutationFilesystemCapabilityBoundaryTests",
+        "WindowsMutationFilesystemCapabilityBindingTests",
+        'FullyQualifiedName~WindowsMutationFilesystemCapability',
     )
 
     print(f"PASS mutation filesystem product wiring ({checks} checks)")
