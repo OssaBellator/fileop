@@ -27,6 +27,8 @@ def read(root: Path, relative: str) -> str:
 
 
 def check(root: Path) -> int:
+    history = read(root, "src/FileOp.Core/Operations/FileCrossVolumeMoveActionHistory.cs")
+    history_invariants = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveActionHistoryInvariantTests.cs")
     two_volume = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeTwoVolumeTests.cs")
     recovery = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeRecoveryTests.cs")
     share = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityShareCompatibilityTests.cs")
@@ -40,6 +42,23 @@ def check(root: Path) -> int:
     native_doc = read(root, "docs/cross-volume-move-native-validation.md")
 
     checks = 0
+    checks += require(
+        history,
+        "public bool DestinationIsDurablyCommitted",
+        "public bool HasDestinationRecoveryEvidence",
+        "SourceDeleteStartedAtUtc.HasValue",
+        "recovery observation",
+        "grants no cleanup, replay, or source-delete authority",
+    )
+    checks += require(
+        history_invariants,
+        "CopyBarrierRecoveryMayCaptureObservedDestinationWithoutProvingSafeCommit",
+        "SourceDeleteRecoveryStillProvesEarlierSafeDestinationCommit",
+        "Assert.IsTrue(history.Entries[0].HasDestinationRecoveryEvidence)",
+        "Assert.IsFalse(history.Entries[0].DestinationIsDurablyCommitted)",
+        "Assert.IsTrue(history.Entries[0].DestinationIsDurablyCommitted)",
+    )
+
     checks += require(
         two_volume,
         '[TestCategory("CrossVolumeMoveNative")]',
