@@ -135,7 +135,7 @@ public sealed class DirectoryCopyTransactionTests
                 store,
                 primitive);
 
-            await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
                 await executor.ExecuteAsync(plan));
 
             Assert.IsNull(await store.GetAsync(plan.OperationId));
@@ -266,7 +266,7 @@ public sealed class DirectoryCopyTransactionTests
             false,
             new FileIdentity(SourceVolume, 99));
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DirectoryCopyTransactionPlan(
                 Guid.NewGuid(),
                 DateTimeOffset.UtcNow,
