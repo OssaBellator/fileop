@@ -58,13 +58,21 @@ That future redesign must include schema/versioning and recovery migration tests
 
 ## Validation
 
-Portable source/model and product-wiring verification:
+The #193 source/model and product-wiring checks are now part of the repository-authoritative offline inventory. `tools/test-local.ps1 -OfflineOnly` already invokes `tools/verify_file_operation_execution_validation.py`; that canonical verifier now runs the 50,000-case mutation-filesystem model, the #193 repository source contract and the project-wide App wiring scan alongside the existing Copy/Move/Delete execution-validation checks.
+
+Run the normal authoritative portable gate with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1 -OfflineOnly
+```
+
+For a narrower #193-only iteration, the dedicated gate remains available:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-mutation-filesystem-identity.ps1 -OfflineOnly
 ```
 
-The targeted gate runs 50,000 deterministic randomized capability combinations and pins the handle-bound source ordering, exact capability binding, skip-only behavior, null-provider fail-closed behavior, project-wide App alias wiring, NTFS-only decision policy and current 64-bit identity construction.
+Both portable paths pin the handle-bound source ordering, exact capability binding, skip-only behavior, null-provider fail-closed behavior, project-wide App alias wiring, NTFS-only decision policy and current 64-bit identity construction. The dedicated gate runs 50,000 deterministic randomized capability combinations; the authoritative canonical execution-validation verifier runs that same model as part of its broader inventory.
 
 On Windows, run the targeted compiled test gate:
 
@@ -72,7 +80,7 @@ On Windows, run the targeted compiled test gate:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-mutation-filesystem-identity.ps1
 ```
 
-The compiled filter covers all `WindowsMutationFilesystemCapability*` test classes. The real integration regression resolves a unique temporary directory through `WindowsFileOperationCanonicalPathResolver`, queries the filesystem through the exact identity-bound handle, accepts it only if it reports NTFS, and proves a deliberately stale expected identity becomes `Unavailable`.
+The compiled filter covers all current `WindowsMutationFilesystemCapability*` test classes: boundary, exact-binding and policy regressions. The real integration regression resolves a unique temporary directory through `WindowsFileOperationCanonicalPathResolver`, queries the filesystem through the exact identity-bound handle, accepts it only if it reports NTFS, and proves a deliberately stale expected identity becomes `Unavailable`.
 
 Before merging the #193 implementation, also run the repository-authoritative full Windows gate on the exact final head:
 
