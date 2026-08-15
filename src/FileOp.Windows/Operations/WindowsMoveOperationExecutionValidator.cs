@@ -73,6 +73,12 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
             return validation;
         }
 
+        if (validation.SourceDirectory.Identity is not FileIdentity ||
+            validation.DestinationDirectory.Identity is not FileIdentity)
+        {
+            return Block(validation, MissingRootIdentitySummary);
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         if (!TryClassifyVolumeRelationship(
                 validation,
@@ -110,14 +116,8 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
         out bool isCrossVolume,
         out string? failureSummary)
     {
-        if (validation.SourceDirectory.Identity is not FileIdentity sourceIdentity ||
-            validation.DestinationDirectory.Identity is not FileIdentity destinationIdentity)
-        {
-            isCrossVolume = false;
-            failureSummary = MissingRootIdentitySummary;
-            return false;
-        }
-
+        var sourceIdentity = validation.SourceDirectory.Identity!.Value;
+        var destinationIdentity = validation.DestinationDirectory.Identity!.Value;
         if (sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber)
         {
             isCrossVolume = true;
