@@ -19,7 +19,12 @@ def reject(text: str, *needles: str) -> int:
     return len(needles)
 
 
-def model_preflight(attributes: int, streams: int, ea_size: int) -> tuple[bool, set[str]]:
+def model_preflight(
+    attributes: int,
+    streams: int,
+    ea_size: int,
+    protected_location: bool,
+) -> tuple[bool, set[str]]:
     read_only = 0x00000001
     normal = 0x00000080
     stable_copied = 0x00000001 | 0x00000002 | 0x00000004 | 0x00000020 | 0x00002000
@@ -31,21 +36,24 @@ def model_preflight(attributes: int, streams: int, ea_size: int) -> tuple[bool, 
         blockers.add("SourceNamedDataStreams")
     if ea_size:
         blockers.add("SourceExtendedAttributes")
+    if protected_location:
+        blockers.add("SourceProtectedLocation")
     return not blockers, blockers
 
 
 def check_model(cases: int) -> int:
     checks = 0
-    allowed, blockers = model_preflight(0x20, 0, 0)
+    allowed, blockers = model_preflight(0x20, 0, 0, False)
     assert allowed and not blockers
     checks += 2
 
-    allowed, blockers = model_preflight(0x1, 1, 16)
+    allowed, blockers = model_preflight(0x1, 1, 16, True)
     assert not allowed
     assert blockers == {
         "SourceUnsupportedAttributes",
         "SourceNamedDataStreams",
         "SourceExtendedAttributes",
+        "SourceProtectedLocation",
     }
     checks += 2
 
@@ -58,7 +66,13 @@ def check_model(cases: int) -> int:
                 attributes |= bit
         streams = rng.randrange(0, 3)
         ea_size = rng.choice([0, 0, 0, 8, 32])
-        allowed, blockers = model_preflight(attributes, streams, ea_size)
+        protected_location = bool(rng.getrandbits(1))
+        allowed, blockers = model_preflight(
+            attributes,
+            streams,
+            ea_size,
+            protected_location,
+        )
         assert allowed == (len(blockers) == 0)
         if attributes & 0x1:
             assert "SourceUnsupportedAttributes" in blockers
@@ -66,7 +80,15 @@ def check_model(cases: int) -> int:
             assert "SourceNamedDataStreams" in blockers
         if ea_size:
             assert "SourceExtendedAttributes" in blockers
-        checks += 1 + int(bool(attributes & 0x1)) + int(bool(streams)) + int(bool(ea_size))
+        if protected_location:
+            assert "SourceProtectedLocation" in blockers
+        checks += (
+            1
+            + int(bool(attributes & 0x1))
+            + int(bool(streams))
+            + int(bool(ea_size))
+            + int(protected_location)
+        )
     return checks
 
 
@@ -75,7 +97,9 @@ def check_repository(root: Path) -> int:
         "core": root / "src/FileOp.Core/Operations/FileCrossVolumeMoveSourcePreflight.cs",
         "windows": root / "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourcePreflightProbe.cs",
         "tests": root / "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightTests.cs",
+        "policy_tests": root / "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightPolicyTests.cs",
         "fidelity": root / "src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs",
+        "raw_source_delete": root / "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs",
     }
     source: dict[str, str] = {}
     for key, path in paths.items():
@@ -89,14 +113,23 @@ def check_repository(root: Path) -> int:
         core,
         "FileCrossVolumeMoveSourcePreflightClassifier",
         "FileCrossVolumeMovePreflightExecutionValidator",
+        "FileCrossVolumeMoveProtectedLocationPreflightProbe",
         "IFileCrossVolumeMoveSourcePreflightProbe",
         "SourcePreflightAuthorizesMutation => false",
+        "SourceProtectedLocation = 1 << 3",
         "FileOperationExecutionValidationDecision.Blocked",
         "FileOperationExecutionValidationStatus.Blocked",
         "before durable history or destination Copy",
         "FileBasicMetadataEvidence.StableCopiedAttributesMask & ~FileAttributeReadOnly",
         "FileCrossVolumeMovePreservationPolicy.RequiresNoSourceNamedDataStreamsAtProof",
         "FileCrossVolumeMovePreservationPolicy.RequiresNoSourceExtendedAttributesAtProof",
+        "validation.DestinationDirectory.Identity is not FileIdentity destinationDirectoryIdentity",
+        "sourceDirectoryIdentity.VolumeSerialNumber ==",
+        "destinationDirectoryIdentity.VolumeSerialNumber",
+        "_protectedLocationPolicy.Evaluate(",
+        "request.CanonicalSourceDirectoryPath",
+        "request.CanonicalSourcePath",
+        "re-evaluated at the final source-delete capability boundary",
         ".ProbeAsync(request, cancellationToken)",
         "Later fidelity checks remain mandatory",
     )
@@ -117,6 +150,16 @@ def check_repository(root: Path) -> int:
     ):
         assert shared in fidelity and shared in core, shared
         checks += 1
+
+    raw_source_delete = source["raw_source_delete"]
+    checks += require(
+        raw_source_delete,
+        "IFileDeleteProtectedLocationPolicy _protectedLocationPolicy",
+        "EnsureSourceMutationAllowed(sourceRootPath, \"source directory\")",
+        "EnsureSourceMutationAllowed(sourcePath, \"source file\")",
+        "_protectedLocationPolicy.Evaluate(canonicalPath)",
+        "protected from source deletion",
+    )
 
     windows = source["windows"]
     checks += require(
@@ -156,6 +199,19 @@ def check_repository(root: Path) -> int:
         "Assert.AreEqual(0, sourceDelete.CallCount)",
         "Assert.IsNull(await history.GetAsync(plan.Id))",
         "SourcePreflightAuthorizesMutation",
+    )
+
+    policy_tests = source["policy_tests"]
+    checks += require(
+        policy_tests,
+        "SameVolumeMoveBypassesCrossVolumeSourcePreflight",
+        "Assert.AreEqual(0, probe.CallCount)",
+        "ProtectedSourceFileBlocksBeforeInnerEvidenceProbe",
+        "SourceProtectedLocation",
+        "Assert.AreEqual(0, inner.CallCount)",
+        "AllowedProtectedLocationPolicyContinuesToInnerEvidenceProbe",
+        "FileCrossVolumeMoveProtectedLocationPreflightProbe",
+        "IFileDeleteProtectedLocationPolicy",
     )
     return checks
 
