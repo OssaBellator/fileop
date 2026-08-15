@@ -156,6 +156,8 @@ def check(root: Path) -> int:
     checks += require(
         native_runner,
         "verify_cross_volume_move_native_inventory.py",
+        "must run from an ordinary unelevated token",
+        "[System.Security.Principal.WindowsIdentity]::GetCurrent()",
         "FILEOP_CROSS_VOLUME_MOVE_SOURCE_ROOT",
         "FILEOP_CROSS_VOLUME_MOVE_DESTINATION_ROOT",
         'TestCategory=CrossVolumeMoveNative',
@@ -170,6 +172,7 @@ def check(root: Path) -> int:
         "Post-barrier fidelity refusal with the real Windows lease",
         "post-barrier ADS",
         "post-barrier EA",
+        "ordinary unelevated token",
         "FileCrossVolumeMoveHardLinkPathBindingTests.CanonicalResolverPreservesTheSpecificOpenedHardLinkName",
         "tools/test-cross-volume-move-security.ps1",
         "tools/test-cross-volume-move-native.ps1",
