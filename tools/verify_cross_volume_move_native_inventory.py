@@ -33,6 +33,7 @@ def check(root: Path) -> int:
     history_corruption = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMovePersistedRecoveryCorruptionTests.cs")
     fidelity = read(root, "src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs")
     fidelity_tests = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityTests.cs")
+    metadata_contract = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveBasicMetadataContractTests.cs")
     two_volume = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeTwoVolumeTests.cs")
     recovery = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeRecoveryTests.cs")
     read_only = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeReadOnlyTests.cs")
@@ -44,8 +45,13 @@ def check(root: Path) -> int:
     raw_delete = read(root, "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs")
     wrapper = read(root, "src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs")
     validator = read(root, "src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs")
+    relationship = read(root, "src/FileOp.Windows/Operations/WindowsFileOperationVolumeRelationship.cs")
+    validator_tests = read(root, "tests/FileOp.Windows.Tests/WindowsMoveOperationExecutionValidatorTests.cs")
+    relationship_tests = read(root, "tests/FileOp.Windows.Tests/WindowsFileOperationVolumeRelationshipTests.cs")
+    cross_store = read(root, "src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs")
     native_runner = read(root, "tools/test-cross-volume-move-native.ps1")
     security_runner = read(root, "tools/test-cross-volume-move-security.ps1")
+    volume_identity_verifier = read(root, "tools/verify_move_volume_identity.py")
     native_doc = read(root, "docs/cross-volume-move-native-validation.md")
 
     checks = 0
@@ -86,6 +92,18 @@ def check(root: Path) -> int:
         "SET state = 7",
         "SET destination_volume_serial = 999",
         "ThrowsExactlyAsync<ArgumentException>",
+    )
+
+    checks += require(
+        metadata_contract,
+        "StableCopiedAttributeMaskMatchesReviewedCopyWriterContract",
+        "CopyMergeReplacesOnlyStableCopiedBitsAndRetainsDestinationOwnedBits",
+        "RecoveryComparerTreatsCreationLastWriteAndStableAttributesAsAuthoritative",
+        "DestinationOwnedTemporaryOfflineBitsDoNotChangeStableMetadataComparison",
+        "NormalAttributeDoesNotSurviveWhenCopyMergeProducesOtherAttributes",
+        "WindowsFileCopyBasicMetadata.MergeDestinationAttributes(",
+        "FileBasicMetadataEvidence.StableCopiedAttributesMask",
+        "SameStableMetadata",
     )
 
     # #185 currently refuses ReadOnly before SourceDeleteStarted. The raw disposition does
@@ -242,14 +260,54 @@ def check(root: Path) -> int:
 
     checks += require(
         validator,
+        "IFileOperationVolumeRelationshipProbe _volumeRelationshipProbe",
+        "sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber",
+        "_volumeRelationshipProbe.Query(",
+        "sourceIdentity",
+        "destinationIdentity",
         "if (isCrossVolume)",
         "return Block(validation, CrossVolumeMoveDisabledSummary);",
         "No durable history, destination Copy, or source-delete mutation",
+    )
+    checks += require(
+        relationship,
+        "FileIdentity expectedSourceIdentity",
+        "FileIdentity expectedDestinationIdentity",
+        "GetFileInformationByHandle(",
+        "observedIdentity != expectedIdentity",
+        "filesystem identity changed before volume relationship proof",
+        "VolumeNameGuid",
+        "handle-bound Windows volume GUID",
+    )
+    checks += require(
+        validator_tests,
+        "EqualVolumeSerialCollisionWithDifferentGuidIsBlockedAsCrossVolume",
+        "EqualVolumeSerialWithoutStrongerGuidProofFailsClosedBeforeNamespaceProbe",
+        "SourceIdentities",
+        "DestinationIdentities",
+    )
+    checks += require(
+        relationship_tests,
+        "TwoDirectoriesOnSameTempVolumeResolveToSameHandleBoundGuid",
+        "StaleExpectedRootIdentityMakesVolumeRelationshipUnavailable",
+        "WindowsFileOperationCanonicalPathResolver",
+        "filesystem identity changed before volume relationship proof",
+    )
+    checks += require(
+        cross_store,
+        "CHECK(source_root_volume_serial <> destination_root_volume_serial)",
+    )
+    checks += require(
+        volume_identity_verifier,
+        "PASS Move volume identity source contract",
+        "StaleExpectedRootIdentityMakesVolumeRelationshipUnavailable",
+        "CHECK(source_root_volume_serial <> destination_root_volume_serial)",
     )
 
     checks += require(
         native_runner,
         "verify_cross_volume_move_native_inventory.py",
+        "verify_move_volume_identity.py",
         "must run from an ordinary unelevated token",
         "[System.Security.Principal.WindowsIdentity]::GetCurrent()",
         "FILEOP_CROSS_VOLUME_MOVE_SOURCE_ROOT",
@@ -269,7 +327,10 @@ def check(root: Path) -> int:
         "post-barrier main-stream writer",
         "read-only",
         "ordinary unelevated token",
+        "schema-v1",
+        "handle-bound Windows volume-GUID",
         "FileCrossVolumeMoveHardLinkPathBindingTests.CanonicalResolverPreservesTheSpecificOpenedHardLinkName",
+        "WindowsFileOperationVolumeRelationshipTests.TwoDirectoriesOnSameTempVolumeResolveToSameHandleBoundGuid",
         "tools/test-cross-volume-move-security.ps1",
         "tools/test-cross-volume-move-native.ps1",
     )
