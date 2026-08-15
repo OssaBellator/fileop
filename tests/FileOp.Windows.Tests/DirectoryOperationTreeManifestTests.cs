@@ -21,10 +21,12 @@ public sealed class DirectoryOperationTreeManifestTests
 
         var manifest = DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            rootIdentity,
+            RootEvidence(root, rootIdentity),
             Array.Empty<DirectoryOperationTreeEntryEvidence>());
 
-        Assert.AreEqual(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar), manifest.CanonicalRootPath);
+        Assert.AreEqual(
+            Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            manifest.CanonicalRootPath);
         Assert.AreEqual(rootIdentity, manifest.RootIdentity);
         Assert.AreEqual(0, manifest.EntryCount);
         Assert.AreEqual(0, manifest.DirectoryCount);
@@ -38,7 +40,7 @@ public sealed class DirectoryOperationTreeManifestTests
         var root = RootPath();
         var manifest = DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             new[]
             {
                 Entry(root, Path.Combine("z", "child.txt"), 6, DirectoryOperationTreeEntryKind.File),
@@ -78,7 +80,7 @@ public sealed class DirectoryOperationTreeManifestTests
                 DirectoryOperationFidelityFeature.AlternateDataStreams,
                 EnumerationComplete: true,
                 MetadataInspectionComplete: true),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             Array.Empty<DirectoryOperationTreeEntryEvidence>()));
 
         Assert.AreEqual(typeof(NotSupportedException), exception.GetType());
@@ -95,11 +97,43 @@ public sealed class DirectoryOperationTreeManifestTests
                 DirectoryOperationFidelityFeature.None,
                 EnumerationComplete: false,
                 MetadataInspectionComplete: true),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             Array.Empty<DirectoryOperationTreeEntryEvidence>()));
 
         Assert.AreEqual(typeof(NotSupportedException), exception.GetType());
         StringAssert.Contains(exception.Message, "complete plain-tree fidelity evidence");
+    }
+
+    [TestMethod]
+    public void FidelityRootMustMatchExecutionValidatedCanonicalRoot()
+    {
+        var root = RootPath();
+        var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
+            PlainFidelity(Path.Combine(root, "different")),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
+            Array.Empty<DirectoryOperationTreeEntryEvidence>()));
+
+        Assert.AreEqual(typeof(ArgumentException), exception.GetType());
+        StringAssert.Contains(exception.Message, "not bound to the execution-validated canonical root");
+    }
+
+    [TestMethod]
+    public void RootMustBeCanonicalNonReparseDirectoryWithIdentity()
+    {
+        var root = RootPath();
+        var reparseRoot = new FileOperationCanonicalPath(
+            root,
+            root,
+            FileOperationCanonicalPathState.Directory,
+            IsLeafReparsePoint: true,
+            Identity: new FileIdentity(Volume, 1));
+        var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
+            PlainFidelity(root),
+            reparseRoot,
+            Array.Empty<DirectoryOperationTreeEntryEvidence>()));
+
+        Assert.AreEqual(typeof(ArgumentException), exception.GetType());
+        StringAssert.Contains(exception.Message, "canonical non-reparse directory root");
     }
 
     [TestMethod]
@@ -109,14 +143,14 @@ public sealed class DirectoryOperationTreeManifestTests
         var rooted = Path.Combine(Path.GetPathRoot(root)!, "outside.txt");
         var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             new[]
             {
-                new DirectoryOperationTreeEntryEvidence(
+                Evidence(
                     rooted,
                     rooted,
                     new FileIdentity(Volume, 2),
-                    DirectoryOperationTreeEntryKind.File),
+                    FileOperationCanonicalPathState.File),
             }));
 
         Assert.AreEqual(typeof(ArgumentException), exception.GetType());
@@ -130,18 +164,41 @@ public sealed class DirectoryOperationTreeManifestTests
         var relative = Path.Combine("..", "escape.txt");
         var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             new[]
             {
-                new DirectoryOperationTreeEntryEvidence(
+                Evidence(
                     relative,
                     Path.GetFullPath(Path.Combine(root, relative)),
                     new FileIdentity(Volume, 2),
-                    DirectoryOperationTreeEntryKind.File),
+                    FileOperationCanonicalPathState.File),
             }));
 
         Assert.AreEqual(typeof(ArgumentException), exception.GetType());
         StringAssert.Contains(exception.Message, "parent-directory segment");
+    }
+
+    [TestMethod]
+    public void TrailingDotOrSpaceSegmentIsRejectedAsAmbiguous()
+    {
+        var root = RootPath();
+        foreach (var relative in new[] { "ambiguous.", "ambiguous " })
+        {
+            var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
+                PlainFidelity(root),
+                RootEvidence(root, new FileIdentity(Volume, 1)),
+                new[]
+                {
+                    Evidence(
+                        relative,
+                        Path.Combine(root, relative),
+                        new FileIdentity(Volume, 2),
+                        FileOperationCanonicalPathState.File),
+                }));
+
+            Assert.AreEqual(typeof(ArgumentException), exception.GetType());
+            StringAssert.Contains(exception.Message, "ambiguous");
+        }
     }
 
     [TestMethod]
@@ -150,18 +207,39 @@ public sealed class DirectoryOperationTreeManifestTests
         var root = RootPath();
         var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             new[]
             {
-                new DirectoryOperationTreeEntryEvidence(
+                Evidence(
                     "expected.txt",
                     Path.Combine(root, "different.txt"),
                     new FileIdentity(Volume, 2),
-                    DirectoryOperationTreeEntryKind.File),
+                    FileOperationCanonicalPathState.File),
             }));
 
         Assert.AreEqual(typeof(ArgumentException), exception.GetType());
         StringAssert.Contains(exception.Message, "expected canonical path");
+    }
+
+    [TestMethod]
+    public void DescendantMustBeExistingNonReparseCanonicalEvidence()
+    {
+        var root = RootPath();
+        var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
+            PlainFidelity(root),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
+            new[]
+            {
+                Evidence(
+                    "link",
+                    Path.Combine(root, "link"),
+                    new FileIdentity(Volume, 2),
+                    FileOperationCanonicalPathState.File,
+                    isLeafReparsePoint: true),
+            }));
+
+        Assert.AreEqual(typeof(ArgumentException), exception.GetType());
+        StringAssert.Contains(exception.Message, "non-reparse canonical evidence");
     }
 
     [TestMethod]
@@ -170,7 +248,7 @@ public sealed class DirectoryOperationTreeManifestTests
         var root = RootPath();
         var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             new[]
             {
                 Entry(root, "Alpha.txt", 2, DirectoryOperationTreeEntryKind.File),
@@ -187,14 +265,14 @@ public sealed class DirectoryOperationTreeManifestTests
         var root = RootPath();
         var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             new[]
             {
-                new DirectoryOperationTreeEntryEvidence(
+                Evidence(
                     "child.txt",
                     Path.Combine(root, "child.txt"),
                     new FileIdentity(Volume + 1, 2),
-                    DirectoryOperationTreeEntryKind.File),
+                    FileOperationCanonicalPathState.File),
             }));
 
         Assert.AreEqual(typeof(ArgumentException), exception.GetType());
@@ -208,7 +286,7 @@ public sealed class DirectoryOperationTreeManifestTests
         var relative = Path.Combine("missing", "child.txt");
         var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             new[]
             {
                 Entry(root, relative, 2, DirectoryOperationTreeEntryKind.File),
@@ -224,7 +302,7 @@ public sealed class DirectoryOperationTreeManifestTests
         var root = RootPath();
         var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             new[]
             {
                 Entry(root, "parent", 2, DirectoryOperationTreeEntryKind.File),
@@ -241,7 +319,7 @@ public sealed class DirectoryOperationTreeManifestTests
         var root = RootPath();
         var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             new[]
             {
                 Entry(root, "one.txt", 2, DirectoryOperationTreeEntryKind.File),
@@ -259,7 +337,7 @@ public sealed class DirectoryOperationTreeManifestTests
         var root = RootPath();
         var exception = CaptureException(() => DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            new FileIdentity(Volume, 1),
+            RootEvidence(root, new FileIdentity(Volume, 1)),
             new[]
             {
                 Entry(root, "cycle", 1, DirectoryOperationTreeEntryKind.Directory),
@@ -282,7 +360,7 @@ public sealed class DirectoryOperationTreeManifestTests
 
         var manifest = DirectoryOperationTreeManifest.Create(
             PlainFidelity(root),
-            rootIdentity,
+            RootEvidence(root, rootIdentity),
             source);
         source.Clear();
 
@@ -304,16 +382,43 @@ public sealed class DirectoryOperationTreeManifestTests
             EnumerationComplete: true,
             MetadataInspectionComplete: true);
 
+    private static FileOperationCanonicalPath RootEvidence(
+        string root,
+        FileIdentity identity) =>
+        new(
+            root,
+            root,
+            FileOperationCanonicalPathState.Directory,
+            IsLeafReparsePoint: false,
+            Identity: identity);
+
     private static DirectoryOperationTreeEntryEvidence Entry(
         string root,
         string relativePath,
         ulong fileReference,
         DirectoryOperationTreeEntryKind kind) =>
-        new(
+        Evidence(
             relativePath,
             Path.Combine(root, relativePath),
             new FileIdentity(Volume, fileReference),
-            kind);
+            kind == DirectoryOperationTreeEntryKind.Directory
+                ? FileOperationCanonicalPathState.Directory
+                : FileOperationCanonicalPathState.File);
+
+    private static DirectoryOperationTreeEntryEvidence Evidence(
+        string relativePath,
+        string canonicalPath,
+        FileIdentity identity,
+        FileOperationCanonicalPathState state,
+        bool isLeafReparsePoint = false) =>
+        new(
+            relativePath,
+            new FileOperationCanonicalPath(
+                canonicalPath,
+                canonicalPath,
+                state,
+                isLeafReparsePoint,
+                identity));
 
     private static string RootPath() =>
         Path.GetFullPath(Path.Combine(
