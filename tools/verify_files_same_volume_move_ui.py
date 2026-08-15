@@ -154,6 +154,7 @@ def check_repository(root: Path) -> int:
         "move": read(root, "src/FileOp.App/FilesView.Move.cs"),
         "directory_move": read(root, "src/FileOp.App/FilesView.DirectoryMove.cs"),
         "copy": read(root, "src/FileOp.App/FilesView.Copy.cs"),
+        "xaml_cs": read(root, "src/FileOp.App/FilesView.xaml.cs"),
         "source": read(root, "src/FileOp.App/MainWindow.StorageSourceIdentity.cs"),
         "aliases": read(root, "src/FileOp.App/MutationExecutionValidatorAliases.cs"),
         "executor": read(root, "src/FileOp.Core/Operations/FileSameVolumeMoveOperationExecutor.cs"),
@@ -191,12 +192,30 @@ def check_repository(root: Path) -> int:
         "new FileSameVolumeMoveOperationExecutor(",
         "new WindowsFileSameVolumeMoveMutationPrimitive()",
         "plan.Intent.Entries.Any(static entry => entry.IsDirectory)",
-        "The executable Move boundary supports regular files only. Directory Move remains disabled.",
+        "The File Move executor supports regular files only. Use the separate Directory Move executor for a homogeneous directory-only plan.",
+        "RunQueuedDirectoryMoveButton.IsEnabled = false;",
+        "UpdateDirectoryMoveExecutionAvailability();",
         "await executor.RequestCancellationAsync(operationId)",
         "will not replay, rollback or reinterpret the original operation ID automatically",
     )
     assert source["move"].count("new WindowsMoveOperationExecutionValidator()") >= 2
     checks += 1
+
+    checks += require(
+        source["copy"],
+        "RunQueuedDirectoryMoveButton.IsEnabled = false;",
+        "UpdateDirectoryMoveExecutionAvailability();",
+    )
+    checks += require(
+        source["xaml_cs"],
+        "a Ready homogeneous same-volume local file or directory Move can reach its reviewed executor",
+        "A Ready regular-file Copy or homogeneous same-volume local file/directory Move still requires fresh execution-grade validation before mutation.",
+        "UpdateDirectoryMoveExecutionAvailability();",
+    )
+    checks += forbid(
+        source["xaml_cs"],
+        "Cross-volume and directory Move remain non-executable.",
+    )
 
     checks += require(
         source["directory_move"],

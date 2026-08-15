@@ -198,6 +198,7 @@ public sealed partial class FilesView
         SetCopyExecutionUiBusy(false);
         UpdateCopyExecutionAvailability();
         UpdateMoveExecutionAvailability();
+        UpdateDirectoryMoveExecutionAvailability();
     }
 
     private bool CanRunCopyPlan(FileOperationPlan plan, out string refusal)
@@ -382,6 +383,7 @@ public sealed partial class FilesView
             ClearQueueButton.IsEnabled = false;
             RunQueuedCopyButton.IsEnabled = false;
             RunQueuedMoveButton.IsEnabled = false;
+            RunQueuedDirectoryMoveButton.IsEnabled = false;
             CancelQueuedMoveButton.IsEnabled = false;
             CancelQueuedCopyButton.Visibility = Visibility.Visible;
             UpdateCopyCancellationAvailability();
@@ -461,6 +463,7 @@ public sealed partial class FilesView
         UpdateIntentAvailability();
         UpdateCopyExecutionAvailability();
         UpdateMoveExecutionAvailability();
+        UpdateDirectoryMoveExecutionAvailability();
     }
 
     private static string GetFileOperationHistoryDatabasePath() =>

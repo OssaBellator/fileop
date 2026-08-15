@@ -249,6 +249,7 @@ public sealed partial class FilesView
         SetMoveExecutionUiBusy(false);
         UpdateCopyExecutionAvailability();
         UpdateMoveExecutionAvailability();
+        UpdateDirectoryMoveExecutionAvailability();
     }
 
     private bool CanAttemptMovePlan(FileOperationPlan plan, out string refusal)
@@ -267,7 +268,7 @@ public sealed partial class FilesView
 
         if (plan.Intent.Entries.Count == 0 || plan.Intent.Entries.Any(static entry => entry.IsDirectory))
         {
-            refusal = "The executable Move boundary supports regular files only. Directory Move remains disabled.";
+            refusal = "The File Move executor supports regular files only. Use the separate Directory Move executor for a homogeneous directory-only plan.";
             return false;
         }
 
@@ -382,6 +383,7 @@ public sealed partial class FilesView
             PreflightQueuedOperationButton.IsEnabled = false;
             RunQueuedCopyButton.IsEnabled = false;
             RunQueuedMoveButton.IsEnabled = false;
+            RunQueuedDirectoryMoveButton.IsEnabled = false;
             RemoveQueuedOperationButton.IsEnabled = false;
             ClearQueueButton.IsEnabled = false;
             CancelQueuedCopyButton.IsEnabled = false;

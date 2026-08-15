@@ -348,7 +348,7 @@ def check_repository(root: Path) -> int:
         'new FileBrowserPreflightSnapshot(result, DateTimeOffset.UtcNow)',
         '_preflightSnapshots[plan.Id] = snapshot;',
         'point-in-time read-only snapshot and can become stale',
-        'Cross-volume and directory Move remain non-executable.',
+        'Cross-volume and mixed file/directory Move remain non-executable.',
         '_preflightSnapshots.Remove(row.Id);',
         '_preflightSnapshots.Clear();',
         'OperationQueueList.IsEnabled = !executionBusy && !_preflightRunning;',
