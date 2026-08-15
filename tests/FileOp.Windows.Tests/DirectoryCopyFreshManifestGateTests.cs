@@ -89,8 +89,7 @@ public sealed class DirectoryCopyFreshManifestGateTests
             reviewed.CanonicalRootPath,
             DirectoryOperationFidelityFeature.None,
             EnumerationComplete: true,
-            MetadataInspectionComplete: false,
-            new[] { "EA inspection unavailable" });
+            MetadataInspectionComplete: false);
         var acquisition = DirectoryOperationTreeManifestAcquisitionResult.Unavailable(
             fidelity,
             "metadata inspection incomplete");
@@ -115,7 +114,7 @@ public sealed class DirectoryCopyFreshManifestGateTests
             EnumerationComplete: true,
             MetadataInspectionComplete: false);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             DirectoryOperationTreeManifestAcquisitionResult.Ready(
                 manifest,
                 incomplete,
@@ -139,7 +138,7 @@ public sealed class DirectoryCopyFreshManifestGateTests
             modifiers: null)
             ?? throw new AssertFailedException("Acquisition invariant constructor was not found.");
 
-        var exception = Assert.ThrowsException<TargetInvocationException>(() =>
+        var exception = Assert.Throws<TargetInvocationException>(() =>
             constructor.Invoke(new object?[]
             {
                 DirectoryOperationTreeManifestAcquisitionStatus.Unsupported,
@@ -162,7 +161,7 @@ public sealed class DirectoryCopyFreshManifestGateTests
             unrelatedInitial,
             fresh);
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DirectoryCopyFreshManifestGateResult(
                 DirectoryCopyFreshManifestGateStatus.ReadyForDurableHistory,
                 reviewed,
@@ -180,7 +179,7 @@ public sealed class DirectoryCopyFreshManifestGateTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
-        await Assert.ThrowsExceptionAsync<OperationCanceledException>(async () =>
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await gate.PrepareAsync(reviewed, cancellation.Token));
         Assert.AreEqual(0, acquirer.CallCount);
     }
