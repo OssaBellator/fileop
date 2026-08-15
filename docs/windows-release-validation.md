@@ -129,23 +129,29 @@ Then prove the following negative cases fail closed:
 - a test/refactor variant that tries to redirect install/update or uninstall away from `%ProgramFiles%\FileOp`;
 - an existing `%ProgramFiles%\FileOp` root replaced with a reparse point before install/update;
 - an existing `%ProgramFiles%\FileOp` root replaced with a reparse point before uninstall;
-- `%LOCALAPPDATA%\FileOp` replaced with a reparse point before `-PurgeUserData` uninstall;
 - install/update while `FileOp.App` is running;
 - install/update while `FileOp.Indexer` is running;
 - uninstall while either process is running.
 
 From the protected installed location, verify one real elevated helper launch and successful desktop/helper handshake. The same binary from a user-writable location must be rejected before `runas` is started.
 
-## 6. Update rollback and user-data preservation
+## 6. Update rollback, binary uninstall and per-user purge
 
 With a valid existing installation:
 
 - perform a successful update and confirm the new binary set is complete;
 - induce a replacement failure after the old installation is renamed to backup but before the protected verified payload becomes live, and confirm the old installation is restored;
 - induce a failure before live replacement and confirm the protected `.FileOp.work.*` directory is cleaned without changing the current live installation;
-- uninstall without `-PurgeUserData` and confirm `%LOCALAPPDATA%\FileOp` remains;
+- if stale backup/work cleanup fails **after** successful publication, confirm the installer reports cleanup debt without pretending the live update rolled back;
+- run `tools/uninstall-fileop.ps1` elevated and confirm it owns/removes only the canonical `%ProgramFiles%\FileOp` binary tree;
+- confirm elevated uninstall does **not** resolve or recursively delete current-user LocalApplicationData;
 - reinstall and confirm existing compatible per-user state is not silently deleted;
-- only an explicit `-PurgeUserData` uninstall may remove the per-user FileOp directory, and that purge must refuse a reparse-point user-data root.
+- run `tools/purge-user-data.ps1 -ConfirmPurge` under the ordinary current-user token and confirm it removes only the exact current-user FileOp LocalApplicationData tree;
+- confirm `purge-user-data.ps1` refuses an elevated/Administrator token;
+- confirm purge refuses a reparse-point user-data root and any nested reparse point before recursive deletion;
+- spoof `LOCALAPPDATA` and confirm purge still resolves the OS current-user LocalApplicationData known folder rather than trusting the environment variable.
+
+The binary uninstall and per-user purge are intentionally separate trust boundaries. Do not reintroduce a `-PurgeUserData` switch on the elevated uninstaller.
 
 ## 7. Capability/refusal regression
 
@@ -172,7 +178,7 @@ Post the final results to the consolidation PR with:
 - aggregate `tools/test-local.ps1` result;
 - focused Copy/Move/delete results;
 - case-sensitive namespace results;
-- package/sign/protected-stage/install/update/uninstall results;
+- package/sign/protected-stage/install/update/binary-uninstall/user-purge results;
 - exact signing certificate thumbprint used for the test (certificate private material must never be attached);
 - any skipped scenario and the reason.
 
