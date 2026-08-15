@@ -33,7 +33,14 @@ Fresh Windows execution validation resolves stable canonical root identities. Fo
 
 - missing root identity fails closed as `Blocked` rather than throwing or guessing;
 - different root volume serials return `Blocked` **before namespace probing, durable history, destination Copy or source-delete capability acquisition**;
-- same-volume roots continue through the existing namespace-capability checks and same-volume executor.
+- equal 32-bit volume serials are **not** assumed to prove one volume: production validation opens the canonical roots and compares handle-bound Windows volume-GUID names;
+- equal serials with different volume GUIDs are treated as cross-volume and remain `Blocked`;
+- equal serials whose stronger GUID relationship cannot be obtained fail closed before namespace probing/history/mutation;
+- only equal serials with the same proven volume GUID continue through the existing namespace-capability checks and same-volume executor.
+
+The stronger relationship check is intentionally asymmetric: different serials are sufficient evidence of different volumes, while equal serials need stronger proof before FileOp can allow identity-preserving same-volume rename.
+
+The dormant composite journal is still schema-v1 and requires distinct source/destination volume serials. Therefore an equal-serial/different-GUID pair is correctly recognized as cross-volume but is **not** yet a supported dormant composite transaction. Issue #189 must either keep that rare collision case blocked during product enablement or explicitly upgrade durable volume identity/schema before routing it into the composite executor. A serial collision must never fall through to the same-volume rename path.
 
 This preserves the composite implementation for deterministic/model/native testing without presenting it as a current user-reachable mutation route.
 
@@ -47,7 +54,7 @@ The important per-entry states are:
 2. `CopyMutationStarted` — durable Copy mutation barrier crossed; Copy outcome must be settled or treated as recovery-sensitive.
 3. `DestinationCommitted` — the exclusive-create destination is durably bound by filesystem identity and SHA-256 main-stream content evidence. The original source is still retained.
 4. `SourceDeleteStarted` — a separate durable destructive barrier has been crossed while an exact Move-specific source-delete lease is live.
-5. `Moved` — source delete-on-close completed and the durable journal committed the original source identity.
+5. `Moved` — the exact source entry disposition completed, the source capability/evidence lease released, and the durable journal committed the original source identity.
 6. `Skipped` — explicit collision Skip; no copied-destination evidence is recorded.
 7. `Failed` — safe terminal failure with no unresolved mutation barrier.
 8. `RecoveryRequired` — durable evidence exists for an unresolved Copy or source-delete barrier. Evidence grants no replay, rollback or delete authority.
@@ -73,10 +80,12 @@ For one ready entry passed directly into the dormant engine through a validator 
 9. durable `SourceDeleteStarted` barrier;
 10. Core mints an exact one-shot authorization bound to that live evidence lease and durable history row;
 11. re-check the preservation checkpoint with cancellation disabled;
-12. perform same-handle delete-on-close through the reviewed Windows primitive;
+12. perform `FileDispositionInformationEx` on the exact opened source link through the reviewed Windows primitive;
 13. require the exact inner lease to report `SourceDeleteMutationPerformed`;
-14. release the exact capability/evidence lease;
+14. release the exact capability/evidence lease, closing the source handle before destination evidence handles;
 15. durably commit `Moved`.
+
+The current raw primitive sets `FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS | FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK`. It deliberately does **not** set `FILE_DISPOSITION_ON_CLOSE`, and #185 must not describe that implementation as relying on the `ON_CLOSE` flag. Durable `Moved` is still recorded only after the exact source-delete lease has released successfully; release uncertainty after the destructive barrier is recovery-sensitive.
 
 No cancellation token is passed after `SourceDeleteStarted`. From that point the operation must either reach durable completion or become `RecoveryRequired`.
 
@@ -86,7 +95,7 @@ No cancellation token is passed after `SourceDeleteStarted`. From that point the
 
 ### Main-stream content is the destructive invariant
 
-The source and destination main-stream SHA-256 fingerprints must still match the durable committed Copy fingerprint at both checkpoints. The raw source-delete capability keeps the exact source unnamed stream open with DELETE access and `FileShare.Read` only while the final proof and same-handle unlink occur.
+The source and destination main-stream SHA-256 fingerprints must still match the durable committed Copy fingerprint at both checkpoints. The raw source-delete capability keeps the exact source unnamed stream open with DELETE access and `FileShare.Read` only while the final proof and same-handle source disposition occur.
 
 The native matrix now contains both lower-level and full-transaction tests for that boundary: pre-existing main-stream writers and writable mappings must prevent destructive-lease acquisition; a new writer attempted after `SourceDeleteStarted` must fail with `ERROR_SHARING_VIOLATION`; after that refusal the real second fidelity proof must still pass and the same transaction must complete. These tests are implemented but remain merge evidence only after they run successfully on the exact final Windows head.
 
@@ -136,7 +145,7 @@ The second check catches observed drift; it is not described as an atomic freeze
 
 The raw Windows source-delete primitive and the fidelity wrapper have different jobs:
 
-- the raw primitive owns exact root/file handles, canonical/identity revalidation, protected-location/namespace checks and same-handle delete-on-close;
+- the raw primitive owns exact root/file handles, canonical/identity revalidation, protected-location/namespace checks and exact-handle source disposition;
 - the fidelity verifier gathers current content/basic-metadata/stream/link/EA evidence;
 - the Core classifier applies the explicitly scoped preservation policy;
 - the Core executor records the durable delete barrier;
@@ -167,7 +176,8 @@ The exact native evidence matrix covers:
 - ordinary-token destination-default security behavior;
 - deterministic post-barrier refusal using the real raw four-handle lease;
 - mutation-provider success without `SourceDeleteMutationPerformed` is rejected;
-- recovery observation versus normal destination commit survives SQLite round-trip and malformed recovery rows are rejected during hydration.
+- recovery observation versus normal destination commit survives SQLite round-trip and malformed recovery rows are rejected during hydration;
+- equal-serial volume relationships cannot silently bypass the cross-volume product block: equal serials require the handle-bound volume-GUID probe, while an unavailable stronger proof fails closed.
 
 A generic oplock is **not** a prerequisite unless actual native evidence exposes a main-stream race the existing lease cannot close. Do not add an oplock merely to make the design sound stronger.
 
@@ -189,7 +199,7 @@ The original operation ID is single-use once execution can reach durable history
 
 GitHub-hosted Actions are not part of this feature's merge gate.
 
-Portable/model/source verification is wired into `tools/test-local.ps1 -OfflineOnly` through `tools/verify_file_cross_volume_move.py` and the Files Move source verifier. The explicit two-volume runner additionally executes `tools/verify_cross_volume_move_native_inventory.py` before any opt-in native mutation test.
+Portable/model/source verification is wired into `tools/test-local.ps1 -OfflineOnly` through `tools/verify_file_cross_volume_move.py` and the Files Move source verifier. The explicit two-volume runner additionally executes `tools/verify_cross_volume_move_native_inventory.py` and `tools/verify_move_volume_identity.py` before any opt-in native mutation test.
 
 The exact final PR head must pass **all three** Windows commands before #185 can be considered merge-ready:
 
@@ -203,6 +213,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-cross-volume-
   -DestinationRoot 'D:\FileOpNativeTestRoot'
 ```
 
-The two dedicated scripts must run under an ordinary unelevated token. The two-volume roots must resolve to different stable filesystem volume serials. Record exact SHA, Windows/.NET versions, roots, token context, complete outputs and any inconclusive tests from the ordinary suite.
+The two dedicated scripts must run under an ordinary unelevated token. The explicit schema-v1 two-volume roots must resolve to different stable filesystem volume serials. Record exact SHA, Windows/.NET versions, roots, token context, complete outputs and any inconclusive tests from the ordinary suite.
 
 Do not mark #185 ready or merge it based only on source review or randomized-model results. Production `WindowsMoveOperationExecutionValidator` must remain fail-closed for different-volume Move until that exact-head evidence is complete.
