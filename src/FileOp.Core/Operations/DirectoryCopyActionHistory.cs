@@ -338,7 +338,9 @@ public sealed record DirectoryCopyActionHistory
                     break;
 
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(entry.State));
+                    throw new ArgumentException(
+                        $"Directory Copy history action {entry.Ordinal} has an undefined state.",
+                        nameof(entries));
             }
         }
     }

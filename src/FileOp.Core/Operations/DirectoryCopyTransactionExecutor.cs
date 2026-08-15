@@ -139,7 +139,11 @@ public sealed class DirectoryCopyTransactionExecutor
             if (context.IsCancellationRequested || callerCancellation.IsCancellationRequested)
             {
                 return await _historyStore
-                    .CompleteAsync(plan.OperationId, DirectoryCopyActionTerminalState.Cancelled, UtcNow())
+                    .CompleteAsync(
+                        plan.OperationId,
+                        DirectoryCopyActionTerminalState.Cancelled,
+                        UtcNow(),
+                        cancellationToken: CancellationToken.None)
                     .ConfigureAwait(false);
             }
 
@@ -152,17 +156,30 @@ public sealed class DirectoryCopyTransactionExecutor
                     action.CanonicalDestinationPath,
                     Retryable: true);
                 history = await _historyStore
-                    .MarkFailedBeforeMutationAsync(plan.OperationId, ordinal, failure, UtcNow())
+                    .MarkFailedBeforeMutationAsync(
+                        plan.OperationId,
+                        ordinal,
+                        failure,
+                        UtcNow(),
+                        cancellationToken: CancellationToken.None)
                     .ConfigureAwait(false);
                 return await _historyStore
-                    .CompleteAsync(plan.OperationId, DirectoryCopyActionTerminalState.Failed, UtcNow())
+                    .CompleteAsync(
+                        plan.OperationId,
+                        DirectoryCopyActionTerminalState.Failed,
+                        UtcNow(),
+                        cancellationToken: CancellationToken.None)
                     .ConfigureAwait(false);
             }
 
             try
             {
                 history = await _historyStore
-                    .MarkMutationStartedAsync(plan.OperationId, ordinal, UtcNow())
+                    .MarkMutationStartedAsync(
+                        plan.OperationId,
+                        ordinal,
+                        UtcNow(),
+                        cancellationToken: CancellationToken.None)
                     .ConfigureAwait(false);
             }
             catch
@@ -195,7 +212,8 @@ public sealed class DirectoryCopyTransactionExecutor
                         ordinal,
                         receipt.DestinationIdentity,
                         receipt.DestinationContentFingerprint,
-                        UtcNow())
+                        UtcNow(),
+                        cancellationToken: CancellationToken.None)
                     .ConfigureAwait(false);
             }
             catch (Exception exception)
@@ -216,13 +234,15 @@ public sealed class DirectoryCopyTransactionExecutor
                             failure,
                             UtcNow(),
                             observedIdentity,
-                            observedFingerprint)
+                            observedFingerprint,
+                            cancellationToken: CancellationToken.None)
                         .ConfigureAwait(false);
                     history = await _historyStore
                         .CompleteAsync(
                             plan.OperationId,
                             DirectoryCopyActionTerminalState.RecoveryRequired,
-                            UtcNow())
+                            UtcNow(),
+                            cancellationToken: CancellationToken.None)
                         .ConfigureAwait(false);
                 }
                 finally
@@ -239,7 +259,11 @@ public sealed class DirectoryCopyTransactionExecutor
         }
 
         return await _historyStore
-            .CompleteAsync(plan.OperationId, DirectoryCopyActionTerminalState.Succeeded, UtcNow())
+            .CompleteAsync(
+                plan.OperationId,
+                DirectoryCopyActionTerminalState.Succeeded,
+                UtcNow(),
+                cancellationToken: CancellationToken.None)
             .ConfigureAwait(false);
     }
 

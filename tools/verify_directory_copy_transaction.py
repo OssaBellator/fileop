@@ -142,7 +142,8 @@ def check_repository(root: Path) -> int:
         "public sealed class DirectoryCopyTransactionExecutor",
         "if (!fresh.CanBeginDurableHistory)",
         ".BeginAsync(plan, fresh, UtcNow()",
-        ".MarkMutationStartedAsync(plan.OperationId, ordinal, UtcNow())",
+        ".MarkMutationStartedAsync(",
+        "cancellationToken: CancellationToken.None",
         "No cancellation token crosses the durable MutationStarted boundary.",
         ".ExecuteNoReplaceAsync(new DirectoryCopyMutationRequest(",
         "TryResolveCommittedParent(",
@@ -167,8 +168,14 @@ def check_repository(root: Path) -> int:
     )
     assert fresh_gate_call, "Directory Copy executor must invoke the fresh-manifest gate before durable history"
     assert fresh_gate_call.start() < executor.index(".BeginAsync(plan, fresh, UtcNow()")
-    assert executor.index(".MarkMutationStartedAsync(plan.OperationId, ordinal, UtcNow())") < executor.index(".ExecuteNoReplaceAsync(new DirectoryCopyMutationRequest(")
-    checks += 3
+    mutation_barrier_call = re.search(
+        r"\.MarkMutationStartedAsync\(\s*plan\.OperationId,\s*ordinal,\s*UtcNow\(\),\s*"
+        r"cancellationToken:\s*CancellationToken\.None\s*\)",
+        executor,
+    )
+    assert mutation_barrier_call, "Directory Copy mutation barrier persistence must be explicitly non-cancellable"
+    assert mutation_barrier_call.start() < executor.index(".ExecuteNoReplaceAsync(new DirectoryCopyMutationRequest(")
+    checks += 4
     checks += require(
         tests,
         "SqliteHistoryPersistsParentLinkedRecursiveActions",
