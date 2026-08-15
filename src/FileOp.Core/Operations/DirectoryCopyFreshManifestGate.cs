@@ -17,17 +17,89 @@ public enum DirectoryCopyFreshManifestGateStatus
 /// A ReadyForDurableHistory result authorizes only creation of separate durable action history;
 /// it is not filesystem mutation authority.
 /// </summary>
-public sealed record DirectoryCopyFreshManifestGateResult(
-    DirectoryCopyFreshManifestGateStatus Status,
-    DirectoryOperationTreeManifest ReviewedManifest,
-    DirectoryOperationTreeManifestAcquisitionResult Acquisition,
-    DirectoryOperationTreeManifestRevalidationResult? Revalidation,
-    string Summary)
+public sealed record DirectoryCopyFreshManifestGateResult
 {
+    public DirectoryCopyFreshManifestGateResult(
+        DirectoryCopyFreshManifestGateStatus status,
+        DirectoryOperationTreeManifest reviewedManifest,
+        DirectoryOperationTreeManifestAcquisitionResult acquisition,
+        DirectoryOperationTreeManifestRevalidationResult? revalidation,
+        string summary)
+    {
+        ArgumentNullException.ThrowIfNull(reviewedManifest);
+        ArgumentNullException.ThrowIfNull(acquisition);
+        ArgumentException.ThrowIfNullOrWhiteSpace(summary);
+
+        var readyAcquisition =
+            acquisition.Status == DirectoryOperationTreeManifestAcquisitionStatus.Ready &&
+            acquisition.Manifest is not null &&
+            acquisition.CanRevalidateReviewedManifest;
+        var boundRevalidation =
+            revalidation is not null &&
+            ReferenceEquals(revalidation.Initial, reviewedManifest) &&
+            ReferenceEquals(revalidation.Fresh, acquisition.Manifest);
+
+        switch (status)
+        {
+            case DirectoryCopyFreshManifestGateStatus.ReadyForDurableHistory:
+                if (!readyAcquisition || !boundRevalidation || revalidation!.EvidenceStillMatches != true)
+                {
+                    throw new ArgumentException(
+                        "Ready directory Copy gate evidence must bind the exact reviewed manifest to the exact freshly acquired matching manifest.",
+                        nameof(revalidation));
+                }
+                break;
+            case DirectoryCopyFreshManifestGateStatus.ReviewedTreeChanged:
+                if (!readyAcquisition || !boundRevalidation || revalidation!.EvidenceStillMatches)
+                {
+                    throw new ArgumentException(
+                        "Changed directory Copy gate evidence must bind a non-matching revalidation of the exact reviewed/fresh manifests.",
+                        nameof(revalidation));
+                }
+                break;
+            case DirectoryCopyFreshManifestGateStatus.AcquisitionUnsupported:
+                if (acquisition.Status != DirectoryOperationTreeManifestAcquisitionStatus.Unsupported || revalidation is not null)
+                {
+                    throw new ArgumentException(
+                        "Unsupported directory Copy gate evidence must come directly from unsupported acquisition without revalidation.",
+                        nameof(acquisition));
+                }
+                break;
+            case DirectoryCopyFreshManifestGateStatus.AcquisitionUnavailable:
+                if (acquisition.Status == DirectoryOperationTreeManifestAcquisitionStatus.Ready || revalidation is not null)
+                {
+                    throw new ArgumentException(
+                        "Unavailable directory Copy gate evidence must not publish Ready acquisition or revalidation evidence.",
+                        nameof(acquisition));
+                }
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown directory Copy gate status.");
+        }
+
+        Status = status;
+        ReviewedManifest = reviewedManifest;
+        Acquisition = acquisition;
+        Revalidation = revalidation;
+        Summary = summary;
+    }
+
+    public DirectoryCopyFreshManifestGateStatus Status { get; }
+
+    public DirectoryOperationTreeManifest ReviewedManifest { get; }
+
+    public DirectoryOperationTreeManifestAcquisitionResult Acquisition { get; }
+
+    public DirectoryOperationTreeManifestRevalidationResult? Revalidation { get; }
+
+    public string Summary { get; }
+
     public bool CanBeginDurableHistory =>
         Status == DirectoryCopyFreshManifestGateStatus.ReadyForDurableHistory &&
         Acquisition.CanRevalidateReviewedManifest &&
-        Revalidation?.EvidenceStillMatches == true;
+        Revalidation?.EvidenceStillMatches == true &&
+        ReferenceEquals(Revalidation.Initial, ReviewedManifest) &&
+        ReferenceEquals(Revalidation.Fresh, Acquisition.Manifest);
 
     public bool GrantsMutationAuthority => false;
 
