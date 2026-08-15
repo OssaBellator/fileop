@@ -2,7 +2,7 @@
 
 Cross-volume Move is a destructive composite transaction. It is **not** implemented as an unchecked `Copy` followed by a path-based delete.
 
-This document describes the reviewed transaction machinery implemented by draft PR #185. **Production Files execution does not currently enter this transaction.** `WindowsMoveOperationExecutionValidator` blocks freshly validated different-volume Move before durable history, destination Copy or source-delete mutation until the exact implementation passes the remaining native Windows stability tests.
+This document describes the reviewed transaction machinery implemented by draft PR #185. **Production Files execution does not currently enter this transaction.** `WindowsMoveOperationExecutionValidator` blocks freshly validated different-volume Move before durable history, destination Copy or source-delete mutation until the exact implementation passes the remaining native Windows gates.
 
 Issue #186 selected the ordinary-user security contract source-side: FileOp follows Windows cross-volume Move semantics in which the newly created destination receives destination-side default/inherited security rather than preserving the source file's security descriptor. Security-descriptor equality is therefore intentionally not a destructive-fidelity requirement.
 
@@ -56,6 +56,8 @@ The important per-entry states are:
 
 Persisted-history validation is stricter than the SQLite table shape. Entry source identity must remain on the durable source-root volume, destination evidence must remain on the durable destination-root volume, a safe `Failed` row cannot hide an unresolved Copy barrier, and source-delete recovery must retain the earlier Copy/destination chronology.
 
+Recovery observation is deliberately weaker than normal destination commit. A Copy-barrier recovery row may retain an observed destination identity and fingerprint for forensic inspection, but `HasDestinationRecoveryEvidence` does not imply `DestinationIsDurablyCommitted`. Only normal `DestinationCommitted` lineage—or later source-delete lineage that necessarily passed through it—proves the safe commit checkpoint. Recovery evidence never becomes cleanup, replay or source-delete authority.
+
 ## Mutation ordering
 
 For one ready entry passed directly into the dormant engine through a validator that authorizes the composite strategy, the reviewed order is:
@@ -72,8 +74,9 @@ For one ready entry passed directly into the dormant engine through a validator 
 10. Core mints an exact one-shot authorization bound to that live evidence lease and durable history row;
 11. re-check the preservation checkpoint with cancellation disabled;
 12. perform same-handle delete-on-close through the reviewed Windows primitive;
-13. release the exact capability/evidence lease;
-14. durably commit `Moved`.
+13. require the exact inner lease to report `SourceDeleteMutationPerformed`;
+14. release the exact capability/evidence lease;
+15. durably commit `Moved`.
 
 No cancellation token is passed after `SourceDeleteStarted`. From that point the operation must either reach durable completion or become `RecoveryRequired`.
 
@@ -85,7 +88,7 @@ No cancellation token is passed after `SourceDeleteStarted`. From that point the
 
 The source and destination main-stream SHA-256 fingerprints must still match the durable committed Copy fingerprint at both checkpoints. The raw source-delete capability keeps the exact source unnamed stream open with DELETE access and `FileShare.Read` only while the final proof and same-handle unlink occur.
 
-That handle arrangement is intended to reject incompatible main-stream write opens and writable mappings. This is the remaining native boundary that #187 must demonstrate on the exact implementation before production enablement.
+The native matrix now contains both lower-level and full-transaction tests for that boundary: pre-existing main-stream writers and writable mappings must prevent destructive-lease acquisition; a new writer attempted after `SourceDeleteStarted` must fail with `ERROR_SHARING_VIOLATION`; after that refusal the real second fidelity proof must still pass and the same transaction must complete. These tests are implemented but remain merge evidence only after they run successfully on the exact final Windows head.
 
 ### Stable basic metadata is checkpoint evidence, not an atomicity claim
 
@@ -99,7 +102,7 @@ The current identity-bound Copy primitive does not preserve arbitrary source nam
 
 Destination-only streams/EAs added by another actor do not prove loss of source semantics and are not destructive blockers. They also grant no delete authority; main-stream identity/content evidence and the separate durable source-delete authorization remain mandatory.
 
-Windows sharing modes are stream-specific, and attribute/EA access is not governed by ordinary share flags. FileOp therefore does not falsely advertise post-checkpoint ADS/EA mutation as kernel-frozen.
+Windows sharing modes are stream-specific, and attribute/EA access is not represented as share-frozen. The explicit two-volume matrix therefore contains real post-barrier races: one test creates a source ADS after `SourceDeleteStarted`, another writes a source EA with `NtSetEaFile`, and both delegate to the real second Windows fidelity proof. Each must refuse raw deletion and settle `RecoveryRequired` with both paths directly observable.
 
 ### Security semantics
 
@@ -107,7 +110,7 @@ Security-descriptor equivalence is deliberately **not** part of the classifier. 
 
 The reviewed Windows Copy path creates the new destination with destination-context/default security rather than cloning the complete source security descriptor. This matches normal Windows cross-volume Move behavior and avoids requiring `ACCESS_SYSTEM_SECURITY`/SACL reads merely to decide whether an ordinary user's source can later be deleted.
 
-This is a visible fidelity tradeoff, not an implementation accident: moving a file to another volume may change its ACL/security inheritance.
+This is a visible fidelity tradeoff, not an implementation accident: moving a file to another volume may change its ACL/security inheritance. The dedicated ordinary-token security test gives the source a protected NULL DACL and requires the real Copy primitive to create a destination with ordinary destination-context/default security instead of cloning that NULL DACL.
 
 ### Hard-link semantics
 
@@ -115,7 +118,7 @@ Hard links are directory entries to one underlying same-volume file. A new desti
 
 FileOp therefore moves **the selected source directory entry**. Additional source hard links do not block the transaction: removing the selected source entry leaves other source-volume links to the original file valid. Additional destination links likewise do not mean the source Copy lost data. `FileCrossVolumeMovePreservationPolicy.PreservesHardLinkTopology` is false.
 
-This also avoids a false #187 requirement. A source-stream oplock is not documented as a universal freeze on ordinary creation of an additional hard link; the relevant Windows oplock documentation qualifies the `FileLinkInformation` hard-link case around replacement/supersede behavior. FileOp does not claim otherwise.
+This avoids a false requirement for a universal source-stream oplock. The native matrix instead pins the contract directly: the canonical resolver must preserve the specific opened hard-link name while both names report the same identity, and the real two-volume Move must remove only the selected entry while another source-volume link remains valid.
 
 ## Two preservation checkpoints
 
@@ -127,7 +130,7 @@ The wrapper checks again after `SourceDeleteStarted` and before it delegates the
 
 If that second check fails, **no inner delete mutation is called**, but the durable destructive barrier has already been crossed. The entry therefore becomes `RecoveryRequired` rather than pretending the failure is safely retryable.
 
-The second check remains valuable because it catches observed drift. It is not described as an atomic freeze of metadata classes Windows does not freeze for this handle arrangement.
+The second check catches observed drift; it is not described as an atomic freeze of metadata classes Windows does not freeze for this handle arrangement. The native matrix includes both a deterministic second-proof refusal with the real raw lease and real post-barrier ADS/EA changes detected by the real verifier.
 
 ## Handle and authority separation
 
@@ -138,7 +141,8 @@ The raw Windows source-delete primitive and the fidelity wrapper have different 
 - the Core classifier applies the explicitly scoped preservation policy;
 - the Core executor records the durable delete barrier;
 - only Core can mint the post-barrier `FileCrossVolumeMoveSourceDeleteAuthorization`;
-- the fidelity wrapper cannot synthesize or substitute delete authority.
+- the fidelity wrapper cannot synthesize or substitute delete authority;
+- after delegation, the wrapper refuses to report successful destructive completion unless the exact inner lease reports that source disposition was actually performed.
 
 The dormant Files composition code uses `WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive`, not the raw destructive primitive directly. Production validation currently returns before the composite executor is entered.
 
@@ -148,24 +152,26 @@ The raw source lease already owns `DELETE` access and intentionally uses `FileSh
 
 The native verifier consequently uses `FileShare.Read | FileShare.Delete` for evidence reopens. That compatibility flag does not turn recovery evidence or a path into mutation authority; the exact raw source handle and Core post-barrier authorization are still required.
 
-## Remaining native stability validation (#187)
+## Native validation status (#186 / #187)
 
-The source-side architecture is now deliberately narrow enough to test without inventing an unsupported all-metadata oplock guarantee.
+The source-side architecture is now deliberately narrow and the required native tests are implemented. #186 and #187 remain open because those tests have **not yet been recorded as passing on the exact final head**, not because the branch still needs another preservation architecture.
 
-Before production enablement, native Windows tests must prove the main-stream boundary on the exact source lease:
+The exact native evidence matrix covers:
 
-- a pre-existing writable unnamed-stream handle prevents acquisition of the DELETE-capable `FileShare.Read` source lease;
-- a pre-existing writable unnamed-stream mapping prevents that lease;
-- after the source lease is acquired, a new unnamed-stream write-capable open is rejected;
-- both final SHA-256 observations happen while the same source capability remains live;
-- same-handle source disposition uses that exact identity-bound capability after the durable barrier;
-- failure/ambiguity before `SourceDeleteStarted` retains the source, while ambiguity after it remains `RecoveryRequired` without automatic retry/delete.
+- pre-existing main-stream writer prevents source DELETE-lease acquisition;
+- pre-existing writable main-stream mapping prevents that lease;
+- live post-barrier lease rejects a new main-stream writer with `ERROR_SHARING_VIOLATION` and the Move then completes through the real second proof;
+- source ADS and EA before the delete barrier cause safe source-retained refusal;
+- real source ADS and EA created after `SourceDeleteStarted` are detected by the real second proof and cause `RecoveryRequired` without raw delete;
+- selected-entry hard-link path binding and real two-volume hard-link behavior;
+- ordinary-token destination-default security behavior;
+- deterministic post-barrier refusal using the real raw four-handle lease;
+- mutation-provider success without `SourceDeleteMutationPerformed` is rejected;
+- recovery observation versus normal destination commit survives SQLite round-trip and malformed recovery rows are rejected during hydration.
 
-Native scope tests must additionally confirm that source ADS/EA state observed at either checkpoint blocks source deletion and that moving one hard link removes only the selected source directory entry while other links remain valid.
+A generic oplock is **not** a prerequisite unless actual native evidence exposes a main-stream race the existing lease cannot close. Do not add an oplock merely to make the design sound stronger.
 
-A generic oplock is **not** a prerequisite unless native evidence exposes a main-stream race the existing lease cannot close. Do not add an oplock merely to make the design sound stronger; Windows oplocks are stream-scoped and their set-information break behavior does not prove an all-metadata transaction.
-
-Production validation remains disabled for different-volume Move until these tests pass on the exact final head.
+Production validation remains disabled for different-volume Move until all exact-head gates below pass.
 
 ## Cancellation and observable engine outcomes
 
@@ -183,24 +189,20 @@ The original operation ID is single-use once execution can reach durable history
 
 GitHub-hosted Actions are not part of this feature's merge gate.
 
-Portable/model/source verification is wired into `tools/test-local.ps1 -OfflineOnly` through `tools/verify_file_cross_volume_move.py` and the Files Move source verifier. The source contract pins:
+Portable/model/source verification is wired into `tools/test-local.ps1 -OfflineOnly` through `tools/verify_file_cross_volume_move.py` and the Files Move source verifier. The explicit two-volume runner additionally executes `tools/verify_cross_volume_move_native_inventory.py` before any opt-in native mutation test.
 
-- pre-barrier fidelity refusal => destination committed/source retained;
-- post-barrier fidelity refusal => recovery required/no inner delete;
-- successful deletion only after both checkpoints and the durable source-delete barrier;
-- production different-volume validation => blocked before namespace probe, durable history or Copy;
-- malformed mutation-ready root identity evidence => blocked rather than guessed or thrown;
-- security => explicit destination-default/inherited policy with no privileged complete-security read dependency;
-- hard links => selected-directory-entry semantics, not a one-link-only requirement;
-- source ADS/EAs => unsupported and blocking when observed;
-- concurrent metadata atomicity => explicitly not claimed.
-
-Deterministic managed tests cover the SQLite state machine, persisted-history invariants/corruption refusal, executor ordering, fidelity wrapper behavior with injected evidence results, preservation/security policy and product-readiness validation.
-
-The authoritative merge gate for executable changes remains the complete Windows invocation on the **exact final PR head**:
+The exact final PR head must pass **all three** Windows commands before #185 can be considered merge-ready:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-cross-volume-move-security.ps1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-cross-volume-move-native.ps1 `
+  -SourceRoot 'C:\FileOpNativeTestRoot' `
+  -DestinationRoot 'D:\FileOpNativeTestRoot'
 ```
 
-Do not mark #185 ready or merge it based only on source review or randomized-model results. The remaining source-side contract is intentionally fail-closed at the production validator until the required native main-stream/metadata/link tests pass.
+The two dedicated scripts must run under an ordinary unelevated token. The two-volume roots must resolve to different stable filesystem volume serials. Record exact SHA, Windows/.NET versions, roots, token context, complete outputs and any inconclusive tests from the ordinary suite.
+
+Do not mark #185 ready or merge it based only on source review or randomized-model results. Production `WindowsMoveOperationExecutionValidator` must remain fail-closed for different-volume Move until that exact-head evidence is complete.
