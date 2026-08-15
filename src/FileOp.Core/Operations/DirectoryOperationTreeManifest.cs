@@ -13,14 +13,13 @@ public enum DirectoryOperationTreeEntryKind
 }
 
 /// <summary>
-/// Identity-bound evidence for one descendant of a fully inspected plain directory tree.
-/// RelativePath is rooted at the manifest directory and never identifies the root itself.
+/// One relative descendant plus the canonical execution-grade evidence that identified it.
+/// The manifest copies the exact canonical path/type/identity fields and never retains this
+/// caller-owned evidence object as mutation authority.
 /// </summary>
 public sealed record DirectoryOperationTreeEntryEvidence(
     string RelativePath,
-    string CanonicalPath,
-    FileIdentity Identity,
-    DirectoryOperationTreeEntryKind Kind);
+    FileOperationCanonicalPath Source);
 
 public sealed record DirectoryOperationTreeManifestEntry(
     string RelativePath,
@@ -33,10 +32,10 @@ public sealed record DirectoryOperationTreeManifestEntry(
 /// Immutable topology evidence for a future recursive directory Copy executor.
 ///
 /// Construction requires the existing fidelity classifier to accept a complete plain tree,
-/// then binds every descendant to one canonical root, one filesystem volume, one unique
-/// object identity and a deterministic parent-before-child relative-path topology. The
-/// manifest is evidence only: it deliberately grants no mutation authority and performs no
-/// filesystem enumeration or mutation itself.
+/// then binds every descendant to one execution-validated canonical root, one filesystem
+/// volume, one unique object identity and a deterministic parent-before-child relative-path
+/// topology. The manifest is evidence only: it deliberately grants no mutation authority and
+/// performs no filesystem enumeration or mutation itself.
 /// </summary>
 public sealed class DirectoryOperationTreeManifest
 {
@@ -70,10 +69,11 @@ public sealed class DirectoryOperationTreeManifest
 
     public static DirectoryOperationTreeManifest Create(
         DirectoryOperationFidelityEvidence fidelityEvidence,
-        FileIdentity rootIdentity,
+        FileOperationCanonicalPath root,
         IEnumerable<DirectoryOperationTreeEntryEvidence> entries)
     {
         ArgumentNullException.ThrowIfNull(fidelityEvidence);
+        ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(entries);
 
         var support = DirectoryOperationFidelityClassifier.Classify(fidelityEvidence);
@@ -84,7 +84,7 @@ public sealed class DirectoryOperationTreeManifest
                 support.Summary);
         }
 
-        var canonicalRootPath = NormalizeCanonicalRoot(fidelityEvidence.CanonicalRootPath);
+        var (canonicalRootPath, rootIdentity) = ValidateRoot(fidelityEvidence, root);
         var normalized = entries
             .Select(entry => NormalizeEntry(canonicalRootPath, rootIdentity, entry))
             .ToArray();
@@ -106,17 +106,30 @@ public sealed class DirectoryOperationTreeManifest
             Array.AsReadOnly(ordered));
     }
 
-    private static string NormalizeCanonicalRoot(string canonicalRootPath)
+    private static (string CanonicalRootPath, FileIdentity RootIdentity) ValidateRoot(
+        DirectoryOperationFidelityEvidence fidelityEvidence,
+        FileOperationCanonicalPath root)
     {
-        if (string.IsNullOrWhiteSpace(canonicalRootPath))
+        if (root.State != FileOperationCanonicalPathState.Directory ||
+            root.IsLeafReparsePoint ||
+            root.Identity is not FileIdentity rootIdentity ||
+            string.IsNullOrWhiteSpace(root.CanonicalPath))
         {
             throw new ArgumentException(
-                "Directory tree manifest requires a canonical root path.",
-                nameof(canonicalRootPath));
+                "Directory tree manifest requires a canonical non-reparse directory root with stable filesystem identity.",
+                nameof(root));
         }
 
-        var full = Path.GetFullPath(canonicalRootPath);
-        return TrimEndingDirectorySeparatorsPreservingRoot(full);
+        var fidelityRoot = NormalizeCanonicalPath(fidelityEvidence.CanonicalRootPath);
+        var executionRoot = NormalizeCanonicalPath(root.CanonicalPath);
+        if (!string.Equals(fidelityRoot, executionRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "Directory tree manifest fidelity evidence is not bound to the execution-validated canonical root.",
+                nameof(root));
+        }
+
+        return (executionRoot, rootIdentity);
     }
 
     private static DirectoryOperationTreeManifestEntry NormalizeEntry(
@@ -125,16 +138,11 @@ public sealed class DirectoryOperationTreeManifest
         DirectoryOperationTreeEntryEvidence entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
+        ArgumentNullException.ThrowIfNull(entry.Source);
         if (string.IsNullOrWhiteSpace(entry.RelativePath))
         {
             throw new ArgumentException(
                 "Directory tree manifest descendant relative paths must be non-empty.",
-                nameof(entry));
-        }
-        if (string.IsNullOrWhiteSpace(entry.CanonicalPath))
-        {
-            throw new ArgumentException(
-                $"Directory tree manifest entry '{entry.RelativePath}' has no canonical path.",
                 nameof(entry));
         }
         if (Path.IsPathRooted(entry.RelativePath))
@@ -151,10 +159,30 @@ public sealed class DirectoryOperationTreeManifest
             segments.Any(static segment =>
                 string.IsNullOrWhiteSpace(segment) ||
                 segment == "." ||
-                segment == ".."))
+                segment == ".." ||
+                segment.EndsWith(' ') ||
+                segment.EndsWith('.')))
         {
             throw new ArgumentException(
-                $"Directory tree manifest entry '{entry.RelativePath}' contains an empty, current-directory or parent-directory segment.",
+                $"Directory tree manifest entry '{entry.RelativePath}' contains an empty, ambiguous, current-directory or parent-directory segment.",
+                nameof(entry));
+        }
+
+        var source = entry.Source;
+        var kind = source.State switch
+        {
+            FileOperationCanonicalPathState.Directory => DirectoryOperationTreeEntryKind.Directory,
+            FileOperationCanonicalPathState.File => DirectoryOperationTreeEntryKind.File,
+            _ => throw new ArgumentException(
+                $"Directory tree manifest entry '{entry.RelativePath}' must resolve to an existing file or directory.",
+                nameof(entry)),
+        };
+        if (source.IsLeafReparsePoint ||
+            source.Identity is not FileIdentity identity ||
+            string.IsNullOrWhiteSpace(source.CanonicalPath))
+        {
+            throw new ArgumentException(
+                $"Directory tree manifest entry '{entry.RelativePath}' requires non-reparse canonical evidence with stable filesystem identity.",
                 nameof(entry));
         }
 
@@ -163,7 +191,7 @@ public sealed class DirectoryOperationTreeManifest
             Path.Combine(canonicalRootPath, normalizedRelativePath));
         EnsureContainedByRoot(canonicalRootPath, expectedCanonicalPath, normalizedRelativePath);
 
-        var observedCanonicalPath = Path.GetFullPath(entry.CanonicalPath);
+        var observedCanonicalPath = NormalizeCanonicalPath(source.CanonicalPath);
         if (!string.Equals(
                 expectedCanonicalPath,
                 observedCanonicalPath,
@@ -174,7 +202,7 @@ public sealed class DirectoryOperationTreeManifest
                 nameof(entry));
         }
 
-        if (entry.Identity.VolumeSerialNumber != rootIdentity.VolumeSerialNumber)
+        if (identity.VolumeSerialNumber != rootIdentity.VolumeSerialNumber)
         {
             throw new ArgumentException(
                 $"Directory tree manifest entry '{normalizedRelativePath}' is on a different filesystem volume than the manifest root.",
@@ -184,9 +212,22 @@ public sealed class DirectoryOperationTreeManifest
         return new DirectoryOperationTreeManifestEntry(
             normalizedRelativePath,
             observedCanonicalPath,
-            entry.Identity,
-            entry.Kind,
+            identity,
+            kind,
             segments.Length);
+    }
+
+    private static string NormalizeCanonicalPath(string canonicalPath)
+    {
+        if (string.IsNullOrWhiteSpace(canonicalPath))
+        {
+            throw new ArgumentException("Canonical path evidence must not be empty.", nameof(canonicalPath));
+        }
+
+        var full = Path.GetFullPath(canonicalPath);
+        var root = Path.GetPathRoot(full) ?? string.Empty;
+        var trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return trimmed.Length < root.Length ? root : trimmed;
     }
 
     private static void EnsureContainedByRoot(
@@ -264,12 +305,5 @@ public sealed class DirectoryOperationTreeManifest
                     nameof(entries));
             }
         }
-    }
-
-    private static string TrimEndingDirectorySeparatorsPreservingRoot(string path)
-    {
-        var root = Path.GetPathRoot(path) ?? string.Empty;
-        var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return trimmed.Length < root.Length ? root : trimmed;
     }
 }
