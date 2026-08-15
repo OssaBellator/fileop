@@ -15,6 +15,12 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw "Cross-volume Move native validation requires Windows."
 }
 
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$currentPrincipal = [Security.Principal.WindowsPrincipal]::new($currentIdentity)
+if ($currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw "Cross-volume Move native validation must run from an ordinary unelevated token. Close the elevated shell and rerun from the normal FileOp development user session."
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $testProject = Join-Path $repoRoot "tests\FileOp.Windows.Tests\FileOp.Windows.Tests.csproj"
 if (-not (Test-Path -LiteralPath $testProject -PathType Leaf)) {
@@ -64,7 +70,7 @@ try {
         $resolvedDestinationRoot,
         [EnvironmentVariableTarget]::Process)
 
-    Write-Host "Running explicit cross-volume Move native matrix"
+    Write-Host "Running explicit cross-volume Move native matrix under an ordinary unelevated token"
     Write-Host "  Source root:      $resolvedSourceRoot"
     Write-Host "  Destination root: $resolvedDestinationRoot"
     Write-Host "The tests themselves verify that the resolved filesystem volume serials differ."
