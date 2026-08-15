@@ -71,8 +71,10 @@ def check_repository(root: Path) -> int:
         "aliases": root / "src/FileOp.App/MutationExecutionValidatorAliases.cs",
         "tests": root / "tests/FileOp.Windows.Tests/WindowsMutationFilesystemCapabilityBoundaryTests.cs",
         "binding_tests": root / "tests/FileOp.Windows.Tests/WindowsMutationFilesystemCapabilityBindingTests.cs",
+        "policy_tests": root / "tests/FileOp.Windows.Tests/WindowsMutationFilesystemCapabilityPolicyTests.cs",
         "resolver": root / "src/FileOp.Windows/Operations/WindowsFileOperationExecutionValidator.cs",
         "gate": root / "tools/test-mutation-filesystem-identity.ps1",
+        "product_wiring": root / "tools/verify_mutation_filesystem_product_wiring.py",
         "docs": root / "docs/mutation-filesystem-identity-boundary.md",
     }
     source: dict[str, str] = {}
@@ -104,9 +106,12 @@ def check_repository(root: Path) -> int:
         "WindowsNtfsMutationExecutionValidator",
         "validation.SourceDirectory.Identity is not FileIdentity sourceIdentity",
         "validation.DestinationDirectory.Identity is not FileIdentity destinationIdentity",
+        "!validation.Items.Any(static item =>",
+        "item.Decision == FileOperationExecutionValidationDecision.Ready",
         "CapabilityMatches(",
         "capability.IsBoundTo(canonicalDirectoryPath, expectedIdentity)",
         "not exact NTFS evidence bound to the freshly validated root",
+        "The filesystem capability provider returned no evidence.",
         "before durable mutation history",
         "WindowsNtfsFileDeleteOperationExecutionValidator",
         "capability.IsBoundTo(validation.SourceDirectory.CanonicalPath, sourceIdentity)",
@@ -169,6 +174,16 @@ def check_repository(root: Path) -> int:
         'WindowsMutationFilesystemCapabilityState.SupportedNtfs,\n            "ReFS"',
         "not exact NTFS evidence",
     )
+    checks += require(
+        source["policy_tests"],
+        "SkipOnlyCopyDoesNotRequireFilesystemCapabilityProof",
+        "SkipOnlyMoveDoesNotRequireFilesystemCapabilityProof",
+        "MissingCapabilityEvidenceBlocksReadyCopyWithoutThrowing",
+        "MissingCapabilityEvidenceBlocksDeleteBeforeAuthorizationReviewWithoutThrowing",
+        "Assert.AreEqual(0, probe.CallCount)",
+        "provider returned no evidence",
+        "=> null!;",
+    )
 
     # Pin the reason this guard exists: the current resolver still constructs the mutation
     # identity from the 64-bit BY_HANDLE_FILE_INFORMATION file index. #193 must not pretend
@@ -183,10 +198,19 @@ def check_repository(root: Path) -> int:
     checks += require(
         source["gate"],
         "verify_mutation_filesystem_identity_boundary.py",
+        "verify_mutation_filesystem_product_wiring.py",
         "--cases 50000",
         "WindowsMutationFilesystemCapabilityBoundaryTests",
+        "WindowsMutationFilesystemCapabilityBindingTests",
+        'FullyQualifiedName~WindowsMutationFilesystemCapability',
         "dotnet test",
         "OfflineOnly",
+    )
+    checks += require(
+        source["product_wiring"],
+        'app_root.glob("*.cs")',
+        "Unexpected App use of {type_name}",
+        "verify_mutation_filesystem_product_wiring.py",
     )
     checks += require(
         source["docs"],
