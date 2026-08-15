@@ -209,10 +209,16 @@ public sealed class FileCrossVolumeMoveProtectedLocationPreflightProbe :
 }
 
 /// <summary>
-/// Decorates execution-grade validation with a source-only, non-authorizing cross-volume
-/// capability probe. Deterministic unsupported source state is converted to Blocked before
-/// the composite executor can begin durable history or Copy. This does not remove any later
-/// fresh validation or source/destination fidelity checkpoint.
+/// Decorates execution-grade validation with a source-only, non-authorizing schema-v1
+/// cross-volume capability probe. Deterministic unsupported source state is converted to
+/// Blocked before the composite executor can begin durable history or Copy. This does not
+/// remove any later fresh validation or source/destination fidelity checkpoint.
+///
+/// The schema-v1 composite engine currently requires unequal 32-bit volume serials. Equal
+/// serials are therefore outside this preflight's eligibility and are returned untouched;
+/// equality is not treated as proof that the roots are on one volume. Production's stronger
+/// handle-bound volume-GUID relationship proof owns that distinction, while the composite
+/// executor/store independently fail closed on equal-serial history.
 /// </summary>
 public sealed class FileCrossVolumeMovePreflightExecutionValidator :
     IFileOperationExecutionValidator
