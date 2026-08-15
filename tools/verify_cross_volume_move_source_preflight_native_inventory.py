@@ -29,9 +29,11 @@ def read(root: Path, relative: str) -> str:
 def check(root: Path) -> int:
     core = read(root, "src/FileOp.Core/Operations/FileCrossVolumeMoveSourcePreflight.cs")
     policy_tests = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightPolicyTests.cs")
+    attribute_tests = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightAttributeTests.cs")
     native = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightNativeTests.cs")
     fallback_native = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeTwoVolumeTests.cs")
     raw_delete = read(root, "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs")
+    runner = read(root, "tools/test-cross-volume-move-native.ps1")
 
     checks = 0
     checks += require(
@@ -56,6 +58,17 @@ def check(root: Path) -> int:
         "SourceProtectedLocation",
         "Assert.AreEqual(0, inner.CallCount)",
         "AllowedProtectedLocationPolicyContinuesToInnerEvidenceProbe",
+    )
+
+    checks += require(
+        attribute_tests,
+        "SparseCompressedEncryptedIntegrityAndNoScrubAttributesBlockBeforeCopy",
+        "0x00000200u",
+        "0x00000800u",
+        "0x00004000u",
+        "0x00008000u",
+        "0x00020000u",
+        "SourceUnsupportedAttributes",
     )
 
     checks += require(
@@ -99,6 +112,16 @@ def check(root: Path) -> int:
         "EnsureSourceMutationAllowed(sourcePath, \"source file\")",
         "_protectedLocationPolicy.Evaluate(canonicalPath)",
         "protected from source deletion",
+    )
+
+    checks += require(
+        runner,
+        "verify_cross_volume_move_source_preflight.py",
+        "--cases 50000",
+        "verify_cross_volume_move_native_inventory.py",
+        "verify_cross_volume_move_source_preflight_native_inventory.py",
+        "verify_move_volume_identity.py",
+        'TestCategory=CrossVolumeMoveNative',
     )
 
     return checks
