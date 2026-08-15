@@ -70,7 +70,9 @@ public sealed class FileCrossVolumeMoveNativeRecoveryTests
         Assert.IsNotNull(persisted.Entries[0].DestinationCommittedAtUtc);
         Assert.IsNotNull(persisted.Entries[0].SourceDeleteStartedAtUtc);
         Assert.IsTrue(persisted.RequiresRecovery);
-        Assert.IsTrue(persisted.HasRetainedSourceDuplicates);
+        Assert.IsFalse(
+            persisted.HasRetainedSourceDuplicates,
+            "Generic RecoveryRequired history must not claim a known retained duplicate even though this deterministic test directly observes both paths.");
     }
 
     private static FileCrossVolumeMoveFidelityClassification Allowed() =>
