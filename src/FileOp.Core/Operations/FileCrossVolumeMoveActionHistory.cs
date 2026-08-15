@@ -47,14 +47,33 @@ public sealed record FileCrossVolumeMoveActionEntry(
     DateTimeOffset? CompletedAtUtc,
     FileOperationFailure? Failure)
 {
+    /// <summary>
+    /// True only when the journal proves the normal DestinationCommitted checkpoint was
+    /// reached before any later terminal/recovery transition. Copy-barrier recovery may
+    /// retain observed destination identity/content evidence without proving that safe
+    /// checkpoint and must not be upgraded into this property.
+    /// </summary>
     public bool DestinationIsDurablyCommitted =>
         State is FileCrossVolumeMoveEntryState.DestinationCommitted or
             FileCrossVolumeMoveEntryState.SourceDeleteStarted or
             FileCrossVolumeMoveEntryState.Moved ||
-        (State is FileCrossVolumeMoveEntryState.Failed or
-            FileCrossVolumeMoveEntryState.RecoveryRequired &&
+        (State == FileCrossVolumeMoveEntryState.Failed &&
+            DestinationIdentity.HasValue &&
+            DestinationContentFingerprint is not null) ||
+        (State == FileCrossVolumeMoveEntryState.RecoveryRequired &&
+            SourceDeleteStartedAtUtc.HasValue &&
             DestinationIdentity.HasValue &&
             DestinationContentFingerprint is not null);
+
+    /// <summary>
+    /// Recovery-only observation that a destination identity/content pair was captured.
+    /// This does not imply that canonical destination commit completed successfully and
+    /// grants no cleanup, replay, or source-delete authority.
+    /// </summary>
+    public bool HasDestinationRecoveryEvidence =>
+        State == FileCrossVolumeMoveEntryState.RecoveryRequired &&
+        DestinationIdentity.HasValue &&
+        DestinationContentFingerprint is not null;
 
     public bool SourceDeleteBarrierMayBeUnresolved =>
         State == FileCrossVolumeMoveEntryState.SourceDeleteStarted;
@@ -301,7 +320,7 @@ public sealed record FileCrossVolumeMoveActionHistory
                 if (entry.DestinationCommittedAtUtc.HasValue != hasDestinationEvidence)
                 {
                     throw new ArgumentException(
-                        "Recovery-sensitive destination commit evidence must be complete when recorded.");
+                        "Recovery-sensitive destination observation must be complete when recorded.");
                 }
                 if (entry.SourceDeleteStartedAtUtc.HasValue)
                 {
