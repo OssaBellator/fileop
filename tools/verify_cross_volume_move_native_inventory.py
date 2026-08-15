@@ -31,7 +31,9 @@ def check(root: Path) -> int:
     recovery = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeRecoveryTests.cs")
     share = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityShareCompatibilityTests.cs")
     hard_link_path = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveHardLinkPathBindingTests.cs")
+    mutation_proof = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveMutationProofTests.cs")
     security = read(root, "tests/FileOp.Windows.Tests/WindowsFileCopyMutationSecurityPolicyTests.cs")
+    wrapper = read(root, "src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs")
     validator = read(root, "src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs")
     native_runner = read(root, "tools/test-cross-volume-move-native.ps1")
     security_runner = read(root, "tools/test-cross-volume-move-security.ps1")
@@ -86,6 +88,20 @@ def check(root: Path) -> int:
         "retained.Identity.Value",
         "selected.CanonicalPath",
         "retained.CanonicalPath",
+    )
+
+    checks += require(
+        mutation_proof,
+        "FidelityWrapperRejectsInnerSuccessWithoutDispositionProof",
+        "NonReportingDeletePrimitive",
+        "SourceDeleteMutationPerformed => false",
+        "without reporting",
+    )
+    checks += require(
+        wrapper,
+        "await inner.MarkDeletePendingAsync(authorization, CancellationToken.None)",
+        "if (!inner.SourceDeleteMutationPerformed)",
+        "without reporting that the exact source disposition was performed",
     )
 
     checks += require(
