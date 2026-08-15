@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using FileOp.Core.Models;
 using Microsoft.Win32.SafeHandles;
 
 namespace FileOp.Windows.Operations;
@@ -27,13 +28,16 @@ internal interface IFileOperationVolumeRelationshipProbe
 {
     FileOperationVolumeRelationship Query(
         string canonicalSourceDirectoryPath,
-        string canonicalDestinationDirectoryPath);
+        FileIdentity expectedSourceIdentity,
+        string canonicalDestinationDirectoryPath,
+        FileIdentity expectedDestinationIdentity);
 }
 
 /// <summary>
-/// Uses handle-bound Windows volume-GUID names as the stronger relationship proof for
-/// Move roots whose 32-bit volume serials are equal. Drive letters and mount-point text
-/// are not treated as volume identity.
+/// Uses exact identity-bound root handles plus Windows volume-GUID names as the stronger
+/// relationship proof for Move roots whose 32-bit volume serials are equal. Drive letters,
+/// mount-point text and a newly opened path that no longer has the validated root identity
+/// are not treated as volume authority.
 /// </summary>
 internal sealed class WindowsFileOperationVolumeRelationshipProbe :
     IFileOperationVolumeRelationshipProbe
@@ -45,15 +49,23 @@ internal sealed class WindowsFileOperationVolumeRelationshipProbe :
 
     public FileOperationVolumeRelationship Query(
         string canonicalSourceDirectoryPath,
-        string canonicalDestinationDirectoryPath)
+        FileIdentity expectedSourceIdentity,
+        string canonicalDestinationDirectoryPath,
+        FileIdentity expectedDestinationIdentity)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalSourceDirectoryPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalDestinationDirectoryPath);
 
         try
         {
-            var source = ResolveVolumeGuidName(canonicalSourceDirectoryPath);
-            var destination = ResolveVolumeGuidName(canonicalDestinationDirectoryPath);
+            var source = ResolveVolumeGuidName(
+                canonicalSourceDirectoryPath,
+                expectedSourceIdentity,
+                "source");
+            var destination = ResolveVolumeGuidName(
+                canonicalDestinationDirectoryPath,
+                expectedDestinationIdentity,
+                "destination");
             var same = string.Equals(source, destination, StringComparison.OrdinalIgnoreCase);
             return new FileOperationVolumeRelationship(
                 same
@@ -62,8 +74,8 @@ internal sealed class WindowsFileOperationVolumeRelationshipProbe :
                 source,
                 destination,
                 same
-                    ? "Canonical Move roots resolve to the same handle-bound Windows volume GUID."
-                    : "Canonical Move roots have equal serial evidence but resolve to different handle-bound Windows volume GUIDs.");
+                    ? "Validated Move root identities resolve to the same handle-bound Windows volume GUID."
+                    : "Validated Move root identities have equal serial evidence but resolve to different handle-bound Windows volume GUIDs.");
         }
         catch (Exception exception) when (
             exception is IOException or Win32Exception or NotSupportedException)
@@ -72,12 +84,15 @@ internal sealed class WindowsFileOperationVolumeRelationshipProbe :
                 FileOperationVolumeRelationshipState.Unavailable,
                 SourceVolumeGuidName: null,
                 DestinationVolumeGuidName: null,
-                "Windows could not obtain a stronger handle-bound volume GUID relationship for the canonical Move roots: " +
+                "Windows could not obtain a stronger identity-bound volume GUID relationship for the validated Move roots: " +
                 exception.Message);
         }
     }
 
-    private static string ResolveVolumeGuidName(string canonicalDirectoryPath)
+    private static string ResolveVolumeGuidName(
+        string canonicalDirectoryPath,
+        FileIdentity expectedIdentity,
+        string description)
     {
         using var handle = CreateFileW(
             canonicalDirectoryPath,
@@ -91,7 +106,30 @@ internal sealed class WindowsFileOperationVolumeRelationshipProbe :
         {
             throw new Win32Exception(
                 Marshal.GetLastWin32Error(),
-                $"Opening canonical Move root '{canonicalDirectoryPath}' for volume identity");
+                $"Opening canonical Move {description} root '{canonicalDirectoryPath}' for volume identity");
+        }
+
+        if (!GetFileInformationByHandle(handle, out var information))
+        {
+            throw new Win32Exception(
+                Marshal.GetLastWin32Error(),
+                $"Reading canonical Move {description} root identity '{canonicalDirectoryPath}'");
+        }
+
+        if ((information.FileAttributes & (uint)FileAttributes.Directory) == 0 ||
+            (information.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0)
+        {
+            throw new IOException(
+                $"The canonical Move {description} root changed into an unsupported object before volume relationship proof.");
+        }
+
+        var observedIdentity = new FileIdentity(
+            information.VolumeSerialNumber,
+            ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow);
+        if (observedIdentity != expectedIdentity)
+        {
+            throw new IOException(
+                $"The canonical Move {description} root filesystem identity changed before volume relationship proof.");
         }
 
         var capacity = 512;
@@ -107,7 +145,7 @@ internal sealed class WindowsFileOperationVolumeRelationshipProbe :
             {
                 throw new Win32Exception(
                     Marshal.GetLastWin32Error(),
-                    $"Resolving volume GUID for canonical Move root '{canonicalDirectoryPath}'");
+                    $"Resolving volume GUID for canonical Move {description} root '{canonicalDirectoryPath}'");
             }
             if (length < buffer.Capacity)
             {
@@ -118,7 +156,7 @@ internal sealed class WindowsFileOperationVolumeRelationshipProbe :
         }
 
         throw new IOException(
-            $"Resolving volume GUID for canonical Move root '{canonicalDirectoryPath}' exceeded the supported path buffer growth limit.");
+            $"Resolving volume GUID for canonical Move {description} root '{canonicalDirectoryPath}' exceeded the supported path buffer growth limit.");
     }
 
     private static string ExtractVolumeGuidName(string finalPath)
@@ -166,4 +204,36 @@ internal sealed class WindowsFileOperationVolumeRelationshipProbe :
         StringBuilder lpszFilePath,
         uint cchFilePath,
         uint dwFlags);
+
+    [DllImport(
+        "kernel32.dll",
+        SetLastError = true,
+        ExactSpelling = true,
+        CallingConvention = CallingConvention.Winapi)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle hFile,
+        out ByHandleFileInformation lpFileInformation);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation
+    {
+        public uint FileAttributes;
+        public FileTime CreationTime;
+        public FileTime LastAccessTime;
+        public FileTime LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileTime
+    {
+        public uint LowDateTime;
+        public uint HighDateTime;
+    }
 }
