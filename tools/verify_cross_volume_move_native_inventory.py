@@ -38,6 +38,7 @@ def check(root: Path) -> int:
     mutation_proof = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveMutationProofTests.cs")
     security = read(root, "tests/FileOp.Windows.Tests/WindowsFileCopyMutationSecurityPolicyTests.cs")
     copy_primitive = read(root, "src/FileOp.Windows/Operations/WindowsFileCopyMutationPrimitive.cs")
+    raw_delete = read(root, "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs")
     wrapper = read(root, "src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs")
     validator = read(root, "src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs")
     native_runner = read(root, "tools/test-cross-volume-move-native.ps1")
@@ -128,8 +129,10 @@ def check(root: Path) -> int:
     checks += require(
         share,
         "PreExistingMainStreamWriterPreventsDeleteCapabilityAcquisition",
+        "PreExistingDeleteCapableHandlePreventsDestructiveLeaseAcquisition",
         "WritableMainStreamMappingPreventsDeleteCapabilityAcquisitionEvenAfterFileHandleCloses",
         "DeleteCapabilityPreventsNewMainStreamWriterUntilReleased",
+        "DeleteCapabilityPreventsNewDeleteCapableHandleUntilReleased",
         "DeleteCapabilityDoesNotPretendShareModeFreezesAttributesOrEas",
         "DeletingOneHardLinkLeavesOtherSourceVolumeEntryValid",
         "CreateFileMappingW(",
@@ -159,6 +162,19 @@ def check(root: Path) -> int:
         "if (!inner.SourceDeleteMutationPerformed)",
         "without reporting that the exact source disposition was performed",
     )
+
+    # The raw source capability must use direct POSIX disposition on the exact opened link.
+    # FILE_DISPOSITION_ON_CLOSE has an extra Windows precondition and is intentionally absent.
+    checks += require(
+        raw_delete,
+        "FileDispositionDelete",
+        "FileDispositionPosixSemantics",
+        "FileDispositionForceImageSectionCheck",
+        "NtSetInformationFile(",
+        "FileInformationClass.FileDispositionInformationEx",
+        "Volatile.Write(ref _mutationPerformed, 1)",
+    )
+    checks += forbid(raw_delete, "FileDispositionOnClose", "FileDispositionOnClose =")
 
     # #186: the reviewed Copy creates with a default/null OBJECT_ATTRIBUTES security
     # descriptor. The ordinary-token native test then proves the source NULL DACL is not
