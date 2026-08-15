@@ -466,6 +466,11 @@ public sealed class FileCrossVolumeMoveOperationExecutor : IFileOperationExecuto
                 await sourceDeleteLease
                     .MarkDeletePendingAsync(authorization, CancellationToken.None)
                     .ConfigureAwait(false);
+                if (!sourceDeleteLease.SourceDeleteMutationPerformed)
+                {
+                    throw new InvalidOperationException(
+                        "The authorized cross-volume Move source-delete primitive returned without reporting that the exact source disposition was performed.");
+                }
             }
             catch (Exception exception)
             {
