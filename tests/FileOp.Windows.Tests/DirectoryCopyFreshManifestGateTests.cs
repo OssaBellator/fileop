@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
@@ -125,10 +126,20 @@ public sealed class DirectoryCopyFreshManifestGateTests
     public void UnsupportedAcquisitionCannotPublishManifest()
     {
         var manifest = CreateManifest(rootReference: 1, fileReference: 2);
-        var constructor = typeof(DirectoryOperationTreeManifestAcquisitionResult)
-            .GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)[0];
+        var constructor = typeof(DirectoryOperationTreeManifestAcquisitionResult).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: new[]
+            {
+                typeof(DirectoryOperationTreeManifestAcquisitionStatus),
+                typeof(DirectoryOperationTreeManifest),
+                typeof(DirectoryOperationFidelityEvidence),
+                typeof(string),
+            },
+            modifiers: null)
+            ?? throw new AssertFailedException("Acquisition invariant constructor was not found.");
 
-        var exception = Assert.ThrowsException<System.Reflection.TargetInvocationException>(() =>
+        var exception = Assert.ThrowsException<TargetInvocationException>(() =>
             constructor.Invoke(new object?[]
             {
                 DirectoryOperationTreeManifestAcquisitionStatus.Unsupported,
@@ -138,6 +149,26 @@ public sealed class DirectoryCopyFreshManifestGateTests
             }));
 
         Assert.IsInstanceOfType<ArgumentException>(exception.InnerException);
+    }
+
+    [TestMethod]
+    public void ReadyGateCannotBeForgedFromUnrelatedMatchingRevalidation()
+    {
+        var reviewed = CreateManifest(rootReference: 1, fileReference: 2);
+        var fresh = CreateManifest(rootReference: 1, fileReference: 2);
+        var unrelatedInitial = CreateManifest(rootReference: 1, fileReference: 2);
+        var acquisition = Ready(fresh);
+        var unrelatedRevalidation = DirectoryOperationTreeManifestRevalidator.Compare(
+            unrelatedInitial,
+            fresh);
+
+        Assert.ThrowsException<ArgumentException>(() =>
+            new DirectoryCopyFreshManifestGateResult(
+                DirectoryCopyFreshManifestGateStatus.ReadyForDurableHistory,
+                reviewed,
+                acquisition,
+                unrelatedRevalidation,
+                "forged"));
     }
 
     [TestMethod]
