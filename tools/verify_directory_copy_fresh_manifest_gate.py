@@ -7,6 +7,11 @@ import random
 import sys
 from pathlib import Path
 
+from verify_directory_copy_transaction import (
+    check_repository as check_directory_copy_transaction_repository,
+    run_model as run_directory_copy_transaction_model,
+)
+
 
 def gate(acquisition: str, *, changed: bool) -> str:
     if acquisition == "Unsupported":
@@ -140,10 +145,18 @@ def main() -> int:
     if args.cases < 1:
         parser.error("--cases must be positive")
     model_checks = run_model(args.cases)
-    print(f"PASS directory Copy fresh-manifest gate model: {model_checks:,} checks across {args.cases:,} randomized cases")
+    transaction_checks = run_directory_copy_transaction_model(args.cases)
+    print(
+        f"PASS directory Copy fresh-manifest gate model: {model_checks:,} checks across {args.cases:,} randomized cases; "
+        f"recursive transaction: {transaction_checks:,} checks"
+    )
     if not args.model_only:
         source_checks = check_repository(args.repo_root.resolve())
-        print(f"PASS directory Copy fresh-manifest gate source contract: {source_checks} checks")
+        transaction_source_checks = check_directory_copy_transaction_repository(args.repo_root.resolve())
+        print(
+            f"PASS directory Copy fresh-manifest gate source contract: {source_checks} checks; "
+            f"recursive transaction: {transaction_source_checks} checks"
+        )
     return 0
 
 
