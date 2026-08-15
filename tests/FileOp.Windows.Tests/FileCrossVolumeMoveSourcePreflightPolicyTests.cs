@@ -37,9 +37,10 @@ public sealed class FileCrossVolumeMoveSourcePreflightPolicyTests
         var result = await probe.ProbeAsync(request);
 
         Assert.IsFalse(result.CanStartCopy);
-        CollectionAssert.AreEqual(
-            new[] { FileCrossVolumeMoveSourcePreflightBlocker.SourceProtectedLocation },
-            (System.Collections.ICollection)result.Blockers);
+        Assert.AreEqual(1, result.Blockers.Count);
+        Assert.AreEqual(
+            FileCrossVolumeMoveSourcePreflightBlocker.SourceProtectedLocation,
+            result.Blockers[0]);
         Assert.AreEqual(0, inner.CallCount);
         Assert.AreEqual(2, policy.CallCount);
         StringAssert.Contains(result.Summary, "protected from later source deletion");
