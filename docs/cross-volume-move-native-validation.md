@@ -41,7 +41,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-cross-volume-
   -DestinationRoot 'D:\FileOpNativeTestRoot'
 ```
 
-The dedicated runner first executes `tools/verify_cross_volume_move_native_inventory.py`, then sets the two explicit roots and runs `TestCategory=CrossVolumeMoveNative`. The test code resolves the roots through the real Windows execution validator and fails if their stable filesystem volume serials are equal. Drive-letter text is not treated as proof of a cross-volume relationship.
+The dedicated runner refuses an elevated token, first executes `tools/verify_cross_volume_move_native_inventory.py`, then sets the two explicit roots and runs `TestCategory=CrossVolumeMoveNative`. The test code resolves the roots through the real Windows execution validator and fails if their stable filesystem volume serials are equal. Drive-letter text is not treated as proof of a cross-volume relationship.
 
 ## Matrix exercised by the dedicated two-volume gate
 
@@ -55,6 +55,7 @@ The `CrossVolumeMoveNative` category currently requires all of these cases:
 6. **Deterministic post-barrier fidelity refusal with the real Windows lease** — real Copy and the real raw four-handle source-delete lease are used, while an injected evidence-only verifier accepts the first proof and rejects the second after `SourceDeleteStarted`. The raw delete mutation must not run, both paths must still be directly observable, and durable history must settle as `RecoveryRequired`.
 7. **Real post-barrier ADS race** — the first proof uses the real Windows fidelity verifier. After `SourceDeleteStarted`, the test creates a source ADS and then delegates the second proof to the real verifier. The second proof must report `SourceNamedDataStreams`; no raw delete runs and history becomes `RecoveryRequired`.
 8. **Real post-barrier EA race** — the first proof uses the real Windows fidelity verifier. After `SourceDeleteStarted`, the test writes a source EA through `NtSetEaFile` and then delegates the second proof to the real verifier. The second proof must report `SourceExtendedAttributes`; no raw delete runs and history becomes `RecoveryRequired`.
+9. **Real post-barrier main-stream writer exclusion** — after `SourceDeleteStarted`, while the exact raw source DELETE lease is live, the test attempts a new `FILE_WRITE_DATA` open against the selected source stream. It must fail with `ERROR_SHARING_VIOLATION`; the test then runs the real second fidelity proof and requires the Move to complete successfully. This proves the live destructive lease protects the selected main stream during the final proof/unlink boundary rather than merely observing content twice.
 
 For all post-barrier refusal cases, generic recovery history remains conservative: it may retain destination recovery evidence and prove that the earlier normal destination commit occurred, but `HasRetainedSourceDuplicates` remains false because a generic recovery record must not promise current source presence merely from historical evidence. These deterministic tests separately assert that both paths are directly observable at the time of the refusal.
 
@@ -63,7 +64,8 @@ Separate always-on Windows tests pin lower-level assumptions before the explicit
 - `FileCrossVolumeMoveFidelityShareCompatibilityTests` proves that pre-existing main-stream writers and writable mappings block destructive-lease acquisition, the live lease blocks new main-stream writers, attribute/EA access is not misrepresented as share-frozen, deleting one hard link leaves another source-volume link valid, and fidelity reopens remain compatible with the live DELETE-capable handle.
 - `FileCrossVolumeMoveHardLinkPathBindingTests.CanonicalResolverPreservesTheSpecificOpenedHardLinkName` proves that resolving two names for one hard-linked file preserves the specific selected directory entry while reporting the same filesystem identity. If the current Windows/filesystem combination cannot preserve that path binding, selected-entry multi-link Move is not considered validated.
 - `FileCrossVolumeMoveMutationProofTests.FidelityWrapperRejectsInnerSuccessWithoutDispositionProof` proves the production fidelity wrapper cannot treat a provider return as destructive success unless the exact inner lease reports `SourceDeleteMutationPerformed`.
-- `FileCrossVolumeMoveActionHistoryInvariantTests` distinguishes a safe durable destination commit from copy-barrier recovery observation. Recovery-only destination identity/fingerprint evidence must not be upgraded into a known safe copied/source-retained state.
+- `FileCrossVolumeMoveActionHistoryInvariantTests` plus `FileCrossVolumeMoveRecoveryEvidenceStoreTests` distinguish a safe durable destination commit from copy-barrier recovery observation. Recovery-only destination identity/fingerprint evidence must not be upgraded into a known safe copied/source-retained state, including after SQLite reopen.
+- `FileCrossVolumeMovePersistedRecoveryCorruptionTests` proves malformed source-delete recovery chronology and wrong-volume destination evidence are rejected during hydration rather than trusted merely because SQLite can structurally store them.
 
 ## Security-policy validation (#186)
 
@@ -78,11 +80,12 @@ For PR #185 / issues #184, #186 and #187, record:
 - exact git commit SHA;
 - Windows version;
 - .NET SDK version;
-- confirmation that `tools/test-cross-volume-move-security.ps1` ran under an ordinary unelevated token;
+- confirmation that both dedicated scripts ran under an ordinary unelevated token;
 - source and destination two-volume test roots;
 - confirmation that the test validator observed different source/destination volume serials;
 - confirmation that the always-on hard-link canonical-path binding regression passed rather than being inconclusive;
 - confirmation that the post-barrier ADS and post-barrier EA tests both reached `SourceDeleteStarted`, refused the second real fidelity proof, retained both paths, and wrote `RecoveryRequired` history;
+- confirmation that the post-barrier main-stream writer attempt was rejected with `ERROR_SHARING_VIOLATION` and the same transaction then completed through the real second proof and source unlink;
 - complete `tools/test-local.ps1` result;
 - complete `tools/test-cross-volume-move-security.ps1` result;
 - complete `tools/test-cross-volume-move-native.ps1` result;
