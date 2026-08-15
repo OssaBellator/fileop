@@ -68,7 +68,7 @@ public sealed class FileCrossVolumeMoveActionHistoryInvariantTests
     }
 
     [TestMethod]
-    public void CopyBarrierRecoveryMayDurablyCaptureObservedDestinationEvidence()
+    public void CopyBarrierRecoveryMayCaptureObservedDestinationWithoutProvingSafeCommit()
     {
         var valid = NewEntry(
             state: FileCrossVolumeMoveEntryState.RecoveryRequired,
@@ -85,7 +85,33 @@ public sealed class FileCrossVolumeMoveActionHistoryInvariantTests
             T0.AddSeconds(3));
 
         Assert.IsTrue(history.RequiresRecovery);
+        Assert.IsTrue(history.Entries[0].HasDestinationRecoveryEvidence);
+        Assert.IsFalse(history.Entries[0].DestinationIsDurablyCommitted);
+        Assert.IsFalse(history.HasRetainedSourceDuplicates);
+    }
+
+    [TestMethod]
+    public void SourceDeleteRecoveryStillProvesEarlierSafeDestinationCommit()
+    {
+        var valid = NewEntry(
+            state: FileCrossVolumeMoveEntryState.RecoveryRequired,
+            destinationIdentity: new FileIdentity(2, 500),
+            fingerprint: Fingerprint,
+            copyStarted: T0.AddSeconds(1),
+            destinationCommitted: T0.AddSeconds(2),
+            sourceDeleteStarted: T0.AddSeconds(3),
+            completed: T0.AddSeconds(4),
+            failure: Failure);
+
+        var history = NewHistory(
+            valid,
+            FileCrossVolumeMoveTerminalState.RecoveryRequired,
+            T0.AddSeconds(5));
+
+        Assert.IsTrue(history.RequiresRecovery);
+        Assert.IsTrue(history.Entries[0].HasDestinationRecoveryEvidence);
         Assert.IsTrue(history.Entries[0].DestinationIsDurablyCommitted);
+        Assert.IsFalse(history.HasRetainedSourceDuplicates);
     }
 
     [TestMethod]
@@ -107,6 +133,8 @@ public sealed class FileCrossVolumeMoveActionHistoryInvariantTests
 
         Assert.IsFalse(history.RequiresRecovery);
         Assert.IsTrue(history.HasRetainedSourceDuplicates);
+        Assert.IsTrue(history.Entries[0].DestinationIsDurablyCommitted);
+        Assert.IsFalse(history.Entries[0].HasDestinationRecoveryEvidence);
     }
 
     private static FileCrossVolumeMoveActionEntry NewEntry(
