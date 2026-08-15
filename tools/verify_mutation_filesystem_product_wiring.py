@@ -118,10 +118,8 @@ def check(root: Path) -> int:
 
     # A project-wide alias is intentionally used because these are product mutation-policy
     # names. Pin its blast radius recursively across App source while ignoring build output.
-    #
-    # The reviewed Copy primitive is also intentionally allowed in FilesView.Move.cs. Draft
-    # #185 composes the dormant cross-volume engine from that same primitive; after #194 is
-    # merged the App alias makes that composition resolve to WindowsNtfsFileCopyMutationPrimitive.
+    # The reviewed Copy primitive is intentionally allowed in FilesView.Move.cs because draft
+    # #185 composes the dormant cross-volume engine from the same guarded provider.
     allowed_app_usage = {
         "WindowsFileOperationExecutionValidator": {Path("FilesView.Copy.cs")},
         "WindowsMoveOperationExecutionValidator": {Path("FilesView.Move.cs")},
@@ -163,13 +161,13 @@ def check(root: Path) -> int:
     checks += 6
 
     # App aliases protect App compilation only. Prevent another production project under src/
-    # from silently constructing the lower-level raw validator/provider directly. Raw
-    # construction is permitted only inside the reviewed Windows wrappers themselves or at
-    # the exact App sites covered by the global aliases. Tests live outside src/ and remain
-    # free to exercise the lower-level implementations directly.
+    # from silently constructing a lower-level raw validator/provider directly. Construction
+    # is permitted only inside reviewed Windows composition wrappers or at exact App sites
+    # covered by the global aliases. Tests live outside src/ and may exercise raw components.
     allowed_raw_construction = {
         "WindowsFileOperationExecutionValidator": {
             Path("FileOp.App/FilesView.Copy.cs"),
+            Path("FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs"),
             Path("FileOp.Windows/Operations/WindowsMutationFilesystemCapability.cs"),
         },
         "WindowsMoveOperationExecutionValidator": {
@@ -234,10 +232,8 @@ def check(root: Path) -> int:
         "App product-wiring build failed",
     )
 
-    # The narrower #193 gate must not be the only place this policy is checked. Pin the
-    # repository-authoritative offline path as well: test-local already invokes this canonical
-    # execution-validation verifier, which must continue importing and running both #193
-    # source/model and product-wiring checks.
+    # The narrower #193 gate must not be the only place this policy is checked. test-local
+    # already invokes this canonical execution-validation verifier; pin both #193 imports/runs.
     checks += require(
         authoritative,
         "from verify_mutation_filesystem_identity_boundary import (",
