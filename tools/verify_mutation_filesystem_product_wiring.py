@@ -33,6 +33,7 @@ def check(root: Path) -> int:
         raise FileNotFoundError(aliases_path)
 
     aliases = aliases_path.read_text(encoding="utf-8")
+    app_project = read(root, "src/FileOp.App/FileOp.App.csproj")
     copy = read(root, "src/FileOp.App/FilesView.Copy.cs")
     move = read(root, "src/FileOp.App/FilesView.Move.cs")
     delete = read(root, "src/FileOp.App/FilesView.Delete.cs")
@@ -48,6 +49,21 @@ def check(root: Path) -> int:
         "FileOp.Windows.Operations.WindowsNtfsMoveOperationExecutionValidator",
         "global using WindowsFileDeleteOperationExecutionValidator =",
         "FileOp.Windows.Operations.WindowsNtfsFileDeleteOperationExecutionValidator",
+    )
+
+    # The alias source relies on SDK default compile items. Pin the project contract so the
+    # policy cannot disappear from production merely through an MSBuild item change.
+    checks += require(
+        app_project,
+        '<Project Sdk="Microsoft.NET.Sdk">',
+        "<UseWinUI>true</UseWinUI>",
+        '<ProjectReference Include="..\\FileOp.Windows\\FileOp.Windows.csproj" />',
+    )
+    checks += reject(
+        app_project,
+        "<EnableDefaultCompileItems>false</EnableDefaultCompileItems>",
+        '<Compile Remove="MutationExecutionValidatorAliases.cs"',
+        '<Compile Remove="**\\*.cs"',
     )
 
     checks += require(copy, "new WindowsFileOperationExecutionValidator()")
