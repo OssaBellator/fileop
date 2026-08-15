@@ -117,10 +117,12 @@ def check_model(cases: int) -> int:
 def check_repository(root: Path) -> int:
     paths = {
         "core": root / "src/FileOp.Core/Operations/FileCrossVolumeMoveSourcePreflight.cs",
+        "executor": root / "src/FileOp.Core/Operations/FileCrossVolumeMoveOperationExecutor.cs",
         "windows": root / "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourcePreflightProbe.cs",
         "tests": root / "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightTests.cs",
         "policy_tests": root / "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightPolicyTests.cs",
         "attribute_tests": root / "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightAttributeTests.cs",
+        "volume_guard_tests": root / "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSchemaV1VolumeGuardTests.cs",
         "fidelity": root / "src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs",
         "raw_source_delete": root / "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs",
     }
@@ -163,6 +165,13 @@ def check_repository(root: Path) -> int:
         "MarkCopyMutationStartedAsync",
         "CopyNewFileAsync",
         "MarkDeletePendingAsync",
+    )
+
+    executor = source["executor"]
+    checks += require(
+        executor,
+        "sourceRoot.VolumeSerialNumber == destinationRoot.VolumeSerialNumber",
+        "Execution validation did not prove the requested immutable Move on distinct source/destination volumes.",
     )
 
     fidelity = source["fidelity"]
@@ -227,7 +236,7 @@ def check_repository(root: Path) -> int:
     policy_tests = source["policy_tests"]
     checks += require(
         policy_tests,
-        "SameVolumeMoveBypassesCrossVolumeSourcePreflight",
+        "EqualVolumeSerialBypassesSchemaV1CrossVolumeSourcePreflight",
         "Assert.AreEqual(0, probe.CallCount)",
         "ProtectedSourceFileBlocksBeforeInnerEvidenceProbe",
         "SourceProtectedLocation",
@@ -248,6 +257,17 @@ def check_repository(root: Path) -> int:
         "0x00020000u",
         "SourceUnsupportedAttributes",
         "ReviewedStableNonReadOnlyAttributesRemainEligibleForLaterProof",
+    )
+
+    volume_guard_tests = source["volume_guard_tests"]
+    checks += require(
+        volume_guard_tests,
+        "EqualVolumeSerialEvidenceIsRejectedBeforeCompositeHistoryOrCopy",
+        'Assert.AreEqual("CrossVolumeMoveValidationBlocked", result.Failure?.Code)',
+        "distinct source/destination volumes",
+        "Assert.AreEqual(0, copy.CallCount)",
+        "Assert.AreEqual(0, sourceDelete.CallCount)",
+        "Assert.IsNull(await history.GetAsync(plan.Id))",
     )
     return checks
 
