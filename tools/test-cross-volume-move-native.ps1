@@ -33,6 +33,11 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw ".NET 10 SDK is required for the cross-volume Move native matrix."
 }
 
+& python (Join-Path $repoRoot "tools\verify_cross_volume_move_source_preflight.py") --repo-root $repoRoot --cases 50000
+if ($LASTEXITCODE -ne 0) {
+    throw "Cross-volume Move source-preflight source/model verification failed with exit code $LASTEXITCODE."
+}
+
 & python (Join-Path $repoRoot "tools\verify_cross_volume_move_native_inventory.py") --repo-root $repoRoot
 if ($LASTEXITCODE -ne 0) {
     throw "Cross-volume Move native matrix inventory verification failed with exit code $LASTEXITCODE."
