@@ -142,6 +142,13 @@ if ([string]::IsNullOrWhiteSpace($EvidenceDirectory)) {
     $EvidenceDirectory = Join-Path ([IO.Path]::GetTempPath()) "FileOp.CrossVolumeMoveGate.$($headSha.Substring(0, 12)).$timestamp"
 }
 $evidencePath = [IO.Path]::GetFullPath($EvidenceDirectory)
+$repoPathForContainment = [IO.Path]::GetFullPath($repoRoot).TrimEnd('\') + '\'
+$evidencePathForContainment = $evidencePath.TrimEnd('\') + '\'
+if ($evidencePathForContainment.StartsWith(
+        $repoPathForContainment,
+        [StringComparison]::OrdinalIgnoreCase)) {
+    throw "EvidenceDirectory must be outside the repository checkout so the validation run cannot dirty its own exact-head working tree."
+}
 [void](New-Item -ItemType Directory -Path $evidencePath -Force)
 
 $dotnetVersion = (& dotnet --version).Trim()
