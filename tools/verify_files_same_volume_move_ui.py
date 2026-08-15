@@ -189,11 +189,11 @@ def check_repository(root: Path) -> int:
         'CaseSensitiveSourceBlocksReadyMoveBeforeMutationHistory',
         'CaseSensitiveDestinationBlocksReadyMoveAfterCheckingBothRoots',
         'UnavailableNamespaceCapabilityBlocksReadyMove',
-        'SupportedNamespacesReturnOriginalReadyMoveValidation',
-        'NonMoveValidationDoesNotInvokeMoveNamespaceCapability',
-        'Assert.AreEqual(1, probe.QueryCalls);',
-        'Assert.AreEqual(2, probe.QueryCalls);',
-        'Assert.AreEqual(0, probe.QueryCalls);',
+        'SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation',
+        'NonMoveValidationDoesNotInvokeMoveCapabilityProbes',
+        'Assert.AreEqual(1, namespaceProbe.QueryCalls);',
+        'Assert.AreEqual(2, namespaceProbe.QueryCalls);',
+        'Assert.AreEqual(0, namespaceProbe.QueryCalls);',
         'No MutationStarted record',
     ]
     for needle in required_tests:
