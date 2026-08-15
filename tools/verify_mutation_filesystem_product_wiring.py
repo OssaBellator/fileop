@@ -37,6 +37,7 @@ def check(root: Path) -> int:
     move = read(root, "src/FileOp.App/FilesView.Move.cs")
     delete = read(root, "src/FileOp.App/FilesView.Delete.cs")
     gate = read(root, "tools/test-mutation-filesystem-identity.ps1")
+    authoritative = read(root, "tools/verify_file_operation_execution_validation.py")
 
     checks = 0
     checks += require(
@@ -111,7 +112,24 @@ def check(root: Path) -> int:
         "--cases 50000",
         "WindowsMutationFilesystemCapabilityBoundaryTests",
         "WindowsMutationFilesystemCapabilityBindingTests",
+        "WindowsMutationFilesystemCapabilityPolicyTests",
         'FullyQualifiedName~WindowsMutationFilesystemCapability',
+    )
+
+    # The narrower #193 gate must not be the only place this policy is checked. Pin the
+    # repository-authoritative offline path as well: test-local already invokes this canonical
+    # execution-validation verifier, which must continue importing and running both #193
+    # source/model and product-wiring checks.
+    checks += require(
+        authoritative,
+        "from verify_mutation_filesystem_identity_boundary import (",
+        "check_repository as check_mutation_filesystem_repository",
+        "run_model as run_mutation_filesystem_model",
+        "from verify_mutation_filesystem_product_wiring import (",
+        "check as check_mutation_product_wiring",
+        "mutation_filesystem_checks = run_mutation_filesystem_model(args.cases)",
+        "mutation_filesystem_source = check_mutation_filesystem_repository(repo_root)",
+        "mutation_product_wiring = check_mutation_product_wiring(repo_root)",
     )
 
     print(f"PASS mutation filesystem product wiring ({checks} checks)")
