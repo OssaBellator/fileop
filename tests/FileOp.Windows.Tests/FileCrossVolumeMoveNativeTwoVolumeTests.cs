@@ -1,11 +1,13 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
 using FileOp.Core.Operations;
 using FileOp.Windows.Operations;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.Win32.SafeHandles;
 
 namespace FileOp.Windows.Tests;
 
@@ -23,6 +25,8 @@ public sealed class FileCrossVolumeMoveNativeTwoVolumeTests
 {
     private const string SourceRootVariable = "FILEOP_CROSS_VOLUME_MOVE_SOURCE_ROOT";
     private const string DestinationRootVariable = "FILEOP_CROSS_VOLUME_MOVE_DESTINATION_ROOT";
+    private const uint FileWriteEa = 0x00000010u;
+    private const uint Synchronize = 0x00100000u;
 
     [TestMethod]
     [TestCategory("CrossVolumeMoveNative")]
@@ -73,6 +77,35 @@ public sealed class FileCrossVolumeMoveNativeTwoVolumeTests
         var destinationPath = Path.Combine(fixture.DestinationDirectory, Path.GetFileName(sourcePath));
         Assert.IsTrue(File.Exists(destinationPath), "The already committed destination Copy should remain explicit.");
         Assert.AreEqual("main payload", File.ReadAllText(destinationPath));
+
+        var persisted = await history.GetAsync(plan.Id);
+        Assert.IsNotNull(persisted);
+        Assert.AreEqual(FileCrossVolumeMoveTerminalState.Failed, persisted.TerminalState);
+        Assert.IsTrue(persisted.HasRetainedSourceDuplicates);
+        Assert.IsFalse(persisted.RequiresRecovery);
+    }
+
+    [TestMethod]
+    [TestCategory("CrossVolumeMoveNative")]
+    public async Task SourceExtendedAttributeRefusesDestructiveCompletionAndRetainsBothFiles()
+    {
+        using var fixture = CreateFixture();
+        var sourcePath = fixture.CreateSourceFile("with-ea.txt", "main payload with ea");
+        SetExtendedAttribute(sourcePath, "FileOpTest", "extended attribute payload");
+        var plan = CreatePlan(fixture.SourceDirectory, fixture.DestinationDirectory, sourcePath);
+        await AssertReadyOnDifferentVolumesAsync(plan);
+
+        using var history = new SqliteFileCrossVolumeMoveActionHistoryStore(fixture.HistoryDatabasePath);
+        var executor = CreateRealExecutor(history);
+
+        var result = await executor.ExecuteAsync(plan);
+
+        Assert.AreEqual(FileOperationExecutionState.Failed, result.State);
+        Assert.AreEqual("CrossVolumeMoveSourceDeletePreparationFailed", result.Failure?.Code);
+        Assert.IsTrue(File.Exists(sourcePath), "Unsupported source EA semantics must retain the source.");
+        var destinationPath = Path.Combine(fixture.DestinationDirectory, Path.GetFileName(sourcePath));
+        Assert.IsTrue(File.Exists(destinationPath), "The already committed destination Copy should remain explicit.");
+        Assert.AreEqual("main payload with ea", File.ReadAllText(destinationPath));
 
         var persisted = await history.GetAsync(plan.Id);
         Assert.IsNotNull(persisted);
@@ -204,6 +237,60 @@ public sealed class FileCrossVolumeMoveNativeTwoVolumeTests
             Path.GetFullPath(destinationRoot!));
     }
 
+    private static void SetExtendedAttribute(string path, string name, string value)
+    {
+        var nameBytes = Encoding.ASCII.GetBytes(name);
+        var valueBytes = Encoding.UTF8.GetBytes(value);
+        if (nameBytes.Length is 0 or > 254 || valueBytes.Length > ushort.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(name));
+        }
+
+        // FILE_FULL_EA_INFORMATION: ULONG NextEntryOffset; UCHAR Flags;
+        // UCHAR EaNameLength; USHORT EaValueLength; CHAR EaName[]; NUL; value bytes.
+        var buffer = new byte[checked(8 + nameBytes.Length + 1 + valueBytes.Length)];
+        buffer[4] = 0;
+        buffer[5] = checked((byte)nameBytes.Length);
+        buffer[6] = checked((byte)(valueBytes.Length & 0xFF));
+        buffer[7] = checked((byte)(valueBytes.Length >> 8));
+        Buffer.BlockCopy(nameBytes, 0, buffer, 8, nameBytes.Length);
+        Buffer.BlockCopy(valueBytes, 0, buffer, 8 + nameBytes.Length + 1, valueBytes.Length);
+
+        using var handle = CreateFileW(
+            path,
+            FileWriteEa | Synchronize,
+            FileShare.ReadWrite | FileShare.Delete,
+            IntPtr.Zero,
+            FileMode.Open,
+            0,
+            IntPtr.Zero);
+        var openError = Marshal.GetLastWin32Error();
+        if (handle.IsInvalid)
+        {
+            throw new IOException(
+                $"Opening source EA test file failed with Win32 error {openError}.");
+        }
+
+        var pinned = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        try
+        {
+            var status = NtSetEaFile(
+                handle,
+                out _,
+                pinned.AddrOfPinnedObject(),
+                checked((uint)buffer.Length));
+            if (status < 0)
+            {
+                throw new IOException(
+                    $"NtSetEaFile for the source EA regression failed with NTSTATUS 0x{unchecked((uint)status):X8}. The explicit native matrix requires a source filesystem that supports EAs.");
+            }
+        }
+        finally
+        {
+            pinned.Free();
+        }
+    }
+
     private sealed class CancellingCopyMutationPrimitive : IFileCopyMutationPrimitive
     {
         private readonly IFileCopyMutationPrimitive _inner;
@@ -295,9 +382,41 @@ public sealed class FileCrossVolumeMoveNativeTwoVolumeTests
         SetLastError = true,
         ExactSpelling = true,
         CallingConvention = CallingConvention.Winapi)]
+    private static extern SafeFileHandle CreateFileW(
+        string lpFileName,
+        uint dwDesiredAccess,
+        FileShare dwShareMode,
+        IntPtr lpSecurityAttributes,
+        FileMode dwCreationDisposition,
+        uint dwFlagsAndAttributes,
+        IntPtr hTemplateFile);
+
+    [DllImport(
+        "kernel32.dll",
+        CharSet = CharSet.Unicode,
+        SetLastError = true,
+        ExactSpelling = true,
+        CallingConvention = CallingConvention.Winapi)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateHardLinkW(
         string lpFileName,
         string lpExistingFileName,
         IntPtr lpSecurityAttributes);
+
+    [DllImport(
+        "ntdll.dll",
+        ExactSpelling = true,
+        CallingConvention = CallingConvention.Winapi)]
+    private static extern int NtSetEaFile(
+        SafeFileHandle FileHandle,
+        out IoStatusBlock IoStatusBlock,
+        IntPtr Buffer,
+        uint Length);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoStatusBlock
+    {
+        public IntPtr Status;
+        public UIntPtr Information;
+    }
 }
