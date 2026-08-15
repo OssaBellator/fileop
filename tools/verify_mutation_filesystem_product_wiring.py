@@ -90,15 +90,16 @@ def check(root: Path) -> int:
     )
 
     # A project-wide alias is intentionally used because these are product mutation-policy
-    # names. Pin its blast radius: no other App source may start using one of the aliased
-    # lower-level validator names without updating this reviewed boundary explicitly.
+    # names. Pin its blast radius recursively: no App source in any current or future
+    # subdirectory may start using one of the aliased lower-level validator names without
+    # updating this reviewed boundary explicitly.
     expected_usage = {
         "WindowsFileOperationExecutionValidator": "FilesView.Copy.cs",
         "WindowsMoveOperationExecutionValidator": "FilesView.Move.cs",
         "WindowsFileDeleteOperationExecutionValidator": "FilesView.Delete.cs",
     }
     observed_counts = {name: 0 for name in expected_usage}
-    app_sources = sorted(app_root.glob("*.cs"))
+    app_sources = sorted(app_root.rglob("*.cs"))
     if not app_sources:
         raise FileNotFoundError("No FileOp.App C# sources found")
     for path in app_sources:
@@ -110,7 +111,7 @@ def check(root: Path) -> int:
             if count == 0:
                 continue
             assert path.name == expected_file, (
-                f"Unexpected App use of {type_name} in {path.name}; "
+                f"Unexpected App use of {type_name} in {path.relative_to(app_root)}; "
                 f"the #193 alias boundary currently permits only {expected_file}"
             )
             observed_counts[type_name] += count
