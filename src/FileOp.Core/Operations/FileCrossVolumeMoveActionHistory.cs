@@ -75,8 +75,16 @@ public sealed record FileCrossVolumeMoveActionEntry(
         DestinationIdentity.HasValue &&
         DestinationContentFingerprint is not null;
 
+    /// <summary>
+    /// True when the durable source-delete barrier was crossed but normal source-delete
+    /// completion is not proven. RecoveryRequired retains that uncertainty through its
+    /// SourceDeleteStarted timestamp even though the entry is no longer in the live
+    /// SourceDeleteStarted state.
+    /// </summary>
     public bool SourceDeleteBarrierMayBeUnresolved =>
-        State == FileCrossVolumeMoveEntryState.SourceDeleteStarted;
+        State == FileCrossVolumeMoveEntryState.SourceDeleteStarted ||
+        (State == FileCrossVolumeMoveEntryState.RecoveryRequired &&
+            SourceDeleteStartedAtUtc.HasValue);
 }
 
 public sealed record FileCrossVolumeMoveActionHistory
