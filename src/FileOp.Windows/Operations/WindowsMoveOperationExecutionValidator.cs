@@ -29,8 +29,8 @@ namespace FileOp.Windows.Operations;
 public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator
 {
     // Repository tracking: #186 selected the ordinary-user destination-default security
-    // contract source-side; #187 now owns exact-head native validation of the scoped
-    // main-stream/selected-entry preservation contract. Keep issue IDs out of runtime UI text.
+    // contract source-side. #187 remains the proof-to-mutation stability blocker.
+    // Keep issue IDs out of runtime UI text.
     internal const string CrossVolumeMoveDisabledSummary =
         "Cross-volume Move is currently disabled while its final mutation-stability boundary is still under review. Choose a destination on the same volume to use the supported Move path. No durable history, destination Copy, or source-delete mutation was created by this refusal.";
 
@@ -44,11 +44,10 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
     public WindowsMoveOperationExecutionValidator(
         IFileOperationExecutionValidator? inner = null,
         IFileOperationNamespaceCapabilityProbe? namespaceProbe = null)
-        : this(
-            inner ?? new WindowsFileOperationExecutionValidator(),
-            namespaceProbe ?? new WindowsFileOperationNamespaceCapabilityProbe(),
-            new WindowsFileOperationVolumeRelationshipProbe())
     {
+        _inner = inner ?? new WindowsFileOperationExecutionValidator();
+        _namespaceProbe = namespaceProbe ?? new WindowsFileOperationNamespaceCapabilityProbe();
+        _volumeRelationshipProbe = new WindowsFileOperationVolumeRelationshipProbe();
     }
 
     internal WindowsMoveOperationExecutionValidator(
@@ -79,24 +78,19 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
             return Block(validation, MissingRootIdentitySummary);
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!TryClassifyVolumeRelationship(
-                validation,
-                out var isCrossVolume,
-                out var relationshipFailureSummary))
-        {
-            return Block(
-                validation,
-                relationshipFailureSummary ?? MissingRootIdentitySummary);
-        }
-
-        if (isCrossVolume)
-        {
-            return Block(validation, CrossVolumeMoveDisabledSummary);
-        }
-
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!TryClassifyVolumeRelationship(validation, out var isCrossVolume))
+            {
+                return Block(validation, MissingRootIdentitySummary);
+            }
+
+            if (isCrossVolume)
+            {
+                return Block(validation, CrossVolumeMoveDisabledSummary);
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
             RequireSupportedMutationRoots(validation, cancellationToken);
             return validation;
@@ -105,7 +99,7 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
         {
             return Block(
                 validation,
-                "Move execution validation blocked the current Windows namespace capability before durable mutation history: " +
+                "Move execution validation blocked a required Windows mutation capability before durable mutation history: " +
                 exception.Message +
                 " No MutationStarted record or filesystem mutation was created by this capability refusal.");
         }
@@ -113,15 +107,18 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
 
     private bool TryClassifyVolumeRelationship(
         FileOperationExecutionValidationResult validation,
-        out bool isCrossVolume,
-        out string? failureSummary)
+        out bool isCrossVolume)
     {
-        var sourceIdentity = validation.SourceDirectory.Identity!.Value;
-        var destinationIdentity = validation.DestinationDirectory.Identity!.Value;
+        if (validation.SourceDirectory.Identity is not FileIdentity sourceIdentity ||
+            validation.DestinationDirectory.Identity is not FileIdentity destinationIdentity)
+        {
+            isCrossVolume = false;
+            return false;
+        }
+
         if (sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber)
         {
             isCrossVolume = true;
-            failureSummary = null;
             return true;
         }
 
@@ -132,21 +129,16 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
         {
             case FileOperationVolumeRelationshipState.SameVolume:
                 isCrossVolume = false;
-                failureSummary = null;
                 return true;
 
             case FileOperationVolumeRelationshipState.DifferentVolume:
                 isCrossVolume = true;
-                failureSummary = null;
                 return true;
 
             default:
-                isCrossVolume = false;
-                failureSummary =
-                    "Move execution validation could not prove that roots with equal volume-serial evidence belong to the same filesystem volume. " +
-                    relationship.Summary +
-                    " No durable mutation history or filesystem mutation was created.";
-                return false;
+                throw new NotSupportedException(
+                    "Move roots have equal volume-serial evidence, but Windows could not prove that they belong to the same filesystem volume. " +
+                    relationship.Summary);
         }
     }
 
