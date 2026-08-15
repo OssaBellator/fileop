@@ -12,7 +12,7 @@ namespace FileOp.Windows.Tests;
 public sealed class FileCrossVolumeMoveSourcePreflightPolicyTests
 {
     [TestMethod]
-    public async Task SameVolumeMoveBypassesCrossVolumeSourcePreflight()
+    public async Task EqualVolumeSerialBypassesSchemaV1CrossVolumeSourcePreflight()
     {
         var plan = CreatePlan();
         var inner = new FakeValidator(CreateValidation(plan, destinationVolumeSerial: 1));
@@ -88,7 +88,7 @@ public sealed class FileCrossVolumeMoveSourcePreflightPolicyTests
     private static FileOperationPlan CreatePlan()
     {
         var sourceDirectory = Path.GetFullPath(@"C:\Source");
-        var destinationDirectory = Path.GetFullPath(@"C:\Destination");
+        var destinationDirectory = Path.GetFullPath(@"D:\Destination");
         var entry = new FileOperationEntry(
             Path.Combine(sourceDirectory, "a.txt"),
             "a.txt",
@@ -113,7 +113,7 @@ public sealed class FileCrossVolumeMoveSourcePreflightPolicyTests
         uint destinationVolumeSerial)
     {
         var canonicalSourceDirectory = Path.GetFullPath(@"C:\Real\Source");
-        var canonicalDestinationDirectory = Path.GetFullPath(@"C:\Real\Destination");
+        var canonicalDestinationDirectory = Path.GetFullPath(@"D:\Real\Destination");
         var entry = plan.Intent.Entries[0];
         return new FileOperationExecutionValidationResult(
             plan,
