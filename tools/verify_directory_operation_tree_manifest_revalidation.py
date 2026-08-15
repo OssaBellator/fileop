@@ -186,6 +186,7 @@ def check_repository(root: Path) -> int:
         root,
         "tests/FileOp.Windows.Tests/DirectoryOperationTreeManifestRevalidationTests.cs",
     )
+    canonical = read(root, "tools/verify_file_operation_execution_validation.py")
     gate = read(root, "tools/test-local.ps1")
 
     checks = 0
@@ -241,9 +242,17 @@ def check_repository(root: Path) -> int:
         "Assert.IsFalse(result.GrantsMutationAuthority)",
     )
     checks += require(
+        canonical,
+        "from verify_directory_operation_tree_manifest import (",
+        "from verify_directory_operation_tree_manifest_revalidation import (",
+        "run_directory_manifest_model(args.cases)",
+        "run_directory_manifest_revalidation_model(args.cases)",
+        "check_directory_manifest_repository(repo_root)",
+        "check_directory_manifest_revalidation_repository(repo_root)",
+    )
+    checks += require(
         gate,
-        "verify_directory_operation_tree_manifest.py --repo-root $repoRoot --cases 50000",
-        "verify_directory_operation_tree_manifest_revalidation.py --repo-root $repoRoot --cases 50000",
+        "verify_file_operation_execution_validation.py --repo-root $repoRoot --cases 50000",
     )
     return checks
 
