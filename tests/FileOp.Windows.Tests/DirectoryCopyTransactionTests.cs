@@ -61,6 +61,68 @@ public sealed class DirectoryCopyTransactionTests
     }
 
     [TestMethod]
+    public async Task SqliteMutationBarrierRejectsSkippedOrdinal()
+    {
+        var database = TempDatabasePath();
+        try
+        {
+            var plan = CreatePlan();
+            using var store = new SqliteDirectoryCopyActionHistoryStore(database);
+            await store.BeginAsync(plan, ReadyGate(plan.ReviewedManifest), DateTimeOffset.UtcNow);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await store.MarkMutationStartedAsync(plan.OperationId, 1, DateTimeOffset.UtcNow));
+
+            var history = await store.GetAsync(plan.OperationId);
+            Assert.IsNotNull(history);
+            Assert.IsTrue(history.Entries.All(static entry => entry.State == DirectoryCopyActionEntryState.Pending));
+        }
+        finally
+        {
+            DeleteNoThrow(database);
+        }
+    }
+
+    [TestMethod]
+    public async Task TerminalHistoryRejectsLaterMutation()
+    {
+        var database = TempDatabasePath();
+        try
+        {
+            var plan = CreatePlan();
+            using var store = new SqliteDirectoryCopyActionHistoryStore(database);
+            await store.BeginAsync(plan, ReadyGate(plan.ReviewedManifest), DateTimeOffset.UtcNow);
+            await store.CompleteAsync(plan.OperationId, DirectoryCopyActionTerminalState.Cancelled, DateTimeOffset.UtcNow);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await store.MarkMutationStartedAsync(plan.OperationId, 0, DateTimeOffset.UtcNow));
+        }
+        finally
+        {
+            DeleteNoThrow(database);
+        }
+    }
+
+    [TestMethod]
+    public async Task FailedTerminalRequiresDefiniteFailureFrontier()
+    {
+        var database = TempDatabasePath();
+        try
+        {
+            var plan = CreatePlan();
+            using var store = new SqliteDirectoryCopyActionHistoryStore(database);
+            await store.BeginAsync(plan, ReadyGate(plan.ReviewedManifest), DateTimeOffset.UtcNow);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await store.CompleteAsync(plan.OperationId, DirectoryCopyActionTerminalState.Failed, DateTimeOffset.UtcNow));
+        }
+        finally
+        {
+            DeleteNoThrow(database);
+        }
+    }
+
+    [TestMethod]
     public async Task ExecutorPersistsMutationBarrierAndChainsCommittedParentIdentity()
     {
         var database = TempDatabasePath();
@@ -169,6 +231,33 @@ public sealed class DirectoryCopyTransactionTests
             Assert.AreEqual(DirectoryCopyActionEntryState.RecoveryRequired, result.Entries[0].State);
             Assert.AreEqual("DirectoryCopyMutationAmbiguous", result.Entries[0].Failure?.Code);
             Assert.AreEqual(1, primitive.CallCount);
+        }
+        finally
+        {
+            DeleteNoThrow(database);
+        }
+    }
+
+    [TestMethod]
+    public async Task ThrowingReceiptAccessorAfterMutationStartedSettlesRecoveryRequired()
+    {
+        var database = TempDatabasePath();
+        try
+        {
+            var plan = CreatePlan();
+            using var store = new SqliteDirectoryCopyActionHistoryStore(database);
+            var primitive = new FakePrimitive(_ =>
+                ValueTask.FromResult<IDirectoryCopyMutationLease>(new ThrowingReceiptLease()));
+            var executor = new DirectoryCopyTransactionExecutor(
+                new DirectoryCopyFreshManifestGate(new FakeAcquirer(Ready(plan.ReviewedManifest))),
+                store,
+                primitive);
+
+            var result = await executor.ExecuteAsync(plan);
+
+            Assert.AreEqual(DirectoryCopyActionTerminalState.RecoveryRequired, result.TerminalState);
+            Assert.AreEqual(DirectoryCopyActionEntryState.RecoveryRequired, result.Entries[0].State);
+            Assert.AreEqual("DirectoryCopyMutationAmbiguous", result.Entries[0].Failure?.Code);
         }
         finally
         {
@@ -415,6 +504,14 @@ public sealed class DirectoryCopyTransactionTests
     {
         public FakeLease(DirectoryCopyMutationReceipt receipt) => Receipt = receipt;
         public DirectoryCopyMutationReceipt Receipt { get; }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class ThrowingReceiptLease : IDirectoryCopyMutationLease
+    {
+        public DirectoryCopyMutationReceipt Receipt =>
+            throw new IOException("simulated receipt accessor failure");
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
