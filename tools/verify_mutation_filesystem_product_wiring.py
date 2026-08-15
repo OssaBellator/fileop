@@ -27,7 +27,12 @@ def reject(text: str, *needles: str) -> int:
 
 
 def check(root: Path) -> int:
-    aliases = read(root, "src/FileOp.App/MutationExecutionValidatorAliases.cs")
+    app_root = root / "src/FileOp.App"
+    aliases_path = app_root / "MutationExecutionValidatorAliases.cs"
+    if not aliases_path.is_file():
+        raise FileNotFoundError(aliases_path)
+
+    aliases = aliases_path.read_text(encoding="utf-8")
     copy = read(root, "src/FileOp.App/FilesView.Copy.cs")
     move = read(root, "src/FileOp.App/FilesView.Move.cs")
     delete = read(root, "src/FileOp.App/FilesView.Delete.cs")
@@ -66,6 +71,38 @@ def check(root: Path) -> int:
         "using WindowsMoveOperationExecutionValidator =",
         "using WindowsFileDeleteOperationExecutionValidator =",
     )
+
+    # A project-wide alias is intentionally used because these are product mutation-policy
+    # names. Pin its blast radius: no other App source may start using one of the aliased
+    # lower-level validator names without updating this reviewed boundary explicitly.
+    expected_usage = {
+        "WindowsFileOperationExecutionValidator": "FilesView.Copy.cs",
+        "WindowsMoveOperationExecutionValidator": "FilesView.Move.cs",
+        "WindowsFileDeleteOperationExecutionValidator": "FilesView.Delete.cs",
+    }
+    observed_counts = {name: 0 for name in expected_usage}
+    app_sources = sorted(app_root.glob("*.cs"))
+    if not app_sources:
+        raise FileNotFoundError("No FileOp.App C# sources found")
+    for path in app_sources:
+        if path == aliases_path:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for type_name, expected_file in expected_usage.items():
+            count = text.count(type_name)
+            if count == 0:
+                continue
+            assert path.name == expected_file, (
+                f"Unexpected App use of {type_name} in {path.name}; "
+                f"the #193 alias boundary currently permits only {expected_file}"
+            )
+            observed_counts[type_name] += count
+            checks += count
+
+    assert observed_counts["WindowsFileOperationExecutionValidator"] == 1
+    assert observed_counts["WindowsMoveOperationExecutionValidator"] >= 2
+    assert observed_counts["WindowsFileDeleteOperationExecutionValidator"] == 1
+    checks += 3
 
     checks += require(
         gate,
