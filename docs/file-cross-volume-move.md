@@ -91,7 +91,7 @@ No cancellation token is passed after `SourceDeleteStarted`. From that point the
 
 ## Preservation contract
 
-`FileCrossVolumeMovePreservationPolicy` makes the product semantics explicit.
+`FileCrossVolumeMovePreservationPolicy` makes the product semantics explicit. In particular, `FileCrossVolumeMovePreservationPolicy.MovesSelectedSourceDirectoryEntryOnly` is true: cross-volume Move removes the selected source directory entry rather than claiming to transfer same-volume hard-link topology.
 
 ### Main-stream content is the destructive invariant
 
