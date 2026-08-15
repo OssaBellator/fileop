@@ -8,14 +8,14 @@ using Microsoft.Win32.SafeHandles;
 
 namespace FileOp.Windows.Operations;
 
-internal enum FileOperationVolumeRelationshipState
+public enum FileOperationVolumeRelationshipState
 {
     SameVolume,
     DifferentVolume,
     Unavailable,
 }
 
-internal sealed record FileOperationVolumeRelationship(
+public sealed record FileOperationVolumeRelationship(
     FileOperationVolumeRelationshipState State,
     string? SourceVolumeGuidName,
     string? DestinationVolumeGuidName,
@@ -24,7 +24,7 @@ internal sealed record FileOperationVolumeRelationship(
     public bool IsSameVolume => State == FileOperationVolumeRelationshipState.SameVolume;
 }
 
-internal interface IFileOperationVolumeRelationshipProbe
+public interface IFileOperationVolumeRelationshipProbe
 {
     FileOperationVolumeRelationship Query(
         string canonicalSourceDirectoryPath,
@@ -37,9 +37,10 @@ internal interface IFileOperationVolumeRelationshipProbe
 /// Uses exact identity-bound root handles plus Windows volume-GUID names as the stronger
 /// relationship proof for Move roots whose 32-bit volume serials are equal. Drive letters,
 /// mount-point text and a newly opened path that no longer has the validated root identity
-/// are not treated as volume authority.
+/// are not treated as volume authority. This probe returns evidence only; it grants no
+/// mutation authority.
 /// </summary>
-internal sealed class WindowsFileOperationVolumeRelationshipProbe :
+public sealed class WindowsFileOperationVolumeRelationshipProbe :
     IFileOperationVolumeRelationshipProbe
 {
     private const uint FileReadAttributes = 0x00000080u;
