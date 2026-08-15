@@ -20,6 +20,17 @@ $testProject = Join-Path $repoRoot "tests\FileOp.Windows.Tests\FileOp.Windows.Te
 if (-not (Test-Path -LiteralPath $testProject -PathType Leaf)) {
     throw "FileOp.Windows.Tests project was not found at '$testProject'."
 }
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    throw "Python 3 is required for the cross-volume Move native matrix inventory verifier."
+}
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    throw ".NET 10 SDK is required for the cross-volume Move native matrix."
+}
+
+& python (Join-Path $repoRoot "tools\verify_cross_volume_move_native_inventory.py") --repo-root $repoRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Cross-volume Move native matrix inventory verification failed with exit code $LASTEXITCODE."
+}
 
 $sourceItem = Get-Item -LiteralPath $SourceRoot -ErrorAction Stop
 $destinationItem = Get-Item -LiteralPath $DestinationRoot -ErrorAction Stop
