@@ -136,6 +136,12 @@ def check(root: Path) -> int:
         "WindowsMutationFilesystemCapabilityBindingTests",
         "WindowsMutationFilesystemCapabilityPolicyTests",
         'FullyQualifiedName~WindowsMutationFilesystemCapability',
+        '$indexerProject = Join-Path $repoRoot "src\\FileOp.Indexer\\FileOp.Indexer.csproj"',
+        '$appProject = Join-Path $repoRoot "src\\FileOp.App\\FileOp.App.csproj"',
+        "dotnet build $indexerProject",
+        "dotnet build $appProject",
+        "-p:Platform=x64",
+        "App product-wiring build failed",
     )
 
     # The narrower #193 gate must not be the only place this policy is checked. Pin the
