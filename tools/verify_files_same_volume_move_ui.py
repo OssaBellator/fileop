@@ -257,7 +257,7 @@ def check_repository(root: Path) -> int:
         "public sealed class WindowsNtfsDirectorySameVolumeMoveMutationPrimitive",
         "WindowsNtfsMutationCapabilityGuard.RequireExactNtfs(",
         "FileOperationVolumeRelationshipState.SameVolume",
-        "lies inside the source directory subtree",
+        "destination parent cannot be the source directory or one of its descendants",
     )
 
     checks += require(
@@ -280,9 +280,9 @@ def check_repository(root: Path) -> int:
     )
     checks += require(
         source["directory_tests"],
-        "MutationStartedIsDurableBeforeDirectoryPrimitiveIsInvoked",
+        "ExecutorPersistsMutationStartedBeforeProviderAndCommitsIdentity",
         "NativeDirectoryRenamePreservesIdentityAndNestedDescendants",
-        "DestinationCreatedAfterValidationIsNeverReplaced",
+        "NativeDirectoryRenameNeverReplacesDestinationCreatedAfterValidation",
     )
 
     assert "_filesView.ReassertOperationExecutionBusyAfterSourceChange();" in source["source"]
