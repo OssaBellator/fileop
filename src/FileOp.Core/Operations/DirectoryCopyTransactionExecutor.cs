@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
@@ -115,17 +116,9 @@ public sealed class DirectoryCopyTransactionExecutor
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             callerCancellation,
             context.SafeBoundaryCancellation.Token);
-        DirectoryCopyFreshManifestGateResult fresh;
-        try
-        {
-            fresh = await _freshGate
-                .PrepareAsync(plan.ReviewedManifest, linked.Token)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (context.IsCancellationRequested || callerCancellation.IsCancellationRequested)
-        {
-            throw;
-        }
+        var fresh = await _freshGate
+            .PrepareAsync(plan.ReviewedManifest, linked.Token)
+            .ConfigureAwait(false);
 
         if (!fresh.CanBeginDurableHistory)
         {
@@ -199,12 +192,14 @@ public sealed class DirectoryCopyTransactionExecutor
                         plan.OperationId,
                         ordinal,
                         lease.Receipt.DestinationIdentity,
+                        lease.Receipt.DestinationContentFingerprint,
                         UtcNow())
                     .ConfigureAwait(false);
             }
             catch (Exception exception)
             {
-                var observedIdentity = lease?.Receipt?.DestinationIdentity;
+                FileIdentity? observedIdentity = lease?.Receipt.DestinationIdentity;
+                FileContentFingerprint? observedFingerprint = lease?.Receipt.DestinationContentFingerprint;
                 var failure = FailureFromException(
                     "DirectoryCopyMutationAmbiguous",
                     "A recursive directory Copy action crossed MutationStarted but did not reach durable commit. Recovery inspection is required.",
@@ -218,7 +213,8 @@ public sealed class DirectoryCopyTransactionExecutor
                             ordinal,
                             failure,
                             UtcNow(),
-                            observedIdentity)
+                            observedIdentity,
+                            observedFingerprint)
                         .ConfigureAwait(false);
                     history = await _historyStore
                         .CompleteAsync(
