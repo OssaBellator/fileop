@@ -10,6 +10,14 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 
+from verify_directory_operation_tree_manifest import (
+    check_repository as check_directory_manifest_repository,
+    run_model as run_directory_manifest_model,
+)
+from verify_directory_operation_tree_manifest_revalidation import (
+    check_repository as check_directory_manifest_revalidation_repository,
+    run_model as run_directory_manifest_revalidation_model,
+)
 from verify_file_delete_execution_validation import (
     check_repository as check_delete_execution_repository,
     run_model as run_delete_execution_model,
@@ -290,9 +298,13 @@ def main() -> int:
     copy_move_checks = check_properties(args.cases)
     delete_checks = run_delete_execution_model(args.cases, 0xD31E7E)
     mutation_filesystem_checks = run_mutation_filesystem_model(args.cases)
+    directory_manifest_checks = run_directory_manifest_model(args.cases)
+    directory_manifest_revalidation_checks = run_directory_manifest_revalidation_model(args.cases)
     print(
         f"PASS canonical execution validation properties: {copy_move_checks} Copy/Move checks; "
-        f"{delete_checks} delete checks; {mutation_filesystem_checks} mutation-filesystem checks"
+        f"{delete_checks} delete checks; {mutation_filesystem_checks} mutation-filesystem checks; "
+        f"{directory_manifest_checks} directory-manifest checks; "
+        f"{directory_manifest_revalidation_checks} directory-manifest-revalidation checks"
     )
     if not args.self_test_only:
         repo_root = args.repo_root.resolve()
@@ -300,11 +312,15 @@ def main() -> int:
         delete_source = check_delete_execution_repository(repo_root)
         mutation_filesystem_source = check_mutation_filesystem_repository(repo_root)
         mutation_product_wiring = check_mutation_product_wiring(repo_root)
+        directory_manifest_source = check_directory_manifest_repository(repo_root)
+        directory_manifest_revalidation_source = check_directory_manifest_revalidation_repository(repo_root)
         print(
             "PASS canonical execution validation source wiring: "
             f"{copy_move_source} Copy/Move checks; {delete_source} delete checks; "
             f"{mutation_filesystem_source} mutation-filesystem checks; "
-            f"{mutation_product_wiring} product-wiring checks"
+            f"{mutation_product_wiring} product-wiring checks; "
+            f"{directory_manifest_source} directory-manifest checks; "
+            f"{directory_manifest_revalidation_source} directory-manifest-revalidation checks"
         )
     return 0
 
