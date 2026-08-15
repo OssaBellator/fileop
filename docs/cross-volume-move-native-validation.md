@@ -2,7 +2,7 @@
 
 This checklist is the native execution gate for the dormant regular-file cross-volume Move engine in draft PR #185.
 
-It is deliberately separate from hosted GitHub Actions and from the ordinary `tools/test-local.ps1` run. The normal Windows test project discovers the opt-in tests, but when explicit roots are not supplied MSTest reports them as inconclusive/skipped. A normal full local gate therefore does **not** prove that two real filesystem volumes were exercised.
+It is deliberately separate from hosted GitHub Actions and from the ordinary `tools/test-local.ps1` run. The normal Windows test project discovers the opt-in two-volume tests, but when explicit roots are not supplied MSTest reports them as inconclusive/skipped. A normal full local gate therefore does **not** prove that two real filesystem volumes were exercised.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ Use a normal unelevated FileOp development shell on Windows with:
 - source/destination roots that are not reparse points and do not use per-directory case-sensitive namespace semantics;
 - enough free space for the small temporary test payloads.
 
-Do not point the test at production/user data. The test creates and recursively removes uniquely named `FileOp.CrossVolumeMoveNative` subdirectories beneath both supplied roots.
+Do not point the test at production/user data. The two-volume tests create and recursively remove uniquely named `FileOp.CrossVolumeMoveNative` subdirectories beneath both supplied roots. The security-policy test uses its own uniquely named temporary directory under the current user's temp path.
 
 ## Required commands
 
@@ -25,7 +25,15 @@ First run the ordinary authoritative local gate on the exact head:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-local.ps1
 ```
 
-Then run the explicit two-volume matrix:
+Then, from the same ordinary unelevated shell, run the explicit ordinary-token security-policy gate:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-cross-volume-move-security.ps1
+```
+
+That script refuses to run when the current token is elevated. It executes the `CrossVolumeMoveSecurityNative` category, which gives source and destination-parent directories intentionally different inheritable DACLs and proves that the real `WindowsFileCopyMutationPrimitive` creates its destination with the destination-context/default inherited DACL rather than cloning the source DACL. The test queries DACL information only; it does not request SACL, backup-security or `ACCESS_SYSTEM_SECURITY` evidence.
+
+Finally run the explicit two-volume matrix:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-cross-volume-move-native.ps1 `
@@ -35,7 +43,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-cross-volume-
 
 The test code resolves the roots through the real Windows execution validator and fails if their stable filesystem volume serials are equal. Drive-letter text is not treated as proof of a cross-volume relationship.
 
-## Matrix exercised by the dedicated gate
+## Matrix exercised by the dedicated two-volume gate
 
 The `CrossVolumeMoveNative` category currently requires all of these real-engine cases:
 
@@ -44,13 +52,13 @@ The `CrossVolumeMoveNative` category currently requires all of these real-engine
 3. **Cancellation after real Copy** — a wrapper around the real Copy primitive requests cancellation while the Copy lease is still live. The executor must finish the durable destination commit and settle at `DestinationCommitted`, retaining both files and creating no source-delete authority.
 4. **Selected-entry hard-link semantics** — the selected source path has another hard link on the source volume. Cross-volume Move removes only the selected directory entry, creates the destination copy, and leaves the other source-volume hard link valid with the original content.
 
-Separate always-on Windows tests in `FileCrossVolumeMoveFidelityShareCompatibilityTests` pin the lower-level main-stream lease assumptions: pre-existing writers and writable mappings block destructive-lease acquisition, the live lease blocks new main-stream writers, attribute/EA access is not misrepresented as share-frozen, and fidelity reopens remain compatible with the live DELETE-capable handle.
+Separate always-on Windows tests in `FileCrossVolumeMoveFidelityShareCompatibilityTests` pin the lower-level main-stream lease assumptions: pre-existing writers and writable mappings block destructive-lease acquisition, the live lease blocks new main-stream writers, attribute/EA access is not misrepresented as share-frozen, hard-link selected-entry semantics remain visible, and fidelity reopens remain compatible with the live DELETE-capable handle.
 
 ## Security-policy validation (#186)
 
 The selected product contract is Windows-style destination-default/inherited security, not preservation of the source security descriptor. The cross-volume fidelity verifier must not require `ACCESS_SYSTEM_SECURITY`, SACL reads, or source/destination descriptor equality.
 
-Before #186 is closed, record one ordinary-token Windows run that also demonstrates the reviewed Copy primitive creates the destination with destination-side default/inherited security rather than cloning an intentionally different source DACL. Do not run that confirmation elevated and do not interpret a failed privileged security read as evidence.
+`WindowsFileCopyDestinationSecurityPolicyTests.CopyDestinationUsesDestinationInheritedDaclRatherThanSourceDacl` is the executable ordinary-token proof for that contract. It intentionally creates different source and destination inheritance contexts before invoking the real Copy primitive. Before #186 is closed, record a successful run through `tools/test-cross-volume-move-security.ps1` on the exact final head. Do not substitute an elevated run and do not interpret a failed privileged security read as evidence.
 
 ## Evidence to record
 
@@ -59,11 +67,12 @@ For PR #185 / issues #184, #186 and #187, record:
 - exact git commit SHA;
 - Windows version;
 - .NET SDK version;
-- source and destination test roots;
+- confirmation that `tools/test-cross-volume-move-security.ps1` ran under an ordinary unelevated token;
+- source and destination two-volume test roots;
 - confirmation that the test validator observed different source/destination volume serials;
 - complete `tools/test-local.ps1` result;
+- complete `tools/test-cross-volume-move-security.ps1` result;
 - complete `tools/test-cross-volume-move-native.ps1` result;
-- any skipped/inconclusive tests from the ordinary suite;
-- ordinary-token security-policy result required by #186.
+- any skipped/inconclusive tests from the ordinary suite.
 
 Do not mark #185 ready merely because the source/model verifiers are green. Production `WindowsMoveOperationExecutionValidator` must remain fail-closed for different-volume Move until this exact-head native evidence is complete.
