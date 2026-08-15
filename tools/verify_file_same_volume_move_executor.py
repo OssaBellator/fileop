@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Zero-Actions model/source checks for same-volume regular-file Move execution."""
+"""Zero-Actions model/source checks for same-volume regular-file and directory Move execution."""
 from __future__ import annotations
 
 import argparse
 import random
 import sys
 from pathlib import Path
+
+from verify_directory_same_volume_move import (
+    check_repository as check_directory_move_repository,
+    run_model as run_directory_move_model,
+)
 
 
 def executable(*, kind: str, ready: bool, regular_files: bool, same_volume: bool, local: bool) -> bool:
@@ -154,8 +159,16 @@ def main() -> int:
         parser.error('--cases must be greater than zero')
 
     print(f'PASS same-volume Move executor model: {check_properties(args.cases):,} checks')
+    print(
+        f'PASS same-volume directory Move model: '
+        f'{run_directory_move_model(args.cases):,} checks across {args.cases:,} randomized cases'
+    )
     if not args.self_test_only:
         print(f'PASS same-volume Move executor source wiring: {check_repository(args.repo_root.resolve())} checks')
+        print(
+            f'PASS same-volume directory Move source contract: '
+            f'{check_directory_move_repository(args.repo_root.resolve())} checks'
+        )
     return 0
 
 
