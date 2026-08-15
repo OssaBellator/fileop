@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
 using FileOp.Core.Operations;
@@ -38,6 +39,14 @@ public sealed class WindowsNtfsDirectorySameVolumeMoveMutationPrimitive :
             ?? throw new InvalidOperationException(
                 "Directory Move mutation requires fresh destination-root identity evidence before NTFS/volume proof.");
 
+        if (IsSameOrDescendantPath(
+                request.DestinationDirectory.CanonicalPath,
+                request.Item.Source.CanonicalPath))
+        {
+            throw new NotSupportedException(
+                "Directory Move destination parent cannot be the source directory or one of its descendants.");
+        }
+
         WindowsNtfsMutationCapabilityGuard.RequireExactNtfs(
             _filesystemProbe,
             request.SourceDirectory.CanonicalPath,
@@ -70,4 +79,16 @@ public sealed class WindowsNtfsDirectorySameVolumeMoveMutationPrimitive :
 
         return _inner.RenameDirectoryAsync(request);
     }
+
+    private static bool IsSameOrDescendantPath(string candidatePath, string rootPath)
+    {
+        var candidate = NormalizeDirectoryPath(candidatePath);
+        var root = NormalizeDirectoryPath(rootPath);
+        return candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeDirectoryPath(string path) =>
+        Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+        Path.DirectorySeparatorChar;
 }
