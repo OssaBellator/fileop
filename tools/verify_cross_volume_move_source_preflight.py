@@ -57,8 +57,27 @@ def check_model(cases: int) -> int:
     }
     checks += 2
 
+    for attributes in (0x200, 0x800, 0x4000, 0x8000, 0x20000):
+        allowed, blockers = model_preflight(attributes, 0, 0, False)
+        assert not allowed
+        assert blockers == {"SourceUnsupportedAttributes"}
+        checks += 2
+
     rng = random.Random(20260815)
-    known_bits = [0x1, 0x2, 0x4, 0x20, 0x80, 0x2000, 0x400, 0x800, 0x4000]
+    known_bits = [
+        0x1,
+        0x2,
+        0x4,
+        0x20,
+        0x80,
+        0x200,
+        0x400,
+        0x800,
+        0x2000,
+        0x4000,
+        0x8000,
+        0x20000,
+    ]
     for _ in range(cases):
         attributes = 0
         for bit in known_bits:
@@ -76,6 +95,8 @@ def check_model(cases: int) -> int:
         assert allowed == (len(blockers) == 0)
         if attributes & 0x1:
             assert "SourceUnsupportedAttributes" in blockers
+        if attributes & (0x200 | 0x400 | 0x800 | 0x4000 | 0x8000 | 0x20000):
+            assert "SourceUnsupportedAttributes" in blockers
         if streams:
             assert "SourceNamedDataStreams" in blockers
         if ea_size:
@@ -85,6 +106,7 @@ def check_model(cases: int) -> int:
         checks += (
             1
             + int(bool(attributes & 0x1))
+            + int(bool(attributes & (0x200 | 0x400 | 0x800 | 0x4000 | 0x8000 | 0x20000)))
             + int(bool(streams))
             + int(bool(ea_size))
             + int(protected_location)
@@ -98,6 +120,7 @@ def check_repository(root: Path) -> int:
         "windows": root / "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourcePreflightProbe.cs",
         "tests": root / "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightTests.cs",
         "policy_tests": root / "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightPolicyTests.cs",
+        "attribute_tests": root / "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSourcePreflightAttributeTests.cs",
         "fidelity": root / "src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs",
         "raw_source_delete": root / "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs",
     }
@@ -212,6 +235,19 @@ def check_repository(root: Path) -> int:
         "AllowedProtectedLocationPolicyContinuesToInnerEvidenceProbe",
         "FileCrossVolumeMoveProtectedLocationPreflightProbe",
         "IFileDeleteProtectedLocationPolicy",
+    )
+
+    attribute_tests = source["attribute_tests"]
+    checks += require(
+        attribute_tests,
+        "SparseCompressedEncryptedIntegrityAndNoScrubAttributesBlockBeforeCopy",
+        "0x00000200u",
+        "0x00000800u",
+        "0x00004000u",
+        "0x00008000u",
+        "0x00020000u",
+        "SourceUnsupportedAttributes",
+        "ReviewedStableNonReadOnlyAttributesRemainEligibleForLaterProof",
     )
     return checks
 
