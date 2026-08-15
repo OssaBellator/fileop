@@ -31,6 +31,7 @@ def split_relative(relative: str) -> tuple[str, ...] | None:
         not part
         or part.isspace()
         or part in {".", ".."}
+        or ":" in part
         or part.endswith(" ")
         or part.endswith(".")
         for part in parts
@@ -153,6 +154,7 @@ def run_model(cases: int) -> int:
         "rooted",
         "parent_escape",
         "ambiguous_name",
+        "stream_syntax",
         "canonical_mismatch",
         "descendant_reparse",
         "different_volume",
@@ -192,6 +194,9 @@ def run_model(cases: int) -> int:
             expected = False
         elif defect == "ambiguous_name":
             entries.append(Entry("ambiguous.", root + r"\ambiguous.", root_volume, 100_011, False))
+            expected = False
+        elif defect == "stream_syntax":
+            entries.append(Entry("plain.txt:stream", root + r"\plain.txt:stream", root_volume, 100_013, False))
             expected = False
         elif defect == "canonical_mismatch":
             entries.append(Entry("mismatch.txt", root + r"\different.txt", root_volume, 100_003, False))
@@ -278,6 +283,7 @@ def check_repository(root: Path) -> int:
     fidelity = read(root, "src/FileOp.Core/Operations/DirectoryOperationFidelity.cs")
     manifest = read(root, "src/FileOp.Core/Operations/DirectoryOperationTreeManifest.cs")
     tests = read(root, "tests/FileOp.Windows.Tests/DirectoryOperationTreeManifestTests.cs")
+    stream_tests = read(root, "tests/FileOp.Windows.Tests/DirectoryOperationTreeManifestStreamSyntaxTests.cs")
 
     checks = 0
     checks += require(
@@ -303,6 +309,7 @@ def check_repository(root: Path) -> int:
         "not bound to the execution-validated canonical root",
         "Path.IsPathRooted(entry.RelativePath)",
         'segment == ".."',
+        "segment.Contains(Path.VolumeSeparatorChar)",
         "segment.EndsWith(' ')",
         "segment.EndsWith('.')",
         "source.State switch",
@@ -352,6 +359,12 @@ def check_repository(root: Path) -> int:
         "RootIdentityCannotReappearAsDescendant",
         "ManifestCopiesInputEvidenceAndPreservesExactIdentityBinding",
         "Assert.IsFalse(manifest.GrantsMutationAuthority)",
+    )
+    checks += require(
+        stream_tests,
+        "StreamLikeRelativePathComponentIsRejectedBeforeManifestCreation",
+        'var relative = "plain.txt:stream"',
+        'StringAssert.Contains(exception.Message, "stream-like")',
     )
     return checks
 
