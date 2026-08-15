@@ -20,6 +20,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Mutation filesystem identity source/model verification failed with exit code $LASTEXITCODE."
 }
 
+& python (Join-Path $repoRoot "tools\verify_mutation_filesystem_product_wiring.py") `
+    --repo-root $repoRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Mutation filesystem identity product-wiring verification failed with exit code $LASTEXITCODE."
+}
+
 if ($OfflineOnly) {
     Write-Host "PASS mutation filesystem identity offline verification" -ForegroundColor Green
     return
