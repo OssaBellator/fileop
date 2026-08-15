@@ -17,5 +17,7 @@ global using WindowsFileCopyMutationPrimitive =
     FileOp.Windows.Operations.WindowsNtfsFileCopyMutationPrimitive;
 global using WindowsFileSameVolumeMoveMutationPrimitive =
     FileOp.Windows.Operations.WindowsNtfsFileSameVolumeMoveMutationPrimitive;
+global using WindowsDirectorySameVolumeMoveMutationPrimitive =
+    FileOp.Windows.Operations.WindowsNtfsDirectorySameVolumeMoveMutationPrimitive;
 global using WindowsFileDeleteOperationFinalMutationLeaseProvider =
     FileOp.Windows.Operations.WindowsNtfsFileDeleteOperationFinalMutationLeaseProvider;
