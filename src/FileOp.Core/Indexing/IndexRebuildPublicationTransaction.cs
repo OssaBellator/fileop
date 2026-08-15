@@ -12,6 +12,45 @@ public enum IndexRebuildPublicationAttemptState
 }
 
 /// <summary>
+/// Non-authorizing evidence that the SQLite/live-index namespace has been quiesced strongly
+/// enough for a later platform publication primitive to cross the filesystem swap barrier.
+///
+/// The Windows implementation must produce this while holding both the in-process volume
+/// operation gate and the cross-process maintenance lease. Because the live index uses WAL,
+/// shared cache and connection pooling, simply disposing one command/connection is not
+/// sufficient: live and shadow WAL state must be checkpointed, pooled connections cleared,
+/// and WAL/SHM sidecars no longer capable of carrying unmerged state.
+/// </summary>
+public sealed record IndexRebuildPublicationQuiescenceEvidence(
+    string LiveDatabasePath,
+    string ShadowDatabasePath,
+    bool LocalVolumeOperationGateHeld,
+    bool CrossProcessMaintenanceLeaseHeld,
+    bool LiveWalCheckpointComplete,
+    bool ShadowWalCheckpointComplete,
+    bool SqliteConnectionPoolsCleared,
+    bool LiveWalAndShmSidecarsQuiesced,
+    bool ShadowWalAndShmSidecarsQuiesced)
+{
+    public bool CanStartFilesystemSwap =>
+        LocalVolumeOperationGateHeld &&
+        CrossProcessMaintenanceLeaseHeld &&
+        LiveWalCheckpointComplete &&
+        ShadowWalCheckpointComplete &&
+        SqliteConnectionPoolsCleared &&
+        LiveWalAndShmSidecarsQuiesced &&
+        ShadowWalAndShmSidecarsQuiesced &&
+        !string.IsNullOrWhiteSpace(LiveDatabasePath) &&
+        !string.IsNullOrWhiteSpace(ShadowDatabasePath) &&
+        !string.Equals(
+            LiveDatabasePath,
+            ShadowDatabasePath,
+            StringComparison.OrdinalIgnoreCase);
+
+    public bool GrantsFilesystemMutationAuthority => false;
+}
+
+/// <summary>
 /// Immutable evidence/state for one future live/shadow index publication attempt.
 ///
 /// This type performs no filesystem or SQLite mutation. It exists so a later Windows
@@ -26,6 +65,7 @@ public sealed record IndexRebuildPublicationAttempt(
     bool LiveSnapshotWasReadableAtPreparation,
     bool ShadowCheckpointWasValidAtPreparation,
     bool ExclusivePublicationLeaseWasHeldAtPreparation,
+    IndexRebuildPublicationQuiescenceEvidence? QuiescenceAtSwapStart,
     string? FailureSummary)
 {
     public bool SwapMayHaveChangedLiveSnapshot =>
@@ -41,6 +81,8 @@ public sealed record IndexRebuildPublicationAttempt(
     public bool GrantsRollbackAuthority => false;
 
     public bool GrantsCleanupAuthority => false;
+
+    public bool GrantsFilesystemMutationAuthority => false;
 }
 
 public static class IndexRebuildPublicationTransactionPolicy
@@ -70,26 +112,36 @@ public static class IndexRebuildPublicationTransactionPolicy
             publicationState.LiveSnapshotReadable,
             publicationState.ShadowHasValidCheckpoint,
             publicationState.ExclusivePublicationLeaseHeld,
+            QuiescenceAtSwapStart: null,
             FailureSummary: null);
     }
 
     public static IndexRebuildPublicationAttempt MarkSwapStarted(
         IndexRebuildPublicationAttempt attempt,
-        IndexRebuildPublicationState currentPublicationState)
+        IndexRebuildPublicationState currentPublicationState,
+        IndexRebuildPublicationQuiescenceEvidence quiescence)
     {
         ArgumentNullException.ThrowIfNull(attempt);
         ArgumentNullException.ThrowIfNull(currentPublicationState);
+        ArgumentNullException.ThrowIfNull(quiescence);
         RequireState(attempt, IndexRebuildPublicationAttemptState.Prepared);
         RequireSamePublicationBinding(attempt, currentPublicationState);
+        RequireSamePublicationBinding(attempt, quiescence);
         if (!currentPublicationState.CanPublish)
         {
             throw new InvalidOperationException(
                 "Index publication swap cannot start after the verified checkpoint, readable live snapshot, or exclusive publication lease evidence has been lost.");
         }
+        if (!quiescence.CanStartFilesystemSwap)
+        {
+            throw new InvalidOperationException(
+                "Index publication swap cannot start until the local volume operation gate and cross-process maintenance lease are held, both WAL files are checkpointed, SQLite connection pools are cleared, and live/shadow WAL/SHM sidecars are quiesced.");
+        }
 
         return attempt with
         {
             State = IndexRebuildPublicationAttemptState.SwapStarted,
+            QuiescenceAtSwapStart = quiescence,
             FailureSummary = null,
         };
     }
@@ -102,6 +154,12 @@ public static class IndexRebuildPublicationTransactionPolicy
         ArgumentNullException.ThrowIfNull(currentPublicationState);
         RequireState(attempt, IndexRebuildPublicationAttemptState.SwapStarted);
         RequireSamePublicationBinding(attempt, currentPublicationState);
+        if (attempt.QuiescenceAtSwapStart is null ||
+            !attempt.QuiescenceAtSwapStart.CanStartFilesystemSwap)
+        {
+            throw new InvalidOperationException(
+                "Index publication cannot be committed without the exact SQLite quiescence evidence that authorized crossing the swap barrier.");
+        }
 
         return attempt with
         {
@@ -151,6 +209,24 @@ public static class IndexRebuildPublicationTransactionPolicy
         {
             throw new InvalidOperationException(
                 "Index publication attempt is not bound to the current live/shadow database paths.");
+        }
+    }
+
+    private static void RequireSamePublicationBinding(
+        IndexRebuildPublicationAttempt attempt,
+        IndexRebuildPublicationQuiescenceEvidence quiescence)
+    {
+        if (!string.Equals(
+                attempt.LiveDatabasePath,
+                quiescence.LiveDatabasePath,
+                StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(
+                attempt.ShadowDatabasePath,
+                quiescence.ShadowDatabasePath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Index publication quiescence evidence is not bound to this attempt's live/shadow database paths.");
         }
     }
 
