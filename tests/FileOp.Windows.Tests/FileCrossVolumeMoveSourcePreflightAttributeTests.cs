@@ -29,9 +29,10 @@ public sealed class FileCrossVolumeMoveSourcePreflightAttributeTests
             Assert.IsFalse(
                 classification.CanStartCopy,
                 $"Attribute mask 0x{attributes:X8} must be refused before cross-volume Copy.");
-            CollectionAssert.Contains(
-                (System.Collections.ICollection)classification.Blockers,
-                FileCrossVolumeMoveSourcePreflightBlocker.SourceUnsupportedAttributes);
+            Assert.AreEqual(1, classification.Blockers.Count);
+            Assert.AreEqual(
+                FileCrossVolumeMoveSourcePreflightBlocker.SourceUnsupportedAttributes,
+                classification.Blockers[0]);
         }
     }
 
