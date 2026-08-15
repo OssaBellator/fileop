@@ -160,11 +160,12 @@ public sealed class DirectoryOperationTreeManifest
                 string.IsNullOrWhiteSpace(segment) ||
                 segment == "." ||
                 segment == ".." ||
+                segment.Contains(Path.VolumeSeparatorChar) ||
                 segment.EndsWith(' ') ||
                 segment.EndsWith('.')))
         {
             throw new ArgumentException(
-                $"Directory tree manifest entry '{entry.RelativePath}' contains an empty, ambiguous, current-directory or parent-directory segment.",
+                $"Directory tree manifest entry '{entry.RelativePath}' contains an empty, ambiguous, stream-like, current-directory or parent-directory segment.",
                 nameof(entry));
         }
 
