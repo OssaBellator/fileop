@@ -68,10 +68,12 @@ def check_repository(root: Path) -> int:
     paths = {
         "guard": root / "src/FileOp.Windows/Operations/WindowsMutationFilesystemCapability.cs",
         "move": root / "src/FileOp.Windows/Operations/WindowsNtfsMoveOperationExecutionValidator.cs",
+        "primitives": root / "src/FileOp.Windows/Operations/WindowsNtfsMutationPrimitives.cs",
         "aliases": root / "src/FileOp.App/MutationExecutionValidatorAliases.cs",
         "tests": root / "tests/FileOp.Windows.Tests/WindowsMutationFilesystemCapabilityBoundaryTests.cs",
         "binding_tests": root / "tests/FileOp.Windows.Tests/WindowsMutationFilesystemCapabilityBindingTests.cs",
         "policy_tests": root / "tests/FileOp.Windows.Tests/WindowsMutationFilesystemCapabilityPolicyTests.cs",
+        "primitive_tests": root / "tests/FileOp.Windows.Tests/WindowsMutationFilesystemCapabilityPrimitiveGuardTests.cs",
         "resolver": root / "src/FileOp.Windows/Operations/WindowsFileOperationExecutionValidator.cs",
         "gate": root / "tools/test-mutation-filesystem-identity.ps1",
         "product_wiring": root / "tools/verify_mutation_filesystem_product_wiring.py",
@@ -142,6 +144,32 @@ def check_repository(root: Path) -> int:
         "WindowsNtfsMutationExecutionValidator",
     )
 
+    primitives = source["primitives"]
+    checks += require(
+        primitives,
+        "WindowsNtfsMutationCapabilityGuard",
+        "RequireExactNtfs(",
+        "capability.CanUseCurrentMutationIdentity",
+        "capability.IsBoundTo(canonicalDirectoryPath, expectedIdentity)",
+        "WindowsNtfsFileCopyMutationPrimitive",
+        "new WindowsFileCopyMutationPrimitive()",
+        "request.SourceDirectory.CanonicalPath",
+        "request.DestinationDirectory.CanonicalPath",
+        "WindowsNtfsFileSameVolumeMoveMutationPrimitive",
+        "new WindowsFileSameVolumeMoveMutationPrimitive()",
+        "WindowsNtfsFileDeleteOperationFinalMutationLeaseProvider",
+        "new WindowsFileDeleteOperationFinalMutationLeaseProvider()",
+        "request.Authorization.CanonicalSourceDirectoryPath",
+        "request.Authorization.SourceDirectoryIdentity",
+    )
+    checks += reject(
+        primitives,
+        "File.Copy(",
+        "File.Move(",
+        "File.Delete(",
+        "Directory.Delete(",
+    )
+
     checks += require(
         source["aliases"],
         "global using WindowsFileOperationExecutionValidator =",
@@ -150,6 +178,12 @@ def check_repository(root: Path) -> int:
         "FileOp.Windows.Operations.WindowsNtfsMoveOperationExecutionValidator",
         "global using WindowsFileDeleteOperationExecutionValidator =",
         "FileOp.Windows.Operations.WindowsNtfsFileDeleteOperationExecutionValidator",
+        "global using WindowsFileCopyMutationPrimitive =",
+        "FileOp.Windows.Operations.WindowsNtfsFileCopyMutationPrimitive",
+        "global using WindowsFileSameVolumeMoveMutationPrimitive =",
+        "FileOp.Windows.Operations.WindowsNtfsFileSameVolumeMoveMutationPrimitive",
+        "global using WindowsFileDeleteOperationFinalMutationLeaseProvider =",
+        "FileOp.Windows.Operations.WindowsNtfsFileDeleteOperationFinalMutationLeaseProvider",
         "Browsing, Search, indexing and read-only preflight are intentionally not narrowed to NTFS",
     )
 
@@ -184,6 +218,18 @@ def check_repository(root: Path) -> int:
         "provider returned no evidence",
         "=> null!;",
     )
+    checks += require(
+        source["primitive_tests"],
+        "RefsSourceBlocksCopyBeforeRawPrimitiveDelegation",
+        "RefsDestinationBlocksCopyBeforeRawPrimitiveDelegation",
+        "ExactNtfsCopyEvidenceDelegatesToRawPrimitive",
+        "RefsRootBlocksSameVolumeRenameBeforeRawPrimitiveDelegation",
+        "ExactNtfsRenameEvidenceDelegatesToRawPrimitive",
+        "RefsRootBlocksFinalDeleteLeaseBeforeRawProviderDelegation",
+        "ExactNtfsDeleteEvidenceDelegatesToRawFinalLeaseProvider",
+        "MisboundSupportedEvidenceDoesNotReachAnyRawMutationProvider",
+        "Assert.AreEqual(0, inner.CallCount)",
+    )
 
     # Pin the reason this guard exists: the current resolver still constructs the mutation
     # identity from the 64-bit BY_HANDLE_FILE_INFORMATION file index. #193 must not pretend
@@ -203,15 +249,20 @@ def check_repository(root: Path) -> int:
         "WindowsMutationFilesystemCapabilityBoundaryTests",
         "WindowsMutationFilesystemCapabilityBindingTests",
         "WindowsMutationFilesystemCapabilityPolicyTests",
+        "WindowsMutationFilesystemCapabilityPrimitiveGuardTests",
         'FullyQualifiedName~WindowsMutationFilesystemCapability',
         "dotnet test",
+        "dotnet build $indexerProject",
+        "dotnet build $appProject",
         "OfflineOnly",
     )
     checks += require(
         source["product_wiring"],
         'app_root.rglob("*.cs")',
         "Unexpected App use of {type_name}",
-        "verify_mutation_filesystem_product_wiring.py",
+        "WindowsFileCopyMutationPrimitive",
+        "WindowsFileSameVolumeMoveMutationPrimitive",
+        "WindowsFileDeleteOperationFinalMutationLeaseProvider",
         "EnableDefaultCompileItems",
         "check_mutation_product_wiring",
     )
