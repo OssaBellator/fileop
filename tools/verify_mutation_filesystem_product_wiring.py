@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin FileOp.App mutation call sites to the #193 NTFS-guarded validator aliases."""
+"""Pin FileOp.App mutation call sites to the #193 NTFS-guarded aliases."""
 from __future__ import annotations
 
 import argparse
@@ -49,6 +49,12 @@ def check(root: Path) -> int:
         "FileOp.Windows.Operations.WindowsNtfsMoveOperationExecutionValidator",
         "global using WindowsFileDeleteOperationExecutionValidator =",
         "FileOp.Windows.Operations.WindowsNtfsFileDeleteOperationExecutionValidator",
+        "global using WindowsFileCopyMutationPrimitive =",
+        "FileOp.Windows.Operations.WindowsNtfsFileCopyMutationPrimitive",
+        "global using WindowsFileSameVolumeMoveMutationPrimitive =",
+        "FileOp.Windows.Operations.WindowsNtfsFileSameVolumeMoveMutationPrimitive",
+        "global using WindowsFileDeleteOperationFinalMutationLeaseProvider =",
+        "FileOp.Windows.Operations.WindowsNtfsFileDeleteOperationFinalMutationLeaseProvider",
     )
 
     # The alias source relies on SDK default compile items. Pin the project contract so the
@@ -66,28 +72,40 @@ def check(root: Path) -> int:
         '<Compile Remove="**\\*.cs"',
     )
 
-    checks += require(copy, "new WindowsFileOperationExecutionValidator()")
+    checks += require(
+        copy,
+        "new WindowsFileOperationExecutionValidator()",
+        "new WindowsFileCopyMutationPrimitive()",
+    )
     assert move.count("new WindowsMoveOperationExecutionValidator()") >= 2
     checks += 1
+    checks += require(move, "new WindowsFileSameVolumeMoveMutationPrimitive()")
     checks += require(
         delete,
         "private readonly IFileDeleteOperationExecutionValidator _deleteExecutionValidator =",
         "new WindowsFileDeleteOperationExecutionValidator();",
+        "new WindowsFileDeleteOperationFinalMutationLeaseProvider()",
     )
 
-    combined = copy + move + delete
-    checks += reject(
-        combined,
-        "new FileOp.Windows.Operations.WindowsFileOperationExecutionValidator",
-        "new global::FileOp.Windows.Operations.WindowsFileOperationExecutionValidator",
-        "new FileOp.Windows.Operations.WindowsMoveOperationExecutionValidator",
-        "new global::FileOp.Windows.Operations.WindowsMoveOperationExecutionValidator",
-        "new FileOp.Windows.Operations.WindowsFileDeleteOperationExecutionValidator",
-        "new global::FileOp.Windows.Operations.WindowsFileDeleteOperationExecutionValidator",
-        "using WindowsFileOperationExecutionValidator =",
-        "using WindowsMoveOperationExecutionValidator =",
-        "using WindowsFileDeleteOperationExecutionValidator =",
+    guarded_names = (
+        "WindowsFileOperationExecutionValidator",
+        "WindowsMoveOperationExecutionValidator",
+        "WindowsFileDeleteOperationExecutionValidator",
+        "WindowsFileCopyMutationPrimitive",
+        "WindowsFileSameVolumeMoveMutationPrimitive",
+        "WindowsFileDeleteOperationFinalMutationLeaseProvider",
     )
+    combined = copy + move + delete
+    forbidden = []
+    for name in guarded_names:
+        forbidden.extend(
+            (
+                f"new FileOp.Windows.Operations.{name}",
+                f"new global::FileOp.Windows.Operations.{name}",
+                f"using {name} =",
+            )
+        )
+    checks += reject(combined, *forbidden)
 
     # A project-wide alias is intentionally used because these are product mutation-policy
     # names. Pin its blast radius recursively across source directories while ignoring build
@@ -97,6 +115,9 @@ def check(root: Path) -> int:
         "WindowsFileOperationExecutionValidator": Path("FilesView.Copy.cs"),
         "WindowsMoveOperationExecutionValidator": Path("FilesView.Move.cs"),
         "WindowsFileDeleteOperationExecutionValidator": Path("FilesView.Delete.cs"),
+        "WindowsFileCopyMutationPrimitive": Path("FilesView.Copy.cs"),
+        "WindowsFileSameVolumeMoveMutationPrimitive": Path("FilesView.Move.cs"),
+        "WindowsFileDeleteOperationFinalMutationLeaseProvider": Path("FilesView.Delete.cs"),
     }
     observed_counts = {name: 0 for name in expected_usage}
     app_sources = sorted(
@@ -125,7 +146,10 @@ def check(root: Path) -> int:
     assert observed_counts["WindowsFileOperationExecutionValidator"] == 1
     assert observed_counts["WindowsMoveOperationExecutionValidator"] >= 2
     assert observed_counts["WindowsFileDeleteOperationExecutionValidator"] == 1
-    checks += 3
+    assert observed_counts["WindowsFileCopyMutationPrimitive"] == 1
+    assert observed_counts["WindowsFileSameVolumeMoveMutationPrimitive"] == 1
+    assert observed_counts["WindowsFileDeleteOperationFinalMutationLeaseProvider"] == 1
+    checks += 6
 
     checks += require(
         gate,
@@ -135,6 +159,7 @@ def check(root: Path) -> int:
         "WindowsMutationFilesystemCapabilityBoundaryTests",
         "WindowsMutationFilesystemCapabilityBindingTests",
         "WindowsMutationFilesystemCapabilityPolicyTests",
+        "WindowsMutationFilesystemCapabilityPrimitiveGuardTests",
         'FullyQualifiedName~WindowsMutationFilesystemCapability',
         '$indexerProject = Join-Path $repoRoot "src\\FileOp.Indexer\\FileOp.Indexer.csproj"',
         '$appProject = Join-Path $repoRoot "src\\FileOp.App\\FileOp.App.csproj"',
