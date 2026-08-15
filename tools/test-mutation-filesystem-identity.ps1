@@ -49,6 +49,7 @@ foreach ($requiredProject in @($testProject, $indexerProject, $appProject)) {
 # - WindowsMutationFilesystemCapabilityBoundaryTests
 # - WindowsMutationFilesystemCapabilityBindingTests
 # - WindowsMutationFilesystemCapabilityPolicyTests
+# - WindowsMutationFilesystemCapabilityPrimitiveGuardTests
 & dotnet test $testProject `
     -c $Configuration `
     --filter "FullyQualifiedName~WindowsMutationFilesystemCapability" `
