@@ -39,6 +39,7 @@ public sealed class FileCrossVolumeMoveRecoveryEvidenceStoreTests
             Assert.AreEqual(FileCrossVolumeMoveEntryState.RecoveryRequired, recovery.Entries[0].State);
             Assert.IsTrue(recovery.Entries[0].HasDestinationRecoveryEvidence);
             Assert.IsFalse(recovery.Entries[0].DestinationIsDurablyCommitted);
+            Assert.IsFalse(recovery.Entries[0].SourceDeleteBarrierMayBeUnresolved);
             Assert.IsFalse(recovery.HasRetainedSourceDuplicates);
         }
 
@@ -48,6 +49,7 @@ public sealed class FileCrossVolumeMoveRecoveryEvidenceStoreTests
         Assert.IsTrue(persisted.RequiresRecovery);
         Assert.IsTrue(persisted.Entries[0].HasDestinationRecoveryEvidence);
         Assert.IsFalse(persisted.Entries[0].DestinationIsDurablyCommitted);
+        Assert.IsFalse(persisted.Entries[0].SourceDeleteBarrierMayBeUnresolved);
         Assert.AreEqual(destinationIdentity, persisted.Entries[0].DestinationIdentity);
         Assert.AreEqual(fingerprint, persisted.Entries[0].DestinationContentFingerprint);
         Assert.IsFalse(persisted.HasRetainedSourceDuplicates);
@@ -85,6 +87,7 @@ public sealed class FileCrossVolumeMoveRecoveryEvidenceStoreTests
 
             Assert.IsTrue(recovery.Entries[0].HasDestinationRecoveryEvidence);
             Assert.IsTrue(recovery.Entries[0].DestinationIsDurablyCommitted);
+            Assert.IsTrue(recovery.Entries[0].SourceDeleteBarrierMayBeUnresolved);
             Assert.IsFalse(recovery.HasRetainedSourceDuplicates);
         }
 
@@ -94,6 +97,7 @@ public sealed class FileCrossVolumeMoveRecoveryEvidenceStoreTests
         Assert.IsTrue(persisted.RequiresRecovery);
         Assert.IsTrue(persisted.Entries[0].HasDestinationRecoveryEvidence);
         Assert.IsTrue(persisted.Entries[0].DestinationIsDurablyCommitted);
+        Assert.IsTrue(persisted.Entries[0].SourceDeleteBarrierMayBeUnresolved);
         Assert.IsNotNull(persisted.Entries[0].SourceDeleteStartedAtUtc);
         Assert.IsFalse(persisted.HasRetainedSourceDuplicates);
     }
