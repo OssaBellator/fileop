@@ -160,6 +160,7 @@ def check_repository(root: Path) -> int:
         "store": "src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs",
         "contract": "src/FileOp.Core/Operations/FileCrossVolumeMoveSourceDelete.cs",
         "executor": "src/FileOp.Core/Operations/FileCrossVolumeMoveOperationExecutor.cs",
+        "executor_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveOperationExecutorTests.cs",
         "fidelity": "src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs",
         "security": "src/FileOp.Core/Operations/FileCrossVolumeMoveSecurityPolicy.cs",
         "preservation": "src/FileOp.Core/Operations/FileCrossVolumeMovePreservationPolicy.cs",
@@ -224,6 +225,7 @@ def check_repository(root: Path) -> int:
         ".MarkSourceDeleteStartedAsync(",
         "new FileCrossVolumeMoveSourceDeleteAuthorization(",
         ".MarkDeletePendingAsync(authorization, CancellationToken.None)",
+        "if (!sourceDeleteLease.SourceDeleteMutationPerformed)",
         ".CommitSourceDeletedAsync(",
     ]
     assert [executor.index(item) for item in ordered_calls] == sorted(executor.index(item) for item in ordered_calls)
@@ -234,10 +236,19 @@ def check_repository(root: Path) -> int:
         "DestinationCommitted is deliberately a cancellation-safe checkpoint.",
         "No cancellation is passed beyond SourceDeleteStarted",
         "DeleteAccessCapabilityHeld",
+        "SourceDeleteMutationPerformed",
+        "returned without reporting that the exact source disposition was performed",
         "CancellationToken.None",
         "MarkRecoveryRequiredAsync(",
     )
     checks += must_not_contain(executor, "File.Delete(", "File.Move(", "overwrite: true")
+    checks += must_contain(
+        source["executor_tests"],
+        "SourceDeleteSuccessWithoutMutationProofRequiresRecovery",
+        "ReportMutationPerformed = false",
+        "CrossVolumeMoveSourceDeleteFailed",
+        "FileCrossVolumeMoveTerminalState.RecoveryRequired",
+    )
 
     checks += must_contain(
         source["contract"],
