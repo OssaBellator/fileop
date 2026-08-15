@@ -121,6 +121,16 @@ public sealed class WindowsNtfsFileDeleteOperationFinalMutationLeaseProvider :
     private readonly IWindowsMutationFilesystemCapabilityProbe _probe;
 
     public WindowsNtfsFileDeleteOperationFinalMutationLeaseProvider(
+        IFileDeleteProtectedLocationPolicy protectedLocationPolicy,
+        IWindowsMutationFilesystemCapabilityProbe? probe = null)
+        : this(
+            new WindowsFileDeleteOperationFinalMutationLeaseProvider(
+                protectedLocationPolicy ?? throw new ArgumentNullException(nameof(protectedLocationPolicy))),
+            probe)
+    {
+    }
+
+    public WindowsNtfsFileDeleteOperationFinalMutationLeaseProvider(
         IFileDeleteOperationFinalMutationLeaseProvider? inner = null,
         IWindowsMutationFilesystemCapabilityProbe? probe = null)
     {

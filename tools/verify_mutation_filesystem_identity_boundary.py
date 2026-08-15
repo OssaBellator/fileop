@@ -183,7 +183,8 @@ def check_repository(root: Path) -> int:
         "FileOp.Windows.Operations.WindowsNtfsFileSameVolumeMoveMutationPrimitive",
         "global using WindowsFileDeleteOperationFinalMutationLeaseProvider =",
         "FileOp.Windows.Operations.WindowsNtfsFileDeleteOperationFinalMutationLeaseProvider",
-        "Browsing, Search, indexing and read-only preflight are intentionally not narrowed to NTFS",
+        "Browsing,",
+        "Search, indexing and read-only preflight are intentionally not narrowed to NTFS",
     )
 
     checks += require(
@@ -226,6 +227,7 @@ def check_repository(root: Path) -> int:
         "ExactNtfsRenameEvidenceDelegatesToRawPrimitive",
         "RefsRootBlocksFinalDeleteLeaseBeforeRawProviderDelegation",
         "ExactNtfsDeleteEvidenceDelegatesToRawFinalLeaseProvider",
+        "ProtectedLocationPolicyConstructorPreservesRawDeletePolicy",
         "MisboundSupportedEvidenceDoesNotReachAnyRawMutationProvider",
         "BindingFlags.Instance | BindingFlags.NonPublic",
         "Assert.AreEqual(0, inner.CallCount)",

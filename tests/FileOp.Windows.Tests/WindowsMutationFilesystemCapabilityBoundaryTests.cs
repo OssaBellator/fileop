@@ -93,7 +93,7 @@ public sealed class WindowsMutationFilesystemCapabilityBoundaryTests
         Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
         Assert.IsFalse(result.CanBeginMutation);
         Assert.AreEqual(1, probe.Calls.Count);
-        StringAssert.Contains(result.Summary, "Unavailable");
+        StringAssert.Contains(result.Summary, "filesystem proof unavailable");
     }
 
     [TestMethod]

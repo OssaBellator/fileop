@@ -95,7 +95,7 @@ def check(root: Path) -> int:
         delete,
         "private readonly IFileDeleteOperationExecutionValidator _deleteExecutionValidator =",
         "new WindowsFileDeleteOperationExecutionValidator();",
-        "new WindowsFileDeleteOperationFinalMutationLeaseProvider()",
+        "new WindowsFileDeleteOperationFinalMutationLeaseProvider(protectedLocationPolicy)",
     )
 
     guarded_names = (

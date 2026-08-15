@@ -144,6 +144,27 @@ public sealed class WindowsMutationFilesystemCapabilityPrimitiveGuardTests
     }
 
     [TestMethod]
+    public async Task ProtectedLocationPolicyConstructorPreservesRawDeletePolicy()
+    {
+        var request = CreateDeleteRequest();
+        var probe = new QueueProbe(new WindowsMutationFilesystemCapability(
+            request.Authorization.CanonicalSourceDirectoryPath,
+            request.Authorization.SourceDirectoryIdentity,
+            WindowsMutationFilesystemCapabilityState.SupportedNtfs,
+            "NTFS",
+            "filesystem is NTFS"));
+        var guarded = new WindowsNtfsFileDeleteOperationFinalMutationLeaseProvider(
+            new AlwaysBlockedPolicy(),
+            probe);
+
+        await AssertThrowsAsync<UnauthorizedAccessException>(async () =>
+            await guarded.AcquireAsync(request));
+
+        Assert.AreEqual(1, probe.CallCount);
+    }
+
+
+    [TestMethod]
     public async Task MisboundSupportedEvidenceDoesNotReachAnyRawMutationProvider()
     {
         var request = CreateCopyRequest();
@@ -298,6 +319,13 @@ public sealed class WindowsMutationFilesystemCapabilityPrimitiveGuardTests
         Assert.Fail($"Expected {typeof(TException).Name} to be thrown.");
     }
 
+    private sealed class AlwaysBlockedPolicy : IFileDeleteProtectedLocationPolicy
+    {
+        public FileDeleteProtectedLocationResult Evaluate(string canonicalPath) =>
+            new(
+                FileDeleteProtectedLocationDecision.Blocked,
+                "blocked by the test policy");
+    }
     private sealed class QueueProbe : IWindowsMutationFilesystemCapabilityProbe
     {
         private readonly Queue<WindowsMutationFilesystemCapability> _results;
