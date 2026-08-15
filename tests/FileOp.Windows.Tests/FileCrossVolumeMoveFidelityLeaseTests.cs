@@ -53,7 +53,7 @@ public sealed class FileCrossVolumeMoveFidelityLeaseTests
         var inner = new FakeInnerDeletePrimitive();
         var verifier = new FakeFidelityVerifier(
             Allowed(),
-            Blocked(FileCrossVolumeMoveFidelityBlocker.DestinationHardLinks));
+            Blocked(FileCrossVolumeMoveFidelityBlocker.SourceExtendedAttributes));
         var sourceDelete = new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive(
             inner,
             verifier);
