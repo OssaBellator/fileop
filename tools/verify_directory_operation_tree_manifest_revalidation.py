@@ -8,6 +8,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from verify_directory_copy_fresh_manifest_gate import (
+    check_repository as check_directory_copy_fresh_manifest_repository,
+    run_model as run_directory_copy_fresh_manifest_model,
+)
+
 
 @dataclass(frozen=True)
 class Entry:
@@ -267,12 +272,18 @@ def main() -> int:
         parser.error("--cases must be positive")
 
     model_checks = run_model(args.cases)
+    fresh_gate_checks = run_directory_copy_fresh_manifest_model(args.cases)
     print(
-        f"PASS directory tree manifest revalidation model: {model_checks:,} checks across {args.cases:,} randomized cases"
+        f"PASS directory tree manifest revalidation model: {model_checks:,} checks across {args.cases:,} randomized cases; "
+        f"directory Copy fresh-manifest gate: {fresh_gate_checks:,} checks"
     )
     if not args.model_only:
         source_checks = check_repository(args.repo_root.resolve())
-        print(f"PASS directory tree manifest revalidation source contract: {source_checks} checks")
+        fresh_source_checks = check_directory_copy_fresh_manifest_repository(args.repo_root.resolve())
+        print(
+            f"PASS directory tree manifest revalidation source contract: {source_checks} checks; "
+            f"directory Copy fresh-manifest gate: {fresh_source_checks} checks"
+        )
     return 0
 
 
