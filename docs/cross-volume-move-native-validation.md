@@ -31,7 +31,7 @@ Then, from the same ordinary unelevated shell, run the explicit ordinary-token s
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-cross-volume-move-security.ps1
 ```
 
-That script refuses to run when the current token is elevated. It executes the `CrossVolumeMoveSecurityNative` category, which gives source and destination-parent directories intentionally different inheritable DACLs and proves that the real `WindowsFileCopyMutationPrimitive` creates its destination with the destination-context/default inherited DACL rather than cloning the source DACL. The test queries DACL information only; it does not request SACL, backup-security or `ACCESS_SYSTEM_SECURITY` evidence.
+That script refuses to run when the current token is elevated. It executes the `CrossVolumeMoveSecurityNative` category. The canonical regression gives the source file a protected NULL DACL while the destination parent retains an ordinary non-NULL DACL, then invokes the real `WindowsFileCopyMutationPrimitive`. The created destination must have an ordinary non-NULL default/destination-context DACL rather than cloning the source NULL DACL. The test queries/sets DACL information only; it does not request SACL, backup-security or `ACCESS_SYSTEM_SECURITY` evidence.
 
 Finally run the explicit two-volume matrix:
 
@@ -59,7 +59,7 @@ Separate always-on Windows tests in `FileCrossVolumeMoveFidelityShareCompatibili
 
 The selected product contract is Windows-style destination-default/inherited security, not preservation of the source security descriptor. The cross-volume fidelity verifier must not require `ACCESS_SYSTEM_SECURITY`, SACL reads, or source/destination descriptor equality.
 
-`WindowsFileCopyDestinationSecurityPolicyTests.CopyDestinationUsesDestinationInheritedDaclRatherThanSourceDacl` is the executable ordinary-token proof for that contract. It intentionally creates different source and destination inheritance contexts before invoking the real Copy primitive. Before #186 is closed, record a successful run through `tools/test-cross-volume-move-security.ps1` on the exact final head. Do not substitute an elevated run and do not interpret a failed privileged security read as evidence.
+`WindowsFileCopyMutationSecurityPolicyTests.ReviewedCopyCreatesDestinationWithDefaultSecurityInsteadOfCloningSourceNullDacl` is the executable ordinary-token proof for that contract. Before #186 is closed, record a successful run through `tools/test-cross-volume-move-security.ps1` on the exact final head. Do not substitute an elevated run and do not interpret a failed privileged security read as evidence.
 
 ## Evidence to record
 
