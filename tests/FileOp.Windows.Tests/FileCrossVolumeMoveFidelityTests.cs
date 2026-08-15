@@ -84,6 +84,20 @@ public sealed class FileCrossVolumeMoveFidelityTests
     }
 
     [TestMethod]
+    public void ReadOnlyAttributeIsRefusedBeforeSourceDeleteBarrier()
+    {
+        var classification = FileCrossVolumeMoveFidelityClassifier.Classify(
+            BaselineEvidence() with
+            {
+                CurrentSourceBasicMetadata = new FileBasicMetadataEvidence(1, 2, 3, 0x21u),
+                CurrentDestinationBasicMetadata = new FileBasicMetadataEvidence(1, 4, 3, 0x21u),
+            });
+
+        AssertBlocker(classification, FileCrossVolumeMoveFidelityBlocker.SourceUnsupportedAttributes);
+        AssertBlocker(classification, FileCrossVolumeMoveFidelityBlocker.DestinationUnsupportedAttributes);
+    }
+
+    [TestMethod]
     public void SourceNamedStreamsAndExtendedAttributesStillBlockDestructiveCompletion()
     {
         var evidence = BaselineEvidence() with
