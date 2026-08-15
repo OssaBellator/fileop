@@ -24,6 +24,7 @@ def check(root: Path) -> int:
     relationship = read(root, "src/FileOp.Windows/Operations/WindowsFileOperationVolumeRelationship.cs")
     validator = read(root, "src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs")
     tests = read(root, "tests/FileOp.Windows.Tests/WindowsMoveOperationExecutionValidatorTests.cs")
+    real_probe_tests = read(root, "tests/FileOp.Windows.Tests/WindowsFileOperationVolumeRelationshipTests.cs")
     store = read(root, "src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs")
 
     checks = 0
@@ -63,6 +64,16 @@ def check(root: Path) -> int:
         "FileOperationVolumeRelationshipState.DifferentVolume",
         "FileOperationVolumeRelationshipState.Unavailable",
         "Assert.AreEqual(0, probe.QueryCalls)",
+    )
+
+    checks += require(
+        real_probe_tests,
+        "TwoDirectoriesOnSameTempVolumeResolveToSameHandleBoundGuid",
+        "new WindowsFileOperationVolumeRelationshipProbe()",
+        "FileOperationVolumeRelationshipState.SameVolume",
+        "SourceVolumeGuidName",
+        "DestinationVolumeGuidName",
+        "StringComparison.OrdinalIgnoreCase",
     )
 
     # The dormant composite journal is schema-v1 and still keys root identity by the
