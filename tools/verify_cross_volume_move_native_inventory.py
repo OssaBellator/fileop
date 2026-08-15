@@ -79,12 +79,20 @@ def check(root: Path) -> int:
         recovery,
         '[TestCategory("CrossVolumeMoveNative")]',
         "PostBarrierFidelityRefusalWithRealLeaseRequiresRecoveryAndRetainsBothFiles",
+        "PostBarrierSourceNamedStreamIsDetectedByRealSecondProofAndRequiresRecovery",
+        "PostBarrierSourceExtendedAttributeIsDetectedByRealSecondProofAndRequiresRecovery",
+        "MutateOnSecondProofFidelityVerifier",
+        "WindowsFileCrossVolumeMoveFidelityVerifier _inner = new()",
+        "FileCrossVolumeMoveFidelityBlocker.SourceNamedDataStreams",
+        "FileCrossVolumeMoveFidelityBlocker.SourceExtendedAttributes",
         "new WindowsFileCrossVolumeMoveSourceDeletePrimitive()",
         "new WindowsFileCopyMutationPrimitive()",
         "FileCrossVolumeMoveEntryState.RecoveryRequired",
         "FileCrossVolumeMoveTerminalState.RecoveryRequired",
         "Assert.IsFalse(\n            persisted.HasRetainedSourceDuplicates",
         "SourceDeleteStartedAtUtc",
+        "NtSetEaFile(",
+        '":fileop-post-barrier"',
     )
     checks += forbid(recovery, "new WindowsMoveOperationExecutionValidator()")
 
@@ -160,6 +168,8 @@ def check(root: Path) -> int:
     checks += require(
         native_doc,
         "Post-barrier fidelity refusal with the real Windows lease",
+        "post-barrier ADS",
+        "post-barrier EA",
         "FileCrossVolumeMoveHardLinkPathBindingTests.CanonicalResolverPreservesTheSpecificOpenedHardLinkName",
         "tools/test-cross-volume-move-security.ps1",
         "tools/test-cross-volume-move-native.ps1",
