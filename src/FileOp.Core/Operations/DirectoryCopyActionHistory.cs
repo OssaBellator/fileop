@@ -153,43 +153,46 @@ public sealed record DirectoryCopyActionHistory
         IEnumerable<DirectoryCopyActionEntry> entries)
     {
         ArgumentNullException.ThrowIfNull(entries);
-        var snapshot = entries.OrderBy(static entry => entry.Ordinal).ToArray();
-        if (operationId == Guid.Empty || snapshot.Length == 0)
+        ArgumentException.ThrowIfNullOrWhiteSpace(canonicalSourceRootPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(canonicalDestinationParentPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(canonicalDestinationRootPath);
+        if (operationId == Guid.Empty)
         {
-            throw new ArgumentException("Directory Copy history requires a non-empty operation and action list.");
+            throw new ArgumentException("Directory Copy history requires a non-empty operation ID.", nameof(operationId));
+        }
+        if (terminalState.HasValue != completedAtUtc.HasValue)
+        {
+            throw new ArgumentException("Directory Copy terminal state and completion time must appear together.");
+        }
+        if (terminalState is { } terminal && !Enum.IsDefined(terminal))
+        {
+            throw new ArgumentOutOfRangeException(nameof(terminalState));
+        }
+
+        var snapshot = entries.OrderBy(static entry => entry.Ordinal).ToArray();
+        if (snapshot.Length == 0)
+        {
+            throw new ArgumentException("Directory Copy history requires at least one action.", nameof(entries));
         }
         for (var index = 0; index < snapshot.Length; index++)
         {
-            var entry = snapshot[index];
-            if (entry.Ordinal != index)
-            {
-                throw new ArgumentException("Directory Copy history action ordinals must be contiguous and zero-based.", nameof(entries));
-            }
-            if (entry.DestinationParentOrdinal is int parentOrdinal &&
-                (parentOrdinal < 0 || parentOrdinal >= index ||
-                 snapshot[parentOrdinal].Kind != DirectoryCopyActionKind.CreateDirectory))
-            {
-                throw new ArgumentException(
-                    "Directory Copy child actions must reference an earlier destination-directory creation action.",
-                    nameof(entries));
-            }
-            if (entry.Kind == DirectoryCopyActionKind.CreateDirectory && entry.DestinationContentFingerprint is not null)
-            {
-                throw new ArgumentException("Directory creation history cannot contain file-content fingerprint evidence.", nameof(entries));
-            }
-            if (entry.Kind == DirectoryCopyActionKind.CopyFile &&
-                entry.State == DirectoryCopyActionEntryState.Committed &&
-                entry.DestinationContentFingerprint is null)
-            {
-                throw new ArgumentException("Committed directory Copy file history requires destination SHA-256 evidence.", nameof(entries));
-            }
+            ValidateEntry(
+                snapshot,
+                index,
+                canonicalSourceRootPath,
+                sourceRootIdentity,
+                canonicalDestinationParentPath,
+                destinationParentIdentity,
+                canonicalDestinationRootPath);
         }
+        ValidateEntryOrdering(snapshot);
+        ValidateTerminal(snapshot, terminalState);
 
         OperationId = operationId;
-        QueuedAtUtc = queuedAtUtc;
-        FreshValidatedAtUtc = freshValidatedAtUtc;
-        StartedAtUtc = startedAtUtc;
-        CompletedAtUtc = completedAtUtc;
+        QueuedAtUtc = queuedAtUtc.ToUniversalTime();
+        FreshValidatedAtUtc = freshValidatedAtUtc.ToUniversalTime();
+        StartedAtUtc = startedAtUtc.ToUniversalTime();
+        CompletedAtUtc = completedAtUtc?.ToUniversalTime();
         CanonicalSourceRootPath = canonicalSourceRootPath;
         SourceRootIdentity = sourceRootIdentity;
         CanonicalDestinationParentPath = canonicalDestinationParentPath;
@@ -221,6 +224,185 @@ public sealed record DirectoryCopyActionHistory
     public bool GrantsAutomaticReplayAuthority => false;
     public bool GrantsRollbackAuthority => false;
     public bool GrantsDeleteAuthority => false;
+
+    internal static void ValidateEntry(
+        IReadOnlyList<DirectoryCopyActionEntry> entries,
+        int index,
+        string canonicalSourceRootPath,
+        FileIdentity sourceRootIdentity,
+        string canonicalDestinationParentPath,
+        FileIdentity destinationParentIdentity,
+        string canonicalDestinationRootPath)
+    {
+        var entry = entries[index];
+        ArgumentNullException.ThrowIfNull(entry);
+        ArgumentException.ThrowIfNullOrWhiteSpace(entry.CanonicalSourcePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(entry.CanonicalDestinationPath);
+        if (entry.Ordinal != index || !Enum.IsDefined(entry.Kind) || !Enum.IsDefined(entry.State))
+        {
+            throw new ArgumentException("Directory Copy history actions must have contiguous ordinals and defined kind/state values.", nameof(entries));
+        }
+        if (entry.SourceIdentity.VolumeSerialNumber != sourceRootIdentity.VolumeSerialNumber)
+        {
+            throw new ArgumentException("Directory Copy source action identity is not bound to the source-root volume.", nameof(entries));
+        }
+        if (entry.DestinationIdentity is FileIdentity destinationIdentity &&
+            destinationIdentity.VolumeSerialNumber != destinationParentIdentity.VolumeSerialNumber)
+        {
+            throw new ArgumentException("Directory Copy destination action identity is not bound to the destination-parent volume.", nameof(entries));
+        }
+        if (entry.Failure is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(entry.Failure.Code);
+            ArgumentException.ThrowIfNullOrWhiteSpace(entry.Failure.Message);
+        }
+
+        if (index == 0)
+        {
+            if (entry.Kind != DirectoryCopyActionKind.CreateDirectory ||
+                entry.RelativePath.Length != 0 ||
+                entry.DestinationParentOrdinal is not null ||
+                !PathEquals(entry.CanonicalSourcePath, canonicalSourceRootPath) ||
+                !PathEquals(entry.CanonicalDestinationPath, canonicalDestinationRootPath) ||
+                entry.SourceIdentity != sourceRootIdentity)
+            {
+                throw new ArgumentException("Directory Copy history root action is not bound to the reviewed source/destination roots.", nameof(entries));
+            }
+        }
+        else
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(entry.RelativePath);
+            if (entry.DestinationParentOrdinal is not int parentOrdinal ||
+                parentOrdinal < 0 || parentOrdinal >= index ||
+                entries[parentOrdinal].Kind != DirectoryCopyActionKind.CreateDirectory ||
+                !PathEquals(
+                    Path.GetDirectoryName(entry.CanonicalDestinationPath)
+                        ?? throw new ArgumentException("Directory Copy child action has no destination parent path.", nameof(entries)),
+                    entries[parentOrdinal].CanonicalDestinationPath))
+            {
+                throw new ArgumentException(
+                    "Directory Copy child actions must reference their exact earlier destination-directory creation action.",
+                    nameof(entries));
+            }
+        }
+
+        var started = entry.MutationStartedAtUtc.HasValue;
+        var completed = entry.CompletedAtUtc.HasValue;
+        var destination = entry.DestinationIdentity.HasValue;
+        var fingerprint = entry.DestinationContentFingerprint is not null;
+        var failure = entry.Failure is not null;
+        var valid = entry.State switch
+        {
+            DirectoryCopyActionEntryState.Pending => !started && !completed && !destination && !fingerprint && !failure,
+            DirectoryCopyActionEntryState.MutationStarted => started && !completed && !destination && !fingerprint && !failure,
+            DirectoryCopyActionEntryState.Committed => started && completed && destination && !failure &&
+                (entry.Kind == DirectoryCopyActionKind.CopyFile ? fingerprint : !fingerprint),
+            DirectoryCopyActionEntryState.Failed => !started && completed && !destination && !fingerprint && failure,
+            DirectoryCopyActionEntryState.RecoveryRequired => started && completed && failure &&
+                (entry.Kind == DirectoryCopyActionKind.CreateDirectory ? !fingerprint : !fingerprint || destination),
+            _ => false,
+        };
+        if (!valid)
+        {
+            throw new ArgumentException($"Directory Copy action {entry.Ordinal} has invalid evidence for state {entry.State}.", nameof(entries));
+        }
+    }
+
+    internal static void ValidateEntryOrdering(IReadOnlyList<DirectoryCopyActionEntry> entries)
+    {
+        var frontierSeen = false;
+        var pendingSeen = false;
+        foreach (var entry in entries)
+        {
+            switch (entry.State)
+            {
+                case DirectoryCopyActionEntryState.Committed:
+                    if (frontierSeen || pendingSeen)
+                    {
+                        throw new ArgumentException("Directory Copy history must contain one contiguous committed prefix.", nameof(entries));
+                    }
+                    break;
+
+                case DirectoryCopyActionEntryState.Pending:
+                    pendingSeen = true;
+                    break;
+
+                case DirectoryCopyActionEntryState.MutationStarted:
+                case DirectoryCopyActionEntryState.Failed:
+                case DirectoryCopyActionEntryState.RecoveryRequired:
+                    if (frontierSeen || pendingSeen)
+                    {
+                        throw new ArgumentException("Directory Copy history may contain at most one action frontier immediately after the committed prefix.", nameof(entries));
+                    }
+                    frontierSeen = true;
+                    break;
+
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(entry.State));
+            }
+        }
+    }
+
+    internal static void ValidateTerminal(
+        IReadOnlyList<DirectoryCopyActionEntry> entries,
+        DirectoryCopyActionTerminalState? terminalState)
+    {
+        if (!terminalState.HasValue)
+        {
+            return;
+        }
+
+        switch (terminalState.Value)
+        {
+            case DirectoryCopyActionTerminalState.Succeeded:
+                if (entries.Any(static entry => entry.State != DirectoryCopyActionEntryState.Committed))
+                {
+                    throw new ArgumentException("Successful directory Copy history requires every recursive action committed.", nameof(terminalState));
+                }
+                break;
+
+            case DirectoryCopyActionTerminalState.Failed:
+                if (entries.Count(static entry => entry.State == DirectoryCopyActionEntryState.Failed) != 1 ||
+                    entries.Any(static entry => entry.State is DirectoryCopyActionEntryState.MutationStarted or DirectoryCopyActionEntryState.RecoveryRequired))
+                {
+                    throw new ArgumentException("Failed directory Copy history requires exactly one definite pre-mutation failure frontier and no recovery-sensitive action.", nameof(terminalState));
+                }
+                break;
+
+            case DirectoryCopyActionTerminalState.Cancelled:
+                if (!entries.Any(static entry => entry.State == DirectoryCopyActionEntryState.Pending) ||
+                    entries.Any(static entry => entry.State is DirectoryCopyActionEntryState.MutationStarted or DirectoryCopyActionEntryState.Failed or DirectoryCopyActionEntryState.RecoveryRequired))
+                {
+                    throw new ArgumentException("Cancelled directory Copy history requires a committed prefix followed by at least one pending action.", nameof(terminalState));
+                }
+                break;
+
+            case DirectoryCopyActionTerminalState.RecoveryRequired:
+                if (entries.Count(static entry => entry.State is DirectoryCopyActionEntryState.MutationStarted or DirectoryCopyActionEntryState.RecoveryRequired) != 1 ||
+                    entries.Any(static entry => entry.State == DirectoryCopyActionEntryState.Failed))
+                {
+                    throw new ArgumentException("RecoveryRequired directory Copy history requires exactly one recovery-sensitive frontier and no definite-failure frontier.", nameof(terminalState));
+                }
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(terminalState));
+        }
+    }
+
+    private static bool PathEquals(string left, string right) =>
+        string.Equals(
+            NormalizePath(left),
+            NormalizePath(right),
+            StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizePath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(full) ?? string.Empty;
+        var trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return trimmed.Length < root.Length ? root : trimmed;
+    }
 }
 
 public interface IDirectoryCopyActionHistoryStore
