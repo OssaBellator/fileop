@@ -24,7 +24,8 @@ namespace FileOp.Windows.Operations;
 ///
 /// A 32-bit filesystem volume serial is not treated as collision-free. Different serials
 /// prove different volumes directly; equal serials require a stronger handle-bound Windows
-/// volume-GUID relationship before same-volume rename can remain mutation-ready.
+/// volume-GUID relationship bound to the exact freshly validated root identities before
+/// same-volume rename can remain mutation-ready.
 /// </summary>
 public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator
 {
@@ -124,7 +125,9 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
 
         var relationship = _volumeRelationshipProbe.Query(
             validation.SourceDirectory.CanonicalPath,
-            validation.DestinationDirectory.CanonicalPath);
+            sourceIdentity,
+            validation.DestinationDirectory.CanonicalPath,
+            destinationIdentity);
         switch (relationship.State)
         {
             case FileOperationVolumeRelationshipState.SameVolume:
@@ -137,7 +140,7 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
 
             default:
                 throw new NotSupportedException(
-                    "Move roots have equal volume-serial evidence, but Windows could not prove that they belong to the same filesystem volume. " +
+                    "Move roots have equal volume-serial evidence, but Windows could not prove that their exact validated identities belong to the same filesystem volume. " +
                     relationship.Summary);
         }
     }
