@@ -92,6 +92,8 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
         Assert.AreEqual(1, volumeProbe.QueryCalls);
         Assert.AreEqual(ready.SourceDirectory.CanonicalPath, volumeProbe.SourcePaths[0]);
         Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, volumeProbe.DestinationPaths[0]);
+        Assert.AreEqual(ready.SourceDirectory.Identity!.Value, volumeProbe.SourceIdentities[0]);
+        Assert.AreEqual(ready.DestinationDirectory.Identity!.Value, volumeProbe.DestinationIdentities[0]);
         Assert.AreEqual(2, probe.QueryCalls);
         Assert.AreEqual(ready.SourceDirectory.CanonicalPath, probe.QueriedPaths[0]);
         Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, probe.QueriedPaths[1]);
@@ -151,6 +153,8 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
 
         AssertCrossVolumeProductBlock(result);
         Assert.AreEqual(1, volumeProbe.QueryCalls);
+        Assert.AreEqual(ready.SourceDirectory.Identity!.Value, volumeProbe.SourceIdentities[0]);
+        Assert.AreEqual(ready.DestinationDirectory.Identity!.Value, volumeProbe.DestinationIdentities[0]);
         Assert.AreEqual(0, probe.QueryCalls);
     }
 
@@ -332,13 +336,21 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
 
         public System.Collections.Generic.List<string> DestinationPaths { get; } = new();
 
+        public System.Collections.Generic.List<FileIdentity> SourceIdentities { get; } = new();
+
+        public System.Collections.Generic.List<FileIdentity> DestinationIdentities { get; } = new();
+
         public FileOperationVolumeRelationship Query(
             string canonicalSourceDirectoryPath,
-            string canonicalDestinationDirectoryPath)
+            FileIdentity expectedSourceIdentity,
+            string canonicalDestinationDirectoryPath,
+            FileIdentity expectedDestinationIdentity)
         {
             QueryCalls++;
             SourcePaths.Add(canonicalSourceDirectoryPath);
             DestinationPaths.Add(canonicalDestinationDirectoryPath);
+            SourceIdentities.Add(expectedSourceIdentity);
+            DestinationIdentities.Add(expectedDestinationIdentity);
             return new FileOperationVolumeRelationship(
                 _state,
                 _state == FileOperationVolumeRelationshipState.Unavailable
