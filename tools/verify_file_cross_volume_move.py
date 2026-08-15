@@ -175,7 +175,7 @@ def check_repository(root: Path) -> int:
         "history_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveActionHistoryInvariantTests.cs",
         "corruption_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMovePersistedCorruptionTests.cs",
         "native_two_volume_tests": "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeTwoVolumeTests.cs",
-        "security_tests": "tests/FileOp.Windows.Tests/WindowsFileCopyDestinationSecurityPolicyTests.cs",
+        "security_tests": "tests/FileOp.Windows.Tests/WindowsFileCopyMutationSecurityPolicyTests.cs",
         "ui": "src/FileOp.App/FilesView.Move.cs",
         "xaml": "src/FileOp.App/FilesView.xaml",
         "readme": "README.md",
@@ -325,9 +325,6 @@ def check_repository(root: Path) -> int:
         "GetKernelObjectSecurity(",
     )
 
-    # The reviewed Copy primitive must continue to create through NtCreateFile without an
-    # explicit security descriptor. #186 relies on Windows destination/default inheritance,
-    # and the native DACL test below proves that behavior under an ordinary token.
     copy_relative = source["copy_primitive"].split("private static SafeFileHandle OpenRelativeFile(", 1)[1]
     copy_object_attributes = copy_relative.split("var status = NtCreateFile(", 1)[0]
     assert "SecurityDescriptor =" not in copy_object_attributes
@@ -421,14 +418,14 @@ def check_repository(root: Path) -> int:
     checks += must_contain(
         source["security_tests"],
         "TestCategory(\"CrossVolumeMoveSecurityNative\")",
-        "CopyDestinationUsesDestinationInheritedDaclRatherThanSourceDacl",
+        "ReviewedCopyCreatesDestinationWithDefaultSecurityInsteadOfCloningSourceNullDacl",
         "DaclSecurityInformation",
         "ProtectedDaclSecurityInformation",
         "new WindowsFileCopyMutationPrimitive()",
-        "destinationControlDacl",
-        "copiedDestinationDacl",
-        "SetFileSecurityW(",
-        "GetFileSecurityW(",
+        "protected NULL DACL",
+        "destination parent must expose an ordinary non-NULL DACL",
+        "SetNamedSecurityInfoW(",
+        "GetNamedSecurityInfoW(",
     )
     checks += must_not_contain(
         source["security_tests"],
@@ -502,6 +499,7 @@ def check_repository(root: Path) -> int:
         "CrossVolumeMoveNative",
         "ordinary unelevated token",
         "different source/destination volume serials",
+        "WindowsFileCopyMutationSecurityPolicyTests.ReviewedCopyCreatesDestinationWithDefaultSecurityInsteadOfCloningSourceNullDacl",
     )
     checks += must_contain(
         source["gate"],
