@@ -48,6 +48,20 @@ The dedicated runner refuses an elevated token, first executes `tools/verify_cro
 
 `tools/verify_move_volume_identity.py` separately pins the production serial-collision boundary before mutation tests: different serials short-circuit as cross-volume; equal serials require the stronger Windows volume-GUID probe; that probe must be bound to the exact root `FileIdentity` values returned by fresh execution validation; and the schema-v1 composite store must continue to reject equal-serial root pairs.
 
+### One-command exact-head batch
+
+When the two Windows roots are ready, the same required gate can be executed and recorded as one batch:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-cross-volume-move-merge-gate.ps1 `
+  -SourceRoot 'C:\FileOpNativeTestRoot' `
+  -DestinationRoot 'D:\FileOpNativeTestRoot'
+```
+
+The batch wrapper does **not** weaken or replace the three required commands above. It executes them in that order and fails on the first non-zero result. Before starting, it refuses non-Windows hosts, elevated tokens, dirty working trees and equal source/destination stable volume serials. It records the exact git HEAD, Windows version, .NET SDK version, resolved roots, filesystem names and volume serials, then writes complete output for the ordinary gate, security gate and native gate into one evidence directory. By default that directory is created under the current user's temporary directory; `-EvidenceDirectory` can select another path outside the repository.
+
+`tools/verify_cross_volume_move_merge_gate.py` is the platform-independent source contract for this wrapper. It pins exact-head/clean-tree evidence, ordinary-token enforcement, stable volume-serial recording, command ordering, complete log capture and the absence of elevation or GitHub Actions shortcuts.
+
 ## Matrix exercised by the dedicated two-volume gate
 
 The `CrossVolumeMoveNative` category currently requires all of these cases:
@@ -109,5 +123,7 @@ For PR #185 / issues #184, #186 and #187, record:
 - complete `tools/test-cross-volume-move-security.ps1` result;
 - complete `tools/test-cross-volume-move-native.ps1` result;
 - any skipped/inconclusive tests from the ordinary suite.
+
+The one-command batch wrapper writes `environment.txt`, `commands.txt`, the three complete numbered logs and `PASS.txt` into its evidence directory when all three required commands succeed. Those files are intended to make the exact-head evidence easy to attach or summarize later; they are not a substitute for reviewing failures or inconclusive tests.
 
 Do not mark #185 ready merely because the source/model verifiers are green. Production `WindowsMoveOperationExecutionValidator` must remain fail-closed for different-volume Move until this exact-head native evidence is complete.
