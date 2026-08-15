@@ -17,6 +17,7 @@ class Entry:
     volume: int
     file_ref: int
     is_dir: bool
+    is_reparse: bool = False
 
 
 def split_relative(relative: str) -> tuple[str, ...] | None:
@@ -26,7 +27,14 @@ def split_relative(relative: str) -> tuple[str, ...] | None:
     if path.is_absolute() or path.drive or path.root:
         return None
     parts = tuple(re.split(r"[\\/]", relative))
-    if not parts or any(not part or part.isspace() or part in {".", ".."} for part in parts):
+    if not parts or any(
+        not part
+        or part.isspace()
+        or part in {".", ".."}
+        or part.endswith(" ")
+        or part.endswith(".")
+        for part in parts
+    ):
         return None
     return parts
 
@@ -39,12 +47,20 @@ def manifest_valid(
     *,
     fidelity_complete: bool,
     unsupported_features: bool,
+    fidelity_root_matches: bool,
+    root_evidence_valid: bool,
     root: str,
     root_volume: int,
     root_ref: int,
     entries: list[Entry],
 ) -> bool:
-    if not fidelity_complete or unsupported_features or not root:
+    if (
+        not fidelity_complete
+        or unsupported_features
+        or not fidelity_root_matches
+        or not root_evidence_valid
+        or not root
+    ):
         return False
 
     by_path: dict[str, Entry] = {}
@@ -53,7 +69,7 @@ def manifest_valid(
 
     for entry in entries:
         parts = split_relative(entry.relative)
-        if parts is None:
+        if parts is None or entry.is_reparse:
             return False
         relative = "\\".join(parts)
         key = relative.casefold()
@@ -119,6 +135,8 @@ def run_model(cases: int) -> int:
     assert manifest_valid(
         fidelity_complete=True,
         unsupported_features=False,
+        fidelity_root_matches=True,
+        root_evidence_valid=True,
         root=r"C:\ManifestRoot",
         root_volume=10,
         root_ref=1,
@@ -130,9 +148,13 @@ def run_model(cases: int) -> int:
         "none",
         "incomplete",
         "unsupported",
+        "fidelity_root_mismatch",
+        "invalid_root_evidence",
         "rooted",
         "parent_escape",
+        "ambiguous_name",
         "canonical_mismatch",
+        "descendant_reparse",
         "different_volume",
         "duplicate_path",
         "duplicate_identity",
@@ -146,6 +168,8 @@ def run_model(cases: int) -> int:
         defect = rng.choice(defect_kinds)
         fidelity_complete = True
         unsupported_features = False
+        fidelity_root_matches = True
+        root_evidence_valid = True
         expected = True
 
         if defect == "incomplete":
@@ -154,14 +178,26 @@ def run_model(cases: int) -> int:
         elif defect == "unsupported":
             unsupported_features = True
             expected = False
+        elif defect == "fidelity_root_mismatch":
+            fidelity_root_matches = False
+            expected = False
+        elif defect == "invalid_root_evidence":
+            root_evidence_valid = False
+            expected = False
         elif defect == "rooted":
             entries.append(Entry(r"C:\outside.txt", r"C:\outside.txt", root_volume, 100_001, False))
             expected = False
         elif defect == "parent_escape":
             entries.append(Entry(r"..\escape.txt", r"C:\escape.txt", root_volume, 100_002, False))
             expected = False
+        elif defect == "ambiguous_name":
+            entries.append(Entry("ambiguous.", root + r"\ambiguous.", root_volume, 100_011, False))
+            expected = False
         elif defect == "canonical_mismatch":
             entries.append(Entry("mismatch.txt", root + r"\different.txt", root_volume, 100_003, False))
+            expected = False
+        elif defect == "descendant_reparse":
+            entries.append(Entry("link", root + r"\link", root_volume, 100_012, False, True))
             expected = False
         elif defect == "different_volume":
             entries.append(Entry("other-volume.txt", root + r"\other-volume.txt", root_volume + 1, 100_004, False))
@@ -200,6 +236,8 @@ def run_model(cases: int) -> int:
         actual = manifest_valid(
             fidelity_complete=fidelity_complete,
             unsupported_features=unsupported_features,
+            fidelity_root_matches=fidelity_root_matches,
+            root_evidence_valid=root_evidence_valid,
             root=root,
             root_volume=root_volume,
             root_ref=root_ref,
@@ -209,10 +247,10 @@ def run_model(cases: int) -> int:
         checks += 1
 
         if expected:
-            # Every generated valid child has a unique identity on the root volume.
             assert len({(entry.volume, entry.file_ref) for entry in entries}) == len(entries)
             assert all(entry.volume == root_volume for entry in entries)
-            checks += 2
+            assert all(not entry.is_reparse for entry in entries)
+            checks += 3
 
     return checks
 
@@ -253,16 +291,26 @@ def check_repository(root: Path) -> int:
         "DirectoryOperationFidelityClassifier.Classify(fidelityEvidence)",
         "support.CanEnterFutureMutationBoundary",
         "DirectoryOperationTreeEntryEvidence",
+        "FileOperationCanonicalPath Source",
         "DirectoryOperationTreeManifestEntry",
         "CanonicalRootPath",
         "RootIdentity",
         "IReadOnlyList<DirectoryOperationTreeManifestEntry> Entries",
         "GrantsMutationAuthority => false",
+        "root.State != FileOperationCanonicalPathState.Directory",
+        "root.IsLeafReparsePoint",
+        "root.Identity is not FileIdentity rootIdentity",
+        "not bound to the execution-validated canonical root",
         "Path.IsPathRooted(entry.RelativePath)",
         'segment == ".."',
+        "segment.EndsWith(' ')",
+        "segment.EndsWith('.')",
+        "source.State switch",
+        "source.IsLeafReparsePoint",
+        "source.Identity is not FileIdentity identity",
         "expectedCanonicalPath",
         "StringComparison.OrdinalIgnoreCase",
-        "entry.Identity.VolumeSerialNumber != rootIdentity.VolumeSerialNumber",
+        "identity.VolumeSerialNumber != rootIdentity.VolumeSerialNumber",
         "EnsureUniqueRelativePaths(normalized)",
         "EnsureUniqueObjectIdentities(rootIdentity, normalized)",
         "EnsureCompleteParentTopology(normalized)",
@@ -289,9 +337,13 @@ def check_repository(root: Path) -> int:
         "NestedPlainTreeIsDeterministicallyOrderedParentBeforeChild",
         "UnsupportedFidelityCannotCreateManifest",
         "IncompleteFidelityCannotCreateManifest",
+        "FidelityRootMustMatchExecutionValidatedCanonicalRoot",
+        "RootMustBeCanonicalNonReparseDirectoryWithIdentity",
         "RootedRelativePathIsRejected",
         "ParentDirectoryEscapeIsRejected",
+        "TrailingDotOrSpaceSegmentIsRejectedAsAmbiguous",
         "CanonicalPathMismatchIsRejected",
+        "DescendantMustBeExistingNonReparseCanonicalEvidence",
         "DuplicateCaseInsensitiveRelativePathIsRejected",
         "DifferentVolumeDescendantIdentityIsRejected",
         "MissingParentDirectoryIsRejected",
