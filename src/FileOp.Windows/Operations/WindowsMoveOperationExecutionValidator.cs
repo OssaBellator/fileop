@@ -35,22 +35,13 @@ public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecu
 
     public WindowsMoveOperationExecutionValidator(
         IFileOperationExecutionValidator? inner = null,
-        IFileOperationNamespaceCapabilityProbe? namespaceProbe = null)
+        IFileOperationNamespaceCapabilityProbe? namespaceProbe = null,
+        IFileOperationVolumeRelationshipProbe? volumeRelationshipProbe = null)
     {
         _inner = inner ?? new WindowsFileOperationExecutionValidator();
         _namespaceProbe = namespaceProbe ?? new WindowsFileOperationNamespaceCapabilityProbe();
-        _volumeRelationshipProbe = new WindowsFileOperationVolumeRelationshipProbe();
-    }
-
-    internal WindowsMoveOperationExecutionValidator(
-        IFileOperationExecutionValidator inner,
-        IFileOperationNamespaceCapabilityProbe namespaceProbe,
-        IFileOperationVolumeRelationshipProbe volumeRelationshipProbe)
-    {
-        _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-        _namespaceProbe = namespaceProbe ?? throw new ArgumentNullException(nameof(namespaceProbe));
         _volumeRelationshipProbe = volumeRelationshipProbe ??
-            throw new ArgumentNullException(nameof(volumeRelationshipProbe));
+            new WindowsFileOperationVolumeRelationshipProbe();
     }
 
     public async ValueTask<FileOperationExecutionValidationResult> ValidateAsync(
