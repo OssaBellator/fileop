@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
@@ -165,13 +166,19 @@ public sealed class WindowsMutationFilesystemCapabilityPrimitiveGuardTests
     private static FileCopyMutationRequest CreateCopyRequest()
     {
         var roots = CreateRoots(differentVolumes: true);
-        return new FileCopyMutationRequest(CreateReadyItem(roots.Source, roots.Destination), roots.Source, roots.Destination);
+        return new FileCopyMutationRequest(
+            CreateReadyItem(roots.Source, roots.Destination),
+            roots.Source,
+            roots.Destination);
     }
 
     private static FileSameVolumeMoveMutationRequest CreateMoveRequest()
     {
         var roots = CreateRoots(differentVolumes: false);
-        return new FileSameVolumeMoveMutationRequest(CreateReadyItem(roots.Source, roots.Destination), roots.Source, roots.Destination);
+        return new FileSameVolumeMoveMutationRequest(
+            CreateReadyItem(roots.Source, roots.Destination),
+            roots.Source,
+            roots.Destination);
     }
 
     private static (FileOperationCanonicalPath Source, FileOperationCanonicalPath Destination) CreateRoots(
@@ -264,7 +271,16 @@ public sealed class WindowsMutationFilesystemCapabilityPrimitiveGuardTests
             "ready");
         var authorization = new FileDeleteOperationUserAuthorizationIssuer()
             .IssueAfterExplicitUserConfirmation(validation);
-        return new FileDeleteOperationFinalMutationLeaseRequest(authorization, 0);
+
+        var constructor = typeof(FileDeleteOperationFinalMutationLeaseRequest).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: new[] { typeof(FileDeleteOperationUserAuthorizationReceipt), typeof(int) },
+            modifiers: null)
+            ?? throw new AssertFailedException(
+                "Coordinator-only final-delete request constructor was not found.");
+        return (FileDeleteOperationFinalMutationLeaseRequest)constructor.Invoke(
+            new object[] { authorization, 0 });
     }
 
     private static async Task AssertThrowsAsync<TException>(Func<Task> action)
