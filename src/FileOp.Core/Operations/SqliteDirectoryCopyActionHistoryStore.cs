@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
@@ -107,13 +106,14 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
                         canonical_source_path, source_volume_serial, source_file_reference,
                         canonical_destination_path, destination_parent_ordinal,
                         destination_volume_serial, destination_file_reference,
+                        destination_fingerprint_algorithm, destination_fingerprint_hex,
                         state, mutation_started_utc_ticks, completed_utc_ticks,
                         failure_code, failure_message, failure_path, failure_retryable)
                     VALUES(
                         @operation_id, @ordinal, @kind, @relative_path,
                         @source_path, @source_serial, @source_ref,
                         @destination_path, @parent_ordinal,
-                        NULL, NULL,
+                        NULL, NULL, NULL, NULL,
                         @state, NULL, NULL,
                         NULL, NULL, NULL, NULL);
                     """;
@@ -141,13 +141,15 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
     public ValueTask<DirectoryCopyActionHistory> MarkMutationStartedAsync(
         Guid operationId, int ordinal, DateTimeOffset startedAtUtc, CancellationToken cancellationToken = default) =>
         TransitionAsync(operationId, ordinal, DirectoryCopyActionEntryState.Pending,
-            DirectoryCopyActionEntryState.MutationStarted, startedAtUtc, null, null, null, cancellationToken);
+            DirectoryCopyActionEntryState.MutationStarted, startedAtUtc, null, null, null, null, cancellationToken);
 
     public ValueTask<DirectoryCopyActionHistory> CommitAsync(
-        Guid operationId, int ordinal, FileIdentity destinationIdentity, DateTimeOffset committedAtUtc,
+        Guid operationId, int ordinal, FileIdentity destinationIdentity,
+        FileContentFingerprint? destinationContentFingerprint, DateTimeOffset committedAtUtc,
         CancellationToken cancellationToken = default) =>
         TransitionAsync(operationId, ordinal, DirectoryCopyActionEntryState.MutationStarted,
-            DirectoryCopyActionEntryState.Committed, null, committedAtUtc, null, destinationIdentity, cancellationToken);
+            DirectoryCopyActionEntryState.Committed, null, committedAtUtc, null,
+            destinationIdentity, destinationContentFingerprint, cancellationToken);
 
     public ValueTask<DirectoryCopyActionHistory> MarkFailedBeforeMutationAsync(
         Guid operationId, int ordinal, FileOperationFailure failure, DateTimeOffset failedAtUtc,
@@ -155,17 +157,19 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
     {
         ArgumentNullException.ThrowIfNull(failure);
         return TransitionAsync(operationId, ordinal, DirectoryCopyActionEntryState.Pending,
-            DirectoryCopyActionEntryState.Failed, null, failedAtUtc, failure, null, cancellationToken);
+            DirectoryCopyActionEntryState.Failed, null, failedAtUtc, failure, null, null, cancellationToken);
     }
 
     public ValueTask<DirectoryCopyActionHistory> MarkRecoveryRequiredAsync(
         Guid operationId, int ordinal, FileOperationFailure failure, DateTimeOffset failedAtUtc,
-        FileIdentity? observedDestinationIdentity = null, CancellationToken cancellationToken = default)
+        FileIdentity? observedDestinationIdentity = null,
+        FileContentFingerprint? observedDestinationContentFingerprint = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(failure);
         return TransitionAsync(operationId, ordinal, DirectoryCopyActionEntryState.MutationStarted,
             DirectoryCopyActionEntryState.RecoveryRequired, null, failedAtUtc, failure,
-            observedDestinationIdentity, cancellationToken);
+            observedDestinationIdentity, observedDestinationContentFingerprint, cancellationToken);
     }
 
     public async ValueTask<DirectoryCopyActionHistory> CompleteAsync(
@@ -222,6 +226,7 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
         DirectoryCopyActionEntryState expectedState, DirectoryCopyActionEntryState nextState,
         DateTimeOffset? mutationStartedAtUtc, DateTimeOffset? completedAtUtc,
         FileOperationFailure? failure, FileIdentity? destinationIdentity,
+        FileContentFingerprint? destinationContentFingerprint,
         CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
@@ -230,6 +235,13 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
         {
             using var connection = OpenConnection();
             using var transaction = connection.BeginTransaction();
+            ValidateFingerprintTransition(
+                connection,
+                transaction,
+                operationId,
+                ordinal,
+                nextState,
+                destinationContentFingerprint);
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
@@ -239,6 +251,8 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
                     completed_utc_ticks = @completed,
                     destination_volume_serial = COALESCE(@destination_serial, destination_volume_serial),
                     destination_file_reference = COALESCE(@destination_ref, destination_file_reference),
+                    destination_fingerprint_algorithm = COALESCE(@fingerprint_algorithm, destination_fingerprint_algorithm),
+                    destination_fingerprint_hex = COALESCE(@fingerprint_hex, destination_fingerprint_hex),
                     failure_code = @failure_code,
                     failure_message = @failure_message,
                     failure_path = @failure_path,
@@ -250,6 +264,8 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
             command.Parameters.AddWithValue("@completed", completedAtUtc is { } completed ? ToUtcTicks(completed) : DBNull.Value);
             command.Parameters.AddWithValue("@destination_serial", destinationIdentity is { } identity ? ToSqlInteger(identity.VolumeSerialNumber) : DBNull.Value);
             command.Parameters.AddWithValue("@destination_ref", destinationIdentity is { } identity2 ? ToSqlInteger(identity2.FileReferenceNumber) : DBNull.Value);
+            command.Parameters.AddWithValue("@fingerprint_algorithm", destinationContentFingerprint is { } fingerprint ? (int)fingerprint.Algorithm : DBNull.Value);
+            command.Parameters.AddWithValue("@fingerprint_hex", destinationContentFingerprint is { } fingerprint2 ? fingerprint2.HexDigest : DBNull.Value);
             command.Parameters.AddWithValue("@failure_code", failure is null ? DBNull.Value : failure.Code);
             command.Parameters.AddWithValue("@failure_message", failure is null ? DBNull.Value : failure.Message);
             command.Parameters.AddWithValue("@failure_path", failure?.Path is { } path ? path : DBNull.Value);
@@ -271,14 +287,59 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
         return await GetRequiredAsync(operationId, cancellationToken).ConfigureAwait(false);
     }
 
+    private static void ValidateFingerprintTransition(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid operationId,
+        int ordinal,
+        DirectoryCopyActionEntryState nextState,
+        FileContentFingerprint? fingerprint)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT kind FROM directory_copy_entries
+            WHERE operation_id = @operation_id AND ordinal = @ordinal;
+            """;
+        command.Parameters.AddWithValue("@operation_id", operationId.ToString("D", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("@ordinal", ordinal);
+        var value = command.ExecuteScalar();
+        if (value is null || value is DBNull)
+        {
+            throw new InvalidOperationException($"Directory Copy action {ordinal} was not found.");
+        }
+        var kind = (DirectoryCopyActionKind)Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        if (kind == DirectoryCopyActionKind.CreateDirectory && fingerprint is not null)
+        {
+            throw new InvalidOperationException("Directory creation history cannot persist file-content fingerprint evidence.");
+        }
+        if (kind == DirectoryCopyActionKind.CopyFile &&
+            nextState == DirectoryCopyActionEntryState.Committed &&
+            fingerprint is null)
+        {
+            throw new InvalidOperationException("Committed directory Copy file history requires destination SHA-256 evidence.");
+        }
+    }
+
     private static IReadOnlyList<DirectoryCopyActionEntry> BuildActions(DirectoryCopyTransactionPlan plan)
     {
-        var actions = new List<DirectoryCopyActionEntry>();
-        actions.Add(new DirectoryCopyActionEntry(
-            0, DirectoryCopyActionKind.CreateDirectory, string.Empty,
-            plan.ReviewedManifest.CanonicalRootPath, plan.ReviewedManifest.RootIdentity,
-            plan.CanonicalDestinationRootPath, null, null,
-            DirectoryCopyActionEntryState.Pending, null, null, null));
+        var actions = new List<DirectoryCopyActionEntry>
+        {
+            new(
+                0,
+                DirectoryCopyActionKind.CreateDirectory,
+                string.Empty,
+                plan.ReviewedManifest.CanonicalRootPath,
+                plan.ReviewedManifest.RootIdentity,
+                plan.CanonicalDestinationRootPath,
+                null,
+                null,
+                null,
+                DirectoryCopyActionEntryState.Pending,
+                null,
+                null,
+                null),
+        };
         var ordinalByRelativePath = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         {
             [string.Empty] = 0,
@@ -303,6 +364,7 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
                 entry.Identity,
                 destination,
                 parentOrdinal,
+                null,
                 null,
                 DirectoryCopyActionEntryState.Pending,
                 null,
@@ -329,8 +391,14 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
         command.Parameters.AddWithValue("@operation_id", operationId.ToString("D", CultureInfo.InvariantCulture));
         var counts = new Dictionary<DirectoryCopyActionEntryState, long>();
         using var reader = command.ExecuteReader();
-        while (reader.Read()) counts[(DirectoryCopyActionEntryState)reader.GetInt32(0)] = reader.GetInt64(1);
-        if (counts.Count == 0) throw new InvalidOperationException("Directory Copy history has no actions.");
+        while (reader.Read())
+        {
+            counts[(DirectoryCopyActionEntryState)reader.GetInt32(0)] = reader.GetInt64(1);
+        }
+        if (counts.Count == 0)
+        {
+            throw new InvalidOperationException("Directory Copy history has no actions.");
+        }
         var sensitive = Count(counts, DirectoryCopyActionEntryState.MutationStarted) +
             Count(counts, DirectoryCopyActionEntryState.RecoveryRequired);
         if (terminalState == DirectoryCopyActionTerminalState.Succeeded &&
@@ -349,15 +417,21 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
         }
     }
 
-    private static long Count(IReadOnlyDictionary<DirectoryCopyActionEntryState, long> counts, DirectoryCopyActionEntryState state) =>
+    private static long Count(
+        IReadOnlyDictionary<DirectoryCopyActionEntryState, long> counts,
+        DirectoryCopyActionEntryState state) =>
         counts.TryGetValue(state, out var count) ? count : 0;
 
-    private async ValueTask<DirectoryCopyActionHistory> GetRequiredAsync(Guid operationId, CancellationToken cancellationToken) =>
+    private async ValueTask<DirectoryCopyActionHistory> GetRequiredAsync(
+        Guid operationId,
+        CancellationToken cancellationToken) =>
         await GetAsync(operationId, cancellationToken).ConfigureAwait(false)
         ?? throw new InvalidOperationException("Directory Copy history was not found after a durable transition.");
 
     private static async ValueTask<DirectoryCopyActionHistory?> ReadHistoryAsync(
-        SqliteConnection connection, Guid operationId, CancellationToken cancellationToken)
+        SqliteConnection connection,
+        Guid operationId,
+        CancellationToken cancellationToken)
     {
         using var operation = connection.CreateCommand();
         operation.CommandText = """
@@ -369,17 +443,22 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
             """;
         operation.Parameters.AddWithValue("@operation_id", operationId.ToString("D", CultureInfo.InvariantCulture));
         using var reader = await operation.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return null;
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
         var queued = FromUtcTicks(reader.GetInt64(0));
         var validated = FromUtcTicks(reader.GetInt64(1));
         var started = FromUtcTicks(reader.GetInt64(2));
-        var completed = reader.IsDBNull(3) ? null : FromUtcTicks(reader.GetInt64(3));
+        DateTimeOffset? completed = reader.IsDBNull(3) ? null : FromUtcTicks(reader.GetInt64(3));
         var sourceRoot = reader.GetString(4);
         var sourceIdentity = new FileIdentity(FromSqlUInt32(reader.GetInt64(5)), FromSqlUInt64(reader.GetInt64(6)));
         var destinationParent = reader.GetString(7);
         var destinationParentIdentity = new FileIdentity(FromSqlUInt32(reader.GetInt64(8)), FromSqlUInt64(reader.GetInt64(9)));
         var destinationRoot = reader.GetString(10);
-        DirectoryCopyActionTerminalState? terminal = reader.IsDBNull(11) ? null : (DirectoryCopyActionTerminalState)reader.GetInt32(11);
+        DirectoryCopyActionTerminalState? terminal = reader.IsDBNull(11)
+            ? null
+            : (DirectoryCopyActionTerminalState)reader.GetInt32(11);
         await reader.DisposeAsync().ConfigureAwait(false);
 
         using var entriesCommand = connection.CreateCommand();
@@ -387,6 +466,7 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
             SELECT ordinal, kind, relative_path, canonical_source_path,
                    source_volume_serial, source_file_reference, canonical_destination_path,
                    destination_parent_ordinal, destination_volume_serial, destination_file_reference,
+                   destination_fingerprint_algorithm, destination_fingerprint_hex,
                    state, mutation_started_utc_ticks, completed_utc_ticks,
                    failure_code, failure_message, failure_path, failure_retryable
             FROM directory_copy_entries WHERE operation_id = @operation_id ORDER BY ordinal;
@@ -398,27 +478,51 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
         {
             FileIdentity? destinationIdentity = entryReader.IsDBNull(8)
                 ? null
-                : new FileIdentity(FromSqlUInt32(entryReader.GetInt64(8)), FromSqlUInt64(entryReader.GetInt64(9)));
-            FileOperationFailure? failure = entryReader.IsDBNull(13)
+                : new FileIdentity(
+                    FromSqlUInt32(entryReader.GetInt64(8)),
+                    FromSqlUInt64(entryReader.GetInt64(9)));
+            FileContentFingerprint? fingerprint = entryReader.IsDBNull(10)
+                ? null
+                : new FileContentFingerprint(
+                    (FileContentFingerprintAlgorithm)entryReader.GetInt32(10),
+                    entryReader.GetString(11));
+            FileOperationFailure? failure = entryReader.IsDBNull(15)
                 ? null
                 : new FileOperationFailure(
-                    entryReader.GetString(13),
-                    entryReader.IsDBNull(14) ? string.Empty : entryReader.GetString(14),
-                    entryReader.IsDBNull(15) ? null : entryReader.GetString(15),
-                    !entryReader.IsDBNull(16) && entryReader.GetInt32(16) != 0);
+                    entryReader.GetString(15),
+                    entryReader.IsDBNull(16) ? string.Empty : entryReader.GetString(16),
+                    entryReader.IsDBNull(17) ? null : entryReader.GetString(17),
+                    !entryReader.IsDBNull(18) && entryReader.GetInt32(18) != 0);
             entries.Add(new DirectoryCopyActionEntry(
-                entryReader.GetInt32(0), (DirectoryCopyActionKind)entryReader.GetInt32(1),
-                entryReader.GetString(2), entryReader.GetString(3),
-                new FileIdentity(FromSqlUInt32(entryReader.GetInt64(4)), FromSqlUInt64(entryReader.GetInt64(5))),
-                entryReader.GetString(6), entryReader.IsDBNull(7) ? null : entryReader.GetInt32(7),
-                destinationIdentity, (DirectoryCopyActionEntryState)entryReader.GetInt32(10),
-                entryReader.IsDBNull(11) ? null : FromUtcTicks(entryReader.GetInt64(11)),
-                entryReader.IsDBNull(12) ? null : FromUtcTicks(entryReader.GetInt64(12)), failure));
+                entryReader.GetInt32(0),
+                (DirectoryCopyActionKind)entryReader.GetInt32(1),
+                entryReader.GetString(2),
+                entryReader.GetString(3),
+                new FileIdentity(
+                    FromSqlUInt32(entryReader.GetInt64(4)),
+                    FromSqlUInt64(entryReader.GetInt64(5))),
+                entryReader.GetString(6),
+                entryReader.IsDBNull(7) ? null : entryReader.GetInt32(7),
+                destinationIdentity,
+                fingerprint,
+                (DirectoryCopyActionEntryState)entryReader.GetInt32(12),
+                entryReader.IsDBNull(13) ? null : FromUtcTicks(entryReader.GetInt64(13)),
+                entryReader.IsDBNull(14) ? null : FromUtcTicks(entryReader.GetInt64(14)),
+                failure));
         }
         return new DirectoryCopyActionHistory(
-            operationId, queued, validated, started, completed,
-            sourceRoot, sourceIdentity, destinationParent, destinationParentIdentity,
-            destinationRoot, terminal, entries);
+            operationId,
+            queued,
+            validated,
+            started,
+            completed,
+            sourceRoot,
+            sourceIdentity,
+            destinationParent,
+            destinationParentIdentity,
+            destinationRoot,
+            terminal,
+            entries);
     }
 
     private void Initialize()
@@ -453,6 +557,8 @@ public sealed class SqliteDirectoryCopyActionHistoryStore : IDirectoryCopyAction
                 destination_parent_ordinal INTEGER NULL,
                 destination_volume_serial INTEGER NULL,
                 destination_file_reference INTEGER NULL,
+                destination_fingerprint_algorithm INTEGER NULL,
+                destination_fingerprint_hex TEXT NULL,
                 state INTEGER NOT NULL,
                 mutation_started_utc_ticks INTEGER NULL,
                 completed_utc_ticks INTEGER NULL,
