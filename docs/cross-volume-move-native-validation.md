@@ -11,11 +11,14 @@ Use a normal unelevated FileOp development shell on Windows with:
 - the exact PR head checked out and no uncommitted source changes;
 - .NET 10 SDK matching the repository requirements;
 - two existing writable ordinary directories on **different local filesystem volumes**;
+- for the schema-v1 #185 matrix, roots whose observed stable filesystem volume serials are different;
 - a source volume that supports NTFS hard links, named data streams and extended attributes for the current regression matrix;
 - source/destination roots that are not reparse points and do not use per-directory case-sensitive namespace semantics;
 - enough free space for the small temporary test payloads.
 
 Do not point the test at production/user data. The two-volume tests create and recursively remove uniquely named `FileOp.CrossVolumeMoveNative*` subdirectories beneath both supplied roots. The security-policy test uses its own uniquely named temporary directory under the current user's temp path.
+
+A 32-bit volume serial is not considered collision-free for production Move classification. Equal serials require a stronger handle-bound Windows volume-GUID relationship before same-volume rename can remain mutation-ready. However, the dormant composite journal in #185 still requires distinct serials, so an equal-serial/different-GUID pair is **not** an acceptable pair for this native matrix. Issue #189 owns the later enablement choice to keep such pairs unsupported or upgrade durable volume identity/schema.
 
 ## Required commands
 
@@ -41,7 +44,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-cross-volume-
   -DestinationRoot 'D:\FileOpNativeTestRoot'
 ```
 
-The dedicated runner refuses an elevated token, first executes `tools/verify_cross_volume_move_native_inventory.py`, then sets the two explicit roots and runs `TestCategory=CrossVolumeMoveNative`. The test code resolves the roots through the real Windows execution validator and fails if their stable filesystem volume serials are equal. Drive-letter text is not treated as proof of a cross-volume relationship.
+The dedicated runner refuses an elevated token, first executes `tools/verify_cross_volume_move_native_inventory.py` and `tools/verify_move_volume_identity.py`, then sets the two explicit roots and runs `TestCategory=CrossVolumeMoveNative`. The test code resolves the roots through the real Windows execution validator and fails if their stable filesystem volume serials are equal. Drive-letter text is not treated as proof of a cross-volume relationship.
+
+`tools/verify_move_volume_identity.py` separately pins the production serial-collision boundary before mutation tests: different serials short-circuit as cross-volume; equal serials require the stronger Windows volume-GUID probe; that probe must be bound to the exact root `FileIdentity` values returned by fresh execution validation; and the schema-v1 composite store must continue to reject equal-serial root pairs.
 
 ## Matrix exercised by the dedicated two-volume gate
 
@@ -53,10 +58,10 @@ The `CrossVolumeMoveNative` category currently requires all of these cases:
 4. **Cancellation after real Copy** — a wrapper around the real Copy primitive requests cancellation while the Copy lease is still live. The executor must finish the durable destination commit and settle at `DestinationCommitted`, retaining both files and creating no source-delete authority.
 5. **Selected-entry hard-link semantics** — the selected source path has another hard link on the source volume. Cross-volume Move removes only the selected directory entry, creates the destination copy, and leaves the other source-volume hard link valid with the original content.
 6. **Read-only safe refusal** — the real Copy phase preserves ReadOnly on the destination, but the first destructive checkpoint must reject both source and destination ReadOnly attributes before `SourceDeleteStarted`. Both paths remain, durable history is a safe retained duplicate, and no recovery-sensitive state is created. Issue #190 owns future exact-handle `FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE` support; #185 does not claim it.
-7. **Deterministic post-barrier fidelity refusal with the real Windows lease** — real Copy and the real raw four-handle source-delete lease are used, while an injected evidence-only verifier accepts the first proof and rejects the second after `SourceDeleteStarted`. The raw delete mutation must not run, both paths must still be directly observable, and durable history must settle as `RecoveryRequired`.
+7. **Post-barrier fidelity refusal with the real Windows lease** — real Copy and the real raw four-handle source-delete lease are used, while an injected evidence-only verifier accepts the first proof and rejects the second after `SourceDeleteStarted`. The raw delete mutation must not run, both paths must still be directly observable, and durable history must settle as `RecoveryRequired`.
 8. **Real post-barrier ADS race** — the first proof uses the real Windows fidelity verifier. After `SourceDeleteStarted`, the test creates a source ADS and then delegates the second proof to the real verifier. The second proof must report `SourceNamedDataStreams`; no raw delete runs and history becomes `RecoveryRequired`.
 9. **Real post-barrier EA race** — the first proof uses the real Windows fidelity verifier. After `SourceDeleteStarted`, the test writes a source EA through `NtSetEaFile` and then delegates the second proof to the real verifier. The second proof must report `SourceExtendedAttributes`; no raw delete runs and history becomes `RecoveryRequired`.
-10. **Real post-barrier main-stream writer exclusion** — after `SourceDeleteStarted`, while the exact raw source DELETE lease is live, the test attempts a new `FILE_WRITE_DATA` open against the selected source stream. It must fail with `ERROR_SHARING_VIOLATION`; the test then runs the real second fidelity proof and requires the Move to complete successfully. This proves the live destructive lease protects the selected main stream during the final proof/unlink boundary rather than merely observing content twice.
+10. **Real post-barrier main-stream writer exclusion** — after `SourceDeleteStarted`, while the exact raw source DELETE lease is live, the test attempts a new `FILE_WRITE_DATA` open against the selected source stream. It must fail with `ERROR_SHARING_VIOLATION`; the test then runs the real second fidelity proof and requires the Move to complete successfully. This proves the live destructive lease protects the selected main stream during the final proof/source-disposition boundary rather than merely observing content twice.
 
 For all post-barrier refusal cases, generic recovery history remains conservative: it may retain destination recovery evidence and prove that the earlier normal destination commit occurred, but `HasRetainedSourceDuplicates` remains false because a generic recovery record must not promise current source presence merely from historical evidence. These deterministic tests separately assert that both paths are directly observable at the time of the refusal.
 
@@ -64,6 +69,8 @@ Separate always-on Windows tests pin lower-level assumptions before the explicit
 
 - `FileCrossVolumeMoveFidelityShareCompatibilityTests` proves that pre-existing main-stream writers, writable mappings and DELETE-capable handles block destructive-lease acquisition; the live lease blocks new main-stream writers and new DELETE-capable handles; attribute/EA access is not misrepresented as share-frozen; deleting one hard link leaves another source-volume link valid; and fidelity reopens remain compatible with the live DELETE-capable handle.
 - `FileCrossVolumeMoveHardLinkPathBindingTests.CanonicalResolverPreservesTheSpecificOpenedHardLinkName` proves that resolving two names for one hard-linked file preserves the specific selected directory entry while reporting the same filesystem identity. If the current Windows/filesystem combination cannot preserve that path binding, selected-entry multi-link Move is not considered validated.
+- `WindowsFileOperationVolumeRelationshipTests.TwoDirectoriesOnSameTempVolumeResolveToSameHandleBoundGuid` exercises the real handle-bound volume-GUID probe against exact identities returned by `WindowsFileOperationCanonicalPathResolver`; the probe must report `SameVolume` and the same volume-GUID name for both directories.
+- `WindowsMoveOperationExecutionValidatorTests` pins the synthetic serial-collision cases: different serials never need the stronger probe, equal serial + different GUID is cross-volume/product-blocked, equal serial + unavailable stronger proof fails closed before namespace probing, and equal serial + same GUID may continue to the same-volume path.
 - `FileCrossVolumeMoveMutationProofTests.FidelityWrapperRejectsInnerSuccessWithoutDispositionProof` proves the production fidelity wrapper cannot treat a provider return as destructive success unless the exact inner lease reports `SourceDeleteMutationPerformed`.
 - `FileCrossVolumeMoveActionHistoryInvariantTests` plus `FileCrossVolumeMoveRecoveryEvidenceStoreTests` distinguish a safe durable destination commit from copy-barrier recovery observation and retain source-delete barrier uncertainty through recovery. Recovery-only destination identity/fingerprint evidence must not be upgraded into a known safe copied/source-retained state, including after SQLite reopen.
 - `FileCrossVolumeMovePersistedRecoveryCorruptionTests` proves malformed source-delete recovery chronology and wrong-volume destination evidence are rejected during hydration rather than trusted merely because SQLite can structurally store them.
@@ -73,6 +80,8 @@ Separate always-on Windows tests pin lower-level assumptions before the explicit
 The raw Windows source-delete primitive uses `FileDispositionInformationEx` on the exact opened source link with delete, POSIX-semantics and force-image-section-check flags. It intentionally does **not** use `FILE_DISPOSITION_ON_CLOSE`.
 
 Draft #185 also intentionally does **not** use `FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE`. ReadOnly is therefore excluded by the Core preservation classifier and tested as a safe pre-barrier refusal. #190 owns later support rather than letting a predictable read-only delete failure cross the durable source-delete barrier.
+
+Durable `Moved` is recorded only after the exact source-delete capability/evidence lease has released. A disposition or release failure after `SourceDeleteStarted` remains recovery-sensitive; historical recovery evidence is not automatic retry/delete authority.
 
 ## Security-policy validation (#186)
 
@@ -90,10 +99,12 @@ For PR #185 / issues #184, #186 and #187, record:
 - confirmation that both dedicated scripts ran under an ordinary unelevated token;
 - source and destination two-volume test roots;
 - confirmation that the test validator observed different source/destination volume serials;
+- confirmation that the always-on identity-bound volume-GUID regression passed;
+- confirmation that the equal-serial collision/unavailable-proof validator regressions passed;
 - confirmation that the always-on hard-link canonical-path binding regression passed rather than being inconclusive;
 - confirmation that the read-only case retained both paths before `SourceDeleteStarted` and did not create recovery-sensitive history;
 - confirmation that the post-barrier ADS and post-barrier EA tests both reached `SourceDeleteStarted`, refused the second real fidelity proof, retained both paths, and wrote `RecoveryRequired` history;
-- confirmation that the post-barrier main-stream writer attempt was rejected with `ERROR_SHARING_VIOLATION` and the same transaction then completed through the real second proof and source unlink;
+- confirmation that the post-barrier main-stream writer attempt was rejected with `ERROR_SHARING_VIOLATION` and the same transaction then completed through the real second proof and source disposition;
 - complete `tools/test-local.ps1` result;
 - complete `tools/test-cross-volume-move-security.ps1` result;
 - complete `tools/test-cross-volume-move-native.ps1` result;
