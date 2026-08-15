@@ -103,6 +103,8 @@ def check_repository(root: Path) -> int:
         "ReferenceEquals(Revalidation.Initial, ReviewedManifest)",
         "ReferenceEquals(Revalidation.Fresh, Acquisition.Manifest)",
         "Ready directory Copy gate evidence must bind the exact reviewed manifest to the exact freshly acquired matching manifest.",
+        "DirectoryOperationTreeManifestRevalidationResult? revalidation",
+        "revalidation: null",
         "public bool CanBeginDurableHistory",
         "public bool GrantsMutationAuthority => false",
         "DirectoryOperationTreeManifestRevalidator.Compare(",
@@ -126,6 +128,19 @@ def check_repository(root: Path) -> int:
         "UnsupportedAcquisitionCannotPublishManifest",
         "ReadyGateCannotBeForgedFromUnrelatedMatchingRevalidation",
         "CancellationIsObservedBeforeAcquisition",
+        "Assert.Throws<ArgumentException>",
+        "Assert.Throws<TargetInvocationException>",
+        "Assert.ThrowsAsync<OperationCanceledException>",
+    )
+    checks += forbid(
+        gate_source,
+        "Revalidation: null",
+    )
+    checks += forbid(
+        tests,
+        "Assert.ThrowsException",
+        "Assert.ThrowsExceptionAsync",
+        'new[] { "EA inspection unavailable" }',
     )
     combined = acquisition + gate_source
     checks += forbid(
