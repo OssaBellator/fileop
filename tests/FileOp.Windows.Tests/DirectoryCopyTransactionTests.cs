@@ -41,7 +41,7 @@ public sealed class DirectoryCopyTransactionTests
                     0,
                     new FileIdentity(DestinationVolume, 100),
                     destinationContentFingerprint: null,
-                    DateTimeOffset.UtcNow);
+                    committedAtUtc: DateTimeOffset.UtcNow);
             }
 
             using var reopened = new SqliteDirectoryCopyActionHistoryStore(database);
