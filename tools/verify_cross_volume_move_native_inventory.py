@@ -37,6 +37,7 @@ def check(root: Path) -> int:
     hard_link_path = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveHardLinkPathBindingTests.cs")
     mutation_proof = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveMutationProofTests.cs")
     security = read(root, "tests/FileOp.Windows.Tests/WindowsFileCopyMutationSecurityPolicyTests.cs")
+    copy_primitive = read(root, "src/FileOp.Windows/Operations/WindowsFileCopyMutationPrimitive.cs")
     wrapper = read(root, "src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs")
     validator = read(root, "src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs")
     native_runner = read(root, "tools/test-cross-volume-move-native.ps1")
@@ -48,6 +49,8 @@ def check(root: Path) -> int:
         history,
         "public bool DestinationIsDurablyCommitted",
         "public bool HasDestinationRecoveryEvidence",
+        "public bool SourceDeleteBarrierMayBeUnresolved",
+        "State == FileCrossVolumeMoveEntryState.RecoveryRequired &&",
         "SourceDeleteStartedAtUtc.HasValue",
         "recovery observation",
         "grants no cleanup, replay, or source-delete authority",
@@ -56,9 +59,11 @@ def check(root: Path) -> int:
         history_invariants,
         "CopyBarrierRecoveryMayCaptureObservedDestinationWithoutProvingSafeCommit",
         "SourceDeleteRecoveryStillProvesEarlierSafeDestinationCommit",
+        "LiveSourceDeleteBarrierIsReportedUnresolvedUntilMoved",
         "Assert.IsTrue(history.Entries[0].HasDestinationRecoveryEvidence)",
         "Assert.IsFalse(history.Entries[0].DestinationIsDurablyCommitted)",
         "Assert.IsTrue(history.Entries[0].DestinationIsDurablyCommitted)",
+        "Assert.IsTrue(history.Entries[0].SourceDeleteBarrierMayBeUnresolved)",
     )
     checks += require(
         history_store_roundtrip,
@@ -67,6 +72,8 @@ def check(root: Path) -> int:
         "using var reopened = new SqliteFileCrossVolumeMoveActionHistoryStore",
         "Assert.IsFalse(persisted.Entries[0].DestinationIsDurablyCommitted)",
         "Assert.IsTrue(persisted.Entries[0].DestinationIsDurablyCommitted)",
+        "Assert.IsFalse(persisted.Entries[0].SourceDeleteBarrierMayBeUnresolved)",
+        "Assert.IsTrue(persisted.Entries[0].SourceDeleteBarrierMayBeUnresolved)",
     )
     checks += require(
         history_corruption,
@@ -153,6 +160,16 @@ def check(root: Path) -> int:
         "without reporting that the exact source disposition was performed",
     )
 
+    # #186: the reviewed Copy creates with a default/null OBJECT_ATTRIBUTES security
+    # descriptor. The ordinary-token native test then proves the source NULL DACL is not
+    # cloned into the newly created destination object.
+    checks += require(
+        copy_primitive,
+        "var attributes = new ObjectAttributes",
+        "public IntPtr SecurityDescriptor;",
+        "var status = NtCreateFile(",
+    )
+    checks += forbid(copy_primitive, "SecurityDescriptor =")
     checks += require(
         security,
         '[TestCategory("CrossVolumeMoveSecurityNative")]',
