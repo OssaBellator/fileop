@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -449,7 +450,7 @@ public sealed class SqliteFileRecycleActionHistoryStore : IFileRecycleActionHist
 
         using var version = connection.CreateCommand();
         version.CommandText = "SELECT version FROM file_recycle_schema_info WHERE singleton = 1;";
-        var observed = Convert.ToInt32(version.ExecuteScalar());
+        var observed = Convert.ToInt32(version.ExecuteScalar(), CultureInfo.InvariantCulture);
         if (observed != SchemaVersion)
         {
             throw new InvalidOperationException($"Unsupported recycle history schema version {observed}.");

@@ -548,7 +548,9 @@ public sealed class FileRecycleActionHistory
                     break;
 
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(entry.State));
+                    throw new ArgumentException(
+                        $"Recycle history entry {entry.Ordinal} has an undefined state.",
+                        nameof(entries));
             }
         }
     }
