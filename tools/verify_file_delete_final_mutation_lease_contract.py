@@ -198,7 +198,10 @@ def check_repository(root: Path) -> int:
     plan = (root / "src/FileOp.Core/Operations/FileOperationPlan.cs").read_text(encoding="utf-8")
     protocol = (root / "src/FileOp.Core/Indexing/Service/IndexingServiceProtocol.cs").read_text(encoding="utf-8")
 
-    reviewed_provider = "src/FileOp.Windows/Operations/WindowsFileDeleteOperationFinalMutationLeaseProvider.cs"
+    reviewed_providers = {
+        "src/FileOp.Windows/Operations/WindowsFileDeleteOperationFinalMutationLeaseProvider.cs",
+        "src/FileOp.Windows/Operations/WindowsNtfsMutationPrimitives.cs",
+    }
     forbidden_consumers: list[str] = []
     provider_implementations: list[str] = []
     for subtree in ("src/FileOp.App", "src/FileOp.Windows", "src/FileOp.Indexer"):
@@ -212,14 +215,14 @@ def check_repository(root: Path) -> int:
                 forbidden_consumers.append(relative)
             if "IFileDeleteOperationFinalMutationLeaseProvider" in text:
                 provider_implementations.append(relative)
-                if relative != reviewed_provider:
+                if relative not in reviewed_providers:
                     forbidden_consumers.append(relative)
     if forbidden_consumers:
         raise AssertionError(
-            "final delete lease may have only the reviewed native provider and no production coordinator consumer: "
+            "final delete lease may have only the reviewed native providers and no production coordinator consumer: "
             + ", ".join(sorted(set(forbidden_consumers)))
         )
-    if provider_implementations not in ([], [reviewed_provider]):
+    if set(provider_implementations) != reviewed_providers:
         raise AssertionError(
             "unexpected production final-lease provider set: " + repr(provider_implementations)
         )

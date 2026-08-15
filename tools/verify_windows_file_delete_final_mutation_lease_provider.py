@@ -201,7 +201,10 @@ def check_repository(root: Path) -> int:
         (docs, "acquisition path remains non-mutating", "non-mutating acquisition documentation"),
         (docs, "successful `NtCreateFile` request containing `DELETE`", "capability proof documentation"),
         (docs, "IFileDeleteOperationSameLeaseMutation", "separate mutation facet documentation"),
-        (contract_verifier, "reviewed_provider = \"src/FileOp.Windows/Operations/WindowsFileDeleteOperationFinalMutationLeaseProvider.cs\"", "reviewed production-provider guard"),
+        (contract_verifier, "reviewed_providers = {", "reviewed production-provider set guard"),
+        (contract_verifier, "src/FileOp.Windows/Operations/WindowsFileDeleteOperationFinalMutationLeaseProvider.cs", "reviewed native production provider"),
+        (contract_verifier, "src/FileOp.Windows/Operations/WindowsNtfsMutationPrimitives.cs", "reviewed NTFS production wrapper"),
+        (contract_verifier, "if set(provider_implementations) != reviewed_providers:", "exact production-provider set guard"),
         (gate, "verify_windows_file_delete_final_mutation_lease_provider.py --repo-root $repoRoot --cases 50000", "offline gate wiring"),
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "generic Delete remains absent"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 unchanged"),
@@ -249,7 +252,10 @@ def check_repository(root: Path) -> int:
         for path in directory.rglob("*.cs"):
             if "WindowsFileDeleteOperationFinalMutationLeaseProvider" in path.read_text(encoding="utf-8"):
                 consumers.append(path.relative_to(root).as_posix())
-    allowed_consumers = {"src/FileOp.App/FilesView.Delete.cs"}
+    allowed_consumers = {
+        "src/FileOp.App/FilesView.Delete.cs",
+        "src/FileOp.App/MutationExecutionValidatorAliases.cs",
+    }
     unexpected_consumers = sorted(set(consumers) - allowed_consumers)
     if unexpected_consumers:
         raise AssertionError(
