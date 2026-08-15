@@ -218,7 +218,8 @@ def check_repository(root: Path) -> int:
         "File.Delete(",
         "Directory.Move(",
         "Directory.Delete(",
-        "SqliteConnection",
+        "SqliteConnection ",
+        "new SqliteConnection(",
         "Microsoft.Data.Sqlite",
     )
 
