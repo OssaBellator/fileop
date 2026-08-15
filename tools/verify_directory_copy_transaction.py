@@ -52,7 +52,6 @@ def run_model(cases: int) -> int:
             assert "succeeded" not in events
             checks += 2
         if "cancelled" in events:
-            # A cancellation is observed only between actions; no uncommitted mutation appears before it.
             for index, event in enumerate(events):
                 if event.startswith("mutate:"):
                     ordinal = event.split(":", 1)[1]
@@ -98,6 +97,9 @@ def check_repository(root: Path) -> int:
         "RecoveryRequired",
         "public sealed record DirectoryCopyTransactionPlan",
         "DestinationParentOrdinal",
+        "DestinationContentFingerprint",
+        "Directory Copy destination cannot be the reviewed source root or lie inside its subtree.",
+        "Committed directory Copy file history requires destination SHA-256 evidence.",
         "public bool RequiresRecovery",
         "public bool GrantsAutomaticReplayAuthority => false",
         "public bool GrantsRollbackAuthority => false",
@@ -112,6 +114,10 @@ def check_repository(root: Path) -> int:
         "ReferenceEquals(freshGate.ReviewedManifest, plan.ReviewedManifest)",
         "BuildActions(plan)",
         "DestinationParentOrdinal",
+        "destination_fingerprint_algorithm",
+        "destination_fingerprint_hex",
+        "ValidateFingerprintTransition(",
+        "Committed directory Copy file history requires destination SHA-256 evidence.",
         "DirectoryCopyActionEntryState.Pending",
         "DirectoryCopyActionEntryState.MutationStarted",
         "DirectoryCopyActionEntryState.Committed",
@@ -132,7 +138,9 @@ def check_repository(root: Path) -> int:
         "parent.State != DirectoryCopyActionEntryState.Committed",
         "receipt.DestinationIdentity.VolumeSerialNumber != parentIdentity.VolumeSerialNumber",
         "Directory Copy file commit requires destination SHA-256 content evidence",
+        "lease.Receipt.DestinationContentFingerprint",
         ".MarkRecoveryRequiredAsync(",
+        "observedFingerprint",
         "DirectoryCopyActionTerminalState.RecoveryRequired",
         "DirectoryCopyActionTerminalState.Succeeded",
     )
@@ -147,6 +155,8 @@ def check_repository(root: Path) -> int:
         "ProviderFailureAfterMutationStartedSettlesRecoveryRequired",
         "CancellationDuringMutationCommitsCurrentActionThenStopsAtBoundary",
         "FileReceiptWithoutFingerprintCannotCommitAndRequiresRecovery",
+        "TransactionPlanRejectsDestinationInsideReviewedSourceTree",
+        "DestinationContentFingerprint is not null",
     )
     combined = store + executor
     checks += forbid(
