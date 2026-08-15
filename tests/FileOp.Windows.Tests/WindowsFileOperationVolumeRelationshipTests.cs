@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using FileOp.Windows.Operations;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -9,7 +10,7 @@ namespace FileOp.Windows.Tests;
 public sealed class WindowsFileOperationVolumeRelationshipTests
 {
     [TestMethod]
-    public void TwoDirectoriesOnSameTempVolumeResolveToSameHandleBoundGuid()
+    public async Task TwoDirectoriesOnSameTempVolumeResolveToSameHandleBoundGuid()
     {
         var root = Path.Combine(
             Path.GetTempPath(),
@@ -22,8 +23,17 @@ public sealed class WindowsFileOperationVolumeRelationshipTests
 
         try
         {
-            var result = new WindowsFileOperationVolumeRelationshipProbe()
-                .Query(Path.GetFullPath(source), Path.GetFullPath(destination));
+            var resolver = new WindowsFileOperationCanonicalPathResolver();
+            var sourceResolved = await resolver.ResolveAsync(source);
+            var destinationResolved = await resolver.ResolveAsync(destination);
+            Assert.IsTrue(sourceResolved.Identity.HasValue);
+            Assert.IsTrue(destinationResolved.Identity.HasValue);
+
+            var result = new WindowsFileOperationVolumeRelationshipProbe().Query(
+                sourceResolved.CanonicalPath,
+                sourceResolved.Identity.Value,
+                destinationResolved.CanonicalPath,
+                destinationResolved.Identity.Value);
 
             Assert.AreEqual(
                 FileOperationVolumeRelationshipState.SameVolume,
