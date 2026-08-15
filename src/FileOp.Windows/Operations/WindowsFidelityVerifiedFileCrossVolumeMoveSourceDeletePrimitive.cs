@@ -155,6 +155,11 @@ public sealed class WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimit
 
             await inner.MarkDeletePendingAsync(authorization, CancellationToken.None)
                 .ConfigureAwait(false);
+            if (!inner.SourceDeleteMutationPerformed)
+            {
+                throw new InvalidOperationException(
+                    "The authorized cross-volume Move source-delete primitive returned without reporting that the exact source disposition was performed.");
+            }
         }
 
         public async ValueTask DisposeAsync()
