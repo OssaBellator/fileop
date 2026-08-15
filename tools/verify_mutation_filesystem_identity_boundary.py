@@ -70,6 +70,7 @@ def check_repository(root: Path) -> int:
         "move": root / "src/FileOp.Windows/Operations/WindowsNtfsMoveOperationExecutionValidator.cs",
         "aliases": root / "src/FileOp.App/MutationExecutionValidatorAliases.cs",
         "tests": root / "tests/FileOp.Windows.Tests/WindowsMutationFilesystemCapabilityBoundaryTests.cs",
+        "binding_tests": root / "tests/FileOp.Windows.Tests/WindowsMutationFilesystemCapabilityBindingTests.cs",
         "resolver": root / "src/FileOp.Windows/Operations/WindowsFileOperationExecutionValidator.cs",
         "gate": root / "tools/test-mutation-filesystem-identity.ps1",
         "docs": root / "docs/mutation-filesystem-identity-boundary.md",
@@ -96,14 +97,19 @@ def check_repository(root: Path) -> int:
         "TryGetFinalPath(handle",
         "GetVolumeInformationByHandleW(",
         'string.Equals(observedFileSystem, "NTFS"',
+        'string.Equals(FileSystemName, "NTFS"',
+        "public bool IsBoundTo(",
+        "ExpectedIdentity == expectedIdentity",
         "current mutation FileIdentity model is NTFS-only",
         "WindowsNtfsMutationExecutionValidator",
         "validation.SourceDirectory.Identity is not FileIdentity sourceIdentity",
         "validation.DestinationDirectory.Identity is not FileIdentity destinationIdentity",
-        "Source mutation root filesystem capability",
-        "Destination mutation root filesystem capability",
+        "CapabilityMatches(",
+        "capability.IsBoundTo(canonicalDirectoryPath, expectedIdentity)",
+        "not exact NTFS evidence bound to the freshly validated root",
         "before durable mutation history",
         "WindowsNtfsFileDeleteOperationExecutionValidator",
+        "capability.IsBoundTo(validation.SourceDirectory.CanonicalPath, sourceIdentity)",
         "FileDeleteOperationExecutionValidationDecision.Blocked",
         "before authorization review",
     )
@@ -154,6 +160,14 @@ def check_repository(root: Path) -> int:
         "WindowsMutationFilesystemCapabilityState.UnsupportedFilesystem",
         '"ReFS"',
         "identity changed",
+    )
+    checks += require(
+        source["binding_tests"],
+        "SupportedNtfsEvidenceForDifferentIdentityDoesNotAuthorizeCopyValidation",
+        "SupportedStateWithNonNtfsFilesystemNameDoesNotAuthorizeCopyValidation",
+        "SupportedNtfsEvidenceForDifferentPathDoesNotReachDeleteAuthorizationReview",
+        'WindowsMutationFilesystemCapabilityState.SupportedNtfs,\n            "ReFS"',
+        "not exact NTFS evidence",
     )
 
     # Pin the reason this guard exists: the current resolver still constructs the mutation
