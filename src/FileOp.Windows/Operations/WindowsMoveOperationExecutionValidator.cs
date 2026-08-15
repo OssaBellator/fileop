@@ -15,16 +15,18 @@ namespace FileOp.Windows.Operations;
 /// query that capability) must therefore fail before durable Move history begins.
 ///
 /// Cross-volume composite Move infrastructure exists behind this validator. Its security
-/// contract now deliberately follows Windows destination-default/inherited semantics, but
-/// destructive production execution remains disabled until the final proof-to-mutation
-/// stability boundary is kernel-backed and the exact implementation passes native Windows
-/// validation. This block happens before durable history and before destination Copy begins.
+/// contract follows Windows destination-default/inherited semantics and its preservation
+/// contract is deliberately scoped to the selected source directory entry, stable main
+/// stream and observed unsupported source ADS/EA state rather than a fictional global NTFS
+/// metadata transaction. Destructive production execution remains disabled until that exact
+/// contract passes its native Windows validation matrix. This block happens before durable
+/// history and before destination Copy begins.
 /// </summary>
 public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator
 {
     // Repository tracking: #186 selected the ordinary-user destination-default security
-    // contract source-side; #187 remains the proof-to-mutation stability blocker.
-    // Keep issue IDs out of runtime UI text.
+    // contract source-side; #187 now owns exact-head native validation of the scoped
+    // main-stream/selected-entry preservation contract. Keep issue IDs out of runtime UI text.
     internal const string CrossVolumeMoveDisabledSummary =
         "Cross-volume Move is currently disabled while its final mutation-stability boundary is still under review. Choose a destination on the same volume to use the supported Move path. No durable history, destination Copy, or source-delete mutation was created by this refusal.";
 
