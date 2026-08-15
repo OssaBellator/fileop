@@ -33,10 +33,10 @@ public sealed record DirectoryOperationTreeManifestEntry(
 /// Immutable topology evidence for a future recursive directory Copy executor.
 ///
 /// Construction requires the existing fidelity classifier to accept a complete plain tree,
-/// then binds every descendant to one canonical root, one filesystem volume, an exact file
-/// identity and a deterministic parent-before-child relative-path topology. The manifest is
-/// evidence only: it deliberately grants no mutation authority and performs no filesystem
-/// enumeration or mutation itself.
+/// then binds every descendant to one canonical root, one filesystem volume, one unique
+/// object identity and a deterministic parent-before-child relative-path topology. The
+/// manifest is evidence only: it deliberately grants no mutation authority and performs no
+/// filesystem enumeration or mutation itself.
 /// </summary>
 public sealed class DirectoryOperationTreeManifest
 {
@@ -90,6 +90,7 @@ public sealed class DirectoryOperationTreeManifest
             .ToArray();
 
         EnsureUniqueRelativePaths(normalized);
+        EnsureUniqueObjectIdentities(rootIdentity, normalized);
         EnsureCompleteParentTopology(normalized);
 
         var ordered = normalized
@@ -215,6 +216,22 @@ public sealed class DirectoryOperationTreeManifest
             {
                 throw new ArgumentException(
                     $"Directory tree manifest contains duplicate relative path '{entry.RelativePath}' under the current case-insensitive namespace model.",
+                    nameof(entries));
+            }
+        }
+    }
+
+    private static void EnsureUniqueObjectIdentities(
+        FileIdentity rootIdentity,
+        IReadOnlyList<DirectoryOperationTreeManifestEntry> entries)
+    {
+        var seen = new HashSet<FileIdentity> { rootIdentity };
+        foreach (var entry in entries)
+        {
+            if (!seen.Add(entry.Identity))
+            {
+                throw new ArgumentException(
+                    $"Directory tree manifest entry '{entry.RelativePath}' reuses a filesystem identity already present in the plain-tree manifest. Hard-link/cycle evidence is unsupported.",
                     nameof(entries));
             }
         }
