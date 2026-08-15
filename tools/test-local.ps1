@@ -335,6 +335,10 @@ Invoke-Step "Offline file delete recovery-history discovery verifier" {
     python tools/verify_file_delete_recovery_history_discovery.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline file recycle transaction verifier" {
+    python tools/verify_file_recycle_transaction.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline file operation action-history verifier" {
     python tools/verify_file_operation_action_history.py --repo-root $repoRoot --cases 20000
 }
