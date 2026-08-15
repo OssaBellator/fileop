@@ -129,7 +129,6 @@ def check_repository(root: Path) -> int:
         "Directory.Delete(",
     )
 
-    # The handle identity/path checks must happen before filesystem-name evidence is trusted.
     identity_index = guard.index("observedIdentity != expectedIdentity")
     path_index = guard.index("TryGetFinalPath(handle")
     filesystem_index = guard.index("GetVolumeInformationByHandleW(")
@@ -228,12 +227,10 @@ def check_repository(root: Path) -> int:
         "RefsRootBlocksFinalDeleteLeaseBeforeRawProviderDelegation",
         "ExactNtfsDeleteEvidenceDelegatesToRawFinalLeaseProvider",
         "MisboundSupportedEvidenceDoesNotReachAnyRawMutationProvider",
+        "BindingFlags.Instance | BindingFlags.NonPublic",
         "Assert.AreEqual(0, inner.CallCount)",
     )
 
-    # Pin the reason this guard exists: the current resolver still constructs the mutation
-    # identity from the 64-bit BY_HANDLE_FILE_INFORMATION file index. #193 must not pretend
-    # that this became a full-width ReFS identity merely because non-NTFS mutation is blocked.
     checks += require(
         source["resolver"],
         "FileIndexHigh",
@@ -258,8 +255,12 @@ def check_repository(root: Path) -> int:
     )
     checks += require(
         source["product_wiring"],
-        'app_root.rglob("*.cs")',
-        "Unexpected App use of {type_name}",
+        'for path in source_root.rglob("*.cs")',
+        "allowed_app_usage = {",
+        "allowed_raw_construction = {",
+        "FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs",
+        "FileOp.App/FilesView.Move.cs",
+        "Raw construction of {type_name} is not guarded",
         "WindowsFileCopyMutationPrimitive",
         "WindowsFileSameVolumeMoveMutationPrimitive",
         "WindowsFileDeleteOperationFinalMutationLeaseProvider",
