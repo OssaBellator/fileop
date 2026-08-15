@@ -33,7 +33,15 @@ public sealed record WindowsMutationFilesystemCapability(
     string Summary)
 {
     public bool CanUseCurrentMutationIdentity =>
-        State == WindowsMutationFilesystemCapabilityState.SupportedNtfs;
+        State == WindowsMutationFilesystemCapabilityState.SupportedNtfs &&
+        string.Equals(FileSystemName, "NTFS", StringComparison.OrdinalIgnoreCase);
+
+    public bool IsBoundTo(string canonicalDirectoryPath, FileIdentity expectedIdentity) =>
+        ExpectedIdentity == expectedIdentity &&
+        string.Equals(
+            CanonicalDirectoryPath,
+            canonicalDirectoryPath,
+            StringComparison.OrdinalIgnoreCase);
 }
 
 public interface IWindowsMutationFilesystemCapabilityProbe
@@ -86,7 +94,7 @@ public sealed class WindowsMutationFilesystemCapabilityProbe :
         if (handle.IsInvalid)
         {
             return Win32Unavailable(
-                normalizedPath,
+                canonicalDirectoryPath,
                 expectedIdentity,
                 "Opening the exact mutation root",
                 Marshal.GetLastWin32Error());
@@ -95,7 +103,7 @@ public sealed class WindowsMutationFilesystemCapabilityProbe :
         if (!GetFileInformationByHandle(handle, out var information))
         {
             return Win32Unavailable(
-                normalizedPath,
+                canonicalDirectoryPath,
                 expectedIdentity,
                 "Reading the exact mutation-root identity",
                 Marshal.GetLastWin32Error());
@@ -105,7 +113,7 @@ public sealed class WindowsMutationFilesystemCapabilityProbe :
             (information.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0)
         {
             return Unavailable(
-                normalizedPath,
+                canonicalDirectoryPath,
                 expectedIdentity,
                 "The exact mutation root changed type or became a reparse point before filesystem capability proof.");
         }
@@ -114,7 +122,7 @@ public sealed class WindowsMutationFilesystemCapabilityProbe :
         if (observedIdentity != expectedIdentity)
         {
             return Unavailable(
-                normalizedPath,
+                canonicalDirectoryPath,
                 expectedIdentity,
                 $"The mutation-root filesystem identity changed before filesystem capability proof. Expected {expectedIdentity}, observed {observedIdentity}.");
         }
@@ -123,7 +131,7 @@ public sealed class WindowsMutationFilesystemCapabilityProbe :
         if (finalPath is null)
         {
             return Win32Unavailable(
-                normalizedPath,
+                canonicalDirectoryPath,
                 expectedIdentity,
                 "Resolving the exact mutation-root final path",
                 finalPathError);
@@ -131,7 +139,7 @@ public sealed class WindowsMutationFilesystemCapabilityProbe :
         if (!PathsEqual(finalPath, normalizedPath))
         {
             return Unavailable(
-                normalizedPath,
+                canonicalDirectoryPath,
                 expectedIdentity,
                 $"The mutation-root canonical path changed before filesystem capability proof. Expected '{normalizedPath}', observed '{finalPath}'.");
         }
@@ -148,7 +156,7 @@ public sealed class WindowsMutationFilesystemCapabilityProbe :
                 checked((uint)fileSystemName.Capacity)))
         {
             return Win32Unavailable(
-                normalizedPath,
+                canonicalDirectoryPath,
                 expectedIdentity,
                 "Reading the handle-bound filesystem type",
                 Marshal.GetLastWin32Error());
@@ -158,7 +166,7 @@ public sealed class WindowsMutationFilesystemCapabilityProbe :
         if (string.Equals(observedFileSystem, "NTFS", StringComparison.OrdinalIgnoreCase))
         {
             return new WindowsMutationFilesystemCapability(
-                normalizedPath,
+                canonicalDirectoryPath,
                 expectedIdentity,
                 WindowsMutationFilesystemCapabilityState.SupportedNtfs,
                 observedFileSystem,
@@ -166,7 +174,7 @@ public sealed class WindowsMutationFilesystemCapabilityProbe :
         }
 
         return new WindowsMutationFilesystemCapability(
-            normalizedPath,
+            canonicalDirectoryPath,
             expectedIdentity,
             WindowsMutationFilesystemCapabilityState.UnsupportedFilesystem,
             observedFileSystem,
@@ -377,27 +385,43 @@ public sealed class WindowsNtfsMutationExecutionValidator : IFileOperationExecut
         var sourceCapability = _probe.QueryDirectory(
             validation.SourceDirectory.CanonicalPath,
             sourceIdentity);
-        if (!sourceCapability.CanUseCurrentMutationIdentity)
+        if (!CapabilityMatches(
+                sourceCapability,
+                validation.SourceDirectory.CanonicalPath,
+                sourceIdentity))
         {
             return Block(
                 validation,
-                $"Source mutation root filesystem capability is {sourceCapability.State}: {sourceCapability.Summary}");
+                "Source mutation root filesystem capability was not exact NTFS evidence bound to the freshly validated root: " +
+                sourceCapability.Summary);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         var destinationCapability = _probe.QueryDirectory(
             validation.DestinationDirectory.CanonicalPath,
             destinationIdentity);
-        if (!destinationCapability.CanUseCurrentMutationIdentity)
+        if (!CapabilityMatches(
+                destinationCapability,
+                validation.DestinationDirectory.CanonicalPath,
+                destinationIdentity))
         {
             return Block(
                 validation,
-                $"Destination mutation root filesystem capability is {destinationCapability.State}: {destinationCapability.Summary}");
+                "Destination mutation root filesystem capability was not exact NTFS evidence bound to the freshly validated root: " +
+                destinationCapability.Summary);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         return validation;
     }
+
+    private static bool CapabilityMatches(
+        WindowsMutationFilesystemCapability capability,
+        string canonicalDirectoryPath,
+        FileIdentity expectedIdentity) =>
+        capability is not null &&
+        capability.CanUseCurrentMutationIdentity &&
+        capability.IsBoundTo(canonicalDirectoryPath, expectedIdentity);
 
     private static FileOperationExecutionValidationResult Block(
         FileOperationExecutionValidationResult validation,
@@ -455,11 +479,14 @@ public sealed class WindowsNtfsFileDeleteOperationExecutionValidator :
         var capability = _probe.QueryDirectory(
             validation.SourceDirectory.CanonicalPath,
             sourceIdentity);
-        if (!capability.CanUseCurrentMutationIdentity)
+        if (capability is null ||
+            !capability.CanUseCurrentMutationIdentity ||
+            !capability.IsBoundTo(validation.SourceDirectory.CanonicalPath, sourceIdentity))
         {
             return Block(
                 validation,
-                $"Delete source-root filesystem capability is {capability.State}: {capability.Summary}");
+                "Delete source-root filesystem capability was not exact NTFS evidence bound to the freshly validated root: " +
+                (capability?.Summary ?? "The filesystem capability provider returned no evidence."));
         }
 
         cancellationToken.ThrowIfCancellationRequested();
