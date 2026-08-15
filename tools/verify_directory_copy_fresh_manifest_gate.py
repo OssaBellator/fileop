@@ -98,6 +98,11 @@ def check_repository(root: Path) -> int:
         "AcquisitionUnsupported",
         "AcquisitionUnavailable",
         "ReviewedTreeChanged",
+        "ReferenceEquals(revalidation.Initial, reviewedManifest)",
+        "ReferenceEquals(revalidation.Fresh, acquisition.Manifest)",
+        "ReferenceEquals(Revalidation.Initial, ReviewedManifest)",
+        "ReferenceEquals(Revalidation.Fresh, Acquisition.Manifest)",
+        "Ready directory Copy gate evidence must bind the exact reviewed manifest to the exact freshly acquired matching manifest.",
         "public bool CanBeginDurableHistory",
         "public bool GrantsMutationAuthority => false",
         "DirectoryOperationTreeManifestRevalidator.Compare(",
@@ -119,6 +124,7 @@ def check_repository(root: Path) -> int:
         "UnavailableMetadataInspectionFailsClosedWithoutRevalidation",
         "ReadyAcquisitionRejectsIncompleteFidelityEvidence",
         "UnsupportedAcquisitionCannotPublishManifest",
+        "ReadyGateCannotBeForgedFromUnrelatedMatchingRevalidation",
         "CancellationIsObservedBeforeAcquisition",
     )
     combined = acquisition + gate_source
