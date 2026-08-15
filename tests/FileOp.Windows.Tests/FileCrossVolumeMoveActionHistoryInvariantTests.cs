@@ -87,6 +87,7 @@ public sealed class FileCrossVolumeMoveActionHistoryInvariantTests
         Assert.IsTrue(history.RequiresRecovery);
         Assert.IsTrue(history.Entries[0].HasDestinationRecoveryEvidence);
         Assert.IsFalse(history.Entries[0].DestinationIsDurablyCommitted);
+        Assert.IsFalse(history.Entries[0].SourceDeleteBarrierMayBeUnresolved);
         Assert.IsFalse(history.HasRetainedSourceDuplicates);
     }
 
@@ -111,7 +112,31 @@ public sealed class FileCrossVolumeMoveActionHistoryInvariantTests
         Assert.IsTrue(history.RequiresRecovery);
         Assert.IsTrue(history.Entries[0].HasDestinationRecoveryEvidence);
         Assert.IsTrue(history.Entries[0].DestinationIsDurablyCommitted);
+        Assert.IsTrue(history.Entries[0].SourceDeleteBarrierMayBeUnresolved);
         Assert.IsFalse(history.HasRetainedSourceDuplicates);
+    }
+
+    [TestMethod]
+    public void LiveSourceDeleteBarrierIsReportedUnresolvedUntilMoved()
+    {
+        var live = NewEntry(
+            state: FileCrossVolumeMoveEntryState.SourceDeleteStarted,
+            destinationIdentity: new FileIdentity(2, 500),
+            fingerprint: Fingerprint,
+            copyStarted: T0.AddSeconds(1),
+            destinationCommitted: T0.AddSeconds(2),
+            sourceDeleteStarted: T0.AddSeconds(3));
+        var moved = NewEntry(
+            state: FileCrossVolumeMoveEntryState.Moved,
+            destinationIdentity: new FileIdentity(2, 500),
+            fingerprint: Fingerprint,
+            copyStarted: T0.AddSeconds(1),
+            destinationCommitted: T0.AddSeconds(2),
+            sourceDeleteStarted: T0.AddSeconds(3),
+            completed: T0.AddSeconds(4));
+
+        Assert.IsTrue(live.SourceDeleteBarrierMayBeUnresolved);
+        Assert.IsFalse(moved.SourceDeleteBarrierMayBeUnresolved);
     }
 
     [TestMethod]
@@ -135,6 +160,7 @@ public sealed class FileCrossVolumeMoveActionHistoryInvariantTests
         Assert.IsTrue(history.HasRetainedSourceDuplicates);
         Assert.IsTrue(history.Entries[0].DestinationIsDurablyCommitted);
         Assert.IsFalse(history.Entries[0].HasDestinationRecoveryEvidence);
+        Assert.IsFalse(history.Entries[0].SourceDeleteBarrierMayBeUnresolved);
     }
 
     private static FileCrossVolumeMoveActionEntry NewEntry(
