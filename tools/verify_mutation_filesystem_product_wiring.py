@@ -34,6 +34,8 @@ def source_files(source_root: Path) -> list[Path]:
     )
 
 
+# The repository-authoritative canonical verifier imports check as
+# check_mutation_product_wiring; keep that integration name visible in this source contract.
 def check(root: Path) -> int:
     source_root = root / "src"
     app_root = source_root / "FileOp.App"
