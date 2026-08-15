@@ -14,6 +14,13 @@ from verify_file_delete_execution_validation import (
     check_repository as check_delete_execution_repository,
     run_model as run_delete_execution_model,
 )
+from verify_mutation_filesystem_identity_boundary import (
+    check_repository as check_mutation_filesystem_repository,
+    run_model as run_mutation_filesystem_model,
+)
+from verify_mutation_filesystem_product_wiring import (
+    check as check_mutation_product_wiring,
+)
 
 
 class State(Enum):
@@ -282,16 +289,22 @@ def main() -> int:
 
     copy_move_checks = check_properties(args.cases)
     delete_checks = run_delete_execution_model(args.cases, 0xD31E7E)
+    mutation_filesystem_checks = run_mutation_filesystem_model(args.cases)
     print(
         f"PASS canonical execution validation properties: {copy_move_checks} Copy/Move checks; "
-        f"{delete_checks} delete checks"
+        f"{delete_checks} delete checks; {mutation_filesystem_checks} mutation-filesystem checks"
     )
     if not args.self_test_only:
-        copy_move_source = check_repository(args.repo_root.resolve())
-        delete_source = check_delete_execution_repository(args.repo_root.resolve())
+        repo_root = args.repo_root.resolve()
+        copy_move_source = check_repository(repo_root)
+        delete_source = check_delete_execution_repository(repo_root)
+        mutation_filesystem_source = check_mutation_filesystem_repository(repo_root)
+        mutation_product_wiring = check_mutation_product_wiring(repo_root)
         print(
             "PASS canonical execution validation source wiring: "
-            f"{copy_move_source} Copy/Move checks; {delete_source} delete checks"
+            f"{copy_move_source} Copy/Move checks; {delete_source} delete checks; "
+            f"{mutation_filesystem_source} mutation-filesystem checks; "
+            f"{mutation_product_wiring} product-wiring checks"
         )
     return 0
 

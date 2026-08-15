@@ -374,7 +374,7 @@ def check_repository(root: Path) -> int:
         (plan, "public enum FileOperationKind\n{\n    Copy,\n    Move,", "Copy/Move enum unchanged"),
         (parent, "from verify_file_delete_execution_validation import (", "parent imports delete execution child"),
         (parent, "run_delete_execution_model(args.cases", "parent runs delete execution model"),
-        (parent, "check_delete_execution_repository(args.repo_root.resolve())", "parent runs delete execution source checks"),
+        (parent, "delete_source = check_delete_execution_repository(repo_root)", "parent runs delete execution source checks"),
         (gate, "verify_file_operation_execution_validation.py --repo-root $repoRoot --cases 50000", "existing direct execution gate"),
         (protocol, "public const int CurrentVersion = 8;", "protocol v8 stability"),
     ]
