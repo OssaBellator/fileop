@@ -125,6 +125,7 @@ def check_repository(root: Path) -> int:
         "volume_guard_tests": root / "tests/FileOp.Windows.Tests/FileCrossVolumeMoveSchemaV1VolumeGuardTests.cs",
         "fidelity": root / "src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs",
         "raw_source_delete": root / "src/FileOp.Windows/Operations/WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs",
+        "local_gate": root / "tools/test-local.ps1",
     }
     source: dict[str, str] = {}
     for key, path in paths.items():
@@ -268,6 +269,13 @@ def check_repository(root: Path) -> int:
         "Assert.AreEqual(0, copy.CallCount)",
         "Assert.AreEqual(0, sourceDelete.CallCount)",
         "Assert.IsNull(await history.GetAsync(plan.Id))",
+    )
+
+    local_gate = source["local_gate"]
+    checks += require(
+        local_gate,
+        'Invoke-Step "Offline cross-volume Move source-preflight verifier"',
+        "python tools/verify_cross_volume_move_source_preflight.py --repo-root $repoRoot --cases 50000",
     )
     return checks
 

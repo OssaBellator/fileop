@@ -287,6 +287,10 @@ Invoke-Step "Offline cross-volume file Move composite verifier" {
     python tools/verify_file_cross_volume_move.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline cross-volume Move source-preflight verifier" {
+    python tools/verify_cross_volume_move_source_preflight.py --repo-root $repoRoot --cases 50000
+}
+
 Invoke-Step "Offline Files same-volume Move UI verifier" {
     python tools/verify_files_same_volume_move_ui.py --repo-root $repoRoot --cases 50000
 }
