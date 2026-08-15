@@ -66,7 +66,9 @@ This second layer is intentionally defensive. In the normal product route it sho
 
 The original Windows validators and raw mutation providers remain directly testable and reusable as lower-level components. The aliases are intentionally product-level policy wiring, not a claim that canonical path resolution itself is NTFS-only.
 
-`tools/verify_mutation_filesystem_product_wiring.py` recursively scans FileOp.App C# source (excluding generated `bin`/`obj`) and permits all six guarded lower-level names only at the exact reviewed Copy/Move/Delete call-site paths. Fully qualified lower-level construction, a local alias override or a new unrelated App use fails the offline gate, preventing a future call site from silently bypassing either layer.
+`tools/verify_mutation_filesystem_product_wiring.py` recursively scans App source for all six guarded names and also scans **all production C# under `src/`** for raw lower-level construction, excluding generated `bin`/`obj`. Raw construction is allowed only inside the reviewed Windows composition wrappers or the exact App paths covered by global aliases. Fully qualified lower-level construction, a local alias override, or an unrelated production call site fails the offline gate.
+
+The Copy primitive is intentionally permitted in both `FilesView.Copy.cs` and `FilesView.Move.cs`: draft #185's dormant cross-volume engine reuses that same Copy primitive. Once #194 is integrated, the App alias resolves either use to `WindowsNtfsFileCopyMutationPrimitive`, so the #193 verifier remains compatible with #185 rather than rejecting a safely guarded dormant composition.
 
 ## Why not truncate or hash a 128-bit ID?
 
@@ -76,7 +78,7 @@ That future redesign must include schema/versioning and recovery migration tests
 
 ## Validation
 
-The #193 source/model and product-wiring checks are part of the repository-authoritative offline inventory. `tools/test-local.ps1 -OfflineOnly` already invokes `tools/verify_file_operation_execution_validation.py`; that canonical verifier runs the 50,000-case mutation-filesystem model, the #193 repository source contract and the project-wide App wiring scan alongside the existing Copy/Move/Delete execution-validation checks.
+The #193 source/model and product-wiring checks are part of the repository-authoritative offline inventory. `tools/test-local.ps1 -OfflineOnly` already invokes `tools/verify_file_operation_execution_validation.py`; that canonical verifier runs the 50,000-case mutation-filesystem model, the #193 repository source contract and the production wiring scans alongside the existing Copy/Move/Delete execution-validation checks.
 
 Run the normal authoritative portable gate with:
 
@@ -90,7 +92,7 @@ For a narrower #193-only iteration, the dedicated gate remains available:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-mutation-filesystem-identity.ps1 -OfflineOnly
 ```
 
-Both portable paths pin the handle-bound source ordering, exact capability binding, skip-only behavior, null-provider fail-closed behavior, both product defense layers, recursive App alias wiring, NTFS-only decision policy and current 64-bit identity construction. The dedicated gate runs 50,000 deterministic randomized capability combinations; the authoritative canonical execution-validation verifier runs that same model as part of its broader inventory.
+Both portable paths pin the handle-bound source ordering, exact capability binding, skip-only behavior, null-provider fail-closed behavior, both product defense layers, production source wiring, NTFS-only decision policy and current 64-bit identity construction. The dedicated gate runs 50,000 deterministic randomized capability combinations; the authoritative canonical execution-validation verifier runs that same model as part of its broader inventory.
 
 On Windows, run the targeted compiled gate:
 
