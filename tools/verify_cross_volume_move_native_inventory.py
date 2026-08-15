@@ -112,6 +112,7 @@ def check(root: Path) -> int:
 
     checks += require(
         native_runner,
+        "verify_cross_volume_move_native_inventory.py",
         "FILEOP_CROSS_VOLUME_MOVE_SOURCE_ROOT",
         "FILEOP_CROSS_VOLUME_MOVE_DESTINATION_ROOT",
         'TestCategory=CrossVolumeMoveNative',
