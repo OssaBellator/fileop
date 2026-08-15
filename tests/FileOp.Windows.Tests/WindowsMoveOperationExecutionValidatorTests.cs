@@ -16,18 +16,18 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
     public async Task CaseSensitiveSourceBlocksReadyMoveBeforeMutationHistory()
     {
         var ready = CreateReadyValidation(FileOperationKind.Move);
-        var namespaceProbe = new StubNamespaceProbe(path =>
+        var probe = new StubNamespaceProbe(path =>
             path.EndsWith(@"\Source", StringComparison.OrdinalIgnoreCase)
                 ? FileOperationNamespaceCapabilityState.UnsupportedCaseSensitiveDirectory
                 : FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
         var volumeProbe = new StubVolumeRelationshipProbe(FileOperationVolumeRelationshipState.SameVolume);
-        var validator = CreateValidator(ready, namespaceProbe, volumeProbe);
+        var validator = CreateValidator(ready, probe, volumeProbe);
 
         var result = await validator.ValidateAsync(ready.Plan);
 
         Assert.AreEqual(1, volumeProbe.QueryCalls);
-        Assert.AreEqual(1, namespaceProbe.QueryCalls);
-        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, namespaceProbe.QueriedPaths[0]);
+        Assert.AreEqual(1, probe.QueryCalls);
+        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, probe.QueriedPaths[0]);
         Assert.AreSame(ready.Plan, result.Plan);
         Assert.AreEqual(ready.Items.Count, result.Items.Count);
         Assert.AreSame(ready.Items[0], result.Items[0]);
@@ -42,17 +42,17 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
     public async Task CaseSensitiveDestinationBlocksReadyMoveAfterCheckingBothRoots()
     {
         var ready = CreateReadyValidation(FileOperationKind.Move);
-        var namespaceProbe = new StubNamespaceProbe(path =>
+        var probe = new StubNamespaceProbe(path =>
             path.EndsWith(@"\Destination", StringComparison.OrdinalIgnoreCase)
                 ? FileOperationNamespaceCapabilityState.UnsupportedCaseSensitiveDirectory
                 : FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
-        var validator = CreateValidator(ready, namespaceProbe);
+        var validator = CreateValidator(ready, probe);
 
         var result = await validator.ValidateAsync(ready.Plan);
 
-        Assert.AreEqual(2, namespaceProbe.QueryCalls);
-        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, namespaceProbe.QueriedPaths[0]);
-        Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, namespaceProbe.QueriedPaths[1]);
+        Assert.AreEqual(2, probe.QueryCalls);
+        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, probe.QueriedPaths[0]);
+        Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, probe.QueriedPaths[1]);
         Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
         StringAssert.Contains(result.Summary, "UnsupportedCaseSensitiveDirectory");
         StringAssert.Contains(result.Summary, ready.DestinationDirectory.CanonicalPath);
@@ -62,18 +62,18 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
     public async Task UnavailableNamespaceCapabilityBlocksReadyMove()
     {
         var ready = CreateReadyValidation(FileOperationKind.Move);
-        var namespaceProbe = new StubNamespaceProbe(path =>
+        var probe = new StubNamespaceProbe(path =>
             path.EndsWith(@"\Destination", StringComparison.OrdinalIgnoreCase)
                 ? FileOperationNamespaceCapabilityState.Unavailable
                 : FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
-        var validator = CreateValidator(ready, namespaceProbe);
+        var validator = CreateValidator(ready, probe);
 
         var result = await validator.ValidateAsync(ready.Plan);
 
         Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
-        Assert.AreEqual(2, namespaceProbe.QueryCalls);
-        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, namespaceProbe.QueriedPaths[0]);
-        Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, namespaceProbe.QueriedPaths[1]);
+        Assert.AreEqual(2, probe.QueryCalls);
+        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, probe.QueriedPaths[0]);
+        Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, probe.QueriedPaths[1]);
         StringAssert.Contains(result.Summary, "Unavailable");
     }
 
@@ -81,10 +81,10 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
     public async Task SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation()
     {
         var ready = CreateReadyValidation(FileOperationKind.Move);
-        var namespaceProbe = new StubNamespaceProbe(_ =>
+        var probe = new StubNamespaceProbe(_ =>
             FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
         var volumeProbe = new StubVolumeRelationshipProbe(FileOperationVolumeRelationshipState.SameVolume);
-        var validator = CreateValidator(ready, namespaceProbe, volumeProbe);
+        var validator = CreateValidator(ready, probe, volumeProbe);
 
         var result = await validator.ValidateAsync(ready.Plan);
 
@@ -92,103 +92,103 @@ public sealed class WindowsMoveOperationExecutionValidatorTests
         Assert.AreEqual(1, volumeProbe.QueryCalls);
         Assert.AreEqual(ready.SourceDirectory.CanonicalPath, volumeProbe.SourcePaths[0]);
         Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, volumeProbe.DestinationPaths[0]);
-        Assert.AreEqual(2, namespaceProbe.QueryCalls);
-        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, namespaceProbe.QueriedPaths[0]);
-        Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, namespaceProbe.QueriedPaths[1]);
+        Assert.AreEqual(2, probe.QueryCalls);
+        Assert.AreEqual(ready.SourceDirectory.CanonicalPath, probe.QueriedPaths[0]);
+        Assert.AreEqual(ready.DestinationDirectory.CanonicalPath, probe.QueriedPaths[1]);
         Assert.IsTrue(result.CanBeginMutation);
     }
 
     [TestMethod]
-    public async Task MutationReadyMoveWithoutRootIdentityFailsClosedBeforeAnyCapabilityProbe()
+    public async Task MutationReadyMoveWithoutRootIdentityFailsClosedBeforeNamespaceProbe()
     {
         var ready = CreateReadyValidation(
             FileOperationKind.Move,
             includeDestinationRootIdentity: false);
-        var namespaceProbe = new StubNamespaceProbe(_ =>
+        var probe = new StubNamespaceProbe(_ =>
             FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
         var volumeProbe = new StubVolumeRelationshipProbe(FileOperationVolumeRelationshipState.SameVolume);
-        var validator = CreateValidator(ready, namespaceProbe, volumeProbe);
+        var validator = CreateValidator(ready, probe, volumeProbe);
 
         var result = await validator.ValidateAsync(ready.Plan);
 
         Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
         Assert.IsFalse(result.CanBeginMutation);
         Assert.AreEqual(0, volumeProbe.QueryCalls);
-        Assert.AreEqual(0, namespaceProbe.QueryCalls);
-        Assert.AreEqual(0, namespaceProbe.QueriedPaths.Count);
+        Assert.AreEqual(0, probe.QueryCalls);
+        Assert.AreEqual(0, probe.QueriedPaths.Count);
         StringAssert.Contains(result.Summary, "stable source and destination root filesystem identities");
         StringAssert.Contains(result.Summary, "No durable mutation history or filesystem mutation");
     }
 
     [TestMethod]
-    public async Task DifferentVolumeSerialsBlockBeforeStrongerRelationshipOrNamespaceProbe()
+    public async Task CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory()
     {
         var ready = CreateReadyValidation(
             FileOperationKind.Move,
             destinationVolumeSerialNumber: 22);
-        var namespaceProbe = new StubNamespaceProbe(_ =>
+        var probe = new StubNamespaceProbe(_ =>
             FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
         var volumeProbe = new StubVolumeRelationshipProbe(FileOperationVolumeRelationshipState.SameVolume);
-        var validator = CreateValidator(ready, namespaceProbe, volumeProbe);
+        var validator = CreateValidator(ready, probe, volumeProbe);
 
         var result = await validator.ValidateAsync(ready.Plan);
 
         AssertCrossVolumeProductBlock(result);
         Assert.AreEqual(0, volumeProbe.QueryCalls);
-        Assert.AreEqual(0, namespaceProbe.QueryCalls);
+        Assert.AreEqual(0, probe.QueryCalls);
     }
 
     [TestMethod]
     public async Task EqualVolumeSerialCollisionWithDifferentGuidIsBlockedAsCrossVolume()
     {
         var ready = CreateReadyValidation(FileOperationKind.Move);
-        var namespaceProbe = new StubNamespaceProbe(_ =>
+        var probe = new StubNamespaceProbe(_ =>
             FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
         var volumeProbe = new StubVolumeRelationshipProbe(FileOperationVolumeRelationshipState.DifferentVolume);
-        var validator = CreateValidator(ready, namespaceProbe, volumeProbe);
+        var validator = CreateValidator(ready, probe, volumeProbe);
 
         var result = await validator.ValidateAsync(ready.Plan);
 
         AssertCrossVolumeProductBlock(result);
         Assert.AreEqual(1, volumeProbe.QueryCalls);
-        Assert.AreEqual(0, namespaceProbe.QueryCalls);
+        Assert.AreEqual(0, probe.QueryCalls);
     }
 
     [TestMethod]
     public async Task EqualVolumeSerialWithoutStrongerGuidProofFailsClosedBeforeNamespaceProbe()
     {
         var ready = CreateReadyValidation(FileOperationKind.Move);
-        var namespaceProbe = new StubNamespaceProbe(_ =>
+        var probe = new StubNamespaceProbe(_ =>
             FileOperationNamespaceCapabilityState.SupportedCaseInsensitive);
         var volumeProbe = new StubVolumeRelationshipProbe(FileOperationVolumeRelationshipState.Unavailable);
-        var validator = CreateValidator(ready, namespaceProbe, volumeProbe);
+        var validator = CreateValidator(ready, probe, volumeProbe);
 
         var result = await validator.ValidateAsync(ready.Plan);
 
         Assert.AreEqual(FileOperationExecutionValidationStatus.Blocked, result.Status);
         Assert.IsFalse(result.CanBeginMutation);
         Assert.AreEqual(1, volumeProbe.QueryCalls);
-        Assert.AreEqual(0, namespaceProbe.QueryCalls);
+        Assert.AreEqual(0, probe.QueryCalls);
         StringAssert.Contains(result.Summary, "equal volume-serial evidence");
         StringAssert.Contains(result.Summary, "stub volume relationship: Unavailable");
         StringAssert.Contains(result.Summary, "No durable mutation history or filesystem mutation");
     }
 
     [TestMethod]
-    public async Task NonMoveValidationDoesNotInvokeMoveCapabilityProbes()
+    public async Task NonMoveValidationDoesNotInvokeMoveNamespaceCapability()
     {
         var ready = CreateReadyValidation(FileOperationKind.Copy);
-        var namespaceProbe = new StubNamespaceProbe(_ =>
+        var probe = new StubNamespaceProbe(_ =>
             FileOperationNamespaceCapabilityState.UnsupportedCaseSensitiveDirectory);
         var volumeProbe = new StubVolumeRelationshipProbe(FileOperationVolumeRelationshipState.DifferentVolume);
-        var validator = CreateValidator(ready, namespaceProbe, volumeProbe);
+        var validator = CreateValidator(ready, probe, volumeProbe);
 
         var result = await validator.ValidateAsync(ready.Plan);
 
         Assert.AreSame(ready, result);
         Assert.AreEqual(0, volumeProbe.QueryCalls);
-        Assert.AreEqual(0, namespaceProbe.QueryCalls);
-        Assert.AreEqual(0, namespaceProbe.QueriedPaths.Count);
+        Assert.AreEqual(0, probe.QueryCalls);
+        Assert.AreEqual(0, probe.QueriedPaths.Count);
     }
 
     private static WindowsMoveOperationExecutionValidator CreateValidator(
