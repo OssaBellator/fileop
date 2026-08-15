@@ -31,8 +31,11 @@ def check(root: Path) -> int:
     history_invariants = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveActionHistoryInvariantTests.cs")
     history_store_roundtrip = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveRecoveryEvidenceStoreTests.cs")
     history_corruption = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMovePersistedRecoveryCorruptionTests.cs")
+    fidelity = read(root, "src/FileOp.Core/Operations/FileCrossVolumeMoveFidelity.cs")
+    fidelity_tests = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityTests.cs")
     two_volume = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeTwoVolumeTests.cs")
     recovery = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeRecoveryTests.cs")
+    read_only = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveNativeReadOnlyTests.cs")
     share = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveFidelityShareCompatibilityTests.cs")
     hard_link_path = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveHardLinkPathBindingTests.cs")
     mutation_proof = read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveMutationProofTests.cs")
@@ -85,6 +88,35 @@ def check(root: Path) -> int:
         "ThrowsExactlyAsync<ArgumentException>",
     )
 
+    # #185 currently refuses ReadOnly before SourceDeleteStarted. The raw disposition does
+    # not opt into FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE; #190 owns that later support.
+    checks += require(
+        fidelity,
+        "FileAttributeReadOnly = 0x00000001u",
+        "StableCopiedAttributesMask & ~FileAttributeReadOnly",
+        "FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE",
+        "predictable delete refusal into recovery after SourceDeleteStarted",
+    )
+    checks += require(
+        fidelity_tests,
+        "ReadOnlyAttributeIsRefusedBeforeSourceDeleteBarrier",
+        "FileCrossVolumeMoveFidelityBlocker.SourceUnsupportedAttributes",
+        "FileCrossVolumeMoveFidelityBlocker.DestinationUnsupportedAttributes",
+        "0x21u",
+    )
+    checks += require(
+        read_only,
+        '[TestCategory("CrossVolumeMoveNative")]',
+        "ReadOnlySourceIsSafelyRetainedBeforeSourceDeleteBarrier",
+        "CrossVolumeMoveSourceDeletePreparationFailed",
+        "SourceUnsupportedAttributes",
+        "DestinationUnsupportedAttributes",
+        "Assert.IsNull(persisted.Entries[0].SourceDeleteStartedAtUtc)",
+        "Assert.IsTrue(persisted.HasRetainedSourceDuplicates)",
+        "Assert.IsFalse(persisted.RequiresRecovery)",
+        "FileAttributes.ReadOnly",
+    )
+
     checks += require(
         two_volume,
         '[TestCategory("CrossVolumeMoveNative")]',
@@ -100,6 +132,7 @@ def check(root: Path) -> int:
         "CreateHardLinkW(",
     )
     checks += forbid(two_volume, "new WindowsMoveOperationExecutionValidator()")
+    checks += forbid(read_only, "new WindowsMoveOperationExecutionValidator()")
 
     checks += require(
         recovery,
@@ -164,7 +197,7 @@ def check(root: Path) -> int:
     )
 
     # The raw source capability must use direct POSIX disposition on the exact opened link.
-    # FILE_DISPOSITION_ON_CLOSE has an extra Windows precondition and is intentionally absent.
+    # FILE_DISPOSITION_ON_CLOSE and IGNORE_READONLY are intentionally absent in #185.
     checks += require(
         raw_delete,
         "FileDispositionDelete",
@@ -174,7 +207,13 @@ def check(root: Path) -> int:
         "FileInformationClass.FileDispositionInformationEx",
         "Volatile.Write(ref _mutationPerformed, 1)",
     )
-    checks += forbid(raw_delete, "FileDispositionOnClose", "FileDispositionOnClose =")
+    checks += forbid(
+        raw_delete,
+        "FileDispositionOnClose",
+        "FileDispositionIgnoreReadOnlyAttribute",
+        "FileDispositionIgnoreReadonlyAttribute",
+        "IgnoreReadOnlyAttribute",
+    )
 
     # #186: the reviewed Copy creates with a default/null OBJECT_ATTRIBUTES security
     # descriptor. The ordinary-token native test then proves the source NULL DACL is not
@@ -228,6 +267,7 @@ def check(root: Path) -> int:
         "post-barrier ADS",
         "post-barrier EA",
         "post-barrier main-stream writer",
+        "read-only",
         "ordinary unelevated token",
         "FileCrossVolumeMoveHardLinkPathBindingTests.CanonicalResolverPreservesTheSpecificOpenedHardLinkName",
         "tools/test-cross-volume-move-security.ps1",
