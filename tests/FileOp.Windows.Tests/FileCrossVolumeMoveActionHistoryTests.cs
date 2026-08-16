@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using FileOp.Core.Models;
 using FileOp.Core.Operations;
@@ -280,13 +281,67 @@ public sealed class FileCrossVolumeMoveActionHistoryTests
         Assert.IsFalse(completed.HasRetainedSourceDuplicates);
     }
 
+    [TestMethod]
+    public void EveryStoreConnectionUsesFullSynchronousMode()
+    {
+        using var fixture = new HistoryFixture();
+        using (var store = new SqliteFileCrossVolumeMoveActionHistoryStore(fixture.DatabasePath))
+        {
+            AssertFullSynchronous(store);
+            AssertFullSynchronous(store);
+        }
+
+        using var reopened = new SqliteFileCrossVolumeMoveActionHistoryStore(fixture.DatabasePath);
+        AssertFullSynchronous(reopened);
+    }
+
+    [TestMethod]
+    public async Task LaterEntryFrontierMutationRollsBackWhenEarlierEntryIsPending()
+    {
+        using var fixture = new HistoryFixture();
+        var validation = CreateValidation(
+            includeSkippedEntry: true,
+            secondDecisionReady: true);
+        using var store = new SqliteFileCrossVolumeMoveActionHistoryStore(fixture.DatabasePath);
+
+        var begun = await store.BeginAsync(validation, DateTimeOffset.UtcNow);
+        Assert.AreEqual(FileCrossVolumeMoveEntryState.Pending, begun.Entries[0].State);
+        Assert.AreEqual(FileCrossVolumeMoveEntryState.Pending, begun.Entries[1].State);
+
+        await Assert.ThrowsExactlyAsync<ArgumentException>(async () =>
+            await store.MarkCopyMutationStartedAsync(
+                validation.Plan.Id,
+                1,
+                DateTimeOffset.UtcNow));
+
+        var persisted = await store.GetAsync(validation.Plan.Id);
+        Assert.IsNotNull(persisted);
+        Assert.AreEqual(FileCrossVolumeMoveEntryState.Pending, persisted.Entries[0].State);
+        Assert.AreEqual(FileCrossVolumeMoveEntryState.Pending, persisted.Entries[1].State);
+    }
+
+    private static void AssertFullSynchronous(
+        SqliteFileCrossVolumeMoveActionHistoryStore store)
+    {
+        var openConnection = typeof(SqliteFileCrossVolumeMoveActionHistoryStore).GetMethod(
+            "OpenConnection",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new AssertFailedException("OpenConnection was not found.");
+        using var connection = openConnection.Invoke(store, parameters: null) as SqliteConnection
+            ?? throw new AssertFailedException("OpenConnection did not return a SqliteConnection.");
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA synchronous;";
+        Assert.AreEqual(2L, Convert.ToInt64(command.ExecuteScalar()));
+    }
+
     private static FileContentFingerprint CreateFingerprint(char character) =>
         new(FileContentFingerprintAlgorithm.Sha256, new string(character, 64));
 
     private static FileOperationExecutionValidationResult CreateValidation(
         bool includeSkippedEntry,
         ulong destinationVolume = 2,
-        bool firstDecisionSkip = false)
+        bool firstDecisionSkip = false,
+        bool secondDecisionReady = false)
     {
         var sourceDirectory = Path.GetFullPath(@"C:\Source");
         var destinationDirectory = Path.GetFullPath(@"D:\Destination");
@@ -323,7 +378,9 @@ public sealed class FileCrossVolumeMoveActionHistoryTests
         var items = entries
             .Select((entry, ordinal) =>
             {
-                var skip = ordinal > 0 || firstDecisionSkip;
+                var skip =
+                    (ordinal == 0 && firstDecisionSkip) ||
+                    (ordinal > 0 && !secondDecisionReady);
                 return new FileOperationExecutionValidationItem(
                     entry,
                     new FileOperationCanonicalPath(
