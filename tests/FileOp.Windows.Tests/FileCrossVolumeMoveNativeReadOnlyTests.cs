@@ -32,7 +32,7 @@ public sealed class FileCrossVolumeMoveNativeReadOnlyTests
         try
         {
             var plan = CreatePlan(fixture.SourceDirectory, fixture.DestinationDirectory, sourcePath);
-            var validation = await new WindowsFileOperationExecutionValidator().ValidateAsync(plan);
+            var validation = await CreateDirectNtfsValidator().ValidateAsync(plan);
             Assert.IsTrue(validation.CanBeginMutation, validation.Summary);
             Assert.IsTrue(validation.SourceDirectory.Identity.HasValue);
             Assert.IsTrue(validation.DestinationDirectory.Identity.HasValue);
@@ -43,7 +43,7 @@ public sealed class FileCrossVolumeMoveNativeReadOnlyTests
 
             using var history = new SqliteFileCrossVolumeMoveActionHistoryStore(fixture.HistoryDatabasePath);
             var executor = new FileCrossVolumeMoveOperationExecutor(
-                new WindowsFileOperationExecutionValidator(),
+                CreateDirectNtfsValidator(),
                 history,
                 new WindowsFileCopyMutationPrimitive(),
                 new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive());
@@ -83,6 +83,10 @@ public sealed class FileCrossVolumeMoveNativeReadOnlyTests
             ClearReadOnly(Path.Combine(fixture.DestinationDirectory, Path.GetFileName(sourcePath)));
         }
     }
+
+    private static IFileOperationExecutionValidator CreateDirectNtfsValidator() =>
+        new WindowsNtfsMutationExecutionValidator(
+            new WindowsFileOperationExecutionValidator());
 
     private static FileOperationPlan CreatePlan(
         string sourceDirectory,
