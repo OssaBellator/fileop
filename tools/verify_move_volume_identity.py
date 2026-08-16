@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Portable checks for same-volume Move's stronger Windows volume-identity boundary."""
+"""Portable checks for Move's stronger Windows volume-identity/product boundary."""
 from __future__ import annotations
 
 import argparse
@@ -34,7 +34,7 @@ def classify(
     if source_identity is None or destination_identity is None:
         return Decision.BLOCKED, False
     if source_identity[0] != destination_identity[0]:
-        return Decision.READY, False
+        return Decision.BLOCKED, False
     if relationship is Relationship.SAME:
         return Decision.READY, True
     return Decision.BLOCKED, True
@@ -73,7 +73,7 @@ def run_model(cases: int) -> int:
         source_identity=(11, 10),
         destination_identity=(22, 20),
         relationship=Relationship.UNAVAILABLE,
-    ) == (Decision.READY, False)
+    ) == (Decision.BLOCKED, False)
     checks += 1
 
     rng = random.Random(0x1922026)
@@ -100,7 +100,7 @@ def run_model(cases: int) -> int:
             assert decision is Decision.BLOCKED
             assert not queried
         elif source_identity[0] != destination_identity[0]:
-            assert decision is Decision.READY
+            assert decision is Decision.BLOCKED
             assert not queried
         else:
             assert queried
@@ -139,6 +139,7 @@ def check_repository(root: Path) -> int:
     tests = read(root, "tests/FileOp.Windows.Tests/WindowsMoveOperationExecutionValidatorTests.cs")
     real_probe_tests = read(root, "tests/FileOp.Windows.Tests/WindowsFileOperationVolumeRelationshipTests.cs")
     strategy = read(root, "src/FileOp.Core/Operations/FileMoveExecutionStrategy.cs")
+    store = read(root, "src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs")
 
     checks = 0
     checks += require(
@@ -174,7 +175,7 @@ def check_repository(root: Path) -> int:
         "new WindowsFileOperationVolumeRelationshipProbe()",
         "validation.SourceDirectory.Identity is not FileIdentity sourceIdentity",
         "validation.DestinationDirectory.Identity is not FileIdentity destinationIdentity",
-        "sourceIdentity.VolumeSerialNumber == destinationIdentity.VolumeSerialNumber",
+        "sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber",
         "_volumeRelationshipProbe.Query(",
         "validation.SourceDirectory.CanonicalPath",
         "sourceIdentity",
@@ -182,23 +183,23 @@ def check_repository(root: Path) -> int:
         "destinationIdentity",
         "case FileOperationVolumeRelationshipState.SameVolume:",
         "case FileOperationVolumeRelationshipState.DifferentVolume:",
-        "must not enter the same-volume rename path",
         "equal volume-serial evidence",
+        "return Block(validation, CrossVolumeMoveDisabledSummary);",
         "RequireSupportedMutationRoots(validation, cancellationToken)",
     )
-    assert validator.index("sourceIdentity.VolumeSerialNumber == destinationIdentity.VolumeSerialNumber") < validator.index("_volumeRelationshipProbe.Query(")
+    assert validator.index("sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber") < validator.index("_volumeRelationshipProbe.Query(")
     assert validator.index("_volumeRelationshipProbe.Query(") < validator.index("RequireSupportedMutationRoots(validation, cancellationToken)")
     checks += 2
 
     checks += require(
         tests,
         "SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation",
-        "MutationReadyMoveWithoutRootIdentityFailsClosedBeforeCapabilityProbes",
-        "DifferentVolumeSerialsBypassStrongerGuidProofAndRemainReadyForStrategyClassification",
-        "EqualVolumeSerialCollisionWithDifferentGuidBlocksBeforeNamespaceProbe",
+        "MutationReadyMoveWithoutRootIdentityFailsClosedBeforeNamespaceProbe",
+        "CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory",
+        "EqualVolumeSerialCollisionWithDifferentGuidIsBlockedAsCrossVolume",
         "EqualVolumeSerialWithoutStrongerGuidProofFailsClosedBeforeNamespaceProbe",
         "Assert.AreEqual(0, volumeProbe.QueryCalls)",
-        "Assert.AreEqual(0, namespaceProbe.QueryCalls)",
+        "Assert.AreEqual(0, probe.QueryCalls)",
         "FileOperationVolumeRelationshipState.DifferentVolume",
         "FileOperationVolumeRelationshipState.Unavailable",
     )
@@ -235,6 +236,14 @@ def check_repository(root: Path) -> int:
         "sourceDirectoryIdentity.VolumeSerialNumber ==",
         "destinationDirectoryIdentity.VolumeSerialNumber",
         "FileMoveExecutionStrategy.SameVolumeRenameRequired",
+    )
+
+    # The dormant composite journal is schema-v1 and still keys root identity by the
+    # 32-bit serial. Equal-serial/different-GUID roots therefore remain product-blocked
+    # until a later reviewed schema/identity upgrade explicitly supports them.
+    checks += require(
+        store,
+        "CHECK(source_root_volume_serial <> destination_root_volume_serial)",
     )
 
     return checks
