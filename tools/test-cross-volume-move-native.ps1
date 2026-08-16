@@ -68,6 +68,20 @@ if ([string]::Equals(
     throw "SourceRoot and DestinationRoot must be different directories on different filesystem volumes."
 }
 
+$sourceDriveRoot = [System.IO.Path]::GetPathRoot($resolvedSourceRoot)
+$destinationDriveRoot = [System.IO.Path]::GetPathRoot($resolvedDestinationRoot)
+if ([string]::IsNullOrWhiteSpace($sourceDriveRoot) -or
+    [string]::IsNullOrWhiteSpace($destinationDriveRoot)) {
+    throw "Cross-volume Move native validation requires filesystem roots with resolvable local drive roots."
+}
+
+$sourceDrive = [System.IO.DriveInfo]::new($sourceDriveRoot)
+$destinationDrive = [System.IO.DriveInfo]::new($destinationDriveRoot)
+if (-not [string]::Equals($sourceDrive.DriveFormat, "NTFS", [StringComparison]::OrdinalIgnoreCase) -or
+    -not [string]::Equals($destinationDrive.DriveFormat, "NTFS", [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Cross-volume Move native validation requires both supplied roots to be on NTFS, matching FileOp's current mutation identity/capability boundary. Source='$($sourceDrive.DriveFormat)', Destination='$($destinationDrive.DriveFormat)'."
+}
+
 $previousSourceRoot = [Environment]::GetEnvironmentVariable(
     "FILEOP_CROSS_VOLUME_MOVE_SOURCE_ROOT",
     [EnvironmentVariableTarget]::Process)
@@ -88,9 +102,12 @@ try {
     Write-Host "Running explicit cross-volume Move native matrix under an ordinary unelevated token"
     Write-Host "  Identity:          $($currentIdentity.Name)"
     Write-Host "  Source root:       $resolvedSourceRoot"
+    Write-Host "  Source filesystem: $($sourceDrive.DriveFormat)"
     Write-Host "  Destination root:  $resolvedDestinationRoot"
+    Write-Host "  Destination filesystem: $($destinationDrive.DriveFormat)"
     Write-Host "  Elevated administrator role: false"
     Write-Host "The tests themselves verify that the resolved filesystem volume serials differ."
+    Write-Host "The raw source-delete provider independently proves exact handle-bound NTFS and FILE_SUPPORTS_POSIX_UNLINK_RENAME before SourceDeleteStarted."
 
     & dotnet test $testProject `
         -c $Configuration `
