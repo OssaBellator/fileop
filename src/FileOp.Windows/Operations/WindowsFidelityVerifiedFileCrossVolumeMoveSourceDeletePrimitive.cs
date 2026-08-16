@@ -122,6 +122,9 @@ public sealed class WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimit
         public bool SourceDeleteMutationPerformed =>
             Volatile.Read(ref _inner)?.SourceDeleteMutationPerformed == true;
 
+        public bool SourceDeleteHandleCloseCompleted =>
+            Volatile.Read(ref _inner)?.SourceDeleteHandleCloseCompleted == true;
+
         public async ValueTask MarkDeletePendingAsync(
             FileCrossVolumeMoveSourceDeleteAuthorization authorization,
             CancellationToken cancellationToken = default)
@@ -159,6 +162,36 @@ public sealed class WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimit
             {
                 throw new InvalidOperationException(
                     "The authorized cross-volume Move source-delete primitive returned without reporting that the exact source disposition was performed.");
+            }
+        }
+
+        public async ValueTask CloseSourceDeleteHandleAsync(
+            FileCrossVolumeMoveSourceDeleteAuthorization authorization,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(authorization);
+            cancellationToken.ThrowIfCancellationRequested();
+            var inner = Volatile.Read(ref _inner)
+                ?? throw new ObjectDisposedException(nameof(FidelityLease));
+            if (!authorization.SourceDeleteBarrierSatisfied ||
+                !authorization.SourceDeleteMutationAuthorized ||
+                !authorization.IsBoundTo(inner.Evidence))
+            {
+                throw new UnauthorizedAccessException(
+                    "Cross-volume Move checked source-handle close requires the exact Core-minted post-barrier authority for this live lease.");
+            }
+            if (!inner.SourceDeleteMutationPerformed)
+            {
+                throw new InvalidOperationException(
+                    "Cross-volume Move cannot complete the checked source-handle close before exact source disposition is reported.");
+            }
+
+            await inner.CloseSourceDeleteHandleAsync(authorization, CancellationToken.None)
+                .ConfigureAwait(false);
+            if (!inner.SourceDeleteHandleCloseCompleted)
+            {
+                throw new InvalidOperationException(
+                    "The source-delete primitive returned from checked close without a positive exact-handle close receipt.");
             }
         }
 
