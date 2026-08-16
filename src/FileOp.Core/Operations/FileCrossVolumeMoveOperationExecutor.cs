@@ -462,7 +462,8 @@ public sealed class FileCrossVolumeMoveOperationExecutor : IFileOperationExecuto
             try
             {
                 // No cancellation is passed beyond SourceDeleteStarted. The exact live
-                // source/destination lease must reach delete/release/commit or recovery.
+                // source/destination lease must reach disposition, checked source-handle
+                // close, remaining evidence release, and durable Moved commit or recovery.
                 await sourceDeleteLease
                     .MarkDeletePendingAsync(authorization, CancellationToken.None)
                     .ConfigureAwait(false);
@@ -490,6 +491,33 @@ public sealed class FileCrossVolumeMoveOperationExecutor : IFileOperationExecuto
 
             try
             {
+                await sourceDeleteLease
+                    .CloseSourceDeleteHandleAsync(authorization, CancellationToken.None)
+                    .ConfigureAwait(false);
+                if (!sourceDeleteLease.SourceDeleteHandleCloseCompleted)
+                {
+                    throw new InvalidOperationException(
+                        "The source-delete primitive returned from checked source-handle close without a positive completion receipt.");
+                }
+            }
+            catch (Exception exception)
+            {
+                await DisposeSourceDeleteLeaseAsync(sourceDeleteLease).ConfigureAwait(false);
+                return await FailSourceDeleteBarrierAsync(
+                    plan.Id,
+                    ordinal,
+                    progress,
+                    snapshot,
+                    FailureFromException(
+                        "CrossVolumeMoveSourceDeleteHandleCloseFailed",
+                        "The source disposition was issued but the exact destructive source handle did not complete its checked close boundary.",
+                        freshItem.Source.CanonicalPath,
+                        exception,
+                        retryable: false)).ConfigureAwait(false);
+            }
+
+            try
+            {
                 await sourceDeleteLease.DisposeAsync().ConfigureAwait(false);
             }
             catch (Exception exception)
@@ -501,7 +529,7 @@ public sealed class FileCrossVolumeMoveOperationExecutor : IFileOperationExecuto
                     snapshot,
                     FailureFromException(
                         "CrossVolumeMoveSourceDeleteReleaseFailed",
-                        "The source was marked for deletion but the exact capability/evidence lease did not release cleanly.",
+                        "The exact source handle completed its checked close, but the remaining capability/evidence lease did not release cleanly.",
                         freshItem.Source.CanonicalPath,
                         exception,
                         retryable: false)).ConfigureAwait(false);
@@ -532,7 +560,7 @@ public sealed class FileCrossVolumeMoveOperationExecutor : IFileOperationExecuto
                         snapshot,
                         FailureFromException(
                             "CrossVolumeMoveSourceDeleteCommitFailed",
-                            "The source delete ran but durable Moved commit could not be proven.",
+                            "The source delete completed its checked exact-handle close but durable Moved commit could not be proven.",
                             freshItem.Source.CanonicalPath,
                             exception,
                             retryable: false)).ConfigureAwait(false);
@@ -997,8 +1025,8 @@ public sealed class FileCrossVolumeMoveOperationExecutor : IFileOperationExecuto
         }
         catch
         {
-            // Pre-barrier disposal owns no delete mutation. Post-barrier callers route release
-            // failures through recovery before invoking this best-effort helper.
+            // Cleanup is best effort only. Checked destructive source-handle close has its
+            // own explicit receipt and all post-barrier failures settle through recovery.
         }
     }
 
