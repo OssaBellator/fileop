@@ -34,6 +34,7 @@ public sealed class FileCrossVolumeMoveFidelityLeaseTests
         Assert.AreEqual(1, verifier.CallCount);
         Assert.AreEqual(1, inner.AcquireCount);
         Assert.AreEqual(0, inner.MutationCount);
+        Assert.AreEqual(0, inner.CloseCount);
         Assert.AreEqual(1, inner.DisposeCount);
 
         var persisted = await history.GetAsync(plan.Id);
@@ -66,6 +67,7 @@ public sealed class FileCrossVolumeMoveFidelityLeaseTests
         Assert.AreEqual(2, verifier.CallCount);
         Assert.AreEqual(1, inner.AcquireCount);
         Assert.AreEqual(0, inner.MutationCount);
+        Assert.AreEqual(0, inner.CloseCount);
         Assert.AreEqual(1, inner.DisposeCount);
 
         var persisted = await history.GetAsync(plan.Id);
@@ -76,7 +78,7 @@ public sealed class FileCrossVolumeMoveFidelityLeaseTests
     }
 
     [TestMethod]
-    public async Task TwoPositiveFidelityProofsPermitExactlyOneInnerDeleteMutation()
+    public async Task TwoPositiveFidelityProofsPermitExactlyOneInnerDeleteMutationAndCheckedClose()
     {
         using var fixture = new HistoryFixture();
         var plan = CreatePlan();
@@ -94,6 +96,7 @@ public sealed class FileCrossVolumeMoveFidelityLeaseTests
         Assert.AreEqual(2, verifier.CallCount);
         Assert.AreEqual(1, inner.AcquireCount);
         Assert.AreEqual(1, inner.MutationCount);
+        Assert.AreEqual(1, inner.CloseCount);
         Assert.AreEqual(1, inner.DisposeCount);
 
         var persisted = await history.GetAsync(plan.Id);
@@ -262,6 +265,8 @@ public sealed class FileCrossVolumeMoveFidelityLeaseTests
 
         public int MutationCount { get; private set; }
 
+        public int CloseCount { get; private set; }
+
         public int DisposeCount { get; private set; }
 
         public ValueTask<IFileCrossVolumeMoveSourceDeleteLease> AcquireAsync(
@@ -294,6 +299,8 @@ public sealed class FileCrossVolumeMoveFidelityLeaseTests
 
             public bool SourceDeleteMutationPerformed => _owner.MutationCount != 0;
 
+            public bool SourceDeleteHandleCloseCompleted => _owner.CloseCount != 0;
+
             public ValueTask MarkDeletePendingAsync(
                 FileCrossVolumeMoveSourceDeleteAuthorization authorization,
                 CancellationToken cancellationToken = default)
@@ -303,6 +310,17 @@ public sealed class FileCrossVolumeMoveFidelityLeaseTests
                 Assert.IsTrue(authorization.SourceDeleteMutationAuthorized);
                 Assert.IsTrue(authorization.IsBoundTo(Evidence));
                 _owner.MutationCount++;
+                return ValueTask.CompletedTask;
+            }
+
+            public ValueTask CloseSourceDeleteHandleAsync(
+                FileCrossVolumeMoveSourceDeleteAuthorization authorization,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Assert.IsTrue(authorization.IsBoundTo(Evidence));
+                Assert.IsTrue(SourceDeleteMutationPerformed);
+                _owner.CloseCount++;
                 return ValueTask.CompletedTask;
             }
 
