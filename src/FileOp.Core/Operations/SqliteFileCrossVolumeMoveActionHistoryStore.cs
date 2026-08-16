@@ -941,6 +941,7 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         using var command = connection.CreateCommand();
         command.CommandText = """
             PRAGMA foreign_keys = ON;
+            PRAGMA synchronous = FULL;
             PRAGMA journal_mode = WAL;
 
             CREATE TABLE IF NOT EXISTS file_cross_volume_move_schema(
@@ -1024,7 +1025,11 @@ public sealed class SqliteFileCrossVolumeMoveActionHistoryStore :
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;";
+        command.CommandText = """
+            PRAGMA foreign_keys = ON;
+            PRAGMA synchronous = FULL;
+            PRAGMA busy_timeout = 5000;
+            """;
         command.ExecuteNonQuery();
         return connection;
     }
