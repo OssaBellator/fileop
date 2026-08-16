@@ -33,6 +33,7 @@ public sealed class WindowsFileCrossVolumeMoveSourceDeletePrimitive :
     private const uint FileAttributeNormal = 0x00000080;
     private const uint FileFlagBackupSemantics = 0x02000000;
     private const uint FileFlagOpenReparsePoint = 0x00200000;
+    private const uint FileSupportsPosixUnlinkRename = 0x00000400;
 
     private const uint FileSynchronousIoNonAlert = 0x00000020;
     private const uint FileNonDirectoryFile = 0x00000040;
@@ -64,6 +65,9 @@ public sealed class WindowsFileCrossVolumeMoveSourceDeletePrimitive :
         return new ValueTask<IFileCrossVolumeMoveSourceDeleteLease>(
             Task.Run(() => Acquire(request, cancellationToken), cancellationToken));
     }
+
+    internal static bool SupportsPosixUnlinkRename(uint fileSystemFlags) =>
+        (fileSystemFlags & FileSupportsPosixUnlinkRename) != 0;
 
     private IFileCrossVolumeMoveSourceDeleteLease Acquire(
         FileCrossVolumeMoveSourceDeleteRequest request,
@@ -105,6 +109,7 @@ public sealed class WindowsFileCrossVolumeMoveSourceDeletePrimitive :
                 sourceRootPath,
                 request.SourceDirectoryIdentity,
                 "cross-volume Move source directory");
+            RequireSupportedSourceDeleteVolume(sourceDirectory);
             ValidateDirectoryHandle(
                 destinationDirectory,
                 destinationRootPath,
@@ -163,6 +168,7 @@ public sealed class WindowsFileCrossVolumeMoveSourceDeletePrimitive :
                 sourceRootPath,
                 request.SourceDirectoryIdentity,
                 "cross-volume Move source directory");
+            RequireSupportedSourceDeleteVolume(sourceDirectory);
             ValidateDirectoryHandle(
                 destinationDirectory,
                 destinationRootPath,
@@ -205,6 +211,36 @@ public sealed class WindowsFileCrossVolumeMoveSourceDeletePrimitive :
         {
             throw new NotSupportedException(
                 $"Cross-volume Move {description} is not supported by the current namespace model: {capability.Summary}");
+        }
+    }
+
+    private static void RequireSupportedSourceDeleteVolume(SafeFileHandle sourceDirectory)
+    {
+        var volumeName = new StringBuilder(261);
+        var fileSystemName = new StringBuilder(64);
+        if (!GetVolumeInformationByHandleW(
+                sourceDirectory,
+                volumeName,
+                checked((uint)volumeName.Capacity),
+                out _,
+                out _,
+                out var fileSystemFlags,
+                fileSystemName,
+                checked((uint)fileSystemName.Capacity)))
+        {
+            throw Win32IOException(
+                "Reading exact source-volume filesystem capabilities for cross-volume Move source deletion");
+        }
+
+        if (!string.Equals(fileSystemName.ToString(), "NTFS", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException(
+                $"Cross-volume Move source deletion requires exact NTFS mutation evidence; the identity-bound source volume reported '{fileSystemName}'.");
+        }
+        if (!SupportsPosixUnlinkRename(fileSystemFlags))
+        {
+            throw new NotSupportedException(
+                "The exact identity-bound source volume does not advertise FILE_SUPPORTS_POSIX_UNLINK_RENAME required by the reviewed source-delete primitive.");
         }
     }
 
@@ -545,6 +581,8 @@ public sealed class WindowsFileCrossVolumeMoveSourceDeletePrimitive :
         private SafeFileHandle? _destinationFile;
         private int _mutationAttempted;
         private int _mutationPerformed;
+        private int _sourceHandleCloseAttempted;
+        private int _sourceHandleCloseCompleted;
 
         public SourceDeleteLease(
             FileCrossVolumeMoveSourceDeleteEvidence evidence,
@@ -570,6 +608,9 @@ public sealed class WindowsFileCrossVolumeMoveSourceDeletePrimitive :
             IsLive(_destinationDirectory) && IsLive(_destinationFile);
 
         public bool SourceDeleteMutationPerformed => Volatile.Read(ref _mutationPerformed) != 0;
+
+        public bool SourceDeleteHandleCloseCompleted =>
+            Volatile.Read(ref _sourceHandleCloseCompleted) != 0;
 
         public ValueTask MarkDeletePendingAsync(
             FileCrossVolumeMoveSourceDeleteAuthorization authorization,
@@ -655,10 +696,61 @@ public sealed class WindowsFileCrossVolumeMoveSourceDeletePrimitive :
             return ValueTask.CompletedTask;
         }
 
+        public ValueTask CloseSourceDeleteHandleAsync(
+            FileCrossVolumeMoveSourceDeleteAuthorization authorization,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(authorization);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!authorization.SourceDeleteBarrierSatisfied ||
+                !authorization.SourceDeleteMutationAuthorized ||
+                !authorization.IsBoundTo(Evidence))
+            {
+                throw new UnauthorizedAccessException(
+                    "Cross-volume Move checked source-handle close requires the exact Core-minted post-barrier authority for this lease.");
+            }
+            if (!SourceDeleteMutationPerformed)
+            {
+                throw new InvalidOperationException(
+                    "Cross-volume Move cannot close the destructive source handle before exact source disposition is reported.");
+            }
+            if (Interlocked.CompareExchange(ref _sourceHandleCloseAttempted, 1, 0) != 0)
+            {
+                throw new InvalidOperationException(
+                    "Cross-volume Move destructive source handle close may be attempted only once per capability lease.");
+            }
+
+            var sourceFile = Volatile.Read(ref _sourceFile);
+            var sourceDirectory = Volatile.Read(ref _sourceDirectory);
+            var destinationDirectory = Volatile.Read(ref _destinationDirectory);
+            var destinationFile = Volatile.Read(ref _destinationFile);
+            if (!IsLive(sourceFile) || !IsLive(sourceDirectory) ||
+                !IsLive(destinationDirectory) || !IsLive(destinationFile))
+            {
+                throw new ObjectDisposedException(
+                    nameof(SourceDeleteLease),
+                    "Cross-volume Move checked source-handle close requires the exact source handle and retained identity evidence handles to remain live.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var status = NtClose(sourceFile!.DangerousGetHandle());
+            if (status < 0)
+            {
+                throw new IOException(
+                    $"NtClose for the exact cross-volume Move POSIX source-delete handle failed with NTSTATUS 0x{unchecked((uint)status):X8}.");
+            }
+
+            sourceFile.SetHandleAsInvalid();
+            _sourceFile = null;
+            Volatile.Write(ref _sourceHandleCloseCompleted, 1);
+            return ValueTask.CompletedTask;
+        }
+
         public ValueTask DisposeAsync()
         {
-            // Close the source file first so delete-on-close semantics settle while the
-            // destination replacement remains held stable. Only then release evidence handles.
+            // A successful checked close already detached the exact source file handle. If
+            // checked close failed or was never attempted, cleanup may still try best effort,
+            // but cleanup is never accepted as the positive destructive completion receipt.
             DisposeNoThrow(_sourceFile);
             _sourceFile = null;
             DisposeNoThrow(_sourceDirectory);
@@ -703,6 +795,9 @@ public sealed class WindowsFileCrossVolumeMoveSourceDeletePrimitive :
         uint length,
         FileInformationClass fileInformationClass);
 
+    [DllImport("ntdll.dll")]
+    private static extern int NtClose(IntPtr handle);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ReadFile(
@@ -724,6 +819,18 @@ public sealed class WindowsFileCrossVolumeMoveSourceDeletePrimitive :
     private static extern bool GetFileInformationByHandle(
         SafeFileHandle hFile,
         out ByHandleFileInformation lpFileInformation);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeInformationByHandleW(
+        SafeFileHandle hFile,
+        StringBuilder lpVolumeNameBuffer,
+        uint nVolumeNameSize,
+        out uint lpVolumeSerialNumber,
+        out uint lpMaximumComponentLength,
+        out uint lpFileSystemFlags,
+        StringBuilder lpFileSystemNameBuffer,
+        uint nFileSystemNameSize);
 
     private enum FileInformationClass
     {
