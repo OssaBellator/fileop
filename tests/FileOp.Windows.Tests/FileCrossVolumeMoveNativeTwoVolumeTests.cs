@@ -13,8 +13,9 @@ namespace FileOp.Windows.Tests;
 
 /// <summary>
 /// Opt-in native tests for the dormant cross-volume Move engine. These tests bypass the
-/// production WindowsMoveOperationExecutionValidator product block deliberately and use the
-/// ordinary execution-grade validator plus the real Copy/fidelity/source-delete primitives.
+/// production WindowsMoveOperationExecutionValidator product block deliberately, but they
+/// retain the repository's NTFS-only mutation identity boundary by wrapping the ordinary
+/// execution-grade validator with WindowsNtfsMutationExecutionValidator.
 ///
 /// Set FILEOP_CROSS_VOLUME_MOVE_SOURCE_ROOT and FILEOP_CROSS_VOLUME_MOVE_DESTINATION_ROOT to
 /// writable ordinary directories on different filesystem volumes. The dedicated local gate
@@ -133,7 +134,7 @@ public sealed class FileCrossVolumeMoveNativeTwoVolumeTests
                 Assert.IsTrue(await active.RequestCancellationAsync(plan.Id));
             });
         executor = new FileCrossVolumeMoveOperationExecutor(
-            new WindowsFileOperationExecutionValidator(),
+            CreateDirectNtfsValidator(),
             history,
             copy,
             new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive());
@@ -184,14 +185,18 @@ public sealed class FileCrossVolumeMoveNativeTwoVolumeTests
     private static FileCrossVolumeMoveOperationExecutor CreateRealExecutor(
         IFileCrossVolumeMoveActionHistoryStore history) =>
         new(
-            new WindowsFileOperationExecutionValidator(),
+            CreateDirectNtfsValidator(),
             history,
             new WindowsFileCopyMutationPrimitive(),
             new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive());
 
+    private static IFileOperationExecutionValidator CreateDirectNtfsValidator() =>
+        new WindowsNtfsMutationExecutionValidator(
+            new WindowsFileOperationExecutionValidator());
+
     private static async Task AssertReadyOnDifferentVolumesAsync(FileOperationPlan plan)
     {
-        var validation = await new WindowsFileOperationExecutionValidator().ValidateAsync(plan);
+        var validation = await CreateDirectNtfsValidator().ValidateAsync(plan);
         Assert.IsTrue(validation.CanBeginMutation, validation.Summary);
         Assert.IsTrue(validation.SourceDirectory.Identity.HasValue);
         Assert.IsTrue(validation.DestinationDirectory.Identity.HasValue);
@@ -246,8 +251,6 @@ public sealed class FileCrossVolumeMoveNativeTwoVolumeTests
             throw new ArgumentOutOfRangeException(nameof(name));
         }
 
-        // FILE_FULL_EA_INFORMATION: ULONG NextEntryOffset; UCHAR Flags;
-        // UCHAR EaNameLength; USHORT EaValueLength; CHAR EaName[]; NUL; value bytes.
         var buffer = new byte[checked(8 + nameBytes.Length + 1 + valueBytes.Length)];
         buffer[4] = 0;
         buffer[5] = checked((byte)nameBytes.Length);
