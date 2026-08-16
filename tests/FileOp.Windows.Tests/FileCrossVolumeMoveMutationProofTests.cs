@@ -31,6 +31,7 @@ public sealed class FileCrossVolumeMoveMutationProofTests
         StringAssert.Contains(exception.Message, "without reporting");
         Assert.IsTrue(inner.MarkDeletePendingCalled);
         Assert.IsFalse(lease.SourceDeleteMutationPerformed);
+        Assert.IsFalse(lease.SourceDeleteHandleCloseCompleted);
     }
 
     private static FileCrossVolumeMoveSourceDeleteRequest CreateRequest()
@@ -163,6 +164,8 @@ public sealed class FileCrossVolumeMoveMutationProofTests
 
             public bool SourceDeleteMutationPerformed => false;
 
+            public bool SourceDeleteHandleCloseCompleted => false;
+
             public ValueTask MarkDeletePendingAsync(
                 FileCrossVolumeMoveSourceDeleteAuthorization authorization,
                 CancellationToken cancellationToken = default)
@@ -173,6 +176,12 @@ public sealed class FileCrossVolumeMoveMutationProofTests
                 _owner.MarkDeletePendingCalled = true;
                 return ValueTask.CompletedTask;
             }
+
+            public ValueTask CloseSourceDeleteHandleAsync(
+                FileCrossVolumeMoveSourceDeleteAuthorization authorization,
+                CancellationToken cancellationToken = default) =>
+                throw new InvalidOperationException(
+                    "The non-reporting fake cannot close before disposition proof exists.");
 
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
