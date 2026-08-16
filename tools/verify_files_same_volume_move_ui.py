@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zero-Actions model/source checks for Files same-volume file and directory Move UI."""
+"""Zero-Actions model/source checks for Files file/directory Move UI and dormant cross-volume file plumbing."""
 from __future__ import annotations
 
 import argparse
@@ -38,13 +38,17 @@ def can_attempt_directory(*, composition: str, **kwargs: object) -> bool:
     return composition == "Directories" and common_ready(**kwargs)
 
 
-def classify_file_for_ui(strategy: str) -> str:
+def classify_file_for_ui(strategy: str, cross_volume: bool) -> str:
+    # Production Windows validation product-blocks a proven cross-volume pair before
+    # namespace probing/history/mutation. Dormant composite plumbing remains source-testable.
+    if cross_volume:
+        return "KeepQueuedProductDisabled"
     if strategy == "SameVolumeRenameRequired":
         return "Execute"
     if strategy == "SkipOnly":
         return "ExecuteNoMutation"
     if strategy == "CrossVolumeCopyDeleteRequired":
-        return "KeepQueuedCrossVolume"
+        return "KeepQueuedVolumeMismatch"
     return "KeepQueuedBlocked"
 
 
@@ -72,10 +76,12 @@ def check_properties(cases: int) -> int:
     assert not can_attempt_directory(composition="Files", **base)
     assert not can_attempt_file(composition="Mixed", **base)
     assert not can_attempt_directory(composition="Mixed", **base)
-    assert classify_file_for_ui("SameVolumeRenameRequired") == "Execute"
-    assert classify_file_for_ui("CrossVolumeCopyDeleteRequired") == "KeepQueuedCrossVolume"
+    assert classify_file_for_ui("SameVolumeRenameRequired", False) == "Execute"
+    assert classify_file_for_ui("CrossVolumeCopyDeleteRequired", False) == "KeepQueuedVolumeMismatch"
+    assert classify_file_for_ui("CrossVolumeCopyDeleteRequired", True) == "KeepQueuedProductDisabled"
+    assert classify_file_for_ui("SkipOnly", True) == "KeepQueuedProductDisabled"
     assert classify_directory_for_ui("SameVolumeDirectoryRenameRequired") == "Execute"
-    checks = 9
+    checks = 11
 
     rng = random.Random(20260815)
     for _ in range(cases):
@@ -109,10 +115,14 @@ def check_properties(cases: int) -> int:
             "CrossVolumeCopyDeleteRequired",
             "Blocked",
         ])
-        file_disposition = classify_file_for_ui(file_strategy)
-        assert file_disposition.startswith("Execute") == (
-            file_strategy in {"SameVolumeRenameRequired", "SkipOnly"}
-        )
+        cross_volume = bool(rng.getrandbits(1))
+        file_disposition = classify_file_for_ui(file_strategy, cross_volume)
+        if cross_volume:
+            assert file_disposition == "KeepQueuedProductDisabled"
+        else:
+            assert file_disposition.startswith("Execute") == (
+                file_strategy in {"SameVolumeRenameRequired", "SkipOnly"}
+            )
         checks += 1
 
         directory_strategy = rng.choice([
@@ -157,15 +167,20 @@ def check_repository(root: Path) -> int:
         "xaml_cs": read(root, "src/FileOp.App/FilesView.xaml.cs"),
         "source": read(root, "src/FileOp.App/MainWindow.StorageSourceIdentity.cs"),
         "aliases": read(root, "src/FileOp.App/MutationExecutionValidatorAliases.cs"),
-        "executor": read(root, "src/FileOp.Core/Operations/FileSameVolumeMoveOperationExecutor.cs"),
+        "same_executor": read(root, "src/FileOp.Core/Operations/FileSameVolumeMoveOperationExecutor.cs"),
+        "cross_executor": read(root, "src/FileOp.Core/Operations/FileCrossVolumeMoveOperationExecutor.cs"),
+        "cross_history": read(root, "src/FileOp.Core/Operations/FileCrossVolumeMoveActionHistory.cs"),
+        "cross_store": read(root, "src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs"),
         "directory_executor": read(root, "src/FileOp.Core/Operations/DirectorySameVolumeMoveOperationExecutor.cs"),
         "directory_history": read(root, "src/FileOp.Core/Operations/DirectorySameVolumeMoveActionHistory.cs"),
-        "primitive": read(root, "src/FileOp.Windows/Operations/WindowsFileSameVolumeMoveMutationPrimitive.cs"),
+        "same_primitive": read(root, "src/FileOp.Windows/Operations/WindowsFileSameVolumeMoveMutationPrimitive.cs"),
+        "cross_wrapper": read(root, "src/FileOp.Windows/Operations/WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive.cs"),
         "directory_primitive": read(root, "src/FileOp.Windows/Operations/WindowsDirectorySameVolumeMoveMutationPrimitive.cs"),
         "directory_guard": read(root, "src/FileOp.Windows/Operations/WindowsNtfsDirectorySameVolumeMoveMutationPrimitive.cs"),
         "move_validator": read(root, "src/FileOp.Windows/Operations/WindowsMoveOperationExecutionValidator.cs"),
         "namespace": read(root, "src/FileOp.Windows/Operations/WindowsFileOperationNamespaceCapability.cs"),
         "tests": read(root, "tests/FileOp.Windows.Tests/WindowsMoveOperationExecutionValidatorTests.cs"),
+        "cross_tests": read(root, "tests/FileOp.Windows.Tests/FileCrossVolumeMoveOperationExecutorTests.cs"),
         "directory_tests": read(root, "tests/FileOp.Windows.Tests/DirectorySameVolumeMoveTransactionTests.cs"),
         "gate": read(root, "tools/test-local.ps1"),
     }
@@ -185,12 +200,22 @@ def check_repository(root: Path) -> int:
 
     checks += require(
         source["move"],
+        "using FileOp.Core.Models;",
         "public bool IsFileOperationExecutionBusy => _copyExecutionRunning || _moveExecutionRunning;",
         "new WindowsMoveOperationExecutionValidator()",
         "FileMoveExecutionStrategyClassifier.Classify(executionValidation)",
+        "sourceRootIdentity.VolumeSerialNumber != destinationRootIdentity.VolumeSerialNumber",
         "FileMoveExecutionStrategy.CrossVolumeCopyDeleteRequired",
         "new FileSameVolumeMoveOperationExecutor(",
         "new WindowsFileSameVolumeMoveMutationPrimitive()",
+        "new SqliteFileCrossVolumeMoveActionHistoryStore(",
+        "new FileCrossVolumeMoveOperationExecutor(",
+        "new WindowsFileCopyMutationPrimitive()",
+        "new WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive()",
+        "finalCrossVolumeHistory = await historyStore.GetAsync(plan.Id);",
+        "FormatCrossVolumeMoveExecutionOutcome(",
+        "destination copies were durably committed",
+        "original source file(s) were retained",
         "plan.Intent.Entries.Any(static entry => entry.IsDirectory)",
         "The File Move executor supports regular files only. Use the separate Directory Move executor for a homogeneous directory-only plan.",
         "RunQueuedDirectoryMoveButton.IsEnabled = false;",
@@ -198,8 +223,16 @@ def check_repository(root: Path) -> int:
         "await executor.RequestCancellationAsync(operationId)",
         "will not replay, rollback or reinterpret the original operation ID automatically",
     )
-    assert source["move"].count("new WindowsMoveOperationExecutionValidator()") >= 2
+    assert source["move"].count("new WindowsMoveOperationExecutionValidator()") >= 3
     checks += 1
+    checks += forbid(
+        source["move"],
+        "new WindowsFileCrossVolumeMoveSourceDeletePrimitive()",
+        "File.Move(",
+        "Directory.Move(",
+        "File.Copy(",
+        "File.Delete(",
+    )
 
     checks += require(
         source["copy"],
@@ -252,6 +285,30 @@ def check_repository(root: Path) -> int:
         "FileOp.Windows.Operations.WindowsNtfsDirectorySameVolumeMoveMutationPrimitive",
     )
     checks += require(
+        source["same_executor"],
+        "FileSameVolumeMoveOperationExecutor : IFileOperationExecutor",
+    )
+    checks += require(
+        source["cross_executor"],
+        "FileCrossVolumeMoveOperationExecutor : IFileOperationExecutor",
+        "SourceDeleteMutationPerformed",
+    )
+    checks += require(
+        source["cross_history"],
+        "FileCrossVolumeMoveEntryState.SourceDeleteStarted",
+        "FileCrossVolumeMoveEntryState.RecoveryRequired",
+    )
+    checks += require(
+        source["cross_store"],
+        "file_cross_volume_move_actions",
+        "CHECK(source_root_volume_serial <> destination_root_volume_serial)",
+    )
+    checks += require(
+        source["cross_wrapper"],
+        "WindowsFidelityVerifiedFileCrossVolumeMoveSourceDeletePrimitive",
+        "CancellationToken.None",
+    )
+    checks += require(
         source["directory_executor"],
         "public sealed class DirectorySameVolumeMoveOperationExecutor : IFileOperationExecutor",
         ".MarkMutationStartedAsync(plan.Id, ordinal, UtcNow())",
@@ -262,6 +319,10 @@ def check_repository(root: Path) -> int:
         "public sealed record DirectorySameVolumeMoveActionHistory",
         "public bool GrantsAutomaticReplayAuthority => false",
         "public bool GrantsRollbackAuthority => false",
+    )
+    checks += require(
+        source["same_primitive"],
+        "SetFileInformationByHandle(",
     )
     checks += require(
         source["directory_primitive"],
@@ -282,9 +343,19 @@ def check_repository(root: Path) -> int:
     checks += require(
         source["move_validator"],
         "public sealed class WindowsMoveOperationExecutionValidator : IFileOperationExecutionValidator",
-        "before durable mutation history",
-        "No MutationStarted record or filesystem mutation was created",
+        "CrossVolumeMoveDisabledSummary",
+        "sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber",
+        "return Block(validation, CrossVolumeMoveDisabledSummary);",
+        "before durable history",
     )
+    assert source["move_validator"].index(
+        "sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber"
+    ) < source["move_validator"].index("_volumeRelationshipProbe.Query(")
+    assert source["move_validator"].index(
+        "_volumeRelationshipProbe.Query("
+    ) < source["move_validator"].index("RequireSupportedMutationRoots(validation, cancellationToken)")
+    checks += 2
+
     checks += require(
         source["namespace"],
         "FileCaseSensitiveInformation = 71",
@@ -296,6 +367,17 @@ def check_repository(root: Path) -> int:
         source["tests"],
         "CaseSensitiveSourceBlocksReadyMoveBeforeMutationHistory",
         "SupportedSameVolumeNamespacesReturnOriginalReadyMoveValidation",
+        "CrossVolumeMoveIsProductBlockedBeforeNamespaceProbeOrMutationHistory",
+        "EqualVolumeSerialCollisionWithDifferentGuidIsBlockedAsCrossVolume",
+    )
+    checks += require(
+        source["cross_tests"],
+        "SuccessfulMoveCommitsCopyBeforeSourceDeleteBarrierAndAuthorization",
+        "CancellationRequestedDuringCopyStopsAfterDestinationCommitWithoutDeleteAuthority",
+        "SourceDeletePreparationFailureIsSafeFailureWithCommittedDestinationAndRetainedSource",
+        "SourceDeleteMutationFailureAfterBarrierRequiresRecovery",
+        "InvalidCopyReceiptNeverAcquiresSourceDeleteCapability",
+        "FreshSourceIdentityChangeFailsBeforeCopyBarrier",
     )
     checks += require(
         source["directory_tests"],
@@ -305,11 +387,9 @@ def check_repository(root: Path) -> int:
     )
 
     assert "_filesView.ReassertOperationExecutionBusyAfterSourceChange();" in source["source"]
-    assert "FileSameVolumeMoveOperationExecutor : IFileOperationExecutor" in source["executor"]
-    assert "SetFileInformationByHandle(" in source["primitive"]
-    for text in (source["move"], source["directory_move"]):
-        checks += forbid(text, "File.Move(", "Directory.Move(", "File.Copy(", "File.Delete(")
     assert "verify_files_same_volume_move_ui.py --repo-root $repoRoot --cases 50000" in source["gate"]
+    assert "verify_file_cross_volume_move.py --repo-root $repoRoot --cases 50000" in source["gate"]
+    assert "verify_cross_volume_move_source_preflight.py --repo-root $repoRoot --cases 50000" in source["gate"]
     checks += 4
 
     return checks
