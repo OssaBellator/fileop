@@ -134,6 +134,7 @@ public sealed record FileCrossVolumeMoveActionHistory
                 destinationDirectoryIdentity);
         }
 
+        ValidateEntryChronology(snapshot);
         ValidateTerminalState(snapshot, terminalState, completedAtUtc);
 
         OperationId = operationId;
@@ -339,6 +340,44 @@ public sealed record FileCrossVolumeMoveActionHistory
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(entry.State));
+        }
+    }
+
+    private static void ValidateEntryChronology(
+        IReadOnlyList<FileCrossVolumeMoveActionEntry> entries)
+    {
+        var frontierReached = false;
+        foreach (var entry in entries)
+        {
+            if (entry.State == FileCrossVolumeMoveEntryState.Skipped)
+            {
+                continue;
+            }
+
+            if (!frontierReached && entry.State == FileCrossVolumeMoveEntryState.Moved)
+            {
+                continue;
+            }
+
+            if (!frontierReached &&
+                entry.State is FileCrossVolumeMoveEntryState.Pending or
+                    FileCrossVolumeMoveEntryState.CopyMutationStarted or
+                    FileCrossVolumeMoveEntryState.DestinationCommitted or
+                    FileCrossVolumeMoveEntryState.SourceDeleteStarted or
+                    FileCrossVolumeMoveEntryState.Failed or
+                    FileCrossVolumeMoveEntryState.RecoveryRequired)
+            {
+                frontierReached = true;
+                continue;
+            }
+
+            if (frontierReached && entry.State == FileCrossVolumeMoveEntryState.Pending)
+            {
+                continue;
+            }
+
+            throw new ArgumentException(
+                "Cross-volume Move history must preserve a completed Moved prefix followed by at most one active/terminal frontier and then only Pending entries; Skipped entries are neutral.");
         }
     }
 
