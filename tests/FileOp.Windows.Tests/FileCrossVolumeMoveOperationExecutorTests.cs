@@ -37,10 +37,12 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
         Assert.AreEqual(1, sourceDelete.CallCount);
         Assert.IsTrue(sourceDelete.LastLease?.AuthorizationObserved == true);
         Assert.IsTrue(sourceDelete.LastLease?.MutationPerformed == true);
+        Assert.IsTrue(sourceDelete.LastLease?.HandleCloseCompleted == true);
         Assert.IsTrue(IndexOf(events, "copy") < IndexOf(events, "copy-lease:dispose"));
         Assert.IsTrue(IndexOf(events, "copy-lease:dispose") < IndexOf(events, "delete:acquire"));
         Assert.IsTrue(IndexOf(events, "delete:acquire") < IndexOf(events, "delete:authorized"));
-        Assert.IsTrue(IndexOf(events, "delete:authorized") < IndexOf(events, "delete-lease:dispose"));
+        Assert.IsTrue(IndexOf(events, "delete:authorized") < IndexOf(events, "delete-handle:closed"));
+        Assert.IsTrue(IndexOf(events, "delete-handle:closed") < IndexOf(events, "delete-lease:dispose"));
 
         var persisted = await history.GetAsync(plan.Id);
         Assert.IsNotNull(persisted);
@@ -148,6 +150,7 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
         Assert.AreEqual(FileOperationExecutionState.Failed, result.State);
         Assert.AreEqual("CrossVolumeMoveSourceDeleteFailed", result.Failure?.Code);
         Assert.IsTrue(sourceDelete.LastLease?.AuthorizationObserved == true);
+        Assert.IsFalse(sourceDelete.LastLease?.HandleCloseCompleted == true);
 
         var persisted = await history.GetAsync(plan.Id);
         Assert.IsNotNull(persisted);
@@ -185,6 +188,47 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
         Assert.AreEqual("CrossVolumeMoveSourceDeleteFailed", result.Failure?.Code);
         Assert.IsTrue(sourceDelete.LastLease?.AuthorizationObserved == true);
         Assert.IsFalse(sourceDelete.LastLease?.MutationPerformed == true);
+        Assert.IsFalse(sourceDelete.LastLease?.HandleCloseCompleted == true);
+
+        var persisted = await history.GetAsync(plan.Id);
+        Assert.IsNotNull(persisted);
+        Assert.AreEqual(
+            FileCrossVolumeMoveTerminalState.RecoveryRequired,
+            persisted.TerminalState);
+        Assert.AreEqual(
+            FileCrossVolumeMoveEntryState.RecoveryRequired,
+            persisted.Entries[0].State);
+        Assert.IsTrue(persisted.RequiresRecovery);
+    }
+
+    [TestMethod]
+    public async Task CheckedSourceDeleteHandleCloseFailureAfterBarrierRequiresRecovery()
+    {
+        using var fixture = new HistoryFixture();
+        var events = new List<string>();
+        var plan = CreatePlan();
+        var validator = new FakeValidator((candidate, _) => CreateValidation(candidate));
+        using var history = new SqliteFileCrossVolumeMoveActionHistoryStore(fixture.DatabasePath);
+        var copy = new FakeCopyMutation(events);
+        var sourceDelete = new FakeSourceDeletePrimitive(events)
+        {
+            ThrowOnClose = true,
+        };
+        var executor = new FileCrossVolumeMoveOperationExecutor(
+            validator,
+            history,
+            copy,
+            sourceDelete);
+
+        var result = await executor.ExecuteAsync(plan);
+
+        Assert.AreEqual(FileOperationExecutionState.Failed, result.State);
+        Assert.AreEqual("CrossVolumeMoveSourceDeleteHandleCloseFailed", result.Failure?.Code);
+        Assert.IsTrue(sourceDelete.LastLease?.AuthorizationObserved == true);
+        Assert.IsTrue(sourceDelete.LastLease?.MutationPerformed == true);
+        Assert.IsFalse(sourceDelete.LastLease?.HandleCloseCompleted == true);
+        Assert.IsTrue(events.Contains("delete-handle:close"));
+        Assert.IsFalse(events.Contains("delete-handle:closed"));
 
         var persisted = await history.GetAsync(plan.Id);
         Assert.IsNotNull(persisted);
@@ -433,6 +477,8 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
 
         public bool ThrowOnMutation { get; set; }
 
+        public bool ThrowOnClose { get; set; }
+
         public bool ReportMutationPerformed { get; set; } = true;
 
         public FakeSourceDeleteLease? LastLease { get; private set; }
@@ -453,6 +499,7 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
                 new FileCrossVolumeMoveSourceDeleteEvidence(request),
                 _events,
                 ThrowOnMutation,
+                ThrowOnClose,
                 ReportMutationPerformed);
             return ValueTask.FromResult<IFileCrossVolumeMoveSourceDeleteLease>(LastLease);
         }
@@ -462,17 +509,20 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
     {
         private readonly List<string> _events;
         private readonly bool _throwOnMutation;
+        private readonly bool _throwOnClose;
         private readonly bool _reportMutationPerformed;
 
         public FakeSourceDeleteLease(
             FileCrossVolumeMoveSourceDeleteEvidence evidence,
             List<string> events,
             bool throwOnMutation,
+            bool throwOnClose,
             bool reportMutationPerformed)
         {
             Evidence = evidence;
             _events = events;
             _throwOnMutation = throwOnMutation;
+            _throwOnClose = throwOnClose;
             _reportMutationPerformed = reportMutationPerformed;
         }
 
@@ -482,9 +532,13 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
 
         public bool SourceDeleteMutationPerformed => MutationPerformed;
 
+        public bool SourceDeleteHandleCloseCompleted => HandleCloseCompleted;
+
         public bool AuthorizationObserved { get; private set; }
 
         public bool MutationPerformed { get; private set; }
+
+        public bool HandleCloseCompleted { get; private set; }
 
         public ValueTask MarkDeletePendingAsync(
             FileCrossVolumeMoveSourceDeleteAuthorization authorization,
@@ -507,6 +561,23 @@ public sealed class FileCrossVolumeMoveOperationExecutorTests
             {
                 MutationPerformed = true;
             }
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask CloseSourceDeleteHandleAsync(
+            FileCrossVolumeMoveSourceDeleteAuthorization authorization,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.IsTrue(authorization.IsBoundTo(Evidence));
+            Assert.IsTrue(MutationPerformed);
+            _events.Add("delete-handle:close");
+            if (_throwOnClose)
+            {
+                throw new IOException("checked source handle close failed");
+            }
+            HandleCloseCompleted = true;
+            _events.Add("delete-handle:closed");
             return ValueTask.CompletedTask;
         }
 
