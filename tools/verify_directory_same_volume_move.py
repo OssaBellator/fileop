@@ -273,11 +273,11 @@ def check_repository(root: Path) -> int:
 
     checks += require(
         move_validator,
-        "EqualSerialDifferentVolumeSummary",
-        "sourceIdentity.VolumeSerialNumber == destinationIdentity.VolumeSerialNumber",
+        "CrossVolumeMoveDisabledSummary",
+        "sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber",
         "case FileOperationVolumeRelationshipState.SameVolume:",
         "case FileOperationVolumeRelationshipState.DifferentVolume:",
-        "return Block(validation, EqualSerialDifferentVolumeSummary);",
+        "return Block(validation, CrossVolumeMoveDisabledSummary);",
     )
     checks += require(
         app_move,
