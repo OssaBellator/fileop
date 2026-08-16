@@ -218,7 +218,23 @@ public interface IFileCrossVolumeMoveSourceDeleteLease : IAsyncDisposable
 
     bool SourceDeleteMutationPerformed { get; }
 
+    /// <summary>
+    /// Positive provider receipt that the exact source handle which received the one-shot
+    /// POSIX delete disposition completed its checked close boundary. Cleanup/disposal is
+    /// deliberately not equivalent to this receipt.
+    /// </summary>
+    bool SourceDeleteHandleCloseCompleted { get; }
+
     ValueTask MarkDeletePendingAsync(
+        FileCrossVolumeMoveSourceDeleteAuthorization authorization,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Completes the exact source-delete handle close once, after disposition has been
+    /// performed under the same Core-minted post-barrier authority. Failures after the
+    /// durable SourceDeleteStarted barrier are recovery-sensitive.
+    /// </summary>
+    ValueTask CloseSourceDeleteHandleAsync(
         FileCrossVolumeMoveSourceDeleteAuthorization authorization,
         CancellationToken cancellationToken = default);
 }
