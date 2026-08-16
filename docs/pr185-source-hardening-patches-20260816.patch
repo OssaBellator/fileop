@@ -1,0 +1,140 @@
+diff --git a/src/FileOp.Core/Operations/FileCrossVolumeMoveActionHistory.cs b/src/FileOp.Core/Operations/FileCrossVolumeMoveActionHistory.cs
+--- a/src/FileOp.Core/Operations/FileCrossVolumeMoveActionHistory.cs
++++ b/src/FileOp.Core/Operations/FileCrossVolumeMoveActionHistory.cs
+@@
+         for (var ordinal = 0; ordinal < snapshot.Length; ordinal++)
+         {
+             ValidateEntry(
+                 snapshot[ordinal],
+                 ordinal,
+                 collisionPolicy,
+                 sourceDirectoryIdentity,
+                 destinationDirectoryIdentity);
+         }
+ 
++        ValidateEntryChronology(snapshot);
+         ValidateTerminalState(snapshot, terminalState, completedAtUtc);
+@@
+     private static void ValidateTerminalState(
+         IReadOnlyList<FileCrossVolumeMoveActionEntry> entries,
+         FileCrossVolumeMoveTerminalState? terminalState,
+         DateTimeOffset? completedAtUtc)
+@@
+     }
++
++    private static void ValidateEntryChronology(
++        IReadOnlyList<FileCrossVolumeMoveActionEntry> entries)
++    {
++        var frontierReached = false;
++        foreach (var entry in entries)
++        {
++            if (entry.State == FileCrossVolumeMoveEntryState.Skipped)
++            {
++                continue;
++            }
++
++            if (!frontierReached && entry.State == FileCrossVolumeMoveEntryState.Moved)
++            {
++                continue;
++            }
++
++            if (!frontierReached &&
++                entry.State is FileCrossVolumeMoveEntryState.Pending or
++                    FileCrossVolumeMoveEntryState.CopyMutationStarted or
++                    FileCrossVolumeMoveEntryState.DestinationCommitted or
++                    FileCrossVolumeMoveEntryState.SourceDeleteStarted or
++                    FileCrossVolumeMoveEntryState.Failed or
++                    FileCrossVolumeMoveEntryState.RecoveryRequired)
++            {
++                frontierReached = true;
++                continue;
++            }
++
++            if (frontierReached && entry.State == FileCrossVolumeMoveEntryState.Pending)
++            {
++                continue;
++            }
++
++            throw new ArgumentException(
++                "Cross-volume Move history must preserve a completed Moved prefix followed by at most one active/terminal frontier and then only Pending entries; Skipped entries are neutral.");
++        }
++    }
+ 
+diff --git a/src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs b/src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs
+--- a/src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs
++++ b/src/FileOp.Core/Operations/SqliteFileCrossVolumeMoveActionHistoryStore.cs
+@@
+         using var command = connection.CreateCommand();
+         command.CommandText = """
+             PRAGMA foreign_keys = ON;
++            PRAGMA synchronous = FULL;
+             PRAGMA journal_mode = WAL;
+@@
+     private SqliteConnection OpenConnection()
+     {
+         var connection = new SqliteConnection(_connectionString);
+         connection.Open();
+         using var command = connection.CreateCommand();
+-        command.CommandText = "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;";
++        command.CommandText = """
++            PRAGMA foreign_keys = ON;
++            PRAGMA synchronous = FULL;
++            PRAGMA busy_timeout = 5000;
++            """;
+         command.ExecuteNonQuery();
+         return connection;
+     }
+ 
+diff --git a/tools/verify_directory_same_volume_move.py b/tools/verify_directory_same_volume_move.py
+--- a/tools/verify_directory_same_volume_move.py
++++ b/tools/verify_directory_same_volume_move.py
+@@
+     checks += require(
+         move_validator,
+-        "EqualSerialDifferentVolumeSummary",
+-        "sourceIdentity.VolumeSerialNumber == destinationIdentity.VolumeSerialNumber",
++        "CrossVolumeMoveDisabledSummary",
++        "sourceIdentity.VolumeSerialNumber != destinationIdentity.VolumeSerialNumber",
+         "case FileOperationVolumeRelationshipState.SameVolume:",
+         "case FileOperationVolumeRelationshipState.DifferentVolume:",
+-        "return Block(validation, EqualSerialDifferentVolumeSummary);",
++        "return Block(validation, CrossVolumeMoveDisabledSummary);",
+     )
+ 
+# Additional required test/source patches to apply in the same Windows-tested reconstruction:
+#
+# 1. FileCrossVolumeMoveActionHistoryInvariantTests.cs
+#    - replace Assert.ThrowsException<T> with Assert.ThrowsExactly<T> where required by current MSTest
+#    - add PendingThenLaterSourceDeleteFrontierIsRejected
+#    - add MovedAfterPendingIsRejected
+#    - add SecondActiveFrontierIsRejected
+#    - add SkippedEntriesAreNeutralAroundExecutableChronology
+#
+# 2. SQLite behavioral regression
+#    - construct/open/reopen SqliteFileCrossVolumeMoveActionHistoryStore
+#    - query PRAGMA synchronous on effective store connections
+#    - assert numeric mode 2 / FULL
+#    - mutate a later entry into a destructive frontier while an earlier entry is Pending;
+#      constructor hydration must throw before transaction commit and the SQL mutation must roll back
+#    - persisted direct corruption with ordinal 0 Pending / ordinal 1 destructive must throw on hydration
+#
+# 3. WindowsFileCrossVolumeMoveSourceDeletePrimitive.cs
+#    - FILE_SUPPORTS_POSIX_UNLINK_RENAME is 0x00000400 (verified against Microsoft Win32 docs)
+#    - call GetVolumeInformationByHandleW on the exact already identity-validated sourceDirectory handle
+#    - require exact NTFS and the POSIX unlink/rename flag before returning the destructive lease
+#    - do this before SourceDeleteStarted can be persisted
+#
+# 4. direct/native composition
+#    - replace generic direct validator composition with WindowsNtfsMutationExecutionValidator(
+#          new WindowsFileOperationExecutionValidator())
+#      wherever the dormant/native engine intentionally bypasses only the production product kill-switch
+#
+# 5. checked source-delete close receipt
+#    - add an explicit one-shot checked close operation/receipt to IFileCrossVolumeMoveSourceDeleteLease
+#    - FidelityLease delegates it; DisposeAsync remains cleanup, never proof
+#    - Core ordering: MarkDeletePendingAsync -> require SourceDeleteMutationPerformed -> checked exact source-handle close
+#      -> require close receipt -> release remaining evidence handles -> CommitSourceDeletedAsync
+#    - checked close failure after SourceDeleteStarted goes through FailSourceDeleteBarrierAsync / RecoveryRequired
+#    - raw Windows provider should detach exact source handle ownership and perform a checked native close once;
+#      Microsoft documents NtClose STATUS_SUCCESS as successful handle closure
+#    - add deterministic close-failure regression and verifier/native-inventory assertions
