@@ -4,5 +4,11 @@
   <Project Path="src/FileOp.Indexer/FileOp.Indexer.csproj" />
   <Project Path="src/FileOp.App/FileOp.App.csproj" />
   <Project Path="tests/FileOp.Windows.Tests/FileOp.Windows.Tests.csproj" />
+  <Folder Name="/src/">
+    <Project Path="src/FileOp.FilesystemSafety/FileOp.FilesystemSafety.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FileOp.FilesystemSafety.Tests/FileOp.FilesystemSafety.Tests.csproj" />
+  </Folder>
   <Project Path="benchmarks/FileOp.Benchmarks/FileOp.Benchmarks.csproj" />
 </Solution>

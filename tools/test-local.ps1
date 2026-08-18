@@ -267,6 +267,10 @@ Invoke-Step "Offline file operation preflight verifier" {
     python tools/verify_file_operation_preflight.py --repo-root $repoRoot --cases 50000
 }
 
+Invoke-Step "Offline filesystem-safety provider boundary verifier" {
+    python tools/verify_filesystem_safety_provider.py --repo-root $repoRoot
+}
+
 Invoke-Step "Offline file operation execution validation verifier" {
     python tools/verify_file_operation_execution_validation.py --repo-root $repoRoot --cases 50000
 }
@@ -368,6 +372,14 @@ if (-not $SkipBenchmarks) {
 
 Invoke-Step "FileOp.Windows Release build" {
     dotnet build src/FileOp.Windows/FileOp.Windows.csproj --configuration Release
+}
+
+Invoke-Step "FileOp.FilesystemSafety Release build" {
+    dotnet build src/FileOp.FilesystemSafety/FileOp.FilesystemSafety.csproj --configuration Release
+}
+
+Invoke-Step "Filesystem-safety provider tests" {
+    dotnet test tests/FileOp.FilesystemSafety.Tests/FileOp.FilesystemSafety.Tests.csproj --configuration Release
 }
 
 Invoke-Step "FileOp.Indexer x64 Release build" {
