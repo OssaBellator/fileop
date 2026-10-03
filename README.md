@@ -15,17 +15,15 @@ The product direction is to combine instant search, power-user file management, 
 ## Architecture at a glance
 
 ```mermaid
-flowchart LR
-    A[WinUI desktop] --> B[FileOp.Core]
-    B --> C[Shared index + SQLite]
-    B --> D[Files / Search / Storage]
-    C <--> E[FileOp.Indexer]
-    E --> F[NTFS / MFT / USN]
-    D --> G{Mutation requested?}
-    G -- no --> H[Evidence only]
-    G -- yes --> I[Fresh validation + authorization]
-    I --> J[Native bounded mutation]
-    J --> K[Durable history / recovery]
+flowchart TD
+    A[Windows UI]
+    B[Shared FileOp core]
+    C[NTFS index and evidence]
+    D[Fresh validation and authorization]
+    E[Bounded mutation]
+    F[History and recovery]
+
+    A --> B --> C --> D --> E --> F
 ```
 
 ### Reviewer path
