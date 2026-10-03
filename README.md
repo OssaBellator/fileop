@@ -34,6 +34,8 @@ flowchart TD
 
 ### Reviewer path
 
+- Case study: [CASE_STUDY.md](./CASE_STUDY.md)
+
 - Architecture: [`docs/architecture.md`](./docs/architecture.md)
 - Exact Files behavior: [`docs/files-browser.md`](./docs/files-browser.md)
 - Indexing boundary: [`docs/indexing-service.md`](./docs/indexing-service.md)
