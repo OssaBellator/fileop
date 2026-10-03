@@ -12,6 +12,12 @@ The product direction is to combine instant search, power-user file management, 
 - **Verification:** local Windows gates cover Core/Windows/Indexer builds, native regression/integration tests, the WinUI app, bundled-helper checks and a real helper-process handshake.
 - **Boundary:** production signing/package validation still requires a real production certificate dry run before a release is called production-ready.
 
+## Live proof
+
+Representative **completed** offline verifier output captured on 2026-10-03. The full offline sweep was not used as the claim here; this card includes only verifier stages that completed successfully in the observed run.
+
+![Representative FileOp offline verifier output](./docs/assets/proof.svg)
+
 ## Architecture at a glance
 
 ```mermaid
