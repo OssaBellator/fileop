@@ -12,6 +12,33 @@ The product direction is to combine instant search, power-user file management, 
 - **Verification:** local Windows gates cover Core/Windows/Indexer builds, native regression/integration tests, the WinUI app, bundled-helper checks and a real helper-process handshake.
 - **Boundary:** production signing/package validation still requires a real production certificate dry run before a release is called production-ready.
 
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+    A[WinUI desktop] --> B[FileOp.Core]
+    B --> C[Shared index + SQLite]
+    B --> D[Files / Search / Storage]
+    C <--> E[FileOp.Indexer]
+    E --> F[NTFS / MFT / USN]
+    D --> G{Mutation requested?}
+    G -- no --> H[Evidence only]
+    G -- yes --> I[Fresh validation + authorization]
+    I --> J[Native bounded mutation]
+    J --> K[Durable history / recovery]
+```
+
+### Reviewer path
+
+- Architecture: [`docs/architecture.md`](./docs/architecture.md)
+- Exact Files behavior: [`docs/files-browser.md`](./docs/files-browser.md)
+- Indexing boundary: [`docs/indexing-service.md`](./docs/indexing-service.md)
+- Delete preflight: [`docs/file-delete-preflight.md`](./docs/file-delete-preflight.md)
+- Native index synchronization: [`src/FileOp.Windows/Ntfs/NtfsIndexSynchronizer.cs`](./src/FileOp.Windows/Ntfs/NtfsIndexSynchronizer.cs)
+- Helper trust policy: [`src/FileOp.Windows/IndexingService/IndexingServiceHelperTrustPolicy.cs`](./src/FileOp.Windows/IndexingService/IndexingServiceHelperTrustPolicy.cs)
+- Representative native tests: [`tests/FileOp.Windows.Tests/FileDeleteOperationExecutionValidationTests.cs`](./tests/FileOp.Windows.Tests/FileDeleteOperationExecutionValidationTests.cs)
+- Full local verification: [`docs/local-validation.md`](./docs/local-validation.md)
+
 ## Status
 
 The implementation has four runtime layers plus a benchmark harness:
