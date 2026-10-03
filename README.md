@@ -4,6 +4,14 @@ FileOp is a high-performance Windows file and storage manager built around one r
 
 The product direction is to combine instant search, power-user file management, storage analysis, duplicate evidence, carefully authorized cleanup, disk health and measurable performance diagnostics without turning into a generic “PC cleaner.”
 
+## At a glance
+
+- **Problem:** fast Windows file tools often separate search, storage analysis and mutation safety into unrelated systems, creating stale state and weak recovery boundaries.
+- **Implemented:** shared NTFS/USN-backed indexing, exact paged browsing, SQLite persistence, bounded duplicate evidence, WinUI 3 surfaces, authenticated helper IPC and reviewed Copy/Move/permanent-delete paths.
+- **Safety model:** evidence never becomes mutation consent; destructive operations require fresh identity/canonical-path checks, explicit authorization and durable recovery history.
+- **Verification:** local Windows gates cover Core/Windows/Indexer builds, native regression/integration tests, the WinUI app, bundled-helper checks and a real helper-process handshake.
+- **Boundary:** production signing/package validation still requires a real production certificate dry run before a release is called production-ready.
+
 ## Status
 
 The implementation has four runtime layers plus a benchmark harness:
